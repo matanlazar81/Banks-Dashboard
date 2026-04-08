@@ -757,7 +757,9 @@ function banksPlugin(): Plugin {
 
           if (lsSnap) {
             console.log(`[Consolidated] Using LS snapshot for ${lsYear}`);
-            bankBalance3 = lsSnap.bankBalance || { openingBalance: 0, dailyBalances: [], currentBalance: 0 };
+            // Use projectedDecClosing as opening balance (not raw bankBalance which is from the source year)
+            const lsOpenBal = lsSnap.projectedDecClosing || lsSnap.bankBalance?.openingBalance || 0;
+            bankBalance3 = { openingBalance: lsOpenBal, dailyBalances: [], currentBalance: lsOpenBal };
             bankAccounts3 = []; salary3 = lsSnap.salary || []; vendorHistory3 = lsSnap.vendorHistory || [];
             collections3 = []; // raw collection records not needed — we pass collByMonth separately
             nsBudget3 = lsSnap.nsBudget || { byMonth: {} };
@@ -776,7 +778,8 @@ function banksPlugin(): Plugin {
 
           if (stSnap) {
             console.log(`[Consolidated] Using ST snapshot for ${stYear}`);
-            bankBalance6 = stSnap.bankBalance || { openingBalance: 0, dailyBalances: [], currentBalance: 0 };
+            const stOpenBal = stSnap.projectedDecClosing || stSnap.bankBalance?.openingBalance || 0;
+            bankBalance6 = { openingBalance: stOpenBal, dailyBalances: [], currentBalance: stOpenBal };
             bankAccounts6 = []; salary6 = stSnap.salary || []; vendorHistory6 = stSnap.vendorHistory || [];
             collections6 = [];
             nsBudget6 = stSnap.nsBudget || { byMonth: {} };
@@ -1278,6 +1281,30 @@ function banksPlugin(): Plugin {
         }
       });
 
+      // ── /api/budget-snapshot-patch — update specific fields in existing snapshot ──
+      server.middlewares.use('/api/budget-snapshot-patch', async (req: any, res: any) => {
+        if (req.method !== 'POST') { res.statusCode = 405; res.end('Method not allowed'); return; }
+        const fs = await import('fs');
+        const budgetDir = path.resolve(__dirname, 'data', 'budgets');
+        res.setHeader('Content-Type', 'application/json');
+        let body = '';
+        req.on('data', (chunk: any) => { body += chunk; });
+        req.on('end', () => {
+          try {
+            const { year, company, projectedDecClosing } = JSON.parse(body);
+            if (!year || !company) { res.end(JSON.stringify({ error: 'year and company required' })); return; }
+            const filePath = path.resolve(budgetDir, `${year}-${company}.json`);
+            if (!fs.existsSync(filePath)) { res.end(JSON.stringify({ error: 'snapshot not found' })); return; }
+            const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+            if (projectedDecClosing !== undefined) data.projectedDecClosing = projectedDecClosing;
+            data.lastPatchedAt = new Date().toISOString();
+            fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+            console.log(`[Budget] Patched ${year}-${company}: projectedDecClosing=€${projectedDecClosing?.toLocaleString()}`);
+            res.end(JSON.stringify({ success: true }));
+          } catch (e: any) { res.end(JSON.stringify({ error: e.message })); }
+        });
+      });
+
       // ── /api/budget-snapshot — per-company roll forward, read, delete ──
       server.middlewares.use('/api/budget-snapshot', async (req: any, res: any) => {
         const fs = await import('fs');
@@ -1324,6 +1351,22 @@ function banksPlugin(): Plugin {
             try {
               const { sourceYear, targetYear, company, clientDecClosing } = JSON.parse(body);
               if (!sourceYear || !targetYear || !company) { res.end(JSON.stringify({ error: 'sourceYear, targetYear, and company required' })); return; }
+              // When clientDecClosing is not provided (e.g. refresh from source year),
+              // preserve the existing snapshot's projectedDecClosing so the opening balance stays correct.
+              // The server-side cashflow calc omits pipeline/churn/unpaid carry, so its estimate diverges.
+              let existingDecClosing: number | undefined;
+              if (!clientDecClosing) {
+                const existingPath = path.resolve(budgetDir, `${targetYear}-${company}.json`);
+                if (fs.existsSync(existingPath)) {
+                  try {
+                    const existing = JSON.parse(fs.readFileSync(existingPath, 'utf-8'));
+                    if (existing.projectedDecClosing) {
+                      existingDecClosing = existing.projectedDecClosing;
+                      console.log(`[Budget] Preserving existing projected Dec closing: €${existingDecClosing!.toLocaleString()}`);
+                    }
+                  } catch {}
+                }
+              }
               console.log(`[Budget] Rolling forward ${company} ${sourceYear} → ${targetYear}...${clientDecClosing ? ` (client Dec closing: €${Math.round(clientDecClosing).toLocaleString()})` : ''}`);
 
               // Remap any YYYY-MM key to targetYear-MM (handles data from any source year)
@@ -1452,9 +1495,9 @@ function banksPlugin(): Plugin {
                   runBal += coll - sal - vend + reval;
                 }
                 const serverDecClosing = Math.round(runBal);
-                const projectedDecClosing = clientDecClosing ? Math.round(clientDecClosing) : serverDecClosing;
+                const projectedDecClosing = clientDecClosing ? Math.round(clientDecClosing) : (existingDecClosing || serverDecClosing);
                 const lastMonthInflow = lastColl;
-                console.log(`[Budget] LS projected Dec ${sourceYear} closing: €${projectedDecClosing.toLocaleString()} (server: €${serverDecClosing.toLocaleString()}), last inflow: €${lastMonthInflow.toLocaleString()}`);
+                console.log(`[Budget] LS projected Dec ${sourceYear} closing: €${projectedDecClosing.toLocaleString()} (server: €${serverDecClosing.toLocaleString()}${existingDecClosing ? `, existing: €${existingDecClosing.toLocaleString()}` : ''}), last inflow: €${lastMonthInflow.toLocaleString()}`);
 
                 const snapshot = {
                   sourceYear, targetYear, company: 'lsports', createdAt: new Date().toISOString(), status: 'draft',
@@ -1579,8 +1622,8 @@ function banksPlugin(): Plugin {
                   runBal6 += coll - sal - vend + reval;
                 }
                 const serverDecClosing6 = Math.round(runBal6);
-                const projectedDecClosing6 = clientDecClosing ? Math.round(clientDecClosing) : serverDecClosing6;
-                console.log(`[Budget] ST projected Dec ${sourceYear} closing: €${projectedDecClosing6.toLocaleString()} (server: €${serverDecClosing6.toLocaleString()}), last inflow: €${(lastColl6 || avgColl6).toLocaleString()}`);
+                const projectedDecClosing6 = clientDecClosing ? Math.round(clientDecClosing) : (existingDecClosing || serverDecClosing6);
+                console.log(`[Budget] ST projected Dec ${sourceYear} closing: €${projectedDecClosing6.toLocaleString()} (server: €${serverDecClosing6.toLocaleString()}${existingDecClosing ? `, existing: €${existingDecClosing.toLocaleString()}` : ''}), last inflow: €${(lastColl6 || avgColl6).toLocaleString()}`);
 
                 // ── Build flat nsBudget with avg(Oct-Dec) baselines for all 12 months ──
                 const nsBudgetFlat6: Record<string, any> = {};

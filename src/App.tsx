@@ -508,6 +508,8 @@ export default function App() {
   const [asOfDateRaw, setAsOfDateRaw] = useState(''); // raw text typed in date input
   // ── Per-company data cache (avoid re-fetching when switching tabs) ──
   const companyDataCache = useRef<Record<string, any>>({});
+  // ── Live current-year cashflow per company (for propagating to next year) ──
+  const sourceYearCashflowRef = useRef<Record<string, any[]>>({});
 
   // ── Consolidated view state ──
   const [consolidatedData, setConsolidatedData] = useState<any>(null);
@@ -961,8 +963,14 @@ useEffect(() => {
           if (snapResult.exists && snapResult.data) {
             const snap = snapResult.data;
             console.info(`[Snapshot] Loading ${co} ${coYear} from snapshot`);
-            // Set bank data — use projected Dec closing from source year as opening balance
-            const openBal = snap.projectedDecClosing || snap.bankBalance?.openingBalance || 0;
+            // ── Live propagation: derive opening balance, salary & vendor baselines from current-year cashflow ──
+            const liveCf = sourceYearCashflowRef.current[co];
+            const hasLiveCf = liveCf?.length === 12;
+            if (hasLiveCf) {
+              console.info(`[Snapshot] Using live ${currentYear} cashflow for ${co} ${coYear} baselines`);
+            }
+            // Opening balance: live Dec closing > snapshot projected > snapshot bankBalance
+            const openBal = hasLiveCf ? liveCf[11].closingBalance : (snap.projectedDecClosing || snap.bankBalance?.openingBalance || 0);
             setBankData({ openingBalance: openBal, dailyBalances: [], currentBalance: openBal });
             setBankAccounts([]);
             setVendorBills([]);
@@ -975,28 +983,70 @@ useEffect(() => {
             // Zero out preYear reval since projectedDecClosing already includes it
             setMonthlyReval({ byMonth: {}, preYear: { eur: 0, ils: 0 } });
             setPrevMonthEndBalance(null);
-            // Budget data from snapshot
-            if (snap.sfBudget) setSfBudget(snap.sfBudget);
-            else setSfBudget({ totalByMonth: {} });
+            // Budget data from snapshot — with live overrides for salary & vendors
+            if (hasLiveCf) {
+              // Salary baseline: avg of last 3 months (Oct, Nov, Dec) from live current-year cashflow
+              const avgSalary = Math.round((liveCf[9].salary + liveCf[10].salary + liveCf[11].salary) / 3);
+              const liveSalaryBudget: Record<string, { eur: number; ils: number }> = {};
+              for (let m = 1; m <= 12; m++) {
+                liveSalaryBudget[`${coYear}-${String(m).padStart(2, '0')}`] = { eur: avgSalary, ils: 0 };
+              }
+              setSfSalaryBudget(liveSalaryBudget);
+              console.info(`[Snapshot] ${co} ${coYear} salary baseline: avg(Oct/Nov/Dec) = €${avgSalary.toLocaleString()}`);
+              // Vendor baseline: avg of full year from live current-year cashflow
+              const avgVendors = Math.round(liveCf.reduce((s: number, r: any) => s + r.vendors, 0) / 12);
+              const liveVendorTotal: Record<string, { eur: number; ils: number }> = {};
+              for (let m = 1; m <= 12; m++) {
+                liveVendorTotal[`${coYear}-${String(m).padStart(2, '0')}`] = { eur: avgVendors, ils: 0 };
+              }
+              // Keep byMonth categories from snapshot for category adjustments, override totals
+              setSfBudget({ byMonth: snap.sfBudget?.byMonth || {}, totalByMonth: liveVendorTotal });
+              console.info(`[Snapshot] ${co} ${coYear} vendor baseline: avg(12m) = €${avgVendors.toLocaleString()}`);
+              // Also override nsBudget for non-SF subsidiaries (Statscore)
+              const isNonSF = !snap.sfSalaryBudget || Object.keys(snap.sfSalaryBudget).length === 0;
+              if (isNonSF) {
+                const liveNsBud: Record<string, any> = {};
+                for (let m = 1; m <= 12; m++) {
+                  const mk = `${coYear}-${String(m).padStart(2, '0')}`;
+                  const existing = snap.nsBudget?.byMonth?.[mk] || {};
+                  liveNsBud[mk] = { salary: avgSalary, vendors: avgVendors, revenue: existing.revenue || 0 };
+                }
+                setNsBudget({ byMonth: liveNsBud });
+              } else {
+                if (snap.nsBudget) setNsBudget(snap.nsBudget);
+                else setNsBudget({ byMonth: {} });
+              }
+            } else {
+              if (snap.sfBudget) setSfBudget(snap.sfBudget);
+              else setSfBudget({ totalByMonth: {} });
+              if (snap.sfSalaryBudget) setSfSalaryBudget(snap.sfSalaryBudget);
+              else setSfSalaryBudget({});
+              if (snap.nsBudget) setNsBudget(snap.nsBudget);
+              else setNsBudget({ byMonth: {} });
+            }
             if (snap.sfRevenue) setSfRevenue(snap.sfRevenue);
             else setSfRevenue({});
             if (snap.sfActualsSplit) setSfActualsSplit(snap.sfActualsSplit);
             else setSfActualsSplit({});
-            if (snap.sfSalaryBudget) setSfSalaryBudget(snap.sfSalaryBudget);
-            else setSfSalaryBudget({});
             if (snap.sfRevenuePaid) setSfRevenuePaid(snap.sfRevenuePaid);
             else setSfRevenuePaid({});
             if (snap.sfPipeline) setSfPipeline(snap.sfPipeline);
             else setSfPipeline([]);
             if (snap.sfConversion) setSfConversion(snap.sfConversion);
             else setSfConversion({ yearly: [], stages: [], customers: [], projection: [] });
-            if (snap.nsBudget) setNsBudget(snap.nsBudget);
-            else setNsBudget({ byMonth: {} });
             setSfSalaryOverrides([]);
             setChurnData([]);
             setChurnMonthlyAvg(0);
             setYoyRevenue(null);
             setSalaryDeptBudgets({});
+            // Persist updated opening balance to snapshot file for page refresh consistency
+            if (hasLiveCf && Math.round(openBal) !== Math.round(snap.projectedDecClosing || 0)) {
+              fetch('/api/budget-snapshot-patch', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ year: coYear, company: co, projectedDecClosing: Math.round(openBal) }),
+              }).catch(() => {}); // fire-and-forget
+            }
             refetchScenarios();
             setLastRefreshed(new Date().toLocaleDateString('en-GB') + ' ' + new Date().toLocaleTimeString('en-GB'));
             setIsLoading(false);
@@ -1455,6 +1505,13 @@ useEffect(() => {
     return rows;
   }, [vendorBills, arForecast, salaryData, vendorHistory, expenseCategories, book, bookLocal, actualCollections, sfBudget, sfRevenue, sfActualsSplit, salaryAdjPctByMonth, collPctByMonth, monthlyReval, sfSalaryBudget, sfRevenuePaid, sfPipeline, pipelineMinProb, sfConversion, salaryDeptAdj, salaryDeptBudgets, vendorCatAdj, vendorDetailAdj, prevMonthEndBalance, churnMonthlyAvg, asOfDate, nsBudget, activeYear]);
 
+  // ── Capture current-year cashflow for propagation to next year ──
+  useEffect(() => {
+    if (activeYear === currentYear && cashflowForecast?.length === 12 && activeCompany !== 'consolidated') {
+      sourceYearCashflowRef.current[activeCompany] = cashflowForecast;
+    }
+  }, [cashflowForecast, activeYear, currentYear, activeCompany]);
+
   // ── Compute cashflow for any ScenarioData ──
   const computeScenarioCashflow = useCallback((cd: ScenarioData) => {
     const now = new Date();
@@ -1554,20 +1611,47 @@ useEffect(() => {
       const salaryArr: SalaryMonth[] = d.salary || [];
       const vendHist: VendorHistoryRecord[] = d.vendorHistory || [];
       const coll: Record<string, number> = d.collections || {};
-      const nsBud = d.nsBudget || { byMonth: {} };
+      let nsBud = d.nsBudget || { byMonth: {} };
       const mReval = d.monthlyReval || { byMonth: {}, preYear: { eur: 0, ils: 0 } };
-      const sfBud = hasSF ? (d.sfBudget || { totalByMonth: {} }) : { totalByMonth: {} };
+      let sfBud = hasSF ? (d.sfBudget || { totalByMonth: {} }) : { totalByMonth: {} } as any;
       const sfRev = hasSF ? (d.sfRevenue || {}) : {};
       const sfSplit = hasSF ? (d.sfActualsSplit || {}) : {};
-      const sfSalBud = hasSF ? (d.sfSalaryBudget || {}) : {};
+      let sfSalBud = hasSF ? (d.sfSalaryBudget || {}) : {} as any;
       const sfRevPaid = hasSF ? (d.sfRevenuePaid || {}) : {};
+
+      // ── Live propagation: override baselines from current-year cashflow ──
+      const liveCf = sourceYearCashflowRef.current[sub];
+      const hasLive = activeYear !== currentYear && liveCf?.length === 12;
+      let liveOpenBal: number | undefined;
+      if (hasLive) {
+        liveOpenBal = liveCf[11].closingBalance;
+        // Salary baseline: avg of last 3 months (Oct, Nov, Dec)
+        const avgSal = Math.round((liveCf[9].salary + liveCf[10].salary + liveCf[11].salary) / 3);
+        const liveSalBud: Record<string, { eur: number; ils: number }> = {};
+        for (let m = 1; m <= 12; m++) liveSalBud[`${activeYear}-${String(m).padStart(2, '0')}`] = { eur: avgSal, ils: 0 };
+        sfSalBud = liveSalBud;
+        // Vendor baseline: avg of full year
+        const avgVend = Math.round(liveCf.reduce((s: number, r: any) => s + r.vendors, 0) / 12);
+        const liveVendTotal: Record<string, { eur: number; ils: number }> = {};
+        for (let m = 1; m <= 12; m++) liveVendTotal[`${activeYear}-${String(m).padStart(2, '0')}`] = { eur: avgVend, ils: 0 };
+        sfBud = { ...sfBud, totalByMonth: liveVendTotal };
+        // Also override nsBudget for non-SF subsidiaries (Statscore)
+        if (!hasSF) {
+          const liveNsBud: Record<string, any> = {};
+          for (let m = 1; m <= 12; m++) {
+            const mk = `${activeYear}-${String(m).padStart(2, '0')}`;
+            liveNsBud[mk] = { salary: avgSal, vendors: avgVend, revenue: nsBud.byMonth?.[mk]?.revenue || 0 };
+          }
+          nsBud = { byMonth: liveNsBud };
+        }
+      }
 
       const sc = scenarioData || { salaryAdjPctByMonth: {}, collPctByMonth: {}, salaryDeptAdj: {}, vendorCatAdj: {}, vendorDetailAdj: {}, leverOverrides: {}, pipelineMinProb: 100 };
 
       const completedSals = salaryArr.filter((s: any) => s.month < currentMonth && s.amountEUR > 0);
       const lastSal = completedSals.length > 0 ? completedSals[completedSals.length - 1].amountEUR : 0;
 
-      let runBal = (d.bankBalance?.openingBalance || 0) + (mReval.preYear?.eur || 0);
+      let runBal = hasLive ? liveOpenBal! : ((d.bankBalance?.openingBalance || 0) + (mReval.preYear?.eur || 0));
       let prevSal = 0;
       let prevUnpaid = 0;
       const rows: { mKey: string; salary: number; vendors: number; collections: number; totalOutflow: number; net: number; revalImpact: number; closingBalance: number; openingBalance: number; isPast: boolean; isCurrent: boolean }[] = [];
