@@ -4195,8 +4195,10 @@ useEffect(() => {
                               <button onClick={() => setCollPctByMonth(prev => ({ ...prev, [i]: (prev[i] ?? 100) + 5 }))}
                                       className="w-4 h-4 rounded bg-gray-100 hover:bg-green-100 text-gray-500 text-[10px] flex items-center justify-center font-bold leading-none">+</button>
                               {(collPctByMonth[i] ?? 100) !== 100 && (
-                                <button onClick={() => setCollPctByMonth(prev => { const u = { ...prev }; delete u[i]; return u; })}
-                                        className="w-4 h-4 rounded bg-red-50 hover:bg-red-100 text-red-400 hover:text-red-600 text-[10px] flex items-center justify-center font-bold leading-none" title="Reset this month">✕</button>
+                                <button onClick={() => {
+                                  const copyToNext = confirm('Also clear for remaining months?');
+                                  setCollPctByMonth(prev => { const u = { ...prev }; delete u[i]; if (copyToNext) { for (let j = i + 1; j < 12; j++) delete u[j]; } return u; });
+                                }} className="w-4 h-4 rounded bg-red-50 hover:bg-red-100 text-red-400 hover:text-red-600 text-[10px] flex items-center justify-center font-bold leading-none" title="Clear adjustment">✕</button>
                               )}
                               {(collPctByMonth[i] ?? 100) !== 100 && i < 11 && (
                                 <button onClick={() => setCollPctByMonth(prev => { const u = { ...prev }; for (let j = i + 1; j < 12; j++) u[j] = prev[i] ?? 100; return u; })}
@@ -4316,8 +4318,10 @@ useEffect(() => {
                               <button onClick={() => setSalaryAdjPctByMonth(prev => ({ ...prev, [i]: (prev[i] || 0) + 1 }))}
                                       className="w-4 h-4 rounded bg-gray-100 hover:bg-amber-100 text-gray-500 text-[10px] flex items-center justify-center font-bold leading-none">+</button>
                               {hasGlobal && (
-                                <button onClick={() => setSalaryAdjPctByMonth(prev => { const u = { ...prev }; delete u[i]; return u; })}
-                                        className="w-4 h-4 rounded bg-red-50 hover:bg-red-100 text-red-400 hover:text-red-600 text-[10px] flex items-center justify-center font-bold leading-none" title="Reset this month">✕</button>
+                                <button onClick={() => {
+                                  const copyToNext = confirm('Also clear for remaining months?');
+                                  setSalaryAdjPctByMonth(prev => { const u = { ...prev }; delete u[i]; if (copyToNext) { for (let j = i + 1; j < 12; j++) delete u[j]; } return u; });
+                                }} className="w-4 h-4 rounded bg-red-50 hover:bg-red-100 text-red-400 hover:text-red-600 text-[10px] flex items-center justify-center font-bold leading-none" title="Clear adjustment">✕</button>
                               )}
                               {hasGlobal && i < 11 && (
                                 <button onClick={() => setSalaryAdjPctByMonth(prev => { const u = { ...prev }; for (let j = i + 1; j < 12; j++) u[j] = prev[i] || 0; return u; })}
@@ -4382,7 +4386,8 @@ useEffect(() => {
                         {r.vendors > 0 ? `-${fmtC(r.vendors, r.vendorsILS)}` : '-'}
                         {!r.isPast && r.vendorsBase > 0 && r.vendors !== r.vendorsBase && (() => {
                           const delta = r.vendors - r.vendorsBase;
-                          return <span className={`text-[9px] font-semibold ml-1 px-1 py-0 rounded ${delta > 0 ? 'text-red-600 bg-red-50' : 'text-green-700 bg-green-50'}`}>{delta > 0 ? '+' : ''}{fmt(delta)}</span>;
+                          const effPct = Math.round((delta / r.vendorsBase) * 100);
+                          return <span className={`text-[9px] font-semibold ml-1 px-1 py-0 rounded ${delta > 0 ? 'text-red-600 bg-red-50' : 'text-green-700 bg-green-50'}`}>{effPct > 0 ? '+' : ''}{effPct}%</span>;
                         })()}
                         {r.vendors > 0 && r.vendors === r.vendorsBase && <span className="text-[10px] text-violet-400 ml-1">→</span>}
                       </td>
@@ -5761,6 +5766,36 @@ useEffect(() => {
                                   <span className="text-[10px] text-gray-400">%</span>
                                   <button onClick={() => setVendorDetailAdj(prev => ({ ...prev, [forecastDrilldown.mKey]: { ...(prev[forecastDrilldown.mKey] || {}), [detKey]: { pct: _detPct + 1, base: r.amountEUR || 0 } } }))}
                                           className="w-5 h-5 rounded bg-white hover:bg-teal-100 text-gray-500 text-xs flex items-center justify-center font-bold border border-teal-200">+</button>
+                                  {_detPct !== 0 && (
+                                    <button onClick={() => {
+                                      const mKey = forecastDrilldown.mKey;
+                                      const copyToNext = confirm('Also clear for remaining months?');
+                                      setVendorDetailAdj(prev => {
+                                        const u = { ...prev };
+                                        if (u[mKey]) { const mc = { ...u[mKey] }; delete mc[detKey]; u[mKey] = mc; }
+                                        if (copyToNext) {
+                                          const yr = parseInt(mKey.split('-')[0]); const mo = parseInt(mKey.split('-')[1]);
+                                          for (let m = mo + 1; m <= 12; m++) { const mk = `${yr}-${String(m).padStart(2, '0')}`; if (u[mk]) { const mc = { ...u[mk] }; delete mc[detKey]; u[mk] = mc; } }
+                                        }
+                                        return u;
+                                      });
+                                    }} className="w-4 h-4 rounded bg-red-50 hover:bg-red-100 text-red-400 hover:text-red-600 text-[10px] flex items-center justify-center font-bold leading-none" title="Clear adjustment">✕</button>
+                                  )}
+                                  {_detPct !== 0 && (() => {
+                                    const mo = parseInt(forecastDrilldown.mKey.split('-')[1]);
+                                    return mo < 12 ? (
+                                      <button onClick={() => {
+                                        const mKey = forecastDrilldown.mKey;
+                                        const yr = parseInt(mKey.split('-')[0]);
+                                        const moN = parseInt(mKey.split('-')[1]);
+                                        setVendorDetailAdj(prev => {
+                                          const u = { ...prev };
+                                          for (let m = moN + 1; m <= 12; m++) { const mk = `${yr}-${String(m).padStart(2, '0')}`; u[mk] = { ...(u[mk] || {}), [detKey]: { pct: _detPct, base: r.amountEUR || 0 } }; }
+                                          return u;
+                                        });
+                                      }} className="w-4 h-4 rounded bg-teal-100 hover:bg-teal-200 text-teal-600 text-[10px] flex items-center justify-center font-bold leading-none" title="Copy to remaining months">→</button>
+                                    ) : null;
+                                  })()}
                                 </div>
                                 {_detInherited && _detPct !== 0 && <div className="text-[9px] text-teal-400 text-center mt-0.5">from {new Date(_detFromMonth + '-01').toLocaleDateString('en-GB', { month: 'short' })}</div>}
                               </td>
@@ -6263,6 +6298,36 @@ useEffect(() => {
                                 <span className="text-[10px] text-gray-400">%</span>
                                 <button onClick={() => setVendorCatAdj(prev => ({ ...prev, [forecastDrilldown.mKey]: { ...(prev[forecastDrilldown.mKey] || {}), [cat]: vcPct + 1 } }))}
                                         className="w-5 h-5 rounded bg-white hover:bg-teal-100 text-gray-500 text-xs flex items-center justify-center font-bold border border-teal-200">+</button>
+                                {vcPct !== 0 && (
+                                  <button onClick={() => {
+                                    const mKey = forecastDrilldown.mKey;
+                                    const copyToNext = confirm('Also clear for remaining months?');
+                                    setVendorCatAdj(prev => {
+                                      const u = { ...prev };
+                                      if (u[mKey]) { const mc = { ...u[mKey] }; delete mc[cat]; u[mKey] = mc; }
+                                      if (copyToNext) {
+                                        const yr = parseInt(mKey.split('-')[0]); const mo = parseInt(mKey.split('-')[1]);
+                                        for (let m = mo + 1; m <= 12; m++) { const mk = `${yr}-${String(m).padStart(2, '0')}`; if (u[mk]) { const mc = { ...u[mk] }; delete mc[cat]; u[mk] = mc; } }
+                                      }
+                                      return u;
+                                    });
+                                  }} className="w-4 h-4 rounded bg-red-50 hover:bg-red-100 text-red-400 hover:text-red-600 text-[10px] flex items-center justify-center font-bold leading-none" title="Clear adjustment">✕</button>
+                                )}
+                                {vcPct !== 0 && (() => {
+                                  const mo = parseInt(forecastDrilldown.mKey.split('-')[1]);
+                                  return mo < 12 ? (
+                                    <button onClick={() => {
+                                      const mKey = forecastDrilldown.mKey;
+                                      const yr = parseInt(mKey.split('-')[0]);
+                                      const moN = parseInt(mKey.split('-')[1]);
+                                      setVendorCatAdj(prev => {
+                                        const u = { ...prev };
+                                        for (let m = moN + 1; m <= 12; m++) { const mk = `${yr}-${String(m).padStart(2, '0')}`; u[mk] = { ...(u[mk] || {}), [cat]: vcPct }; }
+                                        return u;
+                                      });
+                                    }} className="w-4 h-4 rounded bg-teal-100 hover:bg-teal-200 text-teal-600 text-[10px] flex items-center justify-center font-bold leading-none" title="Copy to remaining months">→</button>
+                                  ) : null;
+                                })()}
                               </div>
                               {vcInherited && vcPct !== 0 && <div className="text-[9px] text-teal-400 text-center mt-0.5">from {new Date(vcAdj.fromMonth + '-01').toLocaleDateString('en-GB', { month: 'short' })}</div>}
                             </td>}
