@@ -525,26 +525,52 @@ export default function App() {
   const [lastRefreshed, setLastRefreshed] = useState('');
   const [currency, setCurrency] = useState<'EUR' | 'ILS'>('EUR');
   const [salaryAdjPctByMonth, setSalaryAdjPctByMonth] = useState<Record<number, number>>(() => {
-    // Read from AP dashboard's localStorage first, fall back to banks-specific
+    // Year-specific: load adjustments for the initial active year
     try {
+      const initYear = (() => { try { const y = localStorage.getItem('banks-active-years'); return y ? JSON.parse(y) : {}; } catch { return {}; } })();
+      const yr = initYear.lsports || new Date().getFullYear();
+      const yearSaved = localStorage.getItem(`banks-salary-adj-${yr}`);
+      if (yearSaved) return JSON.parse(yearSaved);
+      // Fall back to legacy non-year key for current year
       const apSaved = localStorage.getItem('ap-salary-adj');
       if (apSaved) return JSON.parse(apSaved);
       const saved = localStorage.getItem('banks-salary-adj');
       return saved ? JSON.parse(saved) : {};
     } catch { return {}; }
   });
-  // Sync: on each render, check if AP tab has newer adjustments
+  // Sync: on each render, check if AP tab has newer adjustments (current year only)
   useEffect(() => {
-    const handler = () => { try { const ap = localStorage.getItem('ap-salary-adj'); if (ap) setSalaryAdjPctByMonth(JSON.parse(ap)); } catch {} };
+    const handler = () => { if (activeYear !== currentYear) return; try { const ap = localStorage.getItem('ap-salary-adj'); if (ap) setSalaryAdjPctByMonth(JSON.parse(ap)); } catch {} };
     window.addEventListener('focus', handler);
     return () => window.removeEventListener('focus', handler);
-  }, []);
-  useEffect(() => { try { localStorage.setItem('banks-salary-adj', JSON.stringify(salaryAdjPctByMonth)); } catch {} }, [salaryAdjPctByMonth]);
-  // Collection % adjustment per month (default 90% — expected collection rate vs forecast)
+  }, [activeYear, currentYear]);
+  useEffect(() => { try { localStorage.setItem(`banks-salary-adj-${activeYear}`, JSON.stringify(salaryAdjPctByMonth)); } catch {} }, [salaryAdjPctByMonth, activeYear]);
+  // Collection % adjustment per month (default 100% — expected collection rate vs forecast)
   const [collPctByMonth, setCollPctByMonth] = useState<Record<number, number>>(() => {
-    try { const saved = localStorage.getItem('banks-coll-pct'); return saved ? JSON.parse(saved) : {}; } catch { return {}; }
+    try {
+      const initYear = (() => { try { const y = localStorage.getItem('banks-active-years'); return y ? JSON.parse(y) : {}; } catch { return {}; } })();
+      const yr = initYear.lsports || new Date().getFullYear();
+      const yearSaved = localStorage.getItem(`banks-coll-pct-${yr}`);
+      if (yearSaved) return JSON.parse(yearSaved);
+      const saved = localStorage.getItem('banks-coll-pct');
+      return saved ? JSON.parse(saved) : {};
+    } catch { return {}; }
   });
-  useEffect(() => { try { localStorage.setItem('banks-coll-pct', JSON.stringify(collPctByMonth)); } catch {} }, [collPctByMonth]);
+  useEffect(() => { try { localStorage.setItem(`banks-coll-pct-${activeYear}`, JSON.stringify(collPctByMonth)); } catch {} }, [collPctByMonth, activeYear]);
+  // Reset adjustments when switching years (each year has independent assumptions)
+  useEffect(() => {
+    try {
+      const salKey = `banks-salary-adj-${activeYear}`;
+      const colKey = `banks-coll-pct-${activeYear}`;
+      const salSaved = localStorage.getItem(salKey);
+      const colSaved = localStorage.getItem(colKey);
+      setSalaryAdjPctByMonth(salSaved ? JSON.parse(salSaved) : {});
+      setCollPctByMonth(colSaved ? JSON.parse(colSaved) : {});
+    } catch {
+      setSalaryAdjPctByMonth({});
+      setCollPctByMonth({});
+    }
+  }, [activeYear]);
   const getCollPct = (i: number) => collPctByMonth[i] ?? 100; // default 100%
   // Per-department salary % overrides — key: mKey, value: { department: pct }
   const [salaryDeptAdj, setSalaryDeptAdj] = useState<Record<string, Record<string, number>>>(() => {
