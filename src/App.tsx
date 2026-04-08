@@ -5774,10 +5774,11 @@ useEffect(() => {
                                       const copyToNext = confirm('Also clear for remaining months?');
                                       setVendorDetailAdj(prev => {
                                         const u = { ...prev };
-                                        if (u[mKey]) { const mc = { ...u[mKey] }; delete mc[detKey]; u[mKey] = mc; }
+                                        // Set explicit 0 to override any inherited value
+                                        u[mKey] = { ...(u[mKey] || {}), [detKey]: { pct: 0, base: r.amountEUR || 0 } };
                                         if (copyToNext) {
                                           const yr = parseInt(mKey.split('-')[0]); const mo = parseInt(mKey.split('-')[1]);
-                                          for (let m = mo + 1; m <= 12; m++) { const mk = `${yr}-${String(m).padStart(2, '0')}`; if (u[mk]) { const mc = { ...u[mk] }; delete mc[detKey]; u[mk] = mc; } }
+                                          for (let m = mo + 1; m <= 12; m++) { const mk = `${yr}-${String(m).padStart(2, '0')}`; u[mk] = { ...(u[mk] || {}), [detKey]: { pct: 0, base: r.amountEUR || 0 } }; }
                                         }
                                         return u;
                                       });
@@ -6306,10 +6307,11 @@ useEffect(() => {
                                     const copyToNext = confirm('Also clear for remaining months?');
                                     setVendorCatAdj(prev => {
                                       const u = { ...prev };
-                                      if (u[mKey]) { const mc = { ...u[mKey] }; delete mc[cat]; u[mKey] = mc; }
+                                      // Set explicit 0 to override any inherited value
+                                      u[mKey] = { ...(u[mKey] || {}), [cat]: 0 };
                                       if (copyToNext) {
                                         const yr = parseInt(mKey.split('-')[0]); const mo = parseInt(mKey.split('-')[1]);
-                                        for (let m = mo + 1; m <= 12; m++) { const mk = `${yr}-${String(m).padStart(2, '0')}`; if (u[mk]) { const mc = { ...u[mk] }; delete mc[cat]; u[mk] = mc; } }
+                                        for (let m = mo + 1; m <= 12; m++) { const mk = `${yr}-${String(m).padStart(2, '0')}`; u[mk] = { ...(u[mk] || {}), [cat]: 0 }; }
                                       }
                                       return u;
                                     });
