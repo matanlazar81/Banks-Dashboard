@@ -531,7 +531,8 @@ export default function App() {
       const yr = initYear.lsports || new Date().getFullYear();
       const yearSaved = localStorage.getItem(`banks-salary-adj-${yr}`);
       if (yearSaved) return JSON.parse(yearSaved);
-      // Fall back to legacy non-year key for current year
+      // Only fall back to legacy keys for current year — non-current years start clean
+      if (yr !== new Date().getFullYear()) return {};
       const apSaved = localStorage.getItem('ap-salary-adj');
       if (apSaved) return JSON.parse(apSaved);
       const saved = localStorage.getItem('banks-salary-adj');
@@ -552,6 +553,7 @@ export default function App() {
       const yr = initYear.lsports || new Date().getFullYear();
       const yearSaved = localStorage.getItem(`banks-coll-pct-${yr}`);
       if (yearSaved) return JSON.parse(yearSaved);
+      if (yr !== new Date().getFullYear()) return {};
       const saved = localStorage.getItem('banks-coll-pct');
       return saved ? JSON.parse(saved) : {};
     } catch { return {}; }
@@ -1339,7 +1341,7 @@ useEffect(() => {
       // Per-department salary adjustment delta — cascades from earlier months
       // For each department, use the adjustment from this month if set, otherwise inherit from the most recent earlier month
       const effectiveDeptAdj: Record<string, number> = {};
-      const allAdjMonths = Object.keys(salaryDeptAdj).filter(k => k <= mKey).sort();
+      const allAdjMonths = Object.keys(salaryDeptAdj).filter(k => k <= mKey && k.slice(0,4) === mKey.slice(0,4)).sort();
       for (const adjMKey of allAdjMonths) {
         for (const [dept, pct] of Object.entries(salaryDeptAdj[adjMKey])) {
           if (pct !== 0) effectiveDeptAdj[dept] = pct;
@@ -1408,7 +1410,7 @@ useEffect(() => {
       // Apply per-category vendor adjustments from scenario
       if (!isPastMonth && Object.keys(vendorCatAdj).length > 0) {
         const effectiveVendorAdj: Record<string, number> = {};
-        const allVendorAdjMonths = Object.keys(vendorCatAdj).filter(k => k <= mKey).sort();
+        const allVendorAdjMonths = Object.keys(vendorCatAdj).filter(k => k <= mKey && k.slice(0,4) === mKey.slice(0,4)).sort();
         for (const adjM of allVendorAdjMonths) {
           for (const [cat, pct] of Object.entries(vendorCatAdj[adjM])) {
             if (pct !== 0) effectiveVendorAdj[cat] = pct;
@@ -1429,7 +1431,7 @@ useEffect(() => {
       // Apply per-department vendor detail adjustments from scenario
       if (!isPastMonth && Object.keys(vendorDetailAdj).length > 0) {
         const effectiveDetailAdj: Record<string, { pct: number; base: number }> = {};
-        const allDetailAdjMonths = Object.keys(vendorDetailAdj).filter(k => k <= mKey).sort();
+        const allDetailAdjMonths = Object.keys(vendorDetailAdj).filter(k => k <= mKey && k.slice(0,4) === mKey.slice(0,4)).sort();
         for (const adjM of allDetailAdjMonths) {
           for (const [key, val] of Object.entries(vendorDetailAdj[adjM])) {
             if (val.pct !== 0) effectiveDetailAdj[key] = val;
@@ -1714,7 +1716,7 @@ useEffect(() => {
         // Apply vendor category adjustments from scenario
         if (!isPast && sc.vendorCatAdj && Object.keys(sc.vendorCatAdj).length > 0) {
           const effVAdj: Record<string, number> = {};
-          const allVM = Object.keys(sc.vendorCatAdj).filter(k => k <= mKey).sort();
+          const allVM = Object.keys(sc.vendorCatAdj).filter(k => k <= mKey && k.slice(0,4) === mKey.slice(0,4)).sort();
           for (const ak of allVM) { for (const [cat, pct] of Object.entries(sc.vendorCatAdj[ak])) { if (pct !== 0) effVAdj[cat] = pct; else delete effVAdj[cat]; } }
           if (Object.keys(effVAdj).length > 0) {
             const catData = sfBud.byMonth?.[mKey] || nsBud.byMonth?.[mKey]?.categories || {};
@@ -4297,7 +4299,7 @@ useEffect(() => {
                           {!r.isPast && (() => {
                             // Compute dept adj % for display
                             const effAdj2: Record<string, number> = {};
-                            const adjKeys2 = Object.keys(salaryDeptAdj).filter(k => k <= r.mKey).sort();
+                            const adjKeys2 = Object.keys(salaryDeptAdj).filter(k => k <= r.mKey && k.slice(0,4) === r.mKey.slice(0,4)).sort();
                             for (const ak of adjKeys2) { for (const [dep, p] of Object.entries(salaryDeptAdj[ak])) { if (p !== 0) effAdj2[dep] = p; else delete effAdj2[dep]; } }
                             let deptPctStr = '';
                             if (Object.keys(effAdj2).length > 0 && salaryDeptBudgets[r.mKey] && sfSalaryBudget[r.mKey]?.eur) {
@@ -4866,7 +4868,7 @@ useEffect(() => {
                         const mKey = forecastDrilldown.mKey;
                         // Compute effective adjustments (cascade from earlier months)
                         const effectiveAdj: Record<string, { pct: number; inherited: boolean; fromMonth?: string }> = {};
-                        const allAdjMKeys = Object.keys(salaryDeptAdj).filter(k => k <= mKey).sort();
+                        const allAdjMKeys = Object.keys(salaryDeptAdj).filter(k => k <= mKey && k.slice(0,4) === mKey.slice(0,4)).sort();
                         for (const adjMKey of allAdjMKeys) {
                           for (const [dept, pct] of Object.entries(salaryDeptAdj[adjMKey])) {
                             if (pct !== 0) effectiveAdj[dept] = { pct, inherited: adjMKey !== mKey, fromMonth: adjMKey };
@@ -5633,7 +5635,7 @@ useEffect(() => {
                     for (const row of forecastDrilldown.data as any[]) {
                       const dk = `${_catName}||${row.department || ''}||${row.account || ''}`;
                       let dp = 0;
-                      const adms = Object.keys(vendorDetailAdj).filter(k => k <= forecastDrilldown.mKey).sort();
+                      const adms = Object.keys(vendorDetailAdj).filter(k => k <= forecastDrilldown.mKey && k.slice(0,4) === forecastDrilldown.mKey.slice(0,4)).sort();
                       for (const am of adms) { const v = vendorDetailAdj[am]?.[dk]; if (v && v.pct !== 0) dp = v.pct; else if (v && v.pct === 0) dp = 0; }
                       detPcts.push(dp);
                     }
@@ -5747,7 +5749,7 @@ useEffect(() => {
                             let _detPct = 0;
                             let _detInherited = false;
                             let _detFromMonth = '';
-                            const _allDetMKeys = Object.keys(vendorDetailAdj).filter(k => k <= forecastDrilldown.mKey).sort();
+                            const _allDetMKeys = Object.keys(vendorDetailAdj).filter(k => k <= forecastDrilldown.mKey && k.slice(0,4) === forecastDrilldown.mKey.slice(0,4)).sort();
                             for (const adjMK of _allDetMKeys) {
                               const v = vendorDetailAdj[adjMK]?.[detKey];
                               if (v && v.pct !== 0) { _detPct = v.pct; _detInherited = adjMK !== forecastDrilldown.mKey; _detFromMonth = adjMK; }
@@ -5850,7 +5852,7 @@ useEffect(() => {
                           const totalDetailImpact = forecastDrilldown.data.reduce((s: number, r: any) => {
                             const dk = `${_catName}||${r.department || ''}||${r.account || ''}`;
                             let dp = 0;
-                            const adms = Object.keys(vendorDetailAdj).filter(k => k <= forecastDrilldown.mKey).sort();
+                            const adms = Object.keys(vendorDetailAdj).filter(k => k <= forecastDrilldown.mKey && k.slice(0,4) === forecastDrilldown.mKey.slice(0,4)).sort();
                             for (const am of adms) { const v = vendorDetailAdj[am]?.[dk]; if (v && v.pct !== 0) dp = v.pct; else if (v && v.pct === 0) dp = 0; }
                             return s + Math.round((r.amountEUR || 0) * (dp / 100));
                           }, 0);
@@ -6238,7 +6240,7 @@ useEffect(() => {
                       // Compute effective vendor category adjustments (cascading)
                       const _effVendorAdj: Record<string, { pct: number; inherited: boolean; fromMonth?: string }> = {};
                       if (_isFutureCat) {
-                        const _allVcMKeys = Object.keys(vendorCatAdj).filter(k => k <= forecastDrilldown.mKey).sort();
+                        const _allVcMKeys = Object.keys(vendorCatAdj).filter(k => k <= forecastDrilldown.mKey && k.slice(0,4) === forecastDrilldown.mKey.slice(0,4)).sort();
                         for (const adjMK of _allVcMKeys) {
                           for (const [cat2, pct2] of Object.entries(vendorCatAdj[adjMK])) {
                             if (pct2 !== 0) _effVendorAdj[cat2] = { pct: pct2, inherited: adjMK !== forecastDrilldown.mKey, fromMonth: adjMK };
