@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.claude/
+.env
+data/
+*.db
+*.log
+chat-history.json
