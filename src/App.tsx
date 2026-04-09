@@ -4756,14 +4756,24 @@ useEffect(() => {
                     const totalVendorSaving = cashflowForecast.reduce((s, r) => s + Math.max(0, r.vendorsBase - r.vendors), 0);
                     const totalSaving = totalSalarySaving + totalVendorSaving;
                     if (totalSaving === 0) return null;
-                    return (
+                    const totalSalaryAfter = cashflowForecast.reduce((s, r) => s + r.salary, 0);
+                    const totalVendorAfter = cashflowForecast.reduce((s, r) => s + r.vendors, 0);
+                    const totalOutflowAfter = cashflowForecast.reduce((s, r) => s + r.totalOutflow, 0);
+                    return (<>
                       <tr className="bg-green-50 border-t border-green-200 font-semibold text-green-700 whitespace-nowrap">
                         <td className="py-2 pr-1 text-green-800" colSpan={6}>TOTAL SAVINGS</td>
                         <td className="py-2 pr-1 text-right">{fmt(totalSalarySaving)}</td>
                         <td className="py-2 pr-1 text-right">{fmt(totalVendorSaving)}</td>
                         <td className="py-2 pr-1 text-right" colSpan={4}>{fmt(totalSaving)}</td>
                       </tr>
-                    );
+                      <tr className="bg-emerald-50 font-bold text-emerald-800 whitespace-nowrap">
+                        <td className="py-2 pr-1" colSpan={6}>TOTAL AFTER SAVINGS</td>
+                        <td className="py-2 pr-1 text-right">-{fmt(totalSalaryAfter)}</td>
+                        <td className="py-2 pr-1 text-right">-{fmt(totalVendorAfter)}</td>
+                        <td className="py-2 pr-1 text-right">-{fmt(totalOutflowAfter)}</td>
+                        <td className="py-2 pr-1 text-right" colSpan={3}></td>
+                      </tr>
+                    </>);
                   })()}
                 </tfoot>
               </table>
