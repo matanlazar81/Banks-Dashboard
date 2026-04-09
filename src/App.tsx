@@ -850,8 +850,9 @@ useEffect(() => {
           if (pct === 0) continue;
           const hcD = deptHeadcount[dept];
           const budget = salaryDeptBudgets[mKey]?.[dept] || 0;
-          if (hcD && hcD.avgSalaryEUR > 0 && budget > 0) {
-            let implied = Math.round((budget * (pct as number) / 100) / hcD.avgSalaryEUR);
+          const cpp = hcD && hcD.count > 0 ? budget / hcD.count : (hcD?.avgSalaryEUR || 0);
+          if (cpp > 0 && budget > 0) {
+            let implied = Math.round((budget * (pct as number) / 100) / cpp);
             if (hcD.count > 0) implied = Math.max(-hcD.count, Math.min(hcD.count * 2, implied));
             if (!derivedHc[mKey]) derivedHc[mKey] = {};
             derivedHc[mKey][dept] = implied;
@@ -5064,10 +5065,12 @@ useEffect(() => {
                                       <td className="py-1.5 pr-1 text-center text-gray-500">{hcCount || '—'}</td>
                                       {(() => {
                                         // Helper: apply HC delta → auto-set salary % and Welfare vendor %
+                                        // Use budget/headcount as cost per person (includes overhead), not avg payroll
+                                        const costPerPerson = hcCount > 0 ? total / hcCount : hcAvgEUR;
                                         const applyHcDelta = (newDelta: number) => {
                                           setHeadcountAdj(prev => ({ ...prev, [mKey]: { ...(prev[mKey] || {}), [dept]: newDelta } }));
-                                          if (hcAvgEUR > 0 && total > 0) {
-                                            const salaryImpactPct = Math.round((newDelta * hcAvgEUR / total) * 100);
+                                          if (costPerPerson > 0 && total > 0) {
+                                            const salaryImpactPct = Math.round((newDelta * costPerPerson / total) * 100);
                                             setSalaryDeptAdj(prev => ({ ...prev, [mKey]: { ...(prev[mKey] || {}), [dept]: salaryImpactPct } }));
                                           }
                                           if (hcCount > 0) {
@@ -5094,11 +5097,11 @@ useEffect(() => {
                                       })()}
                                       {(() => {
                                         // Helper: apply salary % → auto-sync HC Adj (clamped to actual headcount)
+                                        // Use budget/headcount as cost per person (same as applyHcDelta)
                                         const applyPct = (newPct: number) => {
                                           setSalaryDeptAdj(prev => ({ ...prev, [mKey]: { ...(prev[mKey] || {}), [dept]: newPct } }));
-                                          if (hcAvgEUR > 0 && total > 0) {
-                                            let impliedHcDelta = Math.round((total * newPct / 100) / hcAvgEUR);
-                                            // Clamp: can't remove more people than exist or add unreasonably
+                                          if (costPerPerson > 0 && total > 0) {
+                                            let impliedHcDelta = Math.round((total * newPct / 100) / costPerPerson);
                                             if (hcCount > 0) impliedHcDelta = Math.max(-hcCount, Math.min(hcCount * 2, impliedHcDelta));
                                             setHeadcountAdj(prev => ({ ...prev, [mKey]: { ...(prev[mKey] || {}), [dept]: impliedHcDelta } }));
                                           }
@@ -5122,7 +5125,7 @@ useEffect(() => {
                                       <td className={`py-1.5 text-right font-bold ${pct === 0 ? 'text-gray-300' : impact >= 0 ? 'text-red-600' : 'text-green-700'}`}>
                                         {pct === 0 ? '—' : (<>
                                           {impact >= 0 ? '+' : ''}{fmt(impact)}
-                                          {hcAvgEUR > 0 && <div className="text-[9px] font-normal text-blue-500 mt-0.5">≈ {impact > 0 ? '+' : ''}{Math.round(impact / hcAvgEUR)} people</div>}
+                                          {costPerPerson > 0 && <div className="text-[9px] font-normal text-blue-500 mt-0.5">≈ {impact > 0 ? '+' : ''}{Math.round(impact / costPerPerson)} people</div>}
                                         </>)}
                                       </td>
                                     </tr>
@@ -5144,9 +5147,10 @@ useEffect(() => {
                                       const totalPeople = deptEntries.reduce((s, [dept]) => {
                                         const eff2 = effectiveAdj[dept];
                                         if (!eff2 || eff2.pct === 0) return s;
-                                        const hcA = deptHeadcount[dept]?.avgSalaryEUR || 0;
-                                        if (hcA <= 0) return s;
-                                        return s + Math.round(Math.round((deptTotals[dept] || 0) * (eff2.pct / 100)) / hcA);
+                                        const hcC = deptHeadcount[dept]?.count || 0;
+                                        const cpp = hcC > 0 ? (deptTotals[dept] || 0) / hcC : (deptHeadcount[dept]?.avgSalaryEUR || 0);
+                                        if (cpp <= 0) return s;
+                                        return s + Math.round(Math.round((deptTotals[dept] || 0) * (eff2.pct / 100)) / cpp);
                                       }, 0);
                                       return totalPeople !== 0 ? <div className="text-[9px] font-normal text-blue-500 mt-0.5">≈ {totalPeople > 0 ? '+' : ''}{totalPeople} people</div> : null;
                                     })()}
