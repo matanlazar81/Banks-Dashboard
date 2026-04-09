@@ -600,36 +600,57 @@ export default function App() {
     try { const saved = localStorage.getItem('banks-salary-dept-budgets'); return saved ? JSON.parse(saved) : {}; } catch { return {}; }
   });
   useEffect(() => { try { localStorage.setItem('banks-salary-dept-budgets', JSON.stringify(salaryDeptBudgets)); } catch {} }, [salaryDeptBudgets]);
-  // Auto-set HR vendor categories (Welfare, Training, etc.) based on salary dept adjustments
+  // Auto-set HR vendor categories (Welfare, Training, etc.) based on headcount reduction
+  // HR costs are per-person (meals, gifts, etc.), so use headcount % not salary budget %
   const HR_VENDOR_CATEGORIES = ['Welfare', 'Training - Departmental', 'Training - Company Wide', 'Recruiting', 'Off / On Site - Hackathon, Meetup & Tech Fest'];
   useEffect(() => {
-    const deptMonths = Object.keys(salaryDeptAdj).filter(mKey => Object.keys(salaryDeptAdj[mKey] || {}).length > 0);
+    const totalHc = Object.values(deptHeadcount).reduce((s, d) => s + d.count, 0);
+    if (totalHc === 0) return; // no headcount data yet
+    // Collect all months that have either headcountAdj or salaryDeptAdj
+    const allMonths = new Set([...Object.keys(headcountAdj), ...Object.keys(salaryDeptAdj)]);
+    const deptMonths = [...allMonths].filter(mKey => {
+      const hcEntries = headcountAdj[mKey] || {};
+      const salEntries = salaryDeptAdj[mKey] || {};
+      return Object.values(hcEntries).some(v => v !== 0) || Object.values(salEntries).some(v => v !== 0);
+    });
     if (deptMonths.length === 0) return;
     let hasChanges = false;
     const newVcAdj = { ...vendorCatAdj };
     for (const mKey of deptMonths) {
-      const budgets = salaryDeptBudgets[mKey];
-      if (!budgets) continue;
-      // Compute effective dept adjustments (cascade from earlier months)
-      const effAdj: Record<string, number> = {};
-      const allM = Object.keys(salaryDeptAdj).filter(k => k <= mKey && k.slice(0,4) === mKey.slice(0,4)).sort();
-      for (const m of allM) { for (const [d, p] of Object.entries(salaryDeptAdj[m])) { if (p !== 0) effAdj[d] = p; else delete effAdj[d]; } }
-      // Compute salary reduction %
-      const totalBudget = Object.values(budgets).reduce((s, v) => s + v, 0);
-      let deptDelta = 0;
-      for (const [d, p] of Object.entries(effAdj)) deptDelta += Math.round((budgets[d] || 0) * (p / 100));
-      const salaryPct = totalBudget > 0 ? Math.round((deptDelta / totalBudget) * 100) : 0;
-      if (salaryPct !== 0) {
-        const monthAdj = newVcAdj[mKey] || {};
+      // Compute effective headcount delta (cascade from earlier months)
+      let totalHcDelta = 0;
+      const allHcM = Object.keys(headcountAdj).filter(k => k <= mKey && k.slice(0,4) === mKey.slice(0,4)).sort();
+      const effHc: Record<string, number> = {};
+      for (const m of allHcM) { for (const [d, v] of Object.entries(headcountAdj[m] || {})) { if (v !== 0) effHc[d] = v; else delete effHc[d]; } }
+      totalHcDelta = Object.values(effHc).reduce((s, v) => s + v, 0);
+      // If no explicit HC adj, estimate from salary dept adj
+      if (totalHcDelta === 0) {
+        const budgets = salaryDeptBudgets[mKey];
+        if (budgets) {
+          const effAdj: Record<string, number> = {};
+          const allM = Object.keys(salaryDeptAdj).filter(k => k <= mKey && k.slice(0,4) === mKey.slice(0,4)).sort();
+          for (const m of allM) { for (const [d, p] of Object.entries(salaryDeptAdj[m])) { if (p !== 0) effAdj[d] = p; else delete effAdj[d]; } }
+          for (const [d, p] of Object.entries(effAdj)) {
+            const hcD = deptHeadcount[d];
+            if (hcD && hcD.avgSalaryEUR > 0 && budgets[d]) {
+              totalHcDelta += Math.round((budgets[d] * p / 100) / hcD.avgSalaryEUR);
+            }
+          }
+        }
+      }
+      // Apply HC-based % to HR categories
+      const hcPct = totalHc > 0 ? Math.round((totalHcDelta / totalHc) * 100) : 0;
+      if (hcPct !== 0) {
+        const monthAdj = { ...(newVcAdj[mKey] || {}) };
         let changed = false;
         for (const cat of HR_VENDOR_CATEGORIES) {
-          if ((monthAdj[cat] || 0) !== salaryPct) { monthAdj[cat] = salaryPct; changed = true; }
+          if ((monthAdj[cat] || 0) !== hcPct) { monthAdj[cat] = hcPct; changed = true; }
         }
         if (changed) { newVcAdj[mKey] = monthAdj; hasChanges = true; }
       }
     }
     if (hasChanges) setVendorCatAdj(newVcAdj);
-  }, [salaryDeptAdj, salaryDeptBudgets]);
+  }, [salaryDeptAdj, salaryDeptBudgets, headcountAdj, deptHeadcount]);
 
   // Auto-fetch dept budgets for months that have dept adjustments but no cached budget data
   useEffect(() => {
