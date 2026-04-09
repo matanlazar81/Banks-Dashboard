@@ -15,6 +15,7 @@ function getSfClient() {
   if (!sfClient) {
     try {
       const sfPath = path.resolve(__dirname, 'snowflake-api.cjs');
+      delete require.cache[require.resolve(sfPath)]; // bust cache to pick up file changes
       const { createSnowflakeClient } = require(sfPath);
       sfClient = createSnowflakeClient(process.env);
     } catch (e: any) { console.error('[SF] Failed:', e.message); return null; }

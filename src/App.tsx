@@ -4990,42 +4990,36 @@ useEffect(() => {
                                       <td className="py-1.5 pr-2 text-gray-700 font-medium">{dept}</td>
                                       <td className="py-1.5 pr-2 text-right text-violet-700">{fmt(total)}</td>
                                       <td className="py-1.5 pr-1 text-center text-gray-500">{hcCount || '—'}</td>
+                                      {(() => {
+                                        // Helper: apply HC delta → auto-set salary % and Welfare vendor %
+                                        const applyHcDelta = (newDelta: number) => {
+                                          setHeadcountAdj(prev => ({ ...prev, [mKey]: { ...(prev[mKey] || {}), [dept]: newDelta } }));
+                                          if (hcAvgEUR > 0 && total > 0) {
+                                            const salaryImpactPct = Math.round((newDelta * hcAvgEUR / total) * 100);
+                                            setSalaryDeptAdj(prev => ({ ...prev, [mKey]: { ...(prev[mKey] || {}), [dept]: salaryImpactPct } }));
+                                          }
+                                          if (hcCount > 0) {
+                                            const totalHc = Object.values(deptHeadcount).reduce((s, d) => s + d.count, 0);
+                                            const totalHcDelta = Object.entries(headcountAdj[mKey] || {}).reduce((s, [d, v]) => d === dept ? s + newDelta : s + v, 0);
+                                            const welfarePct = totalHc > 0 ? Math.round((totalHcDelta / totalHc) * 100) : 0;
+                                            setVendorCatAdj(prev => ({ ...prev, [mKey]: { ...(prev[mKey] || {}), Welfare: welfarePct } }));
+                                          }
+                                        };
+                                        return (
                                       <td className="py-1.5 pr-2">
                                         <div className="flex items-center justify-center gap-0.5">
-                                          <button onClick={() => {
-                                            const newDelta = hcDelta - 1;
-                                            setHeadcountAdj(prev => ({ ...prev, [mKey]: { ...(prev[mKey] || {}), [dept]: newDelta } }));
-                                            // Auto-calculate salary dept % from headcount change
-                                            if (hcAvgEUR > 0 && total > 0) {
-                                              const salaryImpactPct = Math.round((newDelta * hcAvgEUR / total) * 100);
-                                              setSalaryDeptAdj(prev => ({ ...prev, [mKey]: { ...(prev[mKey] || {}), [dept]: salaryImpactPct } }));
-                                            }
-                                            // Auto-adjust Welfare vendor category proportionally
-                                            if (hcCount > 0) {
-                                              const totalHc = Object.values(deptHeadcount).reduce((s, d) => s + d.count, 0);
-                                              const totalHcDelta = Object.entries(headcountAdj[mKey] || {}).reduce((s, [d, v]) => d === dept ? s + (newDelta) : s + v, 0);
-                                              const welfarePct = totalHc > 0 ? Math.round((totalHcDelta / totalHc) * 100) : 0;
-                                              setVendorCatAdj(prev => ({ ...prev, [mKey]: { ...(prev[mKey] || {}), Welfare: welfarePct } }));
-                                            }
-                                          }} className="w-5 h-5 rounded bg-white hover:bg-blue-100 text-gray-500 text-xs flex items-center justify-center font-bold border border-blue-200">−</button>
-                                          <span className={`w-8 text-center text-[11px] font-semibold ${hcDelta !== 0 ? 'text-blue-700' : 'text-gray-400'}`}>{hcDelta !== 0 ? (hcDelta > 0 ? `+${hcDelta}` : hcDelta) : '0'}</span>
-                                          <button onClick={() => {
-                                            const newDelta = hcDelta + 1;
-                                            setHeadcountAdj(prev => ({ ...prev, [mKey]: { ...(prev[mKey] || {}), [dept]: newDelta } }));
-                                            if (hcAvgEUR > 0 && total > 0) {
-                                              const salaryImpactPct = Math.round((newDelta * hcAvgEUR / total) * 100);
-                                              setSalaryDeptAdj(prev => ({ ...prev, [mKey]: { ...(prev[mKey] || {}), [dept]: salaryImpactPct } }));
-                                            }
-                                            if (hcCount > 0) {
-                                              const totalHc = Object.values(deptHeadcount).reduce((s, d) => s + d.count, 0);
-                                              const totalHcDelta = Object.entries(headcountAdj[mKey] || {}).reduce((s, [d, v]) => d === dept ? s + (newDelta) : s + v, 0);
-                                              const welfarePct = totalHc > 0 ? Math.round((totalHcDelta / totalHc) * 100) : 0;
-                                              setVendorCatAdj(prev => ({ ...prev, [mKey]: { ...(prev[mKey] || {}), Welfare: welfarePct } }));
-                                            }
-                                          }} className="w-5 h-5 rounded bg-white hover:bg-blue-100 text-gray-500 text-xs flex items-center justify-center font-bold border border-blue-200">+</button>
+                                          <button onClick={() => applyHcDelta(hcDelta - 1)}
+                                                  className="w-5 h-5 rounded bg-white hover:bg-blue-100 text-gray-500 text-xs flex items-center justify-center font-bold border border-blue-200">−</button>
+                                          <input type="text" inputMode="numeric" value={hcDelta}
+                                                 onChange={e => { const v = e.target.value; if (v === '' || v === '-') { setHeadcountAdj(prev => ({ ...prev, [mKey]: { ...(prev[mKey] || {}), [dept]: v as any } })); return; } const n = parseInt(v); if (!isNaN(n)) applyHcDelta(n); }}
+                                                 className={`w-10 text-center text-[11px] font-semibold border rounded px-0.5 py-0.5 ${hcDelta !== 0 ? 'text-blue-700 border-blue-300 bg-blue-50' : 'text-gray-400 border-gray-200 bg-white'}`} />
+                                          <button onClick={() => applyHcDelta(hcDelta + 1)}
+                                                  className="w-5 h-5 rounded bg-white hover:bg-blue-100 text-gray-500 text-xs flex items-center justify-center font-bold border border-blue-200">+</button>
                                         </div>
                                         {hcEffective.inherited && hcDelta !== 0 && <div className="text-[9px] text-blue-400 text-center mt-0.5">from {new Date(hcEffective.fromMonth + '-01').toLocaleDateString('en-GB', { month: 'short' })}</div>}
                                       </td>
+                                        );
+                                      })()}
                                       <td className="py-1.5 pr-2">
                                         <div className="flex items-center justify-center gap-0.5">
                                           <button onClick={() => setSalaryDeptAdj(prev => ({ ...prev, [mKey]: { ...(prev[mKey] || {}), [dept]: pct - 1 } }))}

@@ -472,26 +472,22 @@ function createSnowflakeClient(env) {
   async function fetchHeadcountByDepartment() {
     console.log('[Snowflake] Fetching headcount by department...');
     const rows = await query(`
-      SELECT d.DEPARTMENT_NAME AS DEPT,
+      SELECT e.DEPARTMENT AS DEPT,
              COUNT(*) AS HEADCOUNT,
-             ROUND(AVG(e.PAYROLL_SALARY_MONTHLY_PAYMENT_AMOUNT)) AS AVG_SALARY_ILS,
-             ROUND(AVG(e.PAYROLL_SALARY_MONTHLY_PAYMENT_AMOUNT / NULLIF(
-               (SELECT TOP 1 r.EXCHANGE_RATE FROM DL_PRODUCTION.FINANCE.DIM_EXCHANGE_RATE r
-                WHERE r.FROM_CURRENCY = 'ILS' AND r.TO_CURRENCY = 'EUR'
-                ORDER BY r.EXCHANGE_RATE_DATE DESC), 0))) AS AVG_SALARY_EUR
+             ROUND(AVG(e.PAYROLL_SALARY_MONTHLY_PAYMENT_AMOUNT)) AS AVG_SALARY_ILS
       FROM DL_PRODUCTION.HR.DIM_EMPLOYEE e
-      JOIN DL_PRODUCTION.FINANCE.DIM_DEPARTMENT d ON e.DEPARTMENT_ID = d.DEPARTMENT_ID
       WHERE e.IS_ACTIVE_HEADCOUNT_PAYROLL = TRUE
         AND e.PAYROLL_SALARY_MONTHLY_PAYMENT_AMOUNT > 0
-      GROUP BY d.DEPARTMENT_NAME
+      GROUP BY e.DEPARTMENT
       ORDER BY HEADCOUNT DESC
     `);
     console.log(`[Snowflake] Headcount by dept: ${rows.length} departments`);
+    // Convert ILS to EUR using ~3.75 rate (approximate, used for display only)
     return rows.map(r => ({
       department: r.DEPT,
       headcount: r.HEADCOUNT || 0,
       avgSalaryILS: r.AVG_SALARY_ILS || 0,
-      avgSalaryEUR: r.AVG_SALARY_EUR || 0,
+      avgSalaryEUR: Math.round((r.AVG_SALARY_ILS || 0) / 3.75),
     }));
   }
 
