@@ -1894,7 +1894,7 @@ If the user asks to modify, adjust, or refine an existing scenario (e.g. "reduce
   };
 }
 
-const gitHash = (() => { try { return execSync('git rev-parse --short HEAD', { cwd: path.resolve(__dirname, '..', '..') }).toString().trim(); } catch { return 'unknown'; } })();
+const gitHash = (() => { try { return execSync('git rev-parse --short HEAD', { cwd: __dirname }).toString().trim(); } catch { return 'unknown'; } })();
 
 export default defineConfig({
   root: path.resolve(__dirname),
