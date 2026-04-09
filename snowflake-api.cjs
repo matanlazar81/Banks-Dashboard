@@ -469,16 +469,20 @@ function createSnowflakeClient(env) {
   }
 
   // ── Headcount by department (for salary dept adjustment with +/- controls) ──
+  // Maps sub-groups (e.g., Technology, R&D, SUPPORT) to Bob's parent departments
+  // (e.g., Playmakers, Go To Market) via DIM_DEPARTMENT.GROUP_NAME → DEPARTMENT_NAME
   async function fetchHeadcountByDepartment() {
-    console.log('[Snowflake] Fetching headcount by department...');
+    console.log('[Snowflake] Fetching headcount by department (mapped via DIM_DEPARTMENT)...');
     const rows = await query(`
-      SELECT e.DEPARTMENT AS DEPT,
+      SELECT d.DEPARTMENT_NAME AS DEPT,
              COUNT(*) AS HEADCOUNT,
              ROUND(AVG(e.PAYROLL_SALARY_MONTHLY_PAYMENT_AMOUNT)) AS AVG_SALARY_ILS
       FROM DL_PRODUCTION.HR.DIM_EMPLOYEE e
-      WHERE e.IS_ACTIVE_HEADCOUNT_PAYROLL = TRUE
-        AND e.PAYROLL_SALARY_MONTHLY_PAYMENT_AMOUNT > 0
-      GROUP BY e.DEPARTMENT
+      JOIN DL_PRODUCTION.FINANCE.DIM_DEPARTMENT d
+        ON e.EMPLOYEE_GROUP = d.GROUP_NAME AND d.SUBSIDIARY_ID = 3 AND d.SRC_IS_ACTIVE = TRUE
+      WHERE e.IS_ACTIVE_HEADCOUNT = TRUE
+        AND e.COMPANY_NAME = 'LSports'
+      GROUP BY d.DEPARTMENT_NAME
       ORDER BY HEADCOUNT DESC
     `);
     console.log(`[Snowflake] Headcount by dept: ${rows.length} departments`);
