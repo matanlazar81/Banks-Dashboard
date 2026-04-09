@@ -5052,12 +5052,13 @@ useEffect(() => {
                                         );
                                       })()}
                                       {(() => {
-                                        // Helper: apply salary % → auto-sync HC Adj
+                                        // Helper: apply salary % → auto-sync HC Adj (clamped to actual headcount)
                                         const applyPct = (newPct: number) => {
                                           setSalaryDeptAdj(prev => ({ ...prev, [mKey]: { ...(prev[mKey] || {}), [dept]: newPct } }));
-                                          // Reverse-calculate HC delta from %: delta = round(total * pct / 100 / avgSalary)
                                           if (hcAvgEUR > 0 && total > 0) {
-                                            const impliedHcDelta = Math.round((total * newPct / 100) / hcAvgEUR);
+                                            let impliedHcDelta = Math.round((total * newPct / 100) / hcAvgEUR);
+                                            // Clamp: can't remove more people than exist or add unreasonably
+                                            if (hcCount > 0) impliedHcDelta = Math.max(-hcCount, Math.min(hcCount * 2, impliedHcDelta));
                                             setHeadcountAdj(prev => ({ ...prev, [mKey]: { ...(prev[mKey] || {}), [dept]: impliedHcDelta } }));
                                           }
                                         };
@@ -5927,11 +5928,17 @@ useEffect(() => {
                             let _detPct = 0;
                             let _detInherited = false;
                             let _detFromMonth = '';
+                            let _detFromCatLevel = false;
                             const _allDetMKeys = Object.keys(vendorDetailAdj).filter(k => k <= forecastDrilldown.mKey && k.slice(0,4) === forecastDrilldown.mKey.slice(0,4)).sort();
                             for (const adjMK of _allDetMKeys) {
                               const v = vendorDetailAdj[adjMK]?.[detKey];
-                              if (v && v.pct !== 0) { _detPct = v.pct; _detInherited = adjMK !== forecastDrilldown.mKey; _detFromMonth = adjMK; }
-                              else if (v && v.pct === 0) { _detPct = 0; _detInherited = false; }
+                              if (v && v.pct !== 0) { _detPct = v.pct; _detInherited = adjMK !== forecastDrilldown.mKey; _detFromMonth = adjMK; _detFromCatLevel = false; }
+                              else if (v && v.pct === 0) { _detPct = 0; _detInherited = false; _detFromCatLevel = false; }
+                            }
+                            // Fall back to category-level adjustment if no detail-level override
+                            if (_detPct === 0 && _catName) {
+                              const _allCatMKeys = Object.keys(vendorCatAdj).filter(k => k <= forecastDrilldown.mKey && k.slice(0,4) === forecastDrilldown.mKey.slice(0,4)).sort();
+                              for (const ck of _allCatMKeys) { const cv = vendorCatAdj[ck]?.[_catName]; if (cv && cv !== 0) { _detPct = cv; _detInherited = true; _detFromCatLevel = true; } else if (cv === 0) { _detPct = 0; } }
                             }
                             const _detImpact = Math.round((r.amountEUR || 0) * (_detPct / 100));
                             return (<>
@@ -5978,7 +5985,7 @@ useEffect(() => {
                                     ) : null;
                                   })()}
                                 </div>
-                                {_detInherited && _detPct !== 0 && <div className="text-[9px] text-teal-400 text-center mt-0.5">from {new Date(_detFromMonth + '-01').toLocaleDateString('en-GB', { month: 'short' })}</div>}
+                                {_detInherited && _detPct !== 0 && <div className="text-[9px] text-teal-400 text-center mt-0.5">{_detFromCatLevel ? 'from category' : `from ${new Date(_detFromMonth + '-01').toLocaleDateString('en-GB', { month: 'short' })}`}</div>}
                               </td>
                               <td className={`py-1.5 text-right font-bold ${_detPct === 0 ? 'text-gray-300' : _detImpact >= 0 ? 'text-red-600' : 'text-green-700'}`}>
                                 {_detPct === 0 ? '—' : `${_detImpact >= 0 ? '+' : ''}${fmt(_detImpact)}`}
