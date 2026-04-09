@@ -5057,9 +5057,19 @@ useEffect(() => {
                                     if (v !== undefined && v !== 0) { hcEffective.delta = v; hcEffective.inherited = hcMKey !== mKey; hcEffective.fromMonth = hcMKey; }
                                     else if (v === 0) { hcEffective.delta = 0; hcEffective.inherited = false; }
                                   }
-                                  const hcDelta = hcEffective.delta;
+                                  let hcDelta = hcEffective.delta;
                                   // Cost per person: budget/headcount (includes overhead), fallback to avg payroll
                                   const costPerPerson = hcCount > 0 ? total / hcCount : hcAvgEUR;
+                                  // Bidirectional: if % exists but no HC, derive HC from %. If HC exists but no %, derive %.
+                                  let displayPct = pct;
+                                  let displayHc = hcDelta;
+                                  if (displayHc === 0 && displayPct !== 0 && costPerPerson > 0 && total > 0) {
+                                    // Derive HC from %
+                                    displayHc = Math.max(-hcCount, Math.round((total * displayPct / 100) / costPerPerson));
+                                  } else if (displayHc !== 0 && displayPct === 0 && costPerPerson > 0 && total > 0) {
+                                    // Derive % from HC
+                                    displayPct = Math.round((displayHc * costPerPerson / total) * 100);
+                                  }
                                   return (
                                     <tr key={dept} className={`border-b border-amber-100 ${inherited && pct !== 0 ? 'bg-amber-50/80' : ''}`}>
                                       <td className="py-1.5 pr-2 text-gray-700 font-medium">{dept}</td>
@@ -5083,14 +5093,15 @@ useEffect(() => {
                                         return (
                                       <td className="py-1.5 pr-2">
                                         <div className="flex items-center justify-center gap-0.5">
-                                          <button onClick={() => applyHcDelta(hcDelta - 1)}
+                                          <button onClick={() => applyHcDelta(displayHc - 1)}
                                                   className="w-5 h-5 rounded bg-white hover:bg-blue-100 text-gray-500 text-xs flex items-center justify-center font-bold border border-blue-200">−</button>
-                                          <input type="text" inputMode="numeric" value={hcDelta}
+                                          <input type="text" inputMode="numeric" value={displayHc}
                                                  onChange={e => { const v = e.target.value; if (v === '' || v === '-') { setHeadcountAdj(prev => ({ ...prev, [mKey]: { ...(prev[mKey] || {}), [dept]: v as any } })); return; } const n = parseInt(v); if (!isNaN(n)) applyHcDelta(n); }}
-                                                 className={`w-10 text-center text-[11px] font-semibold border rounded px-0.5 py-0.5 ${hcDelta !== 0 ? 'text-blue-700 border-blue-300 bg-blue-50' : 'text-gray-400 border-gray-200 bg-white'}`} />
-                                          <button onClick={() => applyHcDelta(hcDelta + 1)}
+                                                 className={`w-10 text-center text-[11px] font-semibold border rounded px-0.5 py-0.5 ${displayHc !== 0 ? 'text-blue-700 border-blue-300 bg-blue-50' : 'text-gray-400 border-gray-200 bg-white'}`} />
+                                          <button onClick={() => applyHcDelta(displayHc + 1)}
                                                   className="w-5 h-5 rounded bg-white hover:bg-blue-100 text-gray-500 text-xs flex items-center justify-center font-bold border border-blue-200">+</button>
                                         </div>
+                                        {displayHc !== 0 && hcDelta === 0 && pct !== 0 && <div className="text-[9px] text-blue-400 text-center mt-0.5">from %</div>}
                                         {hcEffective.inherited && hcDelta !== 0 && <div className="text-[9px] text-blue-400 text-center mt-0.5">from {new Date(hcEffective.fromMonth + '-01').toLocaleDateString('en-GB', { month: 'short' })}</div>}
                                       </td>
                                         );
