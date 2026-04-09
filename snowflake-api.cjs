@@ -468,6 +468,33 @@ function createSnowflakeClient(env) {
     }));
   }
 
+  // ── Headcount by department (for salary dept adjustment with +/- controls) ──
+  async function fetchHeadcountByDepartment() {
+    console.log('[Snowflake] Fetching headcount by department...');
+    const rows = await query(`
+      SELECT d.DEPARTMENT_NAME AS DEPT,
+             COUNT(*) AS HEADCOUNT,
+             ROUND(AVG(e.PAYROLL_SALARY_MONTHLY_PAYMENT_AMOUNT)) AS AVG_SALARY_ILS,
+             ROUND(AVG(e.PAYROLL_SALARY_MONTHLY_PAYMENT_AMOUNT / NULLIF(
+               (SELECT TOP 1 r.EXCHANGE_RATE FROM DL_PRODUCTION.FINANCE.DIM_EXCHANGE_RATE r
+                WHERE r.FROM_CURRENCY = 'ILS' AND r.TO_CURRENCY = 'EUR'
+                ORDER BY r.EXCHANGE_RATE_DATE DESC), 0))) AS AVG_SALARY_EUR
+      FROM DL_PRODUCTION.HR.DIM_EMPLOYEE e
+      JOIN DL_PRODUCTION.FINANCE.DIM_DEPARTMENT d ON e.DEPARTMENT_ID = d.DEPARTMENT_ID
+      WHERE e.IS_ACTIVE_HEADCOUNT_PAYROLL = TRUE
+        AND e.PAYROLL_SALARY_MONTHLY_PAYMENT_AMOUNT > 0
+      GROUP BY d.DEPARTMENT_NAME
+      ORDER BY HEADCOUNT DESC
+    `);
+    console.log(`[Snowflake] Headcount by dept: ${rows.length} departments`);
+    return rows.map(r => ({
+      department: r.DEPT,
+      headcount: r.HEADCOUNT || 0,
+      avgSalaryILS: r.AVG_SALARY_ILS || 0,
+      avgSalaryEUR: r.AVG_SALARY_EUR || 0,
+    }));
+  }
+
   // ── Headcount events (HiBob → Snowflake) — levers for salary projection ──
   async function fetchHeadcountEvents(month, year) {
     const yr = year || 2026;
@@ -1082,6 +1109,7 @@ function createSnowflakeClient(env) {
     fetchConversionAnalysis,
     fetchWonOpportunitiesDetail,
     fetchHeadcountEvents,
+    fetchHeadcountByDepartment,
     fetchHeadcountLeverDetail,
     fetchChurnAnalysis,
     fetchChurnDrilldown,

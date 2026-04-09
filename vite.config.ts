@@ -531,6 +531,20 @@ function banksPlugin(): Plugin {
         }
       });
 
+      // ── GET /api/sf-headcount-by-dept — headcount per department with avg salary ──
+      server.middlewares.use('/api/sf-headcount-by-dept', async (_req, res) => {
+        try {
+          const sf = getSfClient();
+          if (!sf) { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ data: [] })); return; }
+          const data = await sf.fetchHeadcountByDepartment();
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ data }));
+        } catch (e: any) {
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ data: [], error: e.message }));
+        }
+      });
+
       // ── GET /api/sf-headcount-lever-detail — all events for a lever type (full year) ──
       // NOTE: must be registered before sf-headcount-events (prefix matching)
       server.middlewares.use('/api/sf-headcount-lever-detail', async (req, res) => {

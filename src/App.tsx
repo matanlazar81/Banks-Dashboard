@@ -64,6 +64,7 @@ type ScenarioData = {
   vendorCatAdj: Record<string, Record<string, number>>; // { "2026-05": { "Software": -20, "Consulting": -30 } }
   vendorDetailAdj: Record<string, Record<string, { pct: number; base: number }>>; // { "2026-05": { "Outsourcing||Playmakers||660004": { pct: -10, base: 227385 } } }
   leverOverrides: Record<string, Record<number, number>>;
+  headcountAdj: Record<string, Record<string, number>>; // { "2026-05": { "Playmakers": -5, "HR": -2 } } = delta headcount per dept per month
   pipelineMinProb: number;
 };
 type Scenario = {
@@ -614,6 +615,13 @@ export default function App() {
     try { const saved = localStorage.getItem('banks-lever-overrides'); return saved ? JSON.parse(saved) : {}; } catch { return {}; }
   });
   useEffect(() => { try { localStorage.setItem('banks-lever-overrides', JSON.stringify(leverOverrides)); } catch {} }, [leverOverrides]);
+  // Per-department headcount adjustments — delta per dept per month (e.g., "Playmakers": -5)
+  const [headcountAdj, setHeadcountAdj] = useState<Record<string, Record<string, number>>>(() => {
+    try { const saved = localStorage.getItem('banks-headcount-adj'); return saved ? JSON.parse(saved) : {}; } catch { return {}; }
+  });
+  useEffect(() => { try { localStorage.setItem('banks-headcount-adj', JSON.stringify(headcountAdj)); } catch {} }, [headcountAdj]);
+  // Headcount per department (fetched from Snowflake)
+  const [deptHeadcount, setDeptHeadcount] = useState<Record<string, { count: number; avgSalaryILS: number; avgSalaryEUR: number }>>({});
 
   // ── Scenario Management ──
   const [scenarios, setScenarios] = useState<Scenario[]>([]);
@@ -744,8 +752,9 @@ useEffect(() => {
     vendorCatAdj: JSON.parse(JSON.stringify(vendorCatAdj)),
     vendorDetailAdj: JSON.parse(JSON.stringify(vendorDetailAdj)),
     leverOverrides: JSON.parse(JSON.stringify(leverOverrides)),
+    headcountAdj: JSON.parse(JSON.stringify(headcountAdj)),
     pipelineMinProb,
-  }), [salaryAdjPctByMonth, collPctByMonth, salaryDeptAdj, vendorCatAdj, vendorDetailAdj, leverOverrides, pipelineMinProb]);
+  }), [salaryAdjPctByMonth, collPctByMonth, salaryDeptAdj, vendorCatAdj, vendorDetailAdj, leverOverrides, headcountAdj, pipelineMinProb]);
 
   const applyScenarioData = useCallback((data: ScenarioData) => {
     setSalaryAdjPctByMonth(data.salaryAdjPctByMonth || {});
@@ -754,6 +763,7 @@ useEffect(() => {
     setVendorCatAdj(data.vendorCatAdj || {});
     setVendorDetailAdj(data.vendorDetailAdj || {});
     setLeverOverrides(data.leverOverrides || {});
+    setHeadcountAdj(data.headcountAdj || {});
     setPipelineMinProb(data.pipelineMinProb ?? 100);
   }, []);
 
@@ -1689,7 +1699,7 @@ useEffect(() => {
         }
       }
 
-      const sc = scenarioData || { salaryAdjPctByMonth: {}, collPctByMonth: {}, salaryDeptAdj: {}, vendorCatAdj: {}, vendorDetailAdj: {}, leverOverrides: {}, pipelineMinProb: 100 };
+      const sc = scenarioData || { salaryAdjPctByMonth: {}, collPctByMonth: {}, salaryDeptAdj: {}, vendorCatAdj: {}, vendorDetailAdj: {}, leverOverrides: {}, headcountAdj: {}, pipelineMinProb: 100 };
 
       const completedSals = salaryArr.filter((s: any) => s.month < currentMonth && s.amountEUR > 0);
       const lastSal = completedSals.length > 0 ? completedSals[completedSals.length - 1].amountEUR : 0;
@@ -3902,7 +3912,7 @@ useEffect(() => {
                       {/* Baseline option */}
                       <div className="px-1 py-1 border-b border-gray-100">
                         <button
-                          onClick={() => { applyScenarioData({ salaryAdjPctByMonth: {}, collPctByMonth: {}, salaryDeptAdj: {}, vendorCatAdj: {}, vendorDetailAdj: {}, leverOverrides: {}, pipelineMinProb: 100 }); setActiveScenarioId(null); setScenarioMenuOpen(false); }}
+                          onClick={() => { applyScenarioData({ salaryAdjPctByMonth: {}, collPctByMonth: {}, salaryDeptAdj: {}, vendorCatAdj: {}, vendorDetailAdj: {}, leverOverrides: {}, headcountAdj: {}, pipelineMinProb: 100 }); setActiveScenarioId(null); setScenarioMenuOpen(false); }}
                           className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg transition-colors ${!activeScenarioId && !hasAnyAdjustments ? 'bg-gray-100' : 'hover:bg-gray-50'}`}
                         >
                           <span className="text-[10px] text-gray-400">{!activeScenarioId && !hasAnyAdjustments ? '●' : '○'}</span>
@@ -4357,13 +4367,20 @@ useEffect(() => {
                                 fetch(`/api/sf-salary-breakdown?month=${r.mKey}`).then(res => res.json()),
                                 fetch(`/api/sf-salary-budget-breakdown?month=${r.mKey}`).then(res => res.json()),
                                 fetch(`/api/sf-headcount-events?month=${r.mKey}`).then(res => res.json()),
-                              ]).then(([actRes, budRes, hcRes]) => {
+                                fetch(`/api/sf-headcount-by-dept`).then(res => res.json()).catch(() => ({ data: [] })),
+                              ]).then(([actRes, budRes, hcRes, hcDeptRes]) => {
                                 setForecastDrilldown(prev => prev ? { ...prev, data: { actuals: actRes.data || [], budget: budRes.data || [], headcount: hcRes.data || { events: [], cumulative: [], baseline: {} } } } : null);
                                 // Cache department budgets for per-dept adjustments
                                 if (budRes.data && budRes.data.length > 0) {
                                   const byDept: Record<string, number> = {};
                                   for (const row of budRes.data) { byDept[row.department] = (byDept[row.department] || 0) + (row.amountEUR || 0); }
                                   setSalaryDeptBudgets(prev => ({ ...prev, [r.mKey]: byDept }));
+                                }
+                                // Cache headcount per department
+                                if (hcDeptRes.data && hcDeptRes.data.length > 0) {
+                                  const hcByDept: Record<string, { count: number; avgSalaryILS: number; avgSalaryEUR: number }> = {};
+                                  for (const row of hcDeptRes.data) { hcByDept[row.department] = { count: row.headcount, avgSalaryILS: row.avgSalaryILS, avgSalaryEUR: row.avgSalaryEUR }; }
+                                  setDeptHeadcount(hcByDept);
                                 }
                               });
                             } else {
@@ -4903,6 +4920,8 @@ useEffect(() => {
                               <thead><tr className="text-left text-[10px] text-amber-500 uppercase border-b border-amber-200">
                                 <th className="pb-1 pr-2">Department</th>
                                 <th className="pb-1 pr-2 text-right">Budget EUR</th>
+                                <th className="pb-1 pr-1 text-center">HC</th>
+                                <th className="pb-1 pr-2 text-center w-[100px]">HC Adj</th>
                                 <th className="pb-1 pr-2 text-center w-[120px]">Adjust %</th>
                                 <th className="pb-1 text-right">Impact</th>
                               </tr></thead>
@@ -4912,10 +4931,60 @@ useEffect(() => {
                                   const pct = eff?.pct || 0;
                                   const inherited = eff?.inherited || false;
                                   const impact = Math.round(total * (pct / 100));
+                                  // Headcount for this department
+                                  const hcData = deptHeadcount[dept];
+                                  const hcCount = hcData?.count || 0;
+                                  const hcAvgEUR = hcData?.avgSalaryEUR || 0;
+                                  // Headcount adjustment: cascading from earlier months (same as dept adj)
+                                  const hcEffective: { delta: number; inherited: boolean; fromMonth?: string } = { delta: 0, inherited: false };
+                                  const allHcMKeys = Object.keys(headcountAdj).filter(k => k <= mKey && k.slice(0,4) === mKey.slice(0,4)).sort();
+                                  for (const hcMKey of allHcMKeys) {
+                                    const v = headcountAdj[hcMKey]?.[dept];
+                                    if (v !== undefined && v !== 0) { hcEffective.delta = v; hcEffective.inherited = hcMKey !== mKey; hcEffective.fromMonth = hcMKey; }
+                                    else if (v === 0) { hcEffective.delta = 0; hcEffective.inherited = false; }
+                                  }
+                                  const hcDelta = hcEffective.delta;
                                   return (
                                     <tr key={dept} className={`border-b border-amber-100 ${inherited && pct !== 0 ? 'bg-amber-50/80' : ''}`}>
                                       <td className="py-1.5 pr-2 text-gray-700 font-medium">{dept}</td>
                                       <td className="py-1.5 pr-2 text-right text-violet-700">{fmt(total)}</td>
+                                      <td className="py-1.5 pr-1 text-center text-gray-500">{hcCount || '—'}</td>
+                                      <td className="py-1.5 pr-2">
+                                        <div className="flex items-center justify-center gap-0.5">
+                                          <button onClick={() => {
+                                            const newDelta = hcDelta - 1;
+                                            setHeadcountAdj(prev => ({ ...prev, [mKey]: { ...(prev[mKey] || {}), [dept]: newDelta } }));
+                                            // Auto-calculate salary dept % from headcount change
+                                            if (hcAvgEUR > 0 && total > 0) {
+                                              const salaryImpactPct = Math.round((newDelta * hcAvgEUR / total) * 100);
+                                              setSalaryDeptAdj(prev => ({ ...prev, [mKey]: { ...(prev[mKey] || {}), [dept]: salaryImpactPct } }));
+                                            }
+                                            // Auto-adjust Welfare vendor category proportionally
+                                            if (hcCount > 0) {
+                                              const totalHc = Object.values(deptHeadcount).reduce((s, d) => s + d.count, 0);
+                                              const totalHcDelta = Object.entries(headcountAdj[mKey] || {}).reduce((s, [d, v]) => d === dept ? s + (newDelta) : s + v, 0);
+                                              const welfarePct = totalHc > 0 ? Math.round((totalHcDelta / totalHc) * 100) : 0;
+                                              setVendorCatAdj(prev => ({ ...prev, [mKey]: { ...(prev[mKey] || {}), Welfare: welfarePct } }));
+                                            }
+                                          }} className="w-5 h-5 rounded bg-white hover:bg-blue-100 text-gray-500 text-xs flex items-center justify-center font-bold border border-blue-200">−</button>
+                                          <span className={`w-8 text-center text-[11px] font-semibold ${hcDelta !== 0 ? 'text-blue-700' : 'text-gray-400'}`}>{hcDelta !== 0 ? (hcDelta > 0 ? `+${hcDelta}` : hcDelta) : '0'}</span>
+                                          <button onClick={() => {
+                                            const newDelta = hcDelta + 1;
+                                            setHeadcountAdj(prev => ({ ...prev, [mKey]: { ...(prev[mKey] || {}), [dept]: newDelta } }));
+                                            if (hcAvgEUR > 0 && total > 0) {
+                                              const salaryImpactPct = Math.round((newDelta * hcAvgEUR / total) * 100);
+                                              setSalaryDeptAdj(prev => ({ ...prev, [mKey]: { ...(prev[mKey] || {}), [dept]: salaryImpactPct } }));
+                                            }
+                                            if (hcCount > 0) {
+                                              const totalHc = Object.values(deptHeadcount).reduce((s, d) => s + d.count, 0);
+                                              const totalHcDelta = Object.entries(headcountAdj[mKey] || {}).reduce((s, [d, v]) => d === dept ? s + (newDelta) : s + v, 0);
+                                              const welfarePct = totalHc > 0 ? Math.round((totalHcDelta / totalHc) * 100) : 0;
+                                              setVendorCatAdj(prev => ({ ...prev, [mKey]: { ...(prev[mKey] || {}), Welfare: welfarePct } }));
+                                            }
+                                          }} className="w-5 h-5 rounded bg-white hover:bg-blue-100 text-gray-500 text-xs flex items-center justify-center font-bold border border-blue-200">+</button>
+                                        </div>
+                                        {hcEffective.inherited && hcDelta !== 0 && <div className="text-[9px] text-blue-400 text-center mt-0.5">from {new Date(hcEffective.fromMonth + '-01').toLocaleDateString('en-GB', { month: 'short' })}</div>}
+                                      </td>
                                       <td className="py-1.5 pr-2">
                                         <div className="flex items-center justify-center gap-0.5">
                                           <button onClick={() => setSalaryDeptAdj(prev => ({ ...prev, [mKey]: { ...(prev[mKey] || {}), [dept]: pct - 1 } }))}
@@ -6884,7 +6953,7 @@ useEffect(() => {
 
         {/* ── Scenario Comparison Panel ── */}
         {activeCompany !== 'consolidated' && showComparePanel && scenarios.length >= 1 && (() => {
-          const baselineData: ScenarioData = { salaryAdjPctByMonth: {}, collPctByMonth: {}, salaryDeptAdj: {}, leverOverrides: {}, pipelineMinProb: 100 };
+          const baselineData: ScenarioData = { salaryAdjPctByMonth: {}, collPctByMonth: {}, salaryDeptAdj: {}, vendorCatAdj: {}, vendorDetailAdj: {}, leverOverrides: {}, headcountAdj: {}, pipelineMinProb: 100 };
           const baselineScenario: Scenario = { id: '__baseline__', name: 'Baseline', createdAt: '', updatedAt: '', data: baselineData };
           const leftScenario = compareLeftId === '__baseline__' ? baselineScenario : scenarios.find(s => s.id === compareLeftId);
           const rightScenario = compareRightId === '__baseline__' ? baselineScenario : scenarios.find(s => s.id === compareRightId);
