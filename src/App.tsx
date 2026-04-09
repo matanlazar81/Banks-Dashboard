@@ -651,8 +651,12 @@ export default function App() {
   // HR costs are per-person (meals, gifts, etc.), so use headcount % not salary budget %
   // Categories that auto-reduce proportionally with headcount changes (per-person costs)
   const HR_VENDOR_CATEGORIES = ['Welfare', 'Training - Departmental', 'Training - Company Wide'];
-  // Specific accounts within other categories that are also per-person (e.g., Refreshments in Facilities)
-  const HR_VENDOR_ACCOUNTS = [{ category: 'Facilities', account: '710002', name: 'Refreshments' }];
+  // Specific accounts within other categories that are per-person (not full category — only these GL accounts)
+  const HR_VENDOR_ACCOUNTS = [
+    { category: 'Facilities', account: '710002', name: 'Refreshments' },
+    { category: 'Other G&A', account: '780007', name: 'Hotch meals - Sibus' },
+    { category: 'Marketing & Branding', account: '610007', name: 'Employee branding' },
+  ];
   useEffect(() => {
     const totalHc = Object.values(deptHeadcount).reduce((s, d) => s + d.count, 0);
     if (totalHc === 0) return;
