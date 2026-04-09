@@ -898,6 +898,41 @@ useEffect(() => {
     if (scenario) { applyScenarioData(scenario.data); setActiveScenarioId(id); setScenarioMenuOpen(false); }
   }, [scenarios, applyScenarioData]);
 
+  // Auto-save: silently update active scenario whenever adjustments change
+  // If no active scenario but adjustments exist, auto-create one
+  const autoSaveRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isInitialMount = useRef(true);
+  useEffect(() => {
+    // Skip initial mount to avoid saving on page load
+    if (isInitialMount.current) { isInitialMount.current = false; return; }
+    if (autoSaveRef.current) clearTimeout(autoSaveRef.current);
+    autoSaveRef.current = setTimeout(() => {
+      const currentData = getCurrentScenarioData();
+      // Check if there are any non-empty adjustments
+      const hasAnyAdj = Object.keys(currentData.salaryAdjPctByMonth).length > 0
+        || Object.keys(currentData.collPctByMonth).length > 0
+        || Object.keys(currentData.salaryDeptAdj).length > 0
+        || Object.keys(currentData.vendorCatAdj).length > 0
+        || Object.keys(currentData.vendorDetailAdj).length > 0
+        || Object.keys(currentData.headcountAdj).length > 0;
+      if (!hasAnyAdj) return;
+      if (activeScenarioId) {
+        // Update existing scenario
+        setScenarios(prev => prev.map(s => s.id === activeScenarioId ? { ...s, updatedAt: new Date().toISOString(), data: currentData } : s));
+        _syncUpdate(activeScenarioId, { data: currentData });
+      } else {
+        // Auto-create new scenario
+        const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+        const name = `Draft ${new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}`;
+        const newScenario: Scenario = { id, name, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), data: currentData };
+        setScenarios(prev => [...prev, newScenario]);
+        setActiveScenarioId(id);
+        _syncSave(id, name, currentData);
+      }
+    }, 1500);
+    return () => { if (autoSaveRef.current) clearTimeout(autoSaveRef.current); };
+  }, [salaryAdjPctByMonth, collPctByMonth, salaryDeptAdj, vendorCatAdj, vendorDetailAdj, leverOverrides, headcountAdj, pipelineMinProb]);
+
   const deleteScenario = useCallback((id: string) => {
     setScenarios(prev => prev.filter(s => s.id !== id));
     if (activeScenarioId === id) setActiveScenarioId(null);
