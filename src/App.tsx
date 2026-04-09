@@ -851,6 +851,7 @@ useEffect(() => {
   }), [salaryAdjPctByMonth, collPctByMonth, salaryDeptAdj, vendorCatAdj, vendorDetailAdj, leverOverrides, headcountAdj, pipelineMinProb]);
 
   const applyScenarioData = useCallback((data: ScenarioData) => {
+    isLoadingScenario.current = true; // prevent auto-save from overwriting during load
     setSalaryAdjPctByMonth(data.salaryAdjPctByMonth || {});
     setCollPctByMonth(data.collPctByMonth || {});
     setSalaryDeptAdj(data.salaryDeptAdj || {});
@@ -924,9 +925,12 @@ useEffect(() => {
   // If no active scenario but adjustments exist, auto-create one
   const autoSaveRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isInitialMount = useRef(true);
+  const isLoadingScenario = useRef(false); // prevent auto-save during scenario load
   useEffect(() => {
     // Skip initial mount to avoid saving on page load
     if (isInitialMount.current) { isInitialMount.current = false; return; }
+    // Skip if we're in the middle of loading a scenario (applyScenarioData sets this)
+    if (isLoadingScenario.current) { isLoadingScenario.current = false; return; }
     if (autoSaveRef.current) clearTimeout(autoSaveRef.current);
     autoSaveRef.current = setTimeout(() => {
       const currentData = getCurrentScenarioData();
