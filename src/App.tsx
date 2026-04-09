@@ -545,7 +545,9 @@ export default function App() {
     window.addEventListener('focus', handler);
     return () => window.removeEventListener('focus', handler);
   }, [activeYear, currentYear]);
-  useEffect(() => { try { localStorage.setItem(`banks-salary-adj-${activeYear}`, JSON.stringify(salaryAdjPctByMonth)); } catch {} }, [salaryAdjPctByMonth, activeYear]);
+  const activeYearRef = useRef(activeYear);
+  activeYearRef.current = activeYear;
+  useEffect(() => { try { localStorage.setItem(`banks-salary-adj-${activeYearRef.current}`, JSON.stringify(salaryAdjPctByMonth)); } catch {} }, [salaryAdjPctByMonth]);
   // Collection % adjustment per month (default 100% — expected collection rate vs forecast)
   const [collPctByMonth, setCollPctByMonth] = useState<Record<number, number>>(() => {
     try {
@@ -558,7 +560,7 @@ export default function App() {
       return saved ? JSON.parse(saved) : {};
     } catch { return {}; }
   });
-  useEffect(() => { try { localStorage.setItem(`banks-coll-pct-${activeYear}`, JSON.stringify(collPctByMonth)); } catch {} }, [collPctByMonth, activeYear]);
+  useEffect(() => { try { localStorage.setItem(`banks-coll-pct-${activeYearRef.current}`, JSON.stringify(collPctByMonth)); } catch {} }, [collPctByMonth]);
   // Load year-specific adjustments when switching years — inherit from current year if none saved
   useEffect(() => {
     try {
