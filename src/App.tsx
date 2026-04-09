@@ -4668,6 +4668,20 @@ useEffect(() => {
                       {fmtC(cashflowForecast[cashflowForecast.length - 1]?.closingBalance || 0, cashflowForecast[cashflowForecast.length - 1]?.closingBalanceILS || 0)}
                     </td>
                   </tr>
+                  {(() => {
+                    const totalSalarySaving = cashflowForecast.reduce((s, r) => s + Math.max(0, r.salaryBase - r.salary), 0);
+                    const totalVendorSaving = cashflowForecast.reduce((s, r) => s + Math.max(0, r.vendorsBase - r.vendors), 0);
+                    const totalSaving = totalSalarySaving + totalVendorSaving;
+                    if (totalSaving === 0) return null;
+                    return (
+                      <tr className="bg-green-50 border-t border-green-200 font-semibold text-green-700 whitespace-nowrap">
+                        <td className="py-2 pr-1 text-green-800" colSpan={6}>TOTAL SAVINGS</td>
+                        <td className="py-2 pr-1 text-right">{fmt(totalSalarySaving)}</td>
+                        <td className="py-2 pr-1 text-right">{fmt(totalVendorSaving)}</td>
+                        <td className="py-2 pr-1 text-right" colSpan={4}>{fmt(totalSaving)}</td>
+                      </tr>
+                    );
+                  })()}
                 </tfoot>
               </table>
             </div>
