@@ -1856,24 +1856,30 @@ You MUST be GRANULAR — adjust at department level, not just a blanket %. Use t
 After your analysis text, you MUST include EXACTLY this JSON block at the very end using TRIPLE backticks:
 
 \`\`\`scenario
-{"name":"Short Name","salaryAdjPctByMonth":{"4":-5,"5":-5},"collPctByMonth":{},"salaryDeptAdj":{"2026-05":{"R&D":-15,"Sales":5},"2026-06":{"R&D":-15,"Sales":5}},"pipelineMinProb":100}
+{"name":"Release 40 Playmakers Aug-Dec","headcountAdj":{"2026-08":{"Playmakers":-40}},"salaryDeptAdj":{"2026-08":{"Playmakers":-29}},"vendorCatAdj":{},"collPctByMonth":{},"salaryAdjPctByMonth":{},"pipelineMinProb":100}
 \`\`\`
 
 Supported fields:
 - "name": short scenario name string
-- "salaryAdjPctByMonth": object with month keys "0"-"11" (Jan=0, Dec=11). Values are OVERALL % change to salary. E.g. -10 means 10% salary reduction across the board.
-- "salaryDeptAdj": DEPARTMENT-LEVEL salary adjustments. Object keyed by "YYYY-MM" month strings, each containing department name → % adjustment. E.g. {"2026-05":{"Playmakers (R&D)":-20,"Go To Market (Sales/Marketing)":-10}}. Department names must EXACTLY match the SALARY BY DEPARTMENT data. Adjustments cascade forward (set once, applies to all future months).
-- "vendorCatAdj": VENDOR CATEGORY adjustments. Object keyed by "YYYY-MM" month strings, each containing vendor category name → % adjustment. E.g. {"2026-05":{"Software":-20,"Consulting":-30,"Professional Services":-15}}. Category names must EXACTLY match the VENDOR EXPENSES BY CATEGORY data. Adjustments cascade forward.
-- "collPctByMonth": object with month keys "0"-"11". Values are collection % where 100=normal. 80=20% less revenue. 0=no revenue.
-- "pipelineMinProb": number 0-100. Pipeline inclusion threshold. 100=exclude pipeline, 50=include 50%+ deals.
+- "headcountAdj": HEADCOUNT adjustments per department per month. Object keyed by "YYYY-MM", each containing department name → delta people count. E.g. {"2026-08":{"Playmakers":-40}} means release 40 Playmakers starting August. Cascades forward (set once, applies to remaining months). ALWAYS include this when the user mentions releasing/hiring people.
+- "salaryAdjPctByMonth": object with month keys "0"-"11" (Jan=0, Dec=11). Values are OVERALL % change to salary. Rarely used — prefer salaryDeptAdj for department-level.
+- "salaryDeptAdj": DEPARTMENT-LEVEL salary % adjustments. Object keyed by "YYYY-MM", each containing department name → % adjustment. MUST match headcountAdj: pct = round(-N * (deptBudget/headcount) / deptBudget * 100) = round(-N/headcount * 100). E.g. releasing 40 from 139 Playmakers = round(-40/139*100) = -29%. Cascades forward. Department names must EXACTLY match the HEADCOUNT BY DEPARTMENT data.
+- "vendorCatAdj": VENDOR CATEGORY adjustments. Object keyed by "YYYY-MM", each containing category name → % adjustment. Category names must EXACTLY match the VENDOR EXPENSES BY CATEGORY data. Cascades forward. HR-related categories (Welfare, Training) auto-adjust from headcount — no need to set manually.
+- "collPctByMonth": object with month keys "0"-"11". Values are collection % where 100=normal. 80=20% less revenue.
+- "pipelineMinProb": number 0-100. Pipeline inclusion threshold. 100=exclude pipeline.
+
+CRITICAL RULES FOR HEADCOUNT SCENARIOS:
+- When user says "release N people from Department X": ALWAYS calculate headcountAdj AND salaryDeptAdj together.
+- Formula: salaryDeptAdj % = round(-N / departmentHeadcount * 100). Use the HEADCOUNT BY DEPARTMENT data.
+- ONLY adjust the SPECIFIC department the user mentions. Do NOT touch other departments.
+- Set the adjustment for the STARTING month only — it cascades forward automatically.
+- For phased reductions (e.g. "over 120 days"): set increasing headcountAdj per month. E.g. month1: -10, month2: -25, month3: -35, month4: -40.
+- HR vendor categories (Welfare, Training, Recruiting) auto-adjust proportionally — no need to set them manually.
 
 IMPORTANT RULES:
 - ALWAYS be granular: use "salaryDeptAdj" for salary cuts (not salaryAdjPctByMonth) and "vendorCatAdj" for vendor cuts.
 - Use EXACT department and category names from the dashboard data.
-- Be specific: calculate which departments AND vendor categories to adjust and by how much.
-- Show your math for BOTH salary and vendor changes: "Department X costs €Y/month, cutting Z% saves €W" and "Vendor category A costs €B/month, cutting C% saves €D".
-- Always recommend a MIX of salary + vendor adjustments, not just one type.
-- When projecting scenarios, analyze EVERY vendor category and department. For each one, assess if it can be reduced and by how much. Be specific: "Software costs €X, can save 15% by renegotiating licenses", "Consulting costs €Y, can reduce 25% by bringing work in-house". Recommend adjustments for ALL categories where savings are achievable, not just the top 2-3.
+- Show your math clearly: "Playmakers has 139 people, releasing 40 = -29% salary reduction".
 The scenario will be auto-saved to the dashboard's Scenarios dropdown.
 
 ADJUSTING EXISTING SCENARIOS:

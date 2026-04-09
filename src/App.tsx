@@ -2246,6 +2246,23 @@ useEffect(() => {
         lines.push(`  Total categories: ${sorted.filter(([,a]) => Math.abs(a) > 0).length}`);
       }
     }
+    // Headcount by department (for HC-based scenarios)
+    if (Object.keys(deptHeadcount).length > 0) {
+      lines.push(`\nHEADCOUNT BY DEPARTMENT (active employees from Bob/Snowflake):`);
+      const totalHc = Object.values(deptHeadcount).reduce((s, d) => s + d.count, 0);
+      for (const [dept, data] of Object.entries(deptHeadcount).sort((a, b) => b[1].count - a[1].count)) {
+        const budgetPerPerson = salaryDeptBudgets[Object.keys(salaryDeptBudgets)[0]]?.[dept];
+        const cpp = budgetPerPerson && data.count > 0 ? Math.round(budgetPerPerson / data.count) : data.avgSalaryEUR;
+        lines.push(`  ${dept}: ${data.count} people, budget/person ~€${cpp.toLocaleString()}/mo`);
+      }
+      lines.push(`  Total: ${totalHc} employees`);
+      lines.push(`\nIMPORTANT FOR SCENARIOS: When user asks to release N people from a department:`);
+      lines.push(`  1. Calculate headcountAdj: { "YYYY-MM": { "DeptName": -N } } for each affected month`);
+      lines.push(`  2. Calculate salaryDeptAdj: pct = round(-N * costPerPerson / deptBudget * 100)`);
+      lines.push(`     where costPerPerson = deptBudget / headcount`);
+      lines.push(`  3. Include BOTH headcountAdj AND salaryDeptAdj in the scenario JSON`);
+      lines.push(`  4. Only adjust the specific department requested — not all departments`);
+    }
     if (yoyRevenue) {
       lines.push(`\nYoY REVENUE (Snowflake):`);
       lines.push(`  Current year (${yoyRevenue.currentYear}): €${yoyRevenue.currentYearRev?.toLocaleString()}`);
@@ -2329,15 +2346,20 @@ useEffect(() => {
             collPctByMonth: numericObj(scenarioData.collPctByMonth),
             salaryDeptAdj: parseDeptAdj(scenarioData.salaryDeptAdj),
             vendorCatAdj: parseDeptAdj(scenarioData.vendorCatAdj),
+            vendorDetailAdj: scenarioData.vendorDetailAdj || {},
             leverOverrides: scenarioData.leverOverrides || {},
+            headcountAdj: parseDeptAdj(scenarioData.headcountAdj),
             pipelineMinProb: scenarioData.pipelineMinProb ?? 100,
           };
           const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
           const now2 = new Date().toISOString();
           setScenarios(prev => [...prev, { id, name, createdAt: now2, updatedAt: now2, data: sData }]);
+          // Auto-apply the scenario so it takes effect immediately
+          applyScenarioData(sData);
+          setActiveScenarioId(id);
           // Remove the raw JSON block from visible reply, add confirmation
           reply = reply.replace(/`{1,3}scenario\s*\n?[\s\S]*?\n?`{1,3}/, '').trim();
-          reply += `\n\n✅ **Scenario "${name}" saved!** You can find it in the Scenarios dropdown.`;
+          reply += `\n\n✅ **Scenario "${name}" saved and applied!** You can see the impact in the cashflow table.`;
         } catch (e2) { /* ignore parse errors */ }
       }
       const finalMessages = [...newMessages, { role: 'assistant' as const, content: reply }];
