@@ -835,8 +835,31 @@ useEffect(() => {
     setVendorCatAdj(data.vendorCatAdj || {});
     setVendorDetailAdj(data.vendorDetailAdj || {});
     setLeverOverrides(data.leverOverrides || {});
-    setHeadcountAdj(data.headcountAdj || {});
     setPipelineMinProb(data.pipelineMinProb ?? 100);
+    // If scenario has headcountAdj, use it; otherwise compute from salaryDeptAdj + deptHeadcount
+    const hcAdj = data.headcountAdj || {};
+    const hasExplicitHc = Object.keys(hcAdj).some(mKey => Object.values(hcAdj[mKey] || {}).some(v => v !== 0));
+    if (hasExplicitHc) {
+      setHeadcountAdj(hcAdj);
+    } else {
+      // Derive HC from salary dept adj: impliedHC = round(budget * pct / 100 / avgSalary)
+      const deptAdj2 = data.salaryDeptAdj || {};
+      const derivedHc: Record<string, Record<string, number>> = {};
+      for (const [mKey, depts] of Object.entries(deptAdj2)) {
+        for (const [dept, pct] of Object.entries(depts)) {
+          if (pct === 0) continue;
+          const hcD = deptHeadcount[dept];
+          const budget = salaryDeptBudgets[mKey]?.[dept] || 0;
+          if (hcD && hcD.avgSalaryEUR > 0 && budget > 0) {
+            let implied = Math.round((budget * (pct as number) / 100) / hcD.avgSalaryEUR);
+            if (hcD.count > 0) implied = Math.max(-hcD.count, Math.min(hcD.count * 2, implied));
+            if (!derivedHc[mKey]) derivedHc[mKey] = {};
+            derivedHc[mKey][dept] = implied;
+          }
+        }
+      }
+      setHeadcountAdj(Object.keys(derivedHc).length > 0 ? derivedHc : hcAdj);
+    }
     // Proactively fetch dept budgets for months with dept adjustments so they take effect immediately
     const deptAdj = data.salaryDeptAdj || {};
     const monthsNeeded = Object.keys(deptAdj).filter(mKey => Object.keys(deptAdj[mKey] || {}).length > 0);
@@ -4482,8 +4505,9 @@ useEffect(() => {
                           }}>
                             {r.salary > 0 ? `-${fmtC(r.salary, r.salaryILS)}` : '-'}
                             {!r.isPast && r.salaryBase > 0 && r.salary !== r.salaryBase && (() => {
-                              const saving = r.salaryBase - r.salary;
-                              return <div className={`text-[9px] font-semibold ${saving > 0 ? 'text-green-600' : 'text-red-500'}`}>{saving > 0 ? 'saving ' : ''}{fmt(Math.abs(saving))}</div>;
+                              const delta = r.salary - r.salaryBase;
+                              const pct = Math.round((delta / r.salaryBase) * 100);
+                              return <div className={`text-[9px] font-semibold ${delta < 0 ? 'text-green-600' : 'text-red-500'}`}>{fmt(Math.abs(delta))} ({pct > 0 ? '+' : ''}{pct}%)</div>;
                             })()}
                           </span>
                         </div>
@@ -4508,9 +4532,9 @@ useEffect(() => {
                           }}>
                         {r.vendors > 0 ? `-${fmtC(r.vendors, r.vendorsILS)}` : '-'}
                         {!r.isPast && r.vendorsBase > 0 && r.vendors !== r.vendorsBase && (() => {
-                          const saving = r.vendorsBase - r.vendors;
-                          const effPct = Math.round(((r.vendors - r.vendorsBase) / r.vendorsBase) * 100);
-                          return <div className={`text-[9px] font-semibold ${saving > 0 ? 'text-green-600' : 'text-red-500'}`}>{saving > 0 ? 'saving ' : ''}{fmt(Math.abs(saving))} ({effPct > 0 ? '+' : ''}{effPct}%)</div>;
+                          const delta = r.vendors - r.vendorsBase;
+                          const effPct = Math.round((delta / r.vendorsBase) * 100);
+                          return <div className={`text-[9px] font-semibold ${delta < 0 ? 'text-green-600' : 'text-red-500'}`}>{fmt(Math.abs(delta))} ({effPct > 0 ? '+' : ''}{effPct}%)</div>;
                         })()}
                         {r.vendors > 0 && r.vendors === r.vendorsBase && <span className="text-[10px] text-violet-400 ml-1">→</span>}
                       </td>
