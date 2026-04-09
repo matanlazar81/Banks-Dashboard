@@ -636,6 +636,17 @@ export default function App() {
   // Headcount per department (fetched from Snowflake)
   const [deptHeadcount, setDeptHeadcount] = useState<Record<string, { count: number; avgSalaryILS: number; avgSalaryEUR: number }>>({});
 
+  // Fetch headcount on mount (needed for HR vendor auto-reduction and dept adjustments)
+  useEffect(() => {
+    fetch(`/api/sf-headcount-by-dept`).then(r => r.json()).then(res => {
+      if (res.data && res.data.length > 0) {
+        const hcByDept: Record<string, { count: number; avgSalaryILS: number; avgSalaryEUR: number }> = {};
+        for (const row of res.data) hcByDept[row.department] = { count: row.headcount, avgSalaryILS: row.avgSalaryILS, avgSalaryEUR: row.avgSalaryEUR };
+        setDeptHeadcount(hcByDept);
+      }
+    }).catch(() => {});
+  }, []);
+
   // Auto-set HR vendor categories (Welfare, Training, etc.) based on headcount reduction
   // HR costs are per-person (meals, gifts, etc.), so use headcount % not salary budget %
   // Categories that auto-reduce proportionally with headcount changes (per-person costs)
