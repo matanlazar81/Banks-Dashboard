@@ -4919,7 +4919,7 @@ useEffect(() => {
                                     <td className="py-2 pl-3">
                                       <div className="flex items-center gap-2">
                                         <span className="inline-block w-2 h-2 rounded-full bg-orange-500"></span>
-                                        <span className="text-orange-800 font-medium">Snowflake Override</span>
+                                        <span className="text-orange-800 font-medium">Salary Override</span>
                                         <span className="text-orange-600">{ov.department || ov.account}</span>
                                         {ov.comments && <span className="text-[10px] text-orange-500 italic">— {ov.comments}</span>}
                                         <span className="text-[9px] bg-orange-200 text-orange-700 px-1.5 py-0.5 rounded font-medium">{ov.mode}</span>
@@ -4934,7 +4934,7 @@ useEffect(() => {
                                 ))}
                               </>
                             ) : (
-                              <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600 pl-3 text-gray-400">{forecastDrilldown.data?.__nsMode ? 'NS Override' : 'Snowflake Override (Google Sheets)'}</td><td className="py-1.5 text-right text-gray-400">-</td></tr>
+                              <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600 pl-3 text-gray-400">{forecastDrilldown.data?.__nsMode ? 'NS Override' : 'Salary Override (Google Sheets)'}</td><td className="py-1.5 text-right text-gray-400">-</td></tr>
                             )}
                             <tr className="border-b border-gray-200">
                               <td className="py-1.5 text-gray-600 pl-3">{adj !== 0 ? <span className="text-blue-700">Manual adjustment ({adj > 0 ? '+' : ''}{adj}%)</span> : <span className="text-gray-400">Manual adjustment (0%)</span>}</td>
