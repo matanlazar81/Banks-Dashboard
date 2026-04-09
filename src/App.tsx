@@ -1460,6 +1460,19 @@ useEffect(() => {
       }
       const vendorsBase = vendors; // base vendors BEFORE scenario adjustments
 
+      // Auto-adjust HR-related vendor categories based on salary dept adjustments (headcount-linked costs)
+      if (!isPastMonth && !isCurMonth && deptAdjDelta !== 0 && salaryBase > 0) {
+        const salaryReductionPct = deptAdjDelta / salaryBase; // negative when reducing
+        const hrCategories = ['Welfare', 'Training - Departmental', 'Training - Company Wide', 'Recruiting', 'Off / On Site - Hackathon, Meetup & Tech Fest'];
+        const catData = sfBudget.byMonth?.[mKey] || nsBudget.byMonth[mKey]?.categories || expenseCategories.byMonth?.[mKey] || {};
+        let hrDelta = 0;
+        for (const cat of hrCategories) {
+          const catBudget = (catData as Record<string, number>)[cat] || 0;
+          if (catBudget > 0) hrDelta += Math.round(catBudget * salaryReductionPct);
+        }
+        if (hrDelta !== 0) vendors += hrDelta;
+      }
+
       // Apply per-category vendor adjustments from scenario
       if (!isPastMonth && Object.keys(vendorCatAdj).length > 0) {
         const effectiveVendorAdj: Record<string, number> = {};
