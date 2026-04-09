@@ -652,10 +652,11 @@ export default function App() {
   // Categories that auto-reduce proportionally with headcount changes (per-person costs)
   const HR_VENDOR_CATEGORIES = ['Welfare', 'Training - Departmental', 'Training - Company Wide'];
   // Specific accounts within other categories that are per-person (not full category — only these GL accounts)
+  // Monthly budget estimates used as base for detail-level % adjustments
   const HR_VENDOR_ACCOUNTS = [
-    { category: 'Facilities', account: '710002', name: 'Refreshments' },
-    { category: 'Other G&A', account: '780007', name: 'Hotch meals - Sibus' },
-    { category: 'Marketing & Branding', account: '610007', name: 'Employee branding' },
+    { category: 'Facilities', account: '710002', name: 'Refreshments', avgBase: 5852 },
+    { category: 'Other G&A', account: '780007', name: 'Hotch meals - Sibus', avgBase: 60000 },
+    { category: 'Marketing & Branding', account: '610007', name: 'Employee branding', avgBase: 2210 },
   ];
   useEffect(() => {
     const totalHc = Object.values(deptHeadcount).reduce((s, d) => s + d.count, 0);
@@ -707,7 +708,7 @@ export default function App() {
         for (const acct of HR_VENDOR_ACCOUNTS) {
           const dk = `${acct.category}||${acct.name}||${acct.account}`;
           const existing = detAdj[dk];
-          if (!existing || existing.pct !== hcPct) { detAdj[dk] = { pct: hcPct, base: 0 }; detChanged = true; }
+          if (!existing || existing.pct !== hcPct) { detAdj[dk] = { pct: hcPct, base: acct.avgBase }; detChanged = true; }
         }
         if (detChanged) { newVdAdj[mKey] = detAdj; hasDetChanges = true; }
       }
