@@ -4287,6 +4287,18 @@ useEffect(() => {
                                   by {s.ownerName} &middot; {new Date(s.updatedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
                                 </span>
                               </div>
+                              <button onClick={(e) => {
+                                e.stopPropagation();
+                                if (!confirm(`Remove "${s.name}" from your shared list?`)) return;
+                                // Unshare: remove yourself from this scenario's shares
+                                fetch(`/api/scenarios/${s.id}/share/${encodeURIComponent(_viewerEmail)}`, {
+                                  method: 'DELETE', credentials: 'include',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ ownerEmail: s.ownerEmail }),
+                                }).then(() => {
+                                  _setShared(prev => prev.filter(x => x.id !== s.id || x.ownerEmail !== s.ownerEmail));
+                                }).catch(() => {});
+                              }} className="text-[9px] text-red-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity px-1" title="Remove from my list">✕</button>
                               <span className="text-[9px] font-medium text-violet-500 opacity-0 group-hover:opacity-100 transition-opacity">Load</span>
                             </div>
                           ))}
