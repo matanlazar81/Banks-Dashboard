@@ -600,6 +600,19 @@ export default function App() {
     try { const saved = localStorage.getItem('banks-salary-dept-budgets'); return saved ? JSON.parse(saved) : {}; } catch { return {}; }
   });
   useEffect(() => { try { localStorage.setItem('banks-salary-dept-budgets', JSON.stringify(salaryDeptBudgets)); } catch {} }, [salaryDeptBudgets]);
+  // Auto-fetch dept budgets for months that have dept adjustments but no cached budget data
+  useEffect(() => {
+    const months = Object.keys(salaryDeptAdj).filter(mKey => Object.keys(salaryDeptAdj[mKey] || {}).length > 0 && !salaryDeptBudgets[mKey]);
+    for (const mKey of months) {
+      fetch(`/api/sf-salary-budget-breakdown?month=${mKey}`).then(r => r.json()).then(res => {
+        if (res.data && res.data.length > 0) {
+          const byDept: Record<string, number> = {};
+          for (const row of res.data) byDept[row.department] = (byDept[row.department] || 0) + (row.amountEUR || 0);
+          setSalaryDeptBudgets(prev => prev[mKey] ? prev : { ...prev, [mKey]: byDept });
+        }
+      }).catch(() => {});
+    }
+  }, [salaryDeptAdj, salaryDeptBudgets]);
   // Per-vendor-category adjustments — persisted across sessions
   const [vendorCatAdj, setVendorCatAdj] = useState<Record<string, Record<string, number>>>(() => {
     try { const saved = localStorage.getItem('banks-vendor-cat-adj'); return saved ? JSON.parse(saved) : {}; } catch { return {}; }
@@ -765,7 +778,22 @@ useEffect(() => {
     setLeverOverrides(data.leverOverrides || {});
     setHeadcountAdj(data.headcountAdj || {});
     setPipelineMinProb(data.pipelineMinProb ?? 100);
-  }, []);
+    // Proactively fetch dept budgets for months with dept adjustments so they take effect immediately
+    const deptAdj = data.salaryDeptAdj || {};
+    const monthsNeeded = Object.keys(deptAdj).filter(mKey => Object.keys(deptAdj[mKey] || {}).length > 0);
+    if (monthsNeeded.length > 0) {
+      const missingMonths = monthsNeeded.filter(mKey => !salaryDeptBudgets[mKey]);
+      for (const mKey of missingMonths) {
+        fetch(`/api/sf-salary-budget-breakdown?month=${mKey}`).then(r => r.json()).then(res => {
+          if (res.data && res.data.length > 0) {
+            const byDept: Record<string, number> = {};
+            for (const row of res.data) byDept[row.department] = (byDept[row.department] || 0) + (row.amountEUR || 0);
+            setSalaryDeptBudgets(prev => ({ ...prev, [mKey]: byDept }));
+          }
+        }).catch(() => {});
+      }
+    }
+  }, [salaryDeptBudgets]);
 
   const saveScenario = useCallback((name: string) => {
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
