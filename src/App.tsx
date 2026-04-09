@@ -5038,19 +5038,32 @@ useEffect(() => {
                                       </td>
                                         );
                                       })()}
+                                      {(() => {
+                                        // Helper: apply salary % → auto-sync HC Adj
+                                        const applyPct = (newPct: number) => {
+                                          setSalaryDeptAdj(prev => ({ ...prev, [mKey]: { ...(prev[mKey] || {}), [dept]: newPct } }));
+                                          // Reverse-calculate HC delta from %: delta = round(total * pct / 100 / avgSalary)
+                                          if (hcAvgEUR > 0 && total > 0) {
+                                            const impliedHcDelta = Math.round((total * newPct / 100) / hcAvgEUR);
+                                            setHeadcountAdj(prev => ({ ...prev, [mKey]: { ...(prev[mKey] || {}), [dept]: impliedHcDelta } }));
+                                          }
+                                        };
+                                        return (
                                       <td className="py-1.5 pr-2">
                                         <div className="flex items-center justify-center gap-0.5">
-                                          <button onClick={() => setSalaryDeptAdj(prev => ({ ...prev, [mKey]: { ...(prev[mKey] || {}), [dept]: pct - 1 } }))}
+                                          <button onClick={() => applyPct(pct - 1)}
                                                   className="w-5 h-5 rounded bg-white hover:bg-amber-100 text-gray-500 text-xs flex items-center justify-center font-bold border border-amber-200">−</button>
                                           <input type="text" inputMode="numeric" value={pct}
-                                                 onChange={e => { const v = e.target.value; if (v === '' || v === '-') { setSalaryDeptAdj(prev => ({ ...prev, [mKey]: { ...(prev[mKey] || {}), [dept]: v as any } })); return; } const n = parseInt(v); if (!isNaN(n)) setSalaryDeptAdj(prev => ({ ...prev, [mKey]: { ...(prev[mKey] || {}), [dept]: n } })); }}
+                                                 onChange={e => { const v = e.target.value; if (v === '' || v === '-') { setSalaryDeptAdj(prev => ({ ...prev, [mKey]: { ...(prev[mKey] || {}), [dept]: v as any } })); return; } const n = parseInt(v); if (!isNaN(n)) applyPct(n); }}
                                                  className={`w-10 text-center text-[11px] font-semibold border rounded px-0.5 py-0.5 ${pct !== 0 ? 'text-amber-700 border-amber-300 bg-amber-50' : 'text-gray-400 border-gray-200 bg-white'}`} />
                                           <span className="text-[10px] text-gray-400">%</span>
-                                          <button onClick={() => setSalaryDeptAdj(prev => ({ ...prev, [mKey]: { ...(prev[mKey] || {}), [dept]: pct + 1 } }))}
+                                          <button onClick={() => applyPct(pct + 1)}
                                                   className="w-5 h-5 rounded bg-white hover:bg-amber-100 text-gray-500 text-xs flex items-center justify-center font-bold border border-amber-200">+</button>
                                         </div>
                                         {inherited && pct !== 0 && <div className="text-[9px] text-amber-400 text-center mt-0.5">from {new Date(eff.fromMonth + '-01').toLocaleDateString('en-GB', { month: 'short' })}</div>}
                                       </td>
+                                        );
+                                      })()}
                                       <td className={`py-1.5 text-right font-bold ${pct === 0 ? 'text-gray-300' : impact >= 0 ? 'text-red-600' : 'text-green-700'}`}>
                                         {pct === 0 ? '—' : (<>
                                           {impact >= 0 ? '+' : ''}{fmt(impact)}
