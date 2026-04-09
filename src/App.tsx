@@ -4773,7 +4773,9 @@ useEffect(() => {
                         <td className="py-2 pr-1 text-right">-{fmt(totalSalaryAfter)}</td>
                         <td className="py-2 pr-1 text-right">-{fmt(totalVendorAfter)}</td>
                         <td className="py-2 pr-1 text-right">-{fmt(totalOutflowAfter)}</td>
-                        <td className="py-2 pr-1 text-right" colSpan={3}></td>
+                        <td className={`py-2 pr-1 text-right ${cashflowForecast.reduce((s, r) => s + r.net, 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmt(cashflowForecast.reduce((s, r) => s + r.net, 0))}</td>
+                        <td className="py-2 pr-1 text-right text-amber-600">{fmt(cashflowForecast.reduce((s, r) => s + r.revalImpact, 0))}</td>
+                        <td className={`py-2 pr-1 text-right ${(cashflowForecast[cashflowForecast.length - 1]?.closingBalance || 0) >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>{fmt(cashflowForecast[cashflowForecast.length - 1]?.closingBalance || 0)}</td>
                       </tr>
                     </>);
                   })()}
