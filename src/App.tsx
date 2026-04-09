@@ -739,6 +739,10 @@ useEffect(() => {
 }, [scenarios, _viewerEmail]);
   const _srvRef = useRef(false);
   const [_shared, _setShared] = useState<Scenario[]>([]);
+  const [_dismissedShares, _setDismissedShares] = useState<Set<string>>(() => {
+    try { const saved = localStorage.getItem('banks-dismissed-shares'); return saved ? new Set(JSON.parse(saved)) : new Set(); } catch { return new Set(); }
+  });
+  const _visibleShared = _shared.filter(s => !_dismissedShares.has(`${s.ownerEmail}||${s.id}`));
   const [_bdUsers, _setBdUsers] = useState<{email:string;displayName:string}[]>([]);
   const [_shareOpen, _setShareOpen] = useState<string|null>(null);
   const [_shareMap, _setShareMap] = useState<Record<string,{email:string;displayName:string}[]>>({});
@@ -4273,10 +4277,10 @@ useEffect(() => {
                         </div>
                       )}
                       {/* Shared with me */}
-                      {_shared.length > 0 && (
+                      {_visibleShared.length > 0 && (
                         <div className="px-1 py-1 border-t border-gray-100">
-                          <p className="text-[10px] text-gray-400 uppercase font-medium px-2 py-1">Shared with me ({_shared.length})</p>
-                          {_shared.map(s => (
+                          <p className="text-[10px] text-gray-400 uppercase font-medium px-2 py-1">Shared with me ({_visibleShared.length})</p>
+                          {_visibleShared.map(s => (
                             <div key={s.ownerEmail + '-' + s.id}
                               className="rounded-lg hover:bg-violet-50/60 px-2 py-1.5 cursor-pointer group flex items-center gap-1"
                               onClick={() => { applyScenarioData(s.data); setActiveScenarioId(null); setScenarioMenuOpen(false); }}
@@ -4290,13 +4294,19 @@ useEffect(() => {
                               <button onClick={(e) => {
                                 e.stopPropagation();
                                 if (!confirm(`Remove "${s.name}" from your shared list?`)) return;
-                                // Unsubscribe: remove yourself from this shared scenario
+                                // Dismiss locally (persists in localStorage)
+                                const key = `${s.ownerEmail}||${s.id}`;
+                                _setDismissedShares(prev => {
+                                  const next = new Set(prev);
+                                  next.add(key);
+                                  try { localStorage.setItem('banks-dismissed-shares', JSON.stringify([...next])); } catch {}
+                                  return next;
+                                });
+                                // Also try server-side unsubscribe (fire and forget)
                                 fetch(`/api/scenarios/${s.id}/unsubscribe`, {
                                   method: 'DELETE', credentials: 'include',
                                   headers: { 'Content-Type': 'application/json' },
                                   body: JSON.stringify({ ownerEmail: s.ownerEmail }),
-                                }).then(() => {
-                                  _setShared(prev => prev.filter(x => x.id !== s.id || x.ownerEmail !== s.ownerEmail));
                                 }).catch(() => {});
                               }} className="text-[9px] text-red-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity px-1" title="Remove from my list">✕</button>
                               <span className="text-[9px] font-medium text-violet-500 opacity-0 group-hover:opacity-100 transition-opacity">Load</span>
