@@ -4323,21 +4323,87 @@ useEffect(() => {
                     <button onClick={() => setCompareScenarioId(null)} className="text-blue-400 hover:text-blue-700 ml-1">✕</button>
                   </div>
                 )}
-                {/* Download cashflow as Excel */}
+                {/* Download cashflow as Excel (styled like HTML) */}
                 <button
                   onClick={() => {
-                    const hdr = ['Month','Status','Opening Balance','Inflows (AR)','Pipeline','Churn','Total Inflows','Salary','Vendors','Total Outflow','Net','Reval Impact','Closing Balance'];
-                    const data = [hdr, ...cashflowForecast.map(r => [
-                      r.month, r.isPast ? 'ACTUAL' : r.isCurrent ? 'CURRENT' : 'PROJECTED',
-                      r.openingBalance, r.collections, r.pipelineWeighted, r.churnDeduction, r.collections + r.pipelineWeighted - r.churnDeduction, r.salary, r.vendors, r.totalOutflow, r.net, r.revalImpact, r.closingBalance
-                    ]), ['TOTAL', '', '', cashflowForecast.reduce((s,r)=>s+r.collections,0), cashflowForecast.reduce((s,r)=>s+r.pipelineWeighted,0), cashflowForecast.reduce((s,r)=>s+r.churnDeduction,0), cashflowForecast.reduce((s,r)=>s+r.collections+r.pipelineWeighted-r.churnDeduction,0), cashflowForecast.reduce((s,r)=>s+r.salary,0), cashflowForecast.reduce((s,r)=>s+r.vendors,0), cashflowForecast.reduce((s,r)=>s+r.totalOutflow,0), cashflowForecast.reduce((s,r)=>s+r.net,0), cashflowForecast.reduce((s,r)=>s+r.revalImpact,0), cashflowForecast[cashflowForecast.length-1]?.closingBalance||0]];
-                    const ws = XLSX.utils.aoa_to_sheet(data);
-                    ws['!cols'] = [{ wch: 18 }, { wch: 10 }, ...Array(11).fill({ wch: 16 })];
-                    // EUR format for numeric columns
-                    for (let r = 1; r <= data.length - 1; r++) { for (let c = 2; c <= 12; c++) { const cell = ws[XLSX.utils.encode_cell({ r, c })]; if (cell && typeof cell.v === 'number') cell.z = '#,##0'; } }
+                    const numFmt = '€#,##0';
+                    const hdrStyle = { font: { bold: true, color: { rgb: 'FFFFFF' }, sz: 10 }, fill: { fgColor: { rgb: '374151' } }, alignment: { horizontal: 'center' }, border: { bottom: { style: 'thin', color: { rgb: '9CA3AF' } } } };
+                    const colColors: Record<number, string> = { 2: '059669', 3: '0D9488', 4: 'EA580C', 5: '047857', 6: 'D97706', 7: '7C3AED', 8: 'DC2626', 10: 'D97706', 11: '1D4ED8' };
+                    const hdrCols = [
+                      { v: 'Month', s: hdrStyle }, { v: 'Opening Bal.', s: hdrStyle },
+                      { v: 'Inflows (AR)', s: { ...hdrStyle, font: { ...hdrStyle.font, color: { rgb: '059669' } } } },
+                      { v: 'Pipeline', s: hdrStyle }, { v: 'Churn', s: hdrStyle },
+                      { v: 'Total Inflows', s: hdrStyle }, { v: 'Salary', s: hdrStyle },
+                      { v: 'Salary Saving', s: { ...hdrStyle, font: { ...hdrStyle.font, color: { rgb: '16A34A' } } } },
+                      { v: 'Vendors', s: hdrStyle },
+                      { v: 'Vendor Saving', s: { ...hdrStyle, font: { ...hdrStyle.font, color: { rgb: '16A34A' } } } },
+                      { v: 'Total Outflow', s: hdrStyle }, { v: 'Net', s: hdrStyle },
+                      { v: 'Reval', s: hdrStyle }, { v: 'Closing Balance', s: hdrStyle },
+                    ];
+                    const rows = cashflowForecast.map(r => {
+                      const status = r.isPast ? 'ACTUAL' : r.isCurrent ? 'CURRENT' : 'PROJECTED';
+                      const statusColor = r.isPast ? '16A34A' : r.isCurrent ? 'D97706' : '7C3AED';
+                      const salSaving = Math.max(0, r.salaryBase - r.salary);
+                      const venSaving = Math.max(0, r.vendorsBase - r.vendors);
+                      const mkCell = (v: number, color?: string, bold?: boolean) => ({
+                        v, t: 'n', z: numFmt,
+                        s: { font: { color: { rgb: color || '374151' }, sz: 10, bold: !!bold }, alignment: { horizontal: 'right' } }
+                      });
+                      return [
+                        { v: `${r.month}  ${status}`, s: { font: { sz: 10, color: { rgb: statusColor }, bold: true } } },
+                        mkCell(r.openingBalance, r.openingBalance >= 0 ? '374151' : 'DC2626'),
+                        mkCell(r.collections, '16A34A'),
+                        mkCell(r.pipelineWeighted, '0D9488'),
+                        mkCell(-r.churnDeduction, 'EA580C'),
+                        mkCell(r.collections + r.pipelineWeighted - r.churnDeduction, '047857', true),
+                        mkCell(-r.salary, 'D97706'),
+                        salSaving > 0 ? mkCell(salSaving, '16A34A') : { v: '', s: {} },
+                        mkCell(-r.vendors, '7C3AED'),
+                        venSaving > 0 ? mkCell(venSaving, '16A34A') : { v: '', s: {} },
+                        mkCell(-r.totalOutflow, 'DC2626', true),
+                        mkCell(r.net, r.net >= 0 ? '16A34A' : 'DC2626', true),
+                        mkCell(r.revalImpact, 'D97706'),
+                        mkCell(r.closingBalance, r.closingBalance >= 0 ? '1D4ED8' : 'DC2626', true),
+                      ];
+                    });
+                    // TOTAL row
+                    const totStyle = { font: { bold: true, sz: 11, color: { rgb: '1F2937' } }, fill: { fgColor: { rgb: 'F3F4F6' } }, border: { top: { style: 'double', color: { rgb: '9CA3AF' } } }, alignment: { horizontal: 'right' } };
+                    const mkTot = (v: number, color?: string) => ({ v, t: 'n', z: numFmt, s: { ...totStyle, font: { ...totStyle.font, color: { rgb: color || '1F2937' } } } });
+                    const totalSalSaving = cashflowForecast.reduce((s, r) => s + Math.max(0, r.salaryBase - r.salary), 0);
+                    const totalVenSaving = cashflowForecast.reduce((s, r) => s + Math.max(0, r.vendorsBase - r.vendors), 0);
+                    const totRow = [
+                      { v: 'TOTAL', s: { ...totStyle, alignment: { horizontal: 'left' } } },
+                      { v: '', s: totStyle },
+                      mkTot(cashflowForecast.reduce((s,r)=>s+r.collections,0), '16A34A'),
+                      mkTot(cashflowForecast.reduce((s,r)=>s+r.pipelineWeighted,0), '0D9488'),
+                      mkTot(-cashflowForecast.reduce((s,r)=>s+r.churnDeduction,0), 'EA580C'),
+                      mkTot(cashflowForecast.reduce((s,r)=>s+r.collections+r.pipelineWeighted-r.churnDeduction,0), '047857'),
+                      mkTot(-cashflowForecast.reduce((s,r)=>s+r.salary,0), 'D97706'),
+                      totalSalSaving > 0 ? mkTot(totalSalSaving, '16A34A') : { v: '', s: totStyle },
+                      mkTot(-cashflowForecast.reduce((s,r)=>s+r.vendors,0), '7C3AED'),
+                      totalVenSaving > 0 ? mkTot(totalVenSaving, '16A34A') : { v: '', s: totStyle },
+                      mkTot(-cashflowForecast.reduce((s,r)=>s+r.totalOutflow,0), 'DC2626'),
+                      mkTot(cashflowForecast.reduce((s,r)=>s+r.net,0), cashflowForecast.reduce((s,r)=>s+r.net,0) >= 0 ? '16A34A' : 'DC2626'),
+                      mkTot(cashflowForecast.reduce((s,r)=>s+r.revalImpact,0), 'D97706'),
+                      mkTot(cashflowForecast[cashflowForecast.length-1]?.closingBalance||0, '1D4ED8'),
+                    ];
+                    // SAVINGS row
+                    const savStyle = { font: { bold: true, sz: 11, color: { rgb: '16A34A' } }, fill: { fgColor: { rgb: 'DCFCE7' } }, alignment: { horizontal: 'right' } };
+                    const savRow = [
+                      { v: 'TOTAL SAVINGS', s: { ...savStyle, alignment: { horizontal: 'left' } } },
+                      ...Array(5).fill({ v: '', s: savStyle }),
+                      { v: totalSalSaving || '', t: totalSalSaving ? 'n' : 's', z: numFmt, s: savStyle },
+                      { v: '', s: savStyle },
+                      { v: totalVenSaving || '', t: totalVenSaving ? 'n' : 's', z: numFmt, s: savStyle },
+                      ...Array(4).fill({ v: '', s: savStyle }),
+                      { v: totalSalSaving + totalVenSaving || '', t: (totalSalSaving + totalVenSaving) ? 'n' : 's', z: numFmt, s: { ...savStyle, font: { ...savStyle.font, sz: 12 } } },
+                    ];
+                    const allData = [hdrCols, ...rows, totRow, ...(totalSalSaving + totalVenSaving > 0 ? [savRow] : [])];
+                    const ws = XLSX.utils.aoa_to_sheet(allData);
+                    ws['!cols'] = [{ wch: 24 }, { wch: 15 }, { wch: 15 }, { wch: 13 }, { wch: 10 }, { wch: 15 }, { wch: 15 }, { wch: 13 }, { wch: 15 }, { wch: 13 }, { wch: 15 }, { wch: 14 }, { wch: 12 }, { wch: 16 }];
                     const wb = XLSX.utils.book_new();
                     XLSX.utils.book_append_sheet(wb, ws, 'Cashflow Forecast');
-                    XLSX.writeFile(wb, `Cashflow_Forecast_${new Date().toISOString().slice(0,10)}.xlsx`);
+                    XLSX.writeFile(wb, `Cashflow_${activeCompany === 'lsports' ? 'LSports' : activeCompany === 'statscore' ? 'Statscore' : 'Consolidated'}_${activeYear}_${new Date().toISOString().slice(0,10)}.xlsx`);
                   }}
                   className="text-[10px] text-green-600 hover:text-green-800 bg-green-50 border border-green-200 rounded-lg px-2 py-1 transition-colors"
                   title="Download as Excel"
