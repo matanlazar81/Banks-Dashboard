@@ -638,7 +638,10 @@ export default function App() {
 
   // Auto-set HR vendor categories (Welfare, Training, etc.) based on headcount reduction
   // HR costs are per-person (meals, gifts, etc.), so use headcount % not salary budget %
-  const HR_VENDOR_CATEGORIES = ['Welfare', 'Training - Departmental', 'Training - Company Wide', 'Recruiting', 'Off / On Site - Hackathon, Meetup & Tech Fest'];
+  // Categories that auto-reduce proportionally with headcount changes (per-person costs)
+  const HR_VENDOR_CATEGORIES = ['Welfare', 'Training - Departmental', 'Training - Company Wide'];
+  // Specific accounts within other categories that are also per-person (e.g., Refreshments in Facilities)
+  const HR_VENDOR_ACCOUNTS = [{ category: 'Facilities', account: '710002', name: 'Refreshments' }];
   useEffect(() => {
     const totalHc = Object.values(deptHeadcount).reduce((s, d) => s + d.count, 0);
     if (totalHc === 0) return;
@@ -650,7 +653,9 @@ export default function App() {
     });
     if (deptMonths.length === 0) return;
     let hasChanges = false;
+    let hasDetChanges = false;
     const newVcAdj = { ...vendorCatAdj };
+    const newVdAdj = { ...vendorDetailAdj };
     for (const mKey of deptMonths) {
       let totalHcDelta = 0;
       const allHcM = Object.keys(headcountAdj).filter(k => k <= mKey && k.slice(0,4) === mKey.slice(0,4)).sort();
@@ -675,9 +680,19 @@ export default function App() {
         let changed = false;
         for (const cat of HR_VENDOR_CATEGORIES) { if ((monthAdj[cat] || 0) !== hcPct) { monthAdj[cat] = hcPct; changed = true; } }
         if (changed) { newVcAdj[mKey] = monthAdj; hasChanges = true; }
+        // Also set detail-level adjustments for specific per-person accounts (e.g., Refreshments)
+        const detAdj = { ...newVdAdj[mKey] || {} };
+        let detChanged = false;
+        for (const acct of HR_VENDOR_ACCOUNTS) {
+          const dk = `${acct.category}||${acct.name}||${acct.account}`;
+          const existing = detAdj[dk];
+          if (!existing || existing.pct !== hcPct) { detAdj[dk] = { pct: hcPct, base: 0 }; detChanged = true; }
+        }
+        if (detChanged) { newVdAdj[mKey] = detAdj; hasDetChanges = true; }
       }
     }
     if (hasChanges) setVendorCatAdj(newVcAdj);
+    if (hasDetChanges) setVendorDetailAdj(newVdAdj);
   }, [salaryDeptAdj, salaryDeptBudgets, headcountAdj, deptHeadcount]);
 
   // ── Scenario Management ──
