@@ -645,13 +645,19 @@ export default function App() {
   useEffect(() => {
     const totalHc = Object.values(deptHeadcount).reduce((s, d) => s + d.count, 0);
     if (totalHc === 0) return;
-    const allMonths = new Set([...Object.keys(headcountAdj), ...Object.keys(salaryDeptAdj)]);
-    const deptMonths = [...allMonths].filter(mKey => {
+    // Expand to all months from earliest adjustment through December (cascading)
+    const explicitMonths = [...new Set([...Object.keys(headcountAdj), ...Object.keys(salaryDeptAdj)])].filter(mKey => {
       const hcEntries = headcountAdj[mKey] || {};
       const salEntries = salaryDeptAdj[mKey] || {};
       return Object.values(hcEntries).some(v => v !== 0) || Object.values(salEntries).some(v => v !== 0);
-    });
-    if (deptMonths.length === 0) return;
+    }).sort();
+    if (explicitMonths.length === 0) return;
+    // Generate all months from earliest adjustment through December of same year
+    const firstMonth = explicitMonths[0];
+    const yr = parseInt(firstMonth.split('-')[0]);
+    const startMo = parseInt(firstMonth.split('-')[1]);
+    const deptMonths: string[] = [];
+    for (let m = startMo; m <= 12; m++) deptMonths.push(`${yr}-${String(m).padStart(2, '0')}`);
     let hasChanges = false;
     let hasDetChanges = false;
     const newVcAdj = { ...vendorCatAdj };
