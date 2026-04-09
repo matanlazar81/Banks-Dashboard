@@ -5052,7 +5052,10 @@ useEffect(() => {
                                         {inherited && pct !== 0 && <div className="text-[9px] text-amber-400 text-center mt-0.5">from {new Date(eff.fromMonth + '-01').toLocaleDateString('en-GB', { month: 'short' })}</div>}
                                       </td>
                                       <td className={`py-1.5 text-right font-bold ${pct === 0 ? 'text-gray-300' : impact >= 0 ? 'text-red-600' : 'text-green-700'}`}>
-                                        {pct === 0 ? '—' : `${impact >= 0 ? '+' : ''}${fmt(impact)}`}
+                                        {pct === 0 ? '—' : (<>
+                                          {impact >= 0 ? '+' : ''}{fmt(impact)}
+                                          {hcAvgEUR > 0 && <div className="text-[9px] font-normal text-blue-500 mt-0.5">≈ {impact > 0 ? '+' : ''}{Math.round(impact / hcAvgEUR)} people</div>}
+                                        </>)}
                                       </td>
                                     </tr>
                                   );
@@ -5061,12 +5064,24 @@ useEffect(() => {
                               {hasAnyDeptAdj && (
                                 <tfoot><tr className="border-t-2 border-amber-300 font-bold">
                                   <td className="py-1.5" colSpan={2}>Total Department Adjustment</td>
+                                  <td className="py-1.5"></td>
                                   <td className="py-1.5 text-center">
-                                    <button onClick={() => setSalaryDeptAdj({})}
+                                    <button onClick={() => { setSalaryDeptAdj({}); setHeadcountAdj({}); }}
                                             className="text-[9px] text-red-500 hover:text-red-700 underline">reset all</button>
                                   </td>
+                                  <td className="py-1.5"></td>
                                   <td className={`py-1.5 text-right font-bold ${totalDeptImpact >= 0 ? 'text-red-600' : 'text-green-700'}`}>
                                     {totalDeptImpact >= 0 ? '+' : ''}{fmt(totalDeptImpact)}
+                                    {(() => {
+                                      const totalPeople = deptEntries.reduce((s, [dept]) => {
+                                        const eff2 = effectiveAdj[dept];
+                                        if (!eff2 || eff2.pct === 0) return s;
+                                        const hcA = deptHeadcount[dept]?.avgSalaryEUR || 0;
+                                        if (hcA <= 0) return s;
+                                        return s + Math.round(Math.round((deptTotals[dept] || 0) * (eff2.pct / 100)) / hcA);
+                                      }, 0);
+                                      return totalPeople !== 0 ? <div className="text-[9px] font-normal text-blue-500 mt-0.5">≈ {totalPeople > 0 ? '+' : ''}{totalPeople} people</div> : null;
+                                    })()}
                                   </td>
                                 </tr></tfoot>
                               )}
