@@ -5058,6 +5058,8 @@ useEffect(() => {
                                     else if (v === 0) { hcEffective.delta = 0; hcEffective.inherited = false; }
                                   }
                                   const hcDelta = hcEffective.delta;
+                                  // Cost per person: budget/headcount (includes overhead), fallback to avg payroll
+                                  const costPerPerson = hcCount > 0 ? total / hcCount : hcAvgEUR;
                                   return (
                                     <tr key={dept} className={`border-b border-amber-100 ${inherited && pct !== 0 ? 'bg-amber-50/80' : ''}`}>
                                       <td className="py-1.5 pr-2 text-gray-700 font-medium">{dept}</td>
@@ -5065,8 +5067,6 @@ useEffect(() => {
                                       <td className="py-1.5 pr-1 text-center text-gray-500">{hcCount || '—'}</td>
                                       {(() => {
                                         // Helper: apply HC delta → auto-set salary % and Welfare vendor %
-                                        // Use budget/headcount as cost per person (includes overhead), not avg payroll
-                                        const costPerPerson = hcCount > 0 ? total / hcCount : hcAvgEUR;
                                         const applyHcDelta = (newDelta: number) => {
                                           setHeadcountAdj(prev => ({ ...prev, [mKey]: { ...(prev[mKey] || {}), [dept]: newDelta } }));
                                           if (costPerPerson > 0 && total > 0) {
