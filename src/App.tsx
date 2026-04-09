@@ -4290,8 +4290,8 @@ useEffect(() => {
                               <button onClick={(e) => {
                                 e.stopPropagation();
                                 if (!confirm(`Remove "${s.name}" from your shared list?`)) return;
-                                // Unshare: remove yourself from this scenario's shares
-                                fetch(`/api/scenarios/${s.id}/share/${encodeURIComponent(_viewerEmail)}`, {
+                                // Unsubscribe: remove yourself from this shared scenario
+                                fetch(`/api/scenarios/${s.id}/unsubscribe`, {
                                   method: 'DELETE', credentials: 'include',
                                   headers: { 'Content-Type': 'application/json' },
                                   body: JSON.stringify({ ownerEmail: s.ownerEmail }),
