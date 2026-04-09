@@ -559,15 +559,28 @@ export default function App() {
     } catch { return {}; }
   });
   useEffect(() => { try { localStorage.setItem(`banks-coll-pct-${activeYear}`, JSON.stringify(collPctByMonth)); } catch {} }, [collPctByMonth, activeYear]);
-  // Reset adjustments when switching years (each year has independent assumptions)
+  // Load year-specific adjustments when switching years — inherit from current year if none saved
   useEffect(() => {
     try {
       const salKey = `banks-salary-adj-${activeYear}`;
       const colKey = `banks-coll-pct-${activeYear}`;
       const salSaved = localStorage.getItem(salKey);
       const colSaved = localStorage.getItem(colKey);
-      setSalaryAdjPctByMonth(salSaved ? JSON.parse(salSaved) : {});
-      setCollPctByMonth(colSaved ? JSON.parse(colSaved) : {});
+      // If target year has its own adjustments, use them; otherwise inherit from current year as starting point
+      const salParsed = salSaved ? JSON.parse(salSaved) : null;
+      const colParsed = colSaved ? JSON.parse(colSaved) : null;
+      const salHasData = salParsed && Object.keys(salParsed).length > 0;
+      const colHasData = colParsed && Object.keys(colParsed).length > 0;
+      if (salHasData) { setSalaryAdjPctByMonth(salParsed); }
+      else {
+        const srcSal = localStorage.getItem(`banks-salary-adj-${currentYear}`) || localStorage.getItem('banks-salary-adj');
+        setSalaryAdjPctByMonth(srcSal ? JSON.parse(srcSal) : {});
+      }
+      if (colHasData) { setCollPctByMonth(colParsed); }
+      else {
+        const srcCol = localStorage.getItem(`banks-coll-pct-${currentYear}`) || localStorage.getItem('banks-coll-pct');
+        setCollPctByMonth(srcCol ? JSON.parse(srcCol) : {});
+      }
     } catch {
       setSalaryAdjPctByMonth({});
       setCollPctByMonth({});
