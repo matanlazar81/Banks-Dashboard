@@ -4479,11 +4479,13 @@ useEffect(() => {
                                 setForecastDrilldown(prev => prev ? { ...prev, data: { actuals, budget, headcount: null, __nsMode: true } } : null);
                               });
                             }
-                          }}>{r.salary > 0 ? `-${fmtC(r.salary, r.salaryILS)}` : '-'}</span>
-                          {!r.isPast && r.salaryBase > 0 && r.salary !== r.salaryBase && (() => {
-                            const delta = r.salary - r.salaryBase;
-                            return <span className={`text-[9px] font-semibold ml-1 px-1 py-0 rounded ${delta > 0 ? 'text-red-600 bg-red-50' : 'text-green-700 bg-green-50'}`}>{delta > 0 ? '+' : ''}{fmt(delta)}</span>;
-                          })()}
+                          }}>
+                            {r.salary > 0 ? `-${fmtC(r.salary, r.salaryILS)}` : '-'}
+                            {!r.isPast && r.salaryBase > 0 && r.salary !== r.salaryBase && (() => {
+                              const saving = r.salaryBase - r.salary;
+                              return <div className={`text-[9px] font-semibold ${saving > 0 ? 'text-green-600' : 'text-red-500'}`}>{saving > 0 ? 'saving ' : ''}{fmt(Math.abs(saving))}</div>;
+                            })()}
+                          </span>
                         </div>
                       </td>
                       <td className="py-2.5 pr-1 text-right text-violet-700 font-medium whitespace-nowrap cursor-pointer hover:underline"
@@ -4506,9 +4508,9 @@ useEffect(() => {
                           }}>
                         {r.vendors > 0 ? `-${fmtC(r.vendors, r.vendorsILS)}` : '-'}
                         {!r.isPast && r.vendorsBase > 0 && r.vendors !== r.vendorsBase && (() => {
-                          const delta = r.vendors - r.vendorsBase;
-                          const effPct = Math.round((delta / r.vendorsBase) * 100);
-                          return <span className={`text-[9px] font-semibold ml-1 px-1 py-0 rounded ${delta > 0 ? 'text-red-600 bg-red-50' : 'text-green-700 bg-green-50'}`}>{effPct > 0 ? '+' : ''}{effPct}%</span>;
+                          const saving = r.vendorsBase - r.vendors;
+                          const effPct = Math.round(((r.vendors - r.vendorsBase) / r.vendorsBase) * 100);
+                          return <div className={`text-[9px] font-semibold ${saving > 0 ? 'text-green-600' : 'text-red-500'}`}>{saving > 0 ? 'saving ' : ''}{fmt(Math.abs(saving))} ({effPct > 0 ? '+' : ''}{effPct}%)</div>;
                         })()}
                         {r.vendors > 0 && r.vendors === r.vendorsBase && <span className="text-[10px] text-violet-400 ml-1">→</span>}
                       </td>
