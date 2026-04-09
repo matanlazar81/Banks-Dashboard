@@ -4766,7 +4766,10 @@ useEffect(() => {
                         <td className="py-2 pr-1 text-green-800" colSpan={6}>TOTAL SAVINGS</td>
                         <td className="py-2 pr-1 text-right">{fmt(totalSalarySaving)}</td>
                         <td className="py-2 pr-1 text-right">{fmt(totalVendorSaving)}</td>
-                        <td className="py-2 pr-1 text-right" colSpan={4}>{fmt(totalSaving)}</td>
+                        <td className="py-2 pr-1 text-right">{fmt(totalSaving)}</td>
+                        <td className="py-2 pr-1 text-right">{fmt(totalSaving)}</td>
+                        <td className="py-2 pr-1 text-right"></td>
+                        <td className="py-2 pr-1 text-right">{fmt(totalSaving)}</td>
                       </tr>
                       <tr className="bg-emerald-50 font-bold text-emerald-800 whitespace-nowrap">
                         <td className="py-2 pr-1" colSpan={6}>TOTAL AFTER SAVINGS</td>
