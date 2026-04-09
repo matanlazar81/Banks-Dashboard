@@ -4718,7 +4718,7 @@ useEffect(() => {
                 </tbody>
                 <tfoot>
                   <tr className="border-t-2 border-gray-300 font-bold bg-gray-50 whitespace-nowrap">
-                    <td className="py-2.5 pr-1 text-gray-800">TOTAL</td>
+                    <td className="py-2.5 pr-1 text-gray-800">TOTAL{cashflowForecast.some(r => r.salary !== r.salaryBase || r.vendors !== r.vendorsBase) ? ' (BEFORE SAVINGS)' : ''}</td>
                     <td className="py-2.5 pr-1"></td>
                     <td className="py-2.5 pr-1 text-right text-green-700">
                       {fmtC(cashflowForecast.reduce((s, r) => s + r.collections, 0), cashflowForecast.reduce((s, r) => s + r.collectionsILS, 0))}
@@ -4732,15 +4732,17 @@ useEffect(() => {
                     <td className="py-2.5 pr-1 text-right text-emerald-700">
                       {fmtC(cashflowForecast.reduce((s, r) => s + r.collections + r.pipelineWeighted - r.churnDeduction, 0), cashflowForecast.reduce((s, r) => s + r.collectionsILS + r.pipelineWeightedILS - r.churnDeductionILS, 0))}
                     </td>
-                    <td className="py-2.5 pr-1 text-right text-amber-700">
-                      -{fmtC(cashflowForecast.reduce((s, r) => s + r.salary, 0), cashflowForecast.reduce((s, r) => s + r.salaryILS, 0))}
-                    </td>
-                    <td className="py-2.5 pr-1 text-right text-violet-700">
-                      -{fmtC(cashflowForecast.reduce((s, r) => s + r.vendors, 0), cashflowForecast.reduce((s, r) => s + r.vendorsILS, 0))}
-                    </td>
-                    <td className="py-2.5 pr-1 text-right text-red-700">
-                      -{fmtC(cashflowForecast.reduce((s, r) => s + r.totalOutflow, 0), cashflowForecast.reduce((s, r) => s + r.totalOutflowILS, 0))}
-                    </td>
+                    {(() => {
+                      const hasSavings = cashflowForecast.some(r => r.salary !== r.salaryBase || r.vendors !== r.vendorsBase);
+                      const salTotal = cashflowForecast.reduce((s, r) => s + (hasSavings ? r.salaryBase : r.salary), 0);
+                      const venTotal = cashflowForecast.reduce((s, r) => s + (hasSavings ? r.vendorsBase : r.vendors), 0);
+                      const outTotal = salTotal + venTotal;
+                      return (<>
+                        <td className="py-2.5 pr-1 text-right text-amber-700">-{fmt(salTotal)}</td>
+                        <td className="py-2.5 pr-1 text-right text-violet-700">-{fmt(venTotal)}</td>
+                        <td className="py-2.5 pr-1 text-right text-red-700">-{fmt(outTotal)}</td>
+                      </>);
+                    })()}
                     <td className={`py-2.5 pr-1 text-right ${cashflowForecast.reduce((s, r) => s + r.net, 0) >= 0 ? 'text-green-700' : 'text-red-700'}`}>
                       {fmtC(cashflowForecast.reduce((s, r) => s + r.net, 0), cashflowForecast.reduce((s, r) => s + r.netILS, 0))}
                     </td>
