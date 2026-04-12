@@ -2974,6 +2974,8 @@ useEffect(() => {
               revBudget: Math.round((sfRevenue.budget?.[r.mKey]?.eur || nsBudget.byMonth[r.mKey]?.revenue || 0) / 1000),
               revActual: Math.round((sfRevenuePaid[r.mKey]?.revenue || 0) / 1000),
               revVariance: (() => { const act = Math.round((sfRevenuePaid[r.mKey]?.revenue || 0) / 1000); const bud = Math.round((sfRevenue.budget?.[r.mKey]?.eur || nsBudget.byMonth[r.mKey]?.revenue || 0) / 1000); return act > 0 && bud > 0 ? act - bud : undefined; })(),
+              totalBudget: Math.round((sfSalaryBudget[r.mKey]?.eur || nsBudget.byMonth[r.mKey]?.salary || 0) / 1000) + Math.round((sfBudget.totalByMonth[r.mKey]?.eur || nsBudget.byMonth[r.mKey]?.vendors || 0) / 1000),
+              totalActual: Math.round((sfActualsSplit[r.mKey]?.salary || (salaryData.find(s => s.month === r.mKey)?.amountEUR) || 0) / 1000) + Math.round((sfActualsSplit[r.mKey]?.vendors || vendorHistory.filter(v => v.paidDate.startsWith(r.mKey)).reduce((s, v) => s + v.amountEUR, 0) || 0) / 1000),
               isPast: r.isPast,
               isCurrent: r.isCurrent,
             };
@@ -3181,7 +3183,7 @@ useEffect(() => {
                 <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl p-8 max-h-[90vh]" onClick={e => e.stopPropagation()}>
                   <div className="flex justify-between items-center mb-4">
                     <h3 className="text-lg font-semibold text-gray-700">
-                      {expandedChart === 'cash' ? 'Cash Balance Forecast (€K)' : expandedChart === 'salary' ? 'Salary — Budget vs Actual (€K)' : expandedChart === 'netflow' ? 'Net Cashflow — Inflows vs Outflows (€K)' : expandedChart === 'revenue' ? 'Revenue — Budget vs Actual (€K)' : 'Vendors — Budget vs Actual (€K)'}
+                      {expandedChart === 'cash' ? 'Cash Balance Forecast (€K)' : expandedChart === 'salary' ? 'Salary — Budget vs Actual (€K)' : expandedChart === 'netflow' ? 'Net Cashflow — Inflows vs Outflows (€K)' : expandedChart === 'revenue' ? 'Revenue — Budget vs Actual (€K)' : expandedChart === 'total' ? 'Total — Budget vs Actual (€K)' : 'Vendors — Budget vs Actual (€K)'}
                     </h3>
                     <button onClick={() => setExpandedChart(null)} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
                   </div>
@@ -3249,6 +3251,20 @@ useEffect(() => {
                         </Line>
                         <Legend wrapperStyle={{ fontSize: 13 }} />
                       </ComposedChart>
+                    ) : expandedChart === 'total' ? (
+                      <BarChart data={chartData} margin={{ top: 30, right: 20, left: 20, bottom: 10 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                        <XAxis dataKey="name" tick={{ fontSize: 13 }} />
+                        <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => `${v}K`} domain={[0, (max: number) => Math.ceil(max * 1.08)]} />
+                        <Tooltip formatter={(value: number, name: string) => [`€${value.toLocaleString()}K`, name]} />
+                        <Bar dataKey="totalBudget" name="Budget" fill="#fdba74" opacity={0.5} radius={[3, 3, 0, 0]}>
+                          <LabelList content={(props: any) => { const { x, y, width, value } = props; if (!value || value === 0) return null; return <text x={x + width / 2} y={y + 16} fill="#9a3412" fontSize={10} fontWeight={500} textAnchor="middle">{value}K</text>; }} />
+                        </Bar>
+                        <Bar dataKey="totalActual" name="Actual" fill="#f97316" radius={[3, 3, 0, 0]}>
+                          <LabelList content={(props: any) => { const { x, y, width, value } = props; if (!value || value === 0) return null; return <text x={x + width / 2} y={y - 6} fill="#333" fontSize={12} fontWeight={600} textAnchor="middle">{value}K</text>; }} />
+                        </Bar>
+                        <Legend wrapperStyle={{ fontSize: 13 }} />
+                      </BarChart>
                     ) : (
                       <BarChart data={chartData} margin={{ top: 30, right: 20, left: 20, bottom: 10 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
@@ -3328,6 +3344,26 @@ useEffect(() => {
                   </BarChart>
                 </ResponsiveContainer>
               </div>
+            </div>
+
+            {/* Total Budget vs Actual */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 cursor-pointer hover:shadow-md transition-shadow" onClick={() => setExpandedChart('total')} title="Click to expand">
+              <h3 className="text-sm font-medium text-gray-700 mb-3">Total — Budget vs Actual (€K) <span className="text-[10px] text-gray-400 font-normal ml-2">click to expand</span></h3>
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={chartData} margin={{ top: 20, right: 10, left: 10, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                  <XAxis dataKey="name" tick={{ fontSize: 10 }} />
+                  <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => `${v}K`} />
+                  <Tooltip formatter={(value: number, name: string) => [`€${value.toLocaleString()}K`, name]} />
+                  <Bar dataKey="totalBudget" name="Budget" fill="#fdba74" opacity={0.5} radius={[2, 2, 0, 0]}>
+                    <LabelList content={renderLabel} />
+                  </Bar>
+                  <Bar dataKey="totalActual" name="Actual" fill="#f97316" radius={[2, 2, 0, 0]}>
+                    <LabelList content={renderLabel} />
+                  </Bar>
+                  <Legend wrapperStyle={{ fontSize: 10 }} />
+                </BarChart>
+              </ResponsiveContainer>
             </div>
 
             {/* Net Cashflow — Inflows vs Outflows */}
