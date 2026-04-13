@@ -2718,19 +2718,21 @@ useEffect(() => {
                         adjustedBalance: last ? (last.adjustedBalance || last.balance || 0) : null,
                       };
                     });
-                    const dataKey = hasAdjusted && !isSnapshotYear ? 'adjustedBalance' : 'balance';
+                    const showBoth = hasAdjusted && !isSnapshotYear;
                     return (
-                      <BarChart data={monthlyData} margin={{ top: 5, right: 5, left: 5, bottom: 5 }}>
+                      <ComposedChart data={monthlyData} margin={{ top: 5, right: 5, left: 5, bottom: 5 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                         <XAxis dataKey="month" tick={{ fontSize: 9 }} />
                         <YAxis tick={{ fontSize: 9 }} tickFormatter={(v: number) => v >= 1000000 ? `€${(v/1000000).toFixed(1)}M` : `€${(v/1000).toFixed(0)}k`} />
-                        <Tooltip formatter={(v: any, name: string) => [v != null ? fmtFull(v as number) : 'No data', name === 'adjustedBalance' ? 'Adjusted Balance' : 'Balance']} />
-                        <Bar dataKey={dataKey} radius={[2, 2, 0, 0]}>
+                        <Tooltip formatter={(v: any, name: string) => [v != null ? fmtFull(v as number) : 'No data', name === 'adjustedBalance' ? 'Adj. (est. reval)' : 'Raw Balance']} />
+                        <Bar dataKey="balance" name="Raw Balance" radius={[2, 2, 0, 0]}>
                           {monthlyData.map((d, i) => (
-                            <Cell key={i} fill={d[dataKey] == null ? '#e5e7eb' : (d[dataKey] as number) >= 0 ? '#10b981' : '#ef4444'} />
+                            <Cell key={i} fill={d.balance == null ? '#e5e7eb' : (d.balance as number) >= 0 ? '#10b981' : '#ef4444'} />
                           ))}
                         </Bar>
-                      </BarChart>
+                        {showBoth && <Line type="monotone" dataKey="adjustedBalance" name="Adj. (est. reval)" stroke="#f59e0b" strokeWidth={2} strokeDasharray="4 2" dot={{ r: 3, fill: '#f59e0b', stroke: '#fff', strokeWidth: 1 }} connectNulls />}
+                        {showBoth && <Legend wrapperStyle={{ fontSize: 9 }} />}
+                      </ComposedChart>
                     );
                   })()}
                 </ResponsiveContainer>
@@ -2768,19 +2770,21 @@ useEffect(() => {
                           adjustedBalance: last ? (last.adjustedBalance || last.balance || 0) : null,
                         };
                       });
-                      const dataKey = hasAdjustedLocal ? 'adjustedBalance' : 'balance';
+                      const showBoth = hasAdjustedLocal;
                       return (
-                        <BarChart data={monthlyData} margin={{ top: 5, right: 5, left: 5, bottom: 5 }}>
+                        <ComposedChart data={monthlyData} margin={{ top: 5, right: 5, left: 5, bottom: 5 }}>
                           <CartesianGrid strokeDasharray="3 3" stroke="#dbeafe" />
                           <XAxis dataKey="month" tick={{ fontSize: 9 }} />
                           <YAxis tick={{ fontSize: 9 }} tickFormatter={(v: number) => Math.abs(v) >= 1000000 ? `₪${(v/1000000).toFixed(1)}M` : `₪${(v/1000).toFixed(0)}k`} />
-                          <Tooltip formatter={(v: any, name: string) => [v != null ? fmtILS(v as number) : 'No data', name === 'adjustedBalance' ? 'Adjusted Balance' : 'Balance']} />
-                          <Bar dataKey={dataKey} radius={[2, 2, 0, 0]}>
+                          <Tooltip formatter={(v: any, name: string) => [v != null ? fmtILS(v as number) : 'No data', name === 'adjustedBalance' ? 'Adj. (est. reval)' : 'Raw Balance']} />
+                          <Bar dataKey="balance" name="Raw Balance" radius={[2, 2, 0, 0]}>
                             {monthlyData.map((d, i) => (
-                              <Cell key={i} fill={d[dataKey] == null ? '#dbeafe' : (d[dataKey] as number) >= 0 ? '#3b82f6' : '#ef4444'} />
+                              <Cell key={i} fill={d.balance == null ? '#dbeafe' : (d.balance as number) >= 0 ? '#3b82f6' : '#ef4444'} />
                             ))}
                           </Bar>
-                        </BarChart>
+                          {showBoth && <Line type="monotone" dataKey="adjustedBalance" name="Adj. (est. reval)" stroke="#f59e0b" strokeWidth={2} strokeDasharray="4 2" dot={{ r: 3, fill: '#f59e0b', stroke: '#fff', strokeWidth: 1 }} connectNulls />}
+                          {showBoth && <Legend wrapperStyle={{ fontSize: 9 }} />}
+                        </ComposedChart>
                       );
                     })()}
                   </ResponsiveContainer>
