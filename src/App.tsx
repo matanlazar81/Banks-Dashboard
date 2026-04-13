@@ -3005,24 +3005,26 @@ useEffect(() => {
               isCurrent: r.isCurrent,
             };
           });
-          // Compute projection: past/current months use actual, future months use avg of past actuals
-          const pastActuals = chartData.filter(d => (d.isPast || d.isCurrent) && d.totalActual > 0).map(d => d.totalActual);
-          const avgPastActual = pastActuals.length > 0 ? Math.round(pastActuals.reduce((s, v) => s + v, 0) / pastActuals.length) : 0;
-          // Linear trend: use simple linear regression on past actuals for a trend line
-          const trendSlope = pastActuals.length >= 2
-            ? pastActuals.reduce((s, v, i) => s + (i - (pastActuals.length - 1) / 2) * (v - avgPastActual), 0) /
-              pastActuals.reduce((s, _, i) => s + Math.pow(i - (pastActuals.length - 1) / 2, 2), 0)
+          // Compute projection: only use COMPLETED past months (exclude current partial month)
+          const completedActuals = chartData.filter(d => d.isPast && d.totalActual > 0).map(d => d.totalActual);
+          const avgCompleted = completedActuals.length > 0 ? Math.round(completedActuals.reduce((s, v) => s + v, 0) / completedActuals.length) : 0;
+          // Linear trend based on completed months only
+          const trendSlope = completedActuals.length >= 2
+            ? completedActuals.reduce((s, v, i) => s + (i - (completedActuals.length - 1) / 2) * (v - avgCompleted), 0) /
+              completedActuals.reduce((s, _, i) => s + Math.pow(i - (completedActuals.length - 1) / 2, 2), 0)
             : 0;
+          const firstPastIdx = chartData.findIndex(d => d.isPast && d.totalActual > 0);
           chartData.forEach((d, i) => {
-            if ((d.isPast || d.isCurrent) && d.totalActual > 0) {
+            if (d.isPast && d.totalActual > 0) {
               (d as any).totalProjected = d.totalActual;
-            } else if (!d.isPast && !d.isCurrent) {
-              // Project using linear trend from past actuals
-              const projIdx = pastActuals.length + (i - pastActuals.length);
-              (d as any).totalProjected = Math.max(0, Math.round(avgPastActual + trendSlope * (projIdx - (pastActuals.length - 1) / 2)));
+            } else if (d.isCurrent || (!d.isPast && !d.isCurrent)) {
+              // For current (partial) and future months: project from completed months trend
+              const stepsFromStart = i - firstPastIdx;
+              (d as any).totalProjected = Math.max(0, Math.round(avgCompleted + trendSlope * (stepsFromStart - (completedActuals.length - 1) / 2)));
             }
             // Trend line spans all months
-            (d as any).totalTrend = Math.max(0, Math.round(avgPastActual + trendSlope * (i - (pastActuals.length - 1) / 2)));
+            const stepsFromStart = i - firstPastIdx;
+            (d as any).totalTrend = Math.max(0, Math.round(avgCompleted + trendSlope * (stepsFromStart - (completedActuals.length - 1) / 2)));
           });
           const futureMonths = cashflowForecast.filter(r => !r.isPast && !r.isCurrent);
           const avgMonthlyNet = futureMonths.length > 0 ? Math.round(futureMonths.reduce((s, r) => s + r.net, 0) / futureMonths.length) : 0;
