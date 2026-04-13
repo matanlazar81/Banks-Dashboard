@@ -2702,45 +2702,50 @@ useEffect(() => {
                     // Build monthly end-of-month balances for all 12 months
                     const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
                     const isSnapshotYear = (activeYears[activeCompany] || currentYear) !== currentYear;
+                    // Compute cumulative reval impact per month (preYear + sum of monthly revals up to that month)
+                    let cumulativeReval = monthlyReval.preYear?.eur || 0;
                     const monthlyData = monthNames.map((name, mi) => {
                       if (isSnapshotYear && cashflowForecast) {
-                        // Use cashflow forecast closing balances for snapshot years
                         const row = cashflowForecast[mi];
-                        return { month: name, balance: row ? row.closingBalance : null, adjustedBalance: row ? row.closingBalance : null };
+                        return { month: name, balance: row ? row.closingBalance : null, revalAdjusted: null as number | null };
                       }
                       const mKey = `${activeYear}-${String(mi + 1).padStart(2, '0')}`;
-                      // Find last daily balance in this month
                       const monthBalances = book.dailyBalances.filter((d: any) => d.date && d.date.substring(0, 7) === mKey);
                       const last = monthBalances.length > 0 ? monthBalances[monthBalances.length - 1] : null;
                       const bal = last ? (last.balance || 0) : null;
-                      const adj = last ? (last.adjustedBalance || last.balance || 0) : null;
+                      // Add this month's reval to cumulative (only if complete month with both ends)
+                      const mReval = monthlyReval.byMonth?.[mKey];
+                      if (mReval?.hasBothEnds) cumulativeReval += mReval.eur || 0;
+                      // For the current month without complete reval, use the estimated adjustment from the API
+                      const estAdj = last?.adjustedBalance != null && last.adjustedBalance !== last.balance ? last.adjustedBalance : null;
+                      const revalAdj = bal != null ? (estAdj != null ? estAdj : bal + cumulativeReval) : null;
                       return {
                         month: name,
                         balance: bal,
-                        adjustedBalance: bal != null && adj != null && Math.abs(adj - bal) > 1 ? adj : null,
+                        revalAdjusted: revalAdj != null && bal != null && Math.abs(revalAdj - bal) > 1 ? revalAdj : null,
                       };
                     });
-                    const showBoth = hasAdjusted && !isSnapshotYear && monthlyData.some(d => d.adjustedBalance != null);
+                    const hasRevalData = monthlyData.some(d => d.revalAdjusted != null);
                     return (
                       <ComposedChart data={monthlyData} margin={{ top: 5, right: 5, left: 5, bottom: 5 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                         <XAxis dataKey="month" tick={{ fontSize: 9 }} />
                         <YAxis tick={{ fontSize: 9 }} tickFormatter={(v: number) => v >= 1000000 ? `€${(v/1000000).toFixed(1)}M` : `€${(v/1000).toFixed(0)}k`} />
-                        <Tooltip formatter={(v: any, name: string) => [v != null ? fmtFull(v as number) : 'No data', name === 'adjustedBalance' ? 'Adj. (est. reval)' : 'Raw Balance']} />
-                        <Bar dataKey="balance" name="Raw Balance" radius={[2, 2, 0, 0]}>
+                        <Tooltip formatter={(v: any, name: string) => [v != null ? fmtFull(v as number) : 'No data', name === 'revalAdjusted' ? 'Incl. FX Reval' : 'Bank Balance']} />
+                        <Bar dataKey="balance" name="Bank Balance" radius={[2, 2, 0, 0]}>
                           {monthlyData.map((d, i) => (
                             <Cell key={i} fill={d.balance == null ? '#e5e7eb' : (d.balance as number) >= 0 ? '#10b981' : '#ef4444'} />
                           ))}
                         </Bar>
-                        {showBoth && <Line type="monotone" dataKey="adjustedBalance" name="Adj. (est. reval)" stroke="#f59e0b" strokeWidth={2} strokeDasharray="4 2" dot={{ r: 3, fill: '#f59e0b', stroke: '#fff', strokeWidth: 1 }} connectNulls />}
-                        {showBoth && <Legend wrapperStyle={{ fontSize: 9 }} />}
+                        {hasRevalData && <Line type="monotone" dataKey="revalAdjusted" name="Incl. FX Reval" stroke="#f59e0b" strokeWidth={2} strokeDasharray="4 2" dot={{ r: 3, fill: '#f59e0b', stroke: '#fff', strokeWidth: 1 }} connectNulls />}
+                        {hasRevalData && <Legend wrapperStyle={{ fontSize: 9 }} />}
                       </ComposedChart>
                     );
                   })()}
                 </ResponsiveContainer>
                 <div className="flex items-center justify-between text-xs text-emerald-600 mt-1">
                   <span>Opening: {fmtFull(book.openingBalance)}</span>
-                  {hasAdjusted && !((activeYears[activeCompany] || currentYear) !== currentYear) && <span className="text-amber-500">■ Estimated reval adjustment</span>}
+                  {hasAdjusted && !((activeYears[activeCompany] || currentYear) !== currentYear) && <span className="text-amber-500">■ Incl. FX Reval (line)</span>}
                   {(activeYears[activeCompany] || currentYear) !== currentYear && cashflowForecast?.length ? (
                     <span>Dec Closing: {fmtFull(cashflowForecast[11]?.closingBalance || 0)}</span>
                   ) : (
@@ -2762,39 +2767,43 @@ useEffect(() => {
                   <ResponsiveContainer width="100%" height={120}>
                     {(() => {
                       const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+                      let cumulativeRevalILS = monthlyReval.preYear?.ils || 0;
                       const monthlyData = monthNames.map((name, mi) => {
                         const mKey = `${activeYear}-${String(mi + 1).padStart(2, '0')}`;
                         const monthBalances = bookLocal.dailyBalances.filter((d: any) => d.date && d.date.substring(0, 7) === mKey);
                         const last = monthBalances.length > 0 ? monthBalances[monthBalances.length - 1] : null;
                         const bal = last ? (last.balance || 0) : null;
-                        const adj = last ? (last.adjustedBalance || last.balance || 0) : null;
+                        const mReval = monthlyReval.byMonth?.[mKey];
+                        if (mReval?.hasBothEnds) cumulativeRevalILS += mReval.ils || 0;
+                        const estAdj = last?.adjustedBalance != null && last.adjustedBalance !== last.balance ? last.adjustedBalance : null;
+                        const revalAdj = bal != null ? (estAdj != null ? estAdj : bal + cumulativeRevalILS) : null;
                         return {
                           month: name,
                           balance: bal,
-                          adjustedBalance: bal != null && adj != null && Math.abs(adj - bal) > 1 ? adj : null,
+                          revalAdjusted: revalAdj != null && bal != null && Math.abs(revalAdj - bal) > 1 ? revalAdj : null,
                         };
                       });
-                      const showBoth = hasAdjustedLocal && monthlyData.some(d => d.adjustedBalance != null);
+                      const hasRevalData = monthlyData.some(d => d.revalAdjusted != null);
                       return (
                         <ComposedChart data={monthlyData} margin={{ top: 5, right: 5, left: 5, bottom: 5 }}>
                           <CartesianGrid strokeDasharray="3 3" stroke="#dbeafe" />
                           <XAxis dataKey="month" tick={{ fontSize: 9 }} />
                           <YAxis tick={{ fontSize: 9 }} tickFormatter={(v: number) => Math.abs(v) >= 1000000 ? `₪${(v/1000000).toFixed(1)}M` : `₪${(v/1000).toFixed(0)}k`} />
-                          <Tooltip formatter={(v: any, name: string) => [v != null ? fmtILS(v as number) : 'No data', name === 'adjustedBalance' ? 'Adj. (est. reval)' : 'Raw Balance']} />
-                          <Bar dataKey="balance" name="Raw Balance" radius={[2, 2, 0, 0]}>
+                          <Tooltip formatter={(v: any, name: string) => [v != null ? fmtILS(v as number) : 'No data', name === 'revalAdjusted' ? 'Incl. FX Reval' : 'Bank Balance']} />
+                          <Bar dataKey="balance" name="Bank Balance" radius={[2, 2, 0, 0]}>
                             {monthlyData.map((d, i) => (
                               <Cell key={i} fill={d.balance == null ? '#dbeafe' : (d.balance as number) >= 0 ? '#3b82f6' : '#ef4444'} />
                             ))}
                           </Bar>
-                          {showBoth && <Line type="monotone" dataKey="adjustedBalance" name="Adj. (est. reval)" stroke="#f59e0b" strokeWidth={2} strokeDasharray="4 2" dot={{ r: 3, fill: '#f59e0b', stroke: '#fff', strokeWidth: 1 }} connectNulls />}
-                          {showBoth && <Legend wrapperStyle={{ fontSize: 9 }} />}
+                          {hasRevalData && <Line type="monotone" dataKey="revalAdjusted" name="Incl. FX Reval" stroke="#f59e0b" strokeWidth={2} strokeDasharray="4 2" dot={{ r: 3, fill: '#f59e0b', stroke: '#fff', strokeWidth: 1 }} connectNulls />}
+                          {hasRevalData && <Legend wrapperStyle={{ fontSize: 9 }} />}
                         </ComposedChart>
                       );
                     })()}
                   </ResponsiveContainer>
                   <div className="flex items-center justify-between text-xs text-blue-600 mt-1">
                     <span>Opening: {fmtILS(bookLocal.openingBalance)}</span>
-                    {hasAdjustedLocal && <span className="text-amber-500">■ Estimated reval adjustment</span>}
+                    {hasAdjustedLocal && <span className="text-amber-500">■ Incl. FX Reval (line)</span>}
                     <span>YTD: {fmtILS(reconciledAdjILS - bookLocal.openingBalance)} ({bookLocal.openingBalance !== 0 ? ((reconciledAdjILS - bookLocal.openingBalance) / Math.abs(bookLocal.openingBalance) * 100).toFixed(1) : '0'}%)</span>
                   </div>
                 </div>
