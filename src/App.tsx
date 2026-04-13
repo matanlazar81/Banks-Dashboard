@@ -4514,7 +4514,7 @@ useEffect(() => {
                     <th className="pb-2 pr-1 text-right whitespace-nowrap">Opening Bal.</th>
                     <th className="pb-2 pr-1 text-right text-green-600 whitespace-nowrap">Inflows (AR)</th>
                     <th className="pb-2 pr-1 text-right text-teal-600 whitespace-nowrap">Pipeline<div className="text-[8px] font-normal normal-case text-gray-400">{pipelineMinProb}% • {cashflowForecast[0]?.pipelineHistWinRate || 33}% wr • +{cashflowForecast[0]?.pipelineDelayMonths || 2}m</div></th>
-                    <th className="pb-2 pr-1 text-right text-orange-600 whitespace-nowrap">Churn</th>
+                    <th className="pb-2 pr-1 text-right text-orange-600 whitespace-nowrap">Churn<div className="text-[8px] font-normal normal-case text-gray-400">{(() => { const cy = churnData.find(c => c.year === activeYear); return cy && cy.monthlyImpact > 0 ? `${activeYear} impact: €${Math.round(cy.monthlyImpact / 1000)}K/mo` : `6m avg: €${Math.round(churnMonthlyAvg / 1000)}K/mo`; })()}</div></th>
                     <th className="pb-2 pr-1 text-right text-emerald-700 whitespace-nowrap">Total Inflows</th>
                     <th className="pb-2 pr-1 text-right text-amber-600 whitespace-nowrap">Salary</th>
                     <th className="pb-2 pr-1 text-right text-violet-600 whitespace-nowrap">Vendors</th>
