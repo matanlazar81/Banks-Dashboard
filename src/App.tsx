@@ -3156,9 +3156,9 @@ useEffect(() => {
               const netCashOnTrack = netCashGrowth >= netCashTarget;
               const netCashProgress = Math.min(100, Math.max(0, (netCashGrowth / netCashTarget) * 100));
 
-              // Projected year-end: Dec closing from forecast
+              // Projected year-end: use sum of monthly net + reval (consistent with table totals)
               const decClosing = cashflowForecast.length > 0 ? cashflowForecast[cashflowForecast.length - 1].closingBalance : janOpening;
-              const projNetCashGrowth = decClosing - janOpening;
+              const projNetCashGrowth = cashflowForecast.reduce((s, r) => s + r.net + r.revalImpact, 0);
               const projNetCashOnTrack = projNetCashGrowth >= netCashTarget;
               const projNetCashProgress = Math.min(100, Math.max(0, (projNetCashGrowth / netCashTarget) * 100));
 
@@ -3507,7 +3507,7 @@ useEffect(() => {
           const totalVendors = cc.reduce((s, r) => s + r.vendors, 0);
           const totalICRev = cc.reduce((s, r) => s + r.icRevenue, 0);
           const totalICExp = cc.reduce((s, r) => s + r.icExpense, 0);
-          const netCashGrowth = decClosing - janOpening;
+          const netCashGrowth = cc.reduce((s, r) => s + r.net + r.revalImpact, 0);
           const netCashTarget = 9500000;
           const onTrack = netCashGrowth >= netCashTarget;
           return (
