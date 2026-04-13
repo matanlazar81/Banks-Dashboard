@@ -2712,13 +2712,15 @@ useEffect(() => {
                       // Find last daily balance in this month
                       const monthBalances = book.dailyBalances.filter((d: any) => d.date && d.date.substring(0, 7) === mKey);
                       const last = monthBalances.length > 0 ? monthBalances[monthBalances.length - 1] : null;
+                      const bal = last ? (last.balance || 0) : null;
+                      const adj = last ? (last.adjustedBalance || last.balance || 0) : null;
                       return {
                         month: name,
-                        balance: last ? (last.balance || 0) : null,
-                        adjustedBalance: last ? (last.adjustedBalance || last.balance || 0) : null,
+                        balance: bal,
+                        adjustedBalance: bal != null && adj != null && Math.abs(adj - bal) > 1 ? adj : null,
                       };
                     });
-                    const showBoth = hasAdjusted && !isSnapshotYear;
+                    const showBoth = hasAdjusted && !isSnapshotYear && monthlyData.some(d => d.adjustedBalance != null);
                     return (
                       <ComposedChart data={monthlyData} margin={{ top: 5, right: 5, left: 5, bottom: 5 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
@@ -2764,13 +2766,15 @@ useEffect(() => {
                         const mKey = `${activeYear}-${String(mi + 1).padStart(2, '0')}`;
                         const monthBalances = bookLocal.dailyBalances.filter((d: any) => d.date && d.date.substring(0, 7) === mKey);
                         const last = monthBalances.length > 0 ? monthBalances[monthBalances.length - 1] : null;
+                        const bal = last ? (last.balance || 0) : null;
+                        const adj = last ? (last.adjustedBalance || last.balance || 0) : null;
                         return {
                           month: name,
-                          balance: last ? (last.balance || 0) : null,
-                          adjustedBalance: last ? (last.adjustedBalance || last.balance || 0) : null,
+                          balance: bal,
+                          adjustedBalance: bal != null && adj != null && Math.abs(adj - bal) > 1 ? adj : null,
                         };
                       });
-                      const showBoth = hasAdjustedLocal;
+                      const showBoth = hasAdjustedLocal && monthlyData.some(d => d.adjustedBalance != null);
                       return (
                         <ComposedChart data={monthlyData} margin={{ top: 5, right: 5, left: 5, bottom: 5 }}>
                           <CartesianGrid strokeDasharray="3 3" stroke="#dbeafe" />
