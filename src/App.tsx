@@ -522,6 +522,7 @@ export default function App() {
   const [consBankExpanded, setConsBankExpanded] = useState<'ls' | 'st' | null>(null);
   const [expandedChart, setExpandedChart] = useState<string | null>(null);
   const [burnOverride, setBurnOverride] = useState<number | null>(null);
+  const [churnOverride, setChurnOverride] = useState<Record<string, number>>({});
   const [expandedKpi, setExpandedKpi] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [lastRefreshed, setLastRefreshed] = useState('');
@@ -1706,10 +1707,14 @@ useEffect(() => {
       }
 
       const totalOutflow = salary + vendors;
-      // Churn deduction: for future months, subtract 6-month rolling avg of monthly churn impact
+      // Churn deduction: for future months, subtract 6-month rolling avg of monthly churn impact (or manual override)
       let churnDeduction = 0;
-      if (!isPastMonth && !isCurMonth && churnMonthlyAvg > 0) {
-        churnDeduction = churnMonthlyAvg;
+      if (!isPastMonth && !isCurMonth) {
+        if (churnOverride[mKey] !== undefined) {
+          churnDeduction = churnOverride[mKey];
+        } else if (churnMonthlyAvg > 0) {
+          churnDeduction = churnMonthlyAvg;
+        }
       }
       const churnDeductionILS = Math.round(churnDeduction * eurIlsRatio);
       const net = collections + pipelineWeighted - totalOutflow - churnDeduction;
@@ -1733,7 +1738,7 @@ useEffect(() => {
       rows.push({ month: label, mKey, openingBalance, openingBalanceILS, salary, salaryBase, salaryILS, vendors, vendorsBase, vendorsILS, totalOutflow, totalOutflowILS, collections, collectionsILS, collectionsActual, collectionsRemaining, collectionsForecast, collectionsRevenue, collectionsUnpaidCarry, collectionsUnpaidCarryMonth, collectionsPipeline, customers, pipelineWeighted, pipelineWeightedILS, pipelineTotal, pipelineCount, pipelineOpps, pipelineHistWinRate, pipelineDelayMonths, churnDeduction, churnDeductionILS, net, netILS, revalImpact, revalImpactILS, revalHasBothEnds, closingBalance: runningBalance, closingBalanceILS: runningBalanceILS, isCurrent: isCurMonth, isPast: isPastMonth });
     }
     return rows;
-  }, [vendorBills, arForecast, salaryData, vendorHistory, expenseCategories, book, bookLocal, actualCollections, sfBudget, sfRevenue, sfActualsSplit, salaryAdjPctByMonth, collPctByMonth, monthlyReval, sfSalaryBudget, sfRevenuePaid, sfPipeline, pipelineMinProb, sfConversion, salaryDeptAdj, salaryDeptBudgets, vendorCatAdj, vendorDetailAdj, prevMonthEndBalance, churnMonthlyAvg, asOfDate, nsBudget, activeYear]);
+  }, [vendorBills, arForecast, salaryData, vendorHistory, expenseCategories, book, bookLocal, actualCollections, sfBudget, sfRevenue, sfActualsSplit, salaryAdjPctByMonth, collPctByMonth, monthlyReval, sfSalaryBudget, sfRevenuePaid, sfPipeline, pipelineMinProb, sfConversion, salaryDeptAdj, salaryDeptBudgets, vendorCatAdj, vendorDetailAdj, prevMonthEndBalance, churnMonthlyAvg, churnOverride, asOfDate, nsBudget, activeYear]);
 
   // ── Capture current-year cashflow for propagation to next year ──
   useEffect(() => {
@@ -4629,29 +4634,34 @@ useEffect(() => {
                           </div>
                         ) : '-'}
                       </td>
-                      <td className={`py-2.5 pr-1 text-right font-medium ${r.churnDeduction > 0 ? 'text-orange-600 cursor-pointer hover:underline' : 'text-gray-300'}`}
-                          onClick={() => {
-                            if (r.churnDeduction <= 0) return;
-                            // Show churn calculation breakdown + drilldown for most impactful recent year
-                            const currentYear = new Date().getFullYear();
-                            const recentYears = churnData.filter(c => c.monthlyImpact > 0).sort((a, b) => b.year - a.year);
-                            const last6m = recentYears.slice(0, 3); // show last few years for context
-                            setForecastDrilldown({ type: 'churn' as any, month: r.month, mKey: r.mKey, data: {
-                              __churnCalc: true,
-                              monthlyAvg: churnMonthlyAvg,
-                              deduction: r.churnDeduction,
-                              yearlyData: churnData.filter(c => c.year >= 2022),
-                            }});
-                            // Also load drilldown for most recent full year
-                            const topYear = recentYears.length > 0 ? recentYears[0].year : currentYear - 1;
-                            fetch(`/api/sf-churn-drilldown?year=${topYear}`).then(res => res.json()).then(j => {
-                              setForecastDrilldown(prev => prev ? { ...prev, data: { ...(prev.data as any), drilldown: j.data || [], drilldownYear: topYear } } : null);
-                            }).catch(() => {});
-                          }}>
-                        {r.churnDeduction > 0 ? (
-                          <div>
-                            <span>-{fmtC(r.churnDeduction, r.churnDeductionILS)}</span>
-                            <div className="text-[10px] text-gray-400">6m avg</div>
+                      <td className={`py-2.5 pr-1 text-right font-medium ${r.churnDeduction > 0 ? 'text-orange-600' : 'text-gray-300'}`}>
+                        {r.churnDeduction > 0 || (!r.isPast && !r.isCurrent) ? (
+                          <div className="flex flex-col items-end gap-0.5">
+                            <span className="cursor-pointer hover:underline" onClick={() => {
+                              if (r.churnDeduction <= 0) return;
+                              const currentYear = new Date().getFullYear();
+                              const recentYears = churnData.filter(c => c.monthlyImpact > 0).sort((a, b) => b.year - a.year);
+                              setForecastDrilldown({ type: 'churn' as any, month: r.month, mKey: r.mKey, data: {
+                                __churnCalc: true,
+                                monthlyAvg: churnMonthlyAvg,
+                                deduction: r.churnDeduction,
+                                yearlyData: churnData.filter(c => c.year >= 2022),
+                              }});
+                              const topYear = recentYears.length > 0 ? recentYears[0].year : currentYear - 1;
+                              fetch(`/api/sf-churn-drilldown?year=${topYear}`).then(res => res.json()).then(j => {
+                                setForecastDrilldown(prev => prev ? { ...prev, data: { ...(prev.data as any), drilldown: j.data || [], drilldownYear: topYear } } : null);
+                              }).catch(() => {});
+                            }}>{r.churnDeduction > 0 ? `-${fmtC(r.churnDeduction, r.churnDeductionILS)}` : '-'}</span>
+                            {!r.isPast && !r.isCurrent && (
+                              <div className="flex items-center gap-0.5">
+                                <button onClick={(e) => { e.stopPropagation(); setChurnOverride(prev => ({ ...prev, [r.mKey]: Math.max(0, (prev[r.mKey] ?? churnMonthlyAvg) - 1000) })); }} className="w-5 h-4 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-[10px] font-bold flex items-center justify-center border border-emerald-200" title="Decrease by €1K">−</button>
+                                <button onClick={(e) => { e.stopPropagation(); setChurnOverride(prev => ({ ...prev, [r.mKey]: (prev[r.mKey] ?? churnMonthlyAvg) + 1000 })); }} className="w-5 h-4 rounded bg-red-50 hover:bg-red-100 text-red-700 text-[10px] font-bold flex items-center justify-center border border-red-200" title="Increase by €1K">+</button>
+                                <input type="number" value={Math.round(r.churnDeduction)} onChange={(e) => { const v = parseInt(e.target.value); setChurnOverride(prev => ({ ...prev, [r.mKey]: isNaN(v) ? 0 : Math.max(0, v) })); }} onClick={(e) => e.stopPropagation()} className="w-16 h-4 text-[10px] text-center border border-gray-200 rounded px-0.5 focus:outline-none focus:ring-1 focus:ring-orange-300" />
+                                <button onClick={(e) => { e.stopPropagation(); const val = r.churnDeduction; setChurnOverride(prev => { const next = { ...prev }; cashflowForecast.filter(f => !f.isPast && !f.isCurrent && f.mKey > r.mKey).forEach(f => { next[f.mKey] = val; }); return next; }); }} className="text-[9px] text-blue-500 hover:text-blue-700 whitespace-nowrap ml-0.5" title="Copy this value to all following months">▶▶</button>
+                                {churnOverride[r.mKey] !== undefined && <button onClick={(e) => { e.stopPropagation(); setChurnOverride(prev => { const next = { ...prev }; delete next[r.mKey]; return next; }); }} className="text-[9px] text-gray-400 hover:text-gray-600" title="Reset to auto">✕</button>}
+                              </div>
+                            )}
+                            <div className="text-[10px] text-gray-400">{churnOverride[r.mKey] !== undefined ? 'manual' : '6m avg'}</div>
                           </div>
                         ) : '-'}
                       </td>
