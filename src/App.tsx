@@ -1707,13 +1707,14 @@ useEffect(() => {
       }
 
       const totalOutflow = salary + vendors;
-      // Churn deduction: for future months, subtract 6-month rolling avg of monthly churn impact (or manual override)
+      // Churn deduction: for future months, use current year's monthly impact from churn analysis (or manual override)
       let churnDeduction = 0;
       if (!isPastMonth && !isCurMonth) {
         if (churnOverride[mKey] !== undefined) {
           churnDeduction = churnOverride[mKey];
-        } else if (churnMonthlyAvg > 0) {
-          churnDeduction = churnMonthlyAvg;
+        } else {
+          const cyChurn = churnData.find(c => c.year === activeYear);
+          churnDeduction = cyChurn && cyChurn.monthlyImpact > 0 ? cyChurn.monthlyImpact : churnMonthlyAvg;
         }
       }
       const churnDeductionILS = Math.round(churnDeduction * eurIlsRatio);
@@ -1738,7 +1739,7 @@ useEffect(() => {
       rows.push({ month: label, mKey, openingBalance, openingBalanceILS, salary, salaryBase, salaryILS, vendors, vendorsBase, vendorsILS, totalOutflow, totalOutflowILS, collections, collectionsILS, collectionsActual, collectionsRemaining, collectionsForecast, collectionsRevenue, collectionsUnpaidCarry, collectionsUnpaidCarryMonth, collectionsPipeline, customers, pipelineWeighted, pipelineWeightedILS, pipelineTotal, pipelineCount, pipelineOpps, pipelineHistWinRate, pipelineDelayMonths, churnDeduction, churnDeductionILS, net, netILS, revalImpact, revalImpactILS, revalHasBothEnds, closingBalance: runningBalance, closingBalanceILS: runningBalanceILS, isCurrent: isCurMonth, isPast: isPastMonth });
     }
     return rows;
-  }, [vendorBills, arForecast, salaryData, vendorHistory, expenseCategories, book, bookLocal, actualCollections, sfBudget, sfRevenue, sfActualsSplit, salaryAdjPctByMonth, collPctByMonth, monthlyReval, sfSalaryBudget, sfRevenuePaid, sfPipeline, pipelineMinProb, sfConversion, salaryDeptAdj, salaryDeptBudgets, vendorCatAdj, vendorDetailAdj, prevMonthEndBalance, churnMonthlyAvg, churnOverride, asOfDate, nsBudget, activeYear]);
+  }, [vendorBills, arForecast, salaryData, vendorHistory, expenseCategories, book, bookLocal, actualCollections, sfBudget, sfRevenue, sfActualsSplit, salaryAdjPctByMonth, collPctByMonth, monthlyReval, sfSalaryBudget, sfRevenuePaid, sfPipeline, pipelineMinProb, sfConversion, salaryDeptAdj, salaryDeptBudgets, vendorCatAdj, vendorDetailAdj, prevMonthEndBalance, churnMonthlyAvg, churnData, churnOverride, asOfDate, nsBudget, activeYear]);
 
   // ── Capture current-year cashflow for propagation to next year ──
   useEffect(() => {
@@ -4654,14 +4655,14 @@ useEffect(() => {
                             }}>{r.churnDeduction > 0 ? `-${fmtC(r.churnDeduction, r.churnDeductionILS)}` : '-'}</span>
                             {!r.isPast && !r.isCurrent && (
                               <div className="flex items-center gap-0.5">
-                                <button onClick={(e) => { e.stopPropagation(); setChurnOverride(prev => ({ ...prev, [r.mKey]: Math.max(0, (prev[r.mKey] ?? churnMonthlyAvg) - 1000) })); }} className="w-5 h-4 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-[10px] font-bold flex items-center justify-center border border-emerald-200" title="Decrease by €1K">−</button>
-                                <button onClick={(e) => { e.stopPropagation(); setChurnOverride(prev => ({ ...prev, [r.mKey]: (prev[r.mKey] ?? churnMonthlyAvg) + 1000 })); }} className="w-5 h-4 rounded bg-red-50 hover:bg-red-100 text-red-700 text-[10px] font-bold flex items-center justify-center border border-red-200" title="Increase by €1K">+</button>
+                                <button onClick={(e) => { e.stopPropagation(); setChurnOverride(prev => ({ ...prev, [r.mKey]: Math.max(0, (prev[r.mKey] ?? r.churnDeduction) - 1000) })); }} className="w-5 h-4 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-[10px] font-bold flex items-center justify-center border border-emerald-200" title="Decrease by €1K">−</button>
+                                <button onClick={(e) => { e.stopPropagation(); setChurnOverride(prev => ({ ...prev, [r.mKey]: (prev[r.mKey] ?? r.churnDeduction) + 1000 })); }} className="w-5 h-4 rounded bg-red-50 hover:bg-red-100 text-red-700 text-[10px] font-bold flex items-center justify-center border border-red-200" title="Increase by €1K">+</button>
                                 <input type="number" value={Math.round(r.churnDeduction)} onChange={(e) => { const v = parseInt(e.target.value); setChurnOverride(prev => ({ ...prev, [r.mKey]: isNaN(v) ? 0 : Math.max(0, v) })); }} onClick={(e) => e.stopPropagation()} className="w-16 h-4 text-[10px] text-center border border-gray-200 rounded px-0.5 focus:outline-none focus:ring-1 focus:ring-orange-300" />
                                 <button onClick={(e) => { e.stopPropagation(); const val = r.churnDeduction; setChurnOverride(prev => { const next = { ...prev }; cashflowForecast.filter(f => !f.isPast && !f.isCurrent && f.mKey > r.mKey).forEach(f => { next[f.mKey] = val; }); return next; }); }} className="text-[9px] text-blue-500 hover:text-blue-700 whitespace-nowrap ml-0.5" title="Copy this value to all following months">▶▶</button>
                                 {churnOverride[r.mKey] !== undefined && <button onClick={(e) => { e.stopPropagation(); setChurnOverride(prev => { const next = { ...prev }; delete next[r.mKey]; return next; }); }} className="text-[9px] text-gray-400 hover:text-gray-600" title="Reset to auto">✕</button>}
                               </div>
                             )}
-                            <div className="text-[10px] text-gray-400">{churnOverride[r.mKey] !== undefined ? 'manual' : '6m avg'}</div>
+                            <div className="text-[10px] text-gray-400">{churnOverride[r.mKey] !== undefined ? 'manual' : `${activeYear} impact`}</div>
                           </div>
                         ) : '-'}
                       </td>
