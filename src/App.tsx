@@ -3005,18 +3005,18 @@ useEffect(() => {
               isCurrent: r.isCurrent,
             };
           });
-          // Compute projection: only use COMPLETED past months (exclude current partial month)
-          const completedActuals = chartData.filter(d => d.isPast && d.totalActual > 0).map(d => d.totalActual);
-          const avgCompleted = completedActuals.length > 0 ? Math.round(completedActuals.reduce((s, v) => s + v, 0) / completedActuals.length) : 0;
+          // Compute projection: use avg actual-to-budget ratio from completed months, apply to each future month's budget
+          const completedWithBudget = chartData.filter(d => d.isPast && d.totalActual > 0 && d.totalBudget > 0);
+          const avgBudgetRatio = completedWithBudget.length > 0
+            ? completedWithBudget.reduce((s, d) => s + d.totalActual / d.totalBudget, 0) / completedWithBudget.length
+            : 1;
           chartData.forEach((d) => {
-            // Show projected bar only where actual data is missing
             if (d.totalActual > 0) {
-              (d as any).totalProjectedBar = undefined; // has actual, no projected bar needed
+              (d as any).totalProjectedBar = undefined;
             } else {
-              (d as any).totalProjectedBar = avgCompleted; // fill gap with avg of past actuals
+              // Project using this month's specific budget × avg ratio from past months
+              (d as any).totalProjectedBar = d.totalBudget > 0 ? Math.round(d.totalBudget * avgBudgetRatio) : undefined;
             }
-            // Avg reference line across all months
-            (d as any).totalAvgLine = avgCompleted;
           });
           const futureMonths = cashflowForecast.filter(r => !r.isPast && !r.isCurrent);
           const avgMonthlyNet = futureMonths.length > 0 ? Math.round(futureMonths.reduce((s, r) => s + r.net, 0) / futureMonths.length) : 0;
@@ -3321,7 +3321,6 @@ useEffect(() => {
                         <Line yAxisId="right" type="monotone" dataKey="totalPct" name="% of Budget" stroke="#059669" strokeWidth={2.5} strokeDasharray="4 2" dot={{ r: 4, fill: '#059669', stroke: '#fff', strokeWidth: 1 }} connectNulls>
                           <LabelList content={(props: any) => { const { x, y, value } = props; if (value == null) return null; return <text x={x} y={y - 10} fill={value > 100 ? '#dc2626' : '#059669'} fontSize={12} fontWeight={700} textAnchor="middle">{value}%</text>; }} />
                         </Line>
-                        <Line yAxisId="left" type="monotone" dataKey="totalAvgLine" name="Avg Actual" stroke="#3b82f6" strokeWidth={1.5} strokeDasharray="8 4" dot={false} connectNulls />
                         <Legend wrapperStyle={{ fontSize: 13 }} />
                       </ComposedChart>
                     ) : (
@@ -3425,7 +3424,6 @@ useEffect(() => {
                     <LabelList content={(props: any) => { const { x, y, width, value } = props; if (!value || value === 0) return null; return <text x={x + width / 2} y={y - 4} fill="#3b82f6" fontSize={9} fontWeight={600} textAnchor="middle">{value}K</text>; }} />
                   </Bar>
                   <Line yAxisId="right" type="monotone" dataKey="totalPct" name="% of Budget" stroke="#059669" strokeWidth={2} strokeDasharray="4 2" dot={{ r: 3, fill: '#059669', stroke: '#fff', strokeWidth: 1 }} connectNulls />
-                  <Line yAxisId="left" type="monotone" dataKey="totalAvgLine" name="Avg Actual" stroke="#3b82f6" strokeWidth={1.5} strokeDasharray="8 4" dot={false} connectNulls />
                   <Legend wrapperStyle={{ fontSize: 10 }} />
                 </ComposedChart>
               </ResponsiveContainer>
