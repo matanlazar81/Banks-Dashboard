@@ -521,6 +521,7 @@ export default function App() {
   const [consDrilldown, setConsDrilldown] = useState<{ type: string; title: string; rows: { label: string; ls: number; st: number; total: number; color?: string }[]; accounts?: { ls: { account: string; name: string; amount: number }[]; st: { account: string; name: string; amount: number }[] }; loading?: boolean } | null>(null);
   const [consBankExpanded, setConsBankExpanded] = useState<'ls' | 'st' | null>(null);
   const [expandedChart, setExpandedChart] = useState<string | null>(null);
+  const [burnOverride, setBurnOverride] = useState<number | null>(null);
   const [expandedKpi, setExpandedKpi] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [lastRefreshed, setLastRefreshed] = useState('');
@@ -2976,6 +2977,7 @@ useEffect(() => {
               revVariance: (() => { const act = Math.round((sfRevenuePaid[r.mKey]?.revenue || 0) / 1000); const bud = Math.round((sfRevenue.budget?.[r.mKey]?.eur || nsBudget.byMonth[r.mKey]?.revenue || 0) / 1000); return act > 0 && bud > 0 ? act - bud : undefined; })(),
               totalBudget: Math.round((sfSalaryBudget[r.mKey]?.eur || nsBudget.byMonth[r.mKey]?.salary || 0) / 1000) + Math.round((sfBudget.totalByMonth[r.mKey]?.eur || nsBudget.byMonth[r.mKey]?.vendors || 0) / 1000),
               totalActual: Math.round((sfActualsSplit[r.mKey]?.salary || (salaryData.find(s => s.month === r.mKey)?.amountEUR) || 0) / 1000) + Math.round((sfActualsSplit[r.mKey]?.vendors || vendorHistory.filter(v => v.paidDate.startsWith(r.mKey)).reduce((s, v) => s + v.amountEUR, 0) || 0) / 1000),
+              totalPct: (() => { const b = Math.round((sfSalaryBudget[r.mKey]?.eur || nsBudget.byMonth[r.mKey]?.salary || 0) / 1000) + Math.round((sfBudget.totalByMonth[r.mKey]?.eur || nsBudget.byMonth[r.mKey]?.vendors || 0) / 1000); const a = Math.round((sfActualsSplit[r.mKey]?.salary || (salaryData.find(s => s.month === r.mKey)?.amountEUR) || 0) / 1000) + Math.round((sfActualsSplit[r.mKey]?.vendors || vendorHistory.filter(v => v.paidDate.startsWith(r.mKey)).reduce((s, v) => s + v.amountEUR, 0) || 0) / 1000); return b > 0 && a > 0 ? Math.round((a / b) * 100) : undefined; })(),
               isPast: r.isPast,
               isCurrent: r.isCurrent,
             };
@@ -3022,28 +3024,41 @@ useEffect(() => {
                   <p className="text-[10px] text-gray-400 uppercase">Avg Monthly Burn</p>
                   {asOfDate && <span className="text-[9px] px-1 py-0.5 rounded bg-amber-100 text-amber-700 font-medium">as of {kpiAsOfLabel}</span>}
                 </div>
-                <p className="text-lg font-bold text-red-600">{fmt(avgBurn)}</p>
-                <p className="text-[10px] text-gray-400">salary + vendors</p>
+                {(() => { const effectiveBurn = burnOverride ?? avgBurn; const diff = effectiveBurn - avgBurn; return (<>
+                <div className="flex items-center gap-2">
+                  <p className="text-lg font-bold text-red-600">{fmt(effectiveBurn)}</p>
+                  {diff !== 0 && <span className={`text-[10px] font-semibold ${diff > 0 ? 'text-red-500' : 'text-emerald-600'}`}>{diff > 0 ? '+' : ''}{fmt(diff)}</span>}
+                </div>
+                <div className="flex items-center gap-1 mt-1">
+                  <button onClick={(e) => { e.stopPropagation(); setBurnOverride((burnOverride ?? avgBurn) - 10000); }} className="w-6 h-6 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-sm font-bold flex items-center justify-center border border-emerald-200">−</button>
+                  <button onClick={(e) => { e.stopPropagation(); setBurnOverride((burnOverride ?? avgBurn) + 10000); }} className="w-6 h-6 rounded bg-red-50 hover:bg-red-100 text-red-700 text-sm font-bold flex items-center justify-center border border-red-200">+</button>
+                  <input type="number" value={effectiveBurn} onChange={(e) => { const v = parseInt(e.target.value); setBurnOverride(isNaN(v) ? null : v); }} onClick={(e) => e.stopPropagation()} className="w-20 h-6 text-[11px] text-center border border-gray-200 rounded px-1 focus:outline-none focus:ring-1 focus:ring-red-300" />
+                  {burnOverride !== null && <button onClick={(e) => { e.stopPropagation(); setBurnOverride(null); }} className="text-[9px] text-gray-400 hover:text-gray-600 underline ml-1">reset</button>}
+                </div>
+                <p className="text-[10px] text-gray-400 mt-1">{burnOverride !== null ? 'manual override' : 'salary + vendors'}</p>
                 <div className="mt-3 pt-3 border-t border-gray-100 text-[11px] space-y-1">
                   <div className="flex justify-between"><span className="text-gray-500">Avg Salary</span><span className="text-amber-600">{fmt(avgSalary)}</span></div>
                   <div className="flex justify-between"><span className="text-gray-500">Avg Vendors</span><span className="text-violet-600">{fmt(avgVendors)}</span></div>
-                  <div className="flex justify-between border-t border-gray-100 pt-1 font-semibold"><span className="text-gray-600">Total Burn</span><span className="text-red-600">{fmt(avgBurn)}</span></div>
-                  <p className="text-[10px] text-gray-400 pt-1">Salary is {avgBurn > 0 ? Math.round(avgSalary / avgBurn * 100) : 0}% of total burn</p>
+                  <div className="flex justify-between border-t border-gray-100 pt-1 font-semibold"><span className="text-gray-600">Total Burn</span><span className="text-red-600">{fmt(effectiveBurn)}</span></div>
+                  <p className="text-[10px] text-gray-400 pt-1">Salary is {effectiveBurn > 0 ? Math.round(avgSalary / effectiveBurn * 100) : 0}% of total burn</p>
                 </div>
+                </>); })()}
               </div>
               <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
                 <div className="flex items-center justify-between mb-1">
                   <p className="text-[10px] text-gray-400 uppercase">Cash Runway</p>
                   {asOfDate && <span className="text-[9px] px-1 py-0.5 rounded bg-amber-100 text-amber-700 font-medium">as of {kpiAsOfLabel}</span>}
                 </div>
-                <p className="text-lg font-bold text-blue-700">{runwayMonths}m</p>
-                <p className="text-[10px] text-gray-400">at current burn rate</p>
+                {(() => { const eb = burnOverride ?? avgBurn; const rm = eb > 0 ? Math.round(currentBalance / eb * 10) / 10 : 0; return (<>
+                <p className="text-lg font-bold text-blue-700">{rm}m</p>
+                <p className="text-[10px] text-gray-400">at {burnOverride !== null ? 'manual' : 'current'} burn rate</p>
                 <div className="mt-3 pt-3 border-t border-gray-100 text-[11px] space-y-1">
                   <div className="flex justify-between"><span className="text-gray-500">Current Balance</span><span className="text-blue-700 font-semibold">{fmt(currentBalance)}</span></div>
-                  <div className="flex justify-between"><span className="text-gray-500">÷ Avg Monthly Burn</span><span className="text-red-600">{fmt(avgBurn)}</span></div>
-                  <div className="flex justify-between border-t border-gray-100 pt-1 font-semibold"><span className="text-gray-600">= Runway</span><span className="text-blue-700">{runwayMonths} months</span></div>
+                  <div className="flex justify-between"><span className="text-gray-500">÷ Avg Monthly Burn</span><span className="text-red-600">{fmt(eb)}</span></div>
+                  <div className="flex justify-between border-t border-gray-100 pt-1 font-semibold"><span className="text-gray-600">= Runway</span><span className="text-blue-700">{rm} months</span></div>
                   <p className="text-[10px] text-gray-400 pt-1">Burn-only runway (excludes inflows). With net cash flow: {avgMonthlyNet < 0 ? Math.round(currentBalance / Math.abs(avgMonthlyNet) * 10) / 10 + 'm' : '∞ (net positive)'}</p>
                 </div>
+                </>); })()}
               </div>
               <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
                 <div className="flex items-center justify-between mb-1">
@@ -3252,19 +3267,23 @@ useEffect(() => {
                         <Legend wrapperStyle={{ fontSize: 13 }} />
                       </ComposedChart>
                     ) : expandedChart === 'total' ? (
-                      <BarChart data={chartData} margin={{ top: 30, right: 20, left: 20, bottom: 10 }}>
+                      <ComposedChart data={chartData} margin={{ top: 30, right: 30, left: 20, bottom: 10 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                         <XAxis dataKey="name" tick={{ fontSize: 13 }} />
-                        <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => `${v}K`} domain={[0, (max: number) => Math.ceil(max * 1.08)]} />
-                        <Tooltip formatter={(value: number, name: string) => [`€${value.toLocaleString()}K`, name]} />
-                        <Bar dataKey="totalBudget" name="Budget" fill="#fdba74" opacity={0.5} radius={[3, 3, 0, 0]}>
+                        <YAxis yAxisId="left" tick={{ fontSize: 12 }} tickFormatter={(v) => `${v}K`} domain={[0, (max: number) => Math.ceil(max * 1.08)]} />
+                        <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11 }} tickFormatter={(v) => `${v}%`} domain={[0, 150]} />
+                        <Tooltip formatter={(value: number, name: string) => [name === '% of Budget' ? `${value}%` : `€${value.toLocaleString()}K`, name]} />
+                        <Bar yAxisId="left" dataKey="totalBudget" name="Budget" fill="#fdba74" opacity={0.5} radius={[3, 3, 0, 0]}>
                           <LabelList content={(props: any) => { const { x, y, width, value } = props; if (!value || value === 0) return null; return <text x={x + width / 2} y={y + 16} fill="#9a3412" fontSize={10} fontWeight={500} textAnchor="middle">{value}K</text>; }} />
                         </Bar>
-                        <Bar dataKey="totalActual" name="Actual" fill="#f97316" radius={[3, 3, 0, 0]}>
-                          <LabelList content={(props: any) => { const { x, y, width, value } = props; if (!value || value === 0) return null; return <text x={x + width / 2} y={y - 6} fill="#333" fontSize={12} fontWeight={600} textAnchor="middle">{value}K</text>; }} />
+                        <Bar yAxisId="left" dataKey="totalActual" name="Actual" fill="#f97316" radius={[3, 3, 0, 0]}>
+                          <LabelList content={(props: any) => { const { x, y, width, value, index } = props; if (!value || value === 0) return null; const pct = chartData[index]?.totalPct; return <><text x={x + width / 2} y={y - 6} fill="#333" fontSize={12} fontWeight={600} textAnchor="middle">{value}K</text>{pct && <text x={x + width / 2} y={y - 20} fill={pct > 100 ? '#dc2626' : '#059669'} fontSize={11} fontWeight={700} textAnchor="middle">{pct}%</text>}</>;}} />
                         </Bar>
+                        <Line yAxisId="right" type="monotone" dataKey="totalPct" name="% of Budget" stroke="#059669" strokeWidth={2.5} strokeDasharray="4 2" dot={{ r: 4, fill: '#059669', stroke: '#fff', strokeWidth: 1 }} connectNulls>
+                          <LabelList content={(props: any) => { const { x, y, value } = props; if (value == null) return null; return <text x={x} y={y - 10} fill={value > 100 ? '#dc2626' : '#059669'} fontSize={12} fontWeight={700} textAnchor="middle">{value}%</text>; }} />
+                        </Line>
                         <Legend wrapperStyle={{ fontSize: 13 }} />
-                      </BarChart>
+                      </ComposedChart>
                     ) : (
                       <BarChart data={chartData} margin={{ top: 30, right: 20, left: 20, bottom: 10 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
@@ -3350,19 +3369,21 @@ useEffect(() => {
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 cursor-pointer hover:shadow-md transition-shadow" onClick={() => setExpandedChart('total')} title="Click to expand">
               <h3 className="text-sm font-medium text-gray-700 mb-3">Total — Budget vs Actual (€K) <span className="text-[10px] text-gray-400 font-normal ml-2">click to expand</span></h3>
               <ResponsiveContainer width="100%" height={200}>
-                <BarChart data={chartData} margin={{ top: 20, right: 10, left: 10, bottom: 5 }}>
+                <ComposedChart data={chartData} margin={{ top: 20, right: 10, left: 10, bottom: 5 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                   <XAxis dataKey="name" tick={{ fontSize: 10 }} />
-                  <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => `${v}K`} />
-                  <Tooltip formatter={(value: number, name: string) => [`€${value.toLocaleString()}K`, name]} />
-                  <Bar dataKey="totalBudget" name="Budget" fill="#fdba74" opacity={0.5} radius={[2, 2, 0, 0]}>
+                  <YAxis yAxisId="left" tick={{ fontSize: 10 }} tickFormatter={(v) => `${v}K`} />
+                  <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 9 }} tickFormatter={(v) => `${v}%`} domain={[0, 150]} hide />
+                  <Tooltip formatter={(value: number, name: string) => [name === '% of Budget' ? `${value}%` : `€${value.toLocaleString()}K`, name]} />
+                  <Bar yAxisId="left" dataKey="totalBudget" name="Budget" fill="#fdba74" opacity={0.5} radius={[2, 2, 0, 0]}>
                     <LabelList content={renderLabel} />
                   </Bar>
-                  <Bar dataKey="totalActual" name="Actual" fill="#f97316" radius={[2, 2, 0, 0]}>
-                    <LabelList content={renderLabel} />
+                  <Bar yAxisId="left" dataKey="totalActual" name="Actual" fill="#f97316" radius={[2, 2, 0, 0]}>
+                    <LabelList content={(props: any) => { const { x, y, width, value, index } = props; if (!value || value === 0) return null; const pct = chartData[index]?.totalPct; return <><text x={x + width / 2} y={y - 4} fill="#666" fontSize={9} textAnchor="middle">{value}K</text>{pct && <text x={x + width / 2} y={y - 14} fill={pct > 100 ? '#dc2626' : '#059669'} fontSize={8} fontWeight={600} textAnchor="middle">{pct}%</text>}</>;}} />
                   </Bar>
+                  <Line yAxisId="right" type="monotone" dataKey="totalPct" name="% of Budget" stroke="#059669" strokeWidth={2} strokeDasharray="4 2" dot={{ r: 3, fill: '#059669', stroke: '#fff', strokeWidth: 1 }} connectNulls />
                   <Legend wrapperStyle={{ fontSize: 10 }} />
-                </BarChart>
+                </ComposedChart>
               </ResponsiveContainer>
             </div>
 
