@@ -3005,6 +3005,25 @@ useEffect(() => {
               isCurrent: r.isCurrent,
             };
           });
+          // Compute projection: past/current months use actual, future months use avg of past actuals
+          const pastActuals = chartData.filter(d => (d.isPast || d.isCurrent) && d.totalActual > 0).map(d => d.totalActual);
+          const avgPastActual = pastActuals.length > 0 ? Math.round(pastActuals.reduce((s, v) => s + v, 0) / pastActuals.length) : 0;
+          // Linear trend: use simple linear regression on past actuals for a trend line
+          const trendSlope = pastActuals.length >= 2
+            ? pastActuals.reduce((s, v, i) => s + (i - (pastActuals.length - 1) / 2) * (v - avgPastActual), 0) /
+              pastActuals.reduce((s, _, i) => s + Math.pow(i - (pastActuals.length - 1) / 2, 2), 0)
+            : 0;
+          chartData.forEach((d, i) => {
+            if ((d.isPast || d.isCurrent) && d.totalActual > 0) {
+              (d as any).totalProjected = d.totalActual;
+            } else if (!d.isPast && !d.isCurrent) {
+              // Project using linear trend from past actuals
+              const projIdx = pastActuals.length + (i - pastActuals.length);
+              (d as any).totalProjected = Math.max(0, Math.round(avgPastActual + trendSlope * (projIdx - (pastActuals.length - 1) / 2)));
+            }
+            // Trend line spans all months
+            (d as any).totalTrend = Math.max(0, Math.round(avgPastActual + trendSlope * (i - (pastActuals.length - 1) / 2)));
+          });
           const futureMonths = cashflowForecast.filter(r => !r.isPast && !r.isCurrent);
           const avgMonthlyNet = futureMonths.length > 0 ? Math.round(futureMonths.reduce((s, r) => s + r.net, 0) / futureMonths.length) : 0;
           const avgBurn = futureMonths.length > 0 ? Math.round(futureMonths.reduce((s, r) => s + r.totalOutflow, 0) / futureMonths.length) : 0;
@@ -3305,6 +3324,10 @@ useEffect(() => {
                         <Line yAxisId="right" type="monotone" dataKey="totalPct" name="% of Budget" stroke="#059669" strokeWidth={2.5} strokeDasharray="4 2" dot={{ r: 4, fill: '#059669', stroke: '#fff', strokeWidth: 1 }} connectNulls>
                           <LabelList content={(props: any) => { const { x, y, value } = props; if (value == null) return null; return <text x={x} y={y - 10} fill={value > 100 ? '#dc2626' : '#059669'} fontSize={12} fontWeight={700} textAnchor="middle">{value}%</text>; }} />
                         </Line>
+                        <Line yAxisId="left" type="monotone" dataKey="totalProjected" name="Projected" stroke="#3b82f6" strokeWidth={2.5} strokeDasharray="6 3" dot={{ r: 4, fill: '#3b82f6', stroke: '#fff', strokeWidth: 1 }} connectNulls>
+                          <LabelList content={(props: any) => { const { x, y, value } = props; if (value == null) return null; return <text x={x} y={y - 10} fill="#3b82f6" fontSize={11} fontWeight={600} textAnchor="middle">{value}K</text>; }} />
+                        </Line>
+                        <Line yAxisId="left" type="monotone" dataKey="totalTrend" name="Trend" stroke="#a855f7" strokeWidth={2} dot={false} connectNulls />
                         <Legend wrapperStyle={{ fontSize: 13 }} />
                       </ComposedChart>
                     ) : (
@@ -3405,6 +3428,8 @@ useEffect(() => {
                     <LabelList content={(props: any) => { const { x, y, width, value, index } = props; if (!value || value === 0) return null; const pct = chartData[index]?.totalPct; return <><text x={x + width / 2} y={y - 4} fill="#666" fontSize={9} textAnchor="middle">{value}K</text>{pct && <text x={x + width / 2} y={y - 14} fill={pct > 100 ? '#dc2626' : '#059669'} fontSize={8} fontWeight={600} textAnchor="middle">{pct}%</text>}</>;}} />
                   </Bar>
                   <Line yAxisId="right" type="monotone" dataKey="totalPct" name="% of Budget" stroke="#059669" strokeWidth={2} strokeDasharray="4 2" dot={{ r: 3, fill: '#059669', stroke: '#fff', strokeWidth: 1 }} connectNulls />
+                  <Line yAxisId="left" type="monotone" dataKey="totalProjected" name="Projected" stroke="#3b82f6" strokeWidth={2} strokeDasharray="6 3" dot={{ r: 3, fill: '#3b82f6', stroke: '#fff', strokeWidth: 1 }} connectNulls />
+                  <Line yAxisId="left" type="monotone" dataKey="totalTrend" name="Trend" stroke="#a855f7" strokeWidth={1.5} dot={false} connectNulls />
                   <Legend wrapperStyle={{ fontSize: 10 }} />
                 </ComposedChart>
               </ResponsiveContainer>
