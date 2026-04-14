@@ -2203,9 +2203,97 @@ useEffect(() => {
       });
   }, [bankAccounts]);
 
+  // Group accounts by bank institution (for "Per Bank" view)
+  const bankGroupedAccounts = useMemo(() => {
+    if (bankAccounts.length === 0) return [];
+
+    const detectBank = (name: string): string => {
+      if (name.includes('Bank HPoalim') || name.includes('Bank Poalim')) return 'Bank HaPoalim';
+      if (name.includes('Bank Leumi')) return 'Bank Leumi';
+      if (name.includes('Bank Discount') || name.includes('Bank Dicount')) return 'Bank Discount';
+      if (name.includes('PKO')) return 'PKO';
+      if (name.includes('AMEX')) return 'AMEX';
+      if (name.includes('MasterCard')) return 'MasterCard';
+      if (name.includes('Isracard')) return 'Isracard';
+      if (name.includes('Visa')) return 'Visa';
+      if (name.includes('PAYPAL') || name.includes('PayPal')) return 'PayPal';
+      if (name.includes('Deposit')) return 'Deposits';
+      if (name.includes('Crypto')) return 'Crypto';
+      return 'Other';
+    };
+
+    const detectCurrency = (name: string): string => {
+      const n = name.toUpperCase();
+      if (n.includes('EUR') || n.includes('EURO')) return 'EUR';
+      if (n.includes('USD') || n.includes('US ')) return 'USD';
+      if (n.includes('NIS') || n.includes('ILS') || n.includes(' IL ') || n.includes(' IL-')) return 'ILS';
+      if (n.includes('GBP')) return 'GBP';
+      if (n.includes('CAD')) return 'CAD';
+      if (n.includes('CNY')) return 'CNY';
+      if (n.includes('PLN')) return 'PLN';
+      return 'Other';
+    };
+
+    const bankIcons: Record<string, { icon: string; color: string }> = {
+      'Bank HaPoalim': { icon: '🏦', color: 'emerald' },
+      'Bank Leumi': { icon: '🏦', color: 'blue' },
+      'Bank Discount': { icon: '🏦', color: 'teal' },
+      'PKO': { icon: '🏦', color: 'indigo' },
+      'AMEX': { icon: '💳', color: 'sky' },
+      'MasterCard': { icon: '💳', color: 'rose' },
+      'Isracard': { icon: '💳', color: 'violet' },
+      'Visa': { icon: '💳', color: 'purple' },
+      'PayPal': { icon: '🅿️', color: 'blue' },
+      'Deposits': { icon: '🔒', color: 'amber' },
+      'Crypto': { icon: '₿', color: 'orange' },
+      'Other': { icon: '📋', color: 'gray' },
+    };
+
+    const bankMap: Record<string, Record<string, BankAccount[]>> = {};
+    for (const a of bankAccounts) {
+      const bank = detectBank(a.name);
+      const cur = detectCurrency(a.name);
+      if (!bankMap[bank]) bankMap[bank] = {};
+      if (!bankMap[bank][cur]) bankMap[bank][cur] = [];
+      bankMap[bank][cur].push(a);
+    }
+
+    const currencyOrder = ['EUR', 'USD', 'ILS', 'GBP', 'CAD', 'CNY', 'PLN', 'Other'];
+    return Object.keys(bankMap)
+      .sort((a, b) => {
+        // Sort banks by total EUR balance descending
+        const aTotal = Object.values(bankMap[a]).flat().reduce((s, acc) => s + acc.primaryBalance, 0);
+        const bTotal = Object.values(bankMap[b]).flat().reduce((s, acc) => s + acc.primaryBalance, 0);
+        return bTotal - aTotal;
+      })
+      .map(bank => {
+        const currencies = currencyOrder
+          .filter(cur => bankMap[bank]?.[cur])
+          .map(cur => {
+            const accounts = bankMap[bank][cur];
+            return {
+              currency: cur,
+              accounts,
+              totalEUR: accounts.reduce((s, a) => s + a.primaryBalance, 0),
+              totalILS: accounts.reduce((s, a) => s + a.localBalance, 0),
+            };
+          });
+        return {
+          name: bank,
+          ...(bankIcons[bank] || { icon: '📋', color: 'gray' }),
+          currencies,
+          totalEUR: currencies.reduce((s, c) => s + c.totalEUR, 0),
+          totalILS: currencies.reduce((s, c) => s + c.totalILS, 0),
+        };
+      });
+  }, [bankAccounts]);
+
   // Collapsible state for categories
   const [expandedCategories, setExpandedCategories] = useState<Record<string, boolean>>({});
   const toggleCategory = (key: string) => setExpandedCategories(prev => ({ ...prev, [key]: !prev[key] }));
+
+  // Bank view mode: category (default) or per-bank institution
+  const [bankViewMode, setBankViewMode] = useState<'category' | 'bank'>('category');
 
   // ── AI Chat Callbacks (must be after displayTotalEUR, categorizedAccounts, cashflowForecast) ──
   const buildDashboardContext = useCallback(() => {
@@ -2820,6 +2908,17 @@ useEffect(() => {
                 <Building2 className="w-4 h-4" /> Bank Account Balances
               </h2>
               <div className="flex items-center gap-3">
+                {/* View mode toggle */}
+                <div className="flex bg-gray-100 rounded-lg p-0.5">
+                  <button onClick={() => setBankViewMode('category')}
+                          className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${bankViewMode === 'category' ? 'bg-white shadow-sm text-gray-700' : 'text-gray-500 hover:text-gray-700'}`}>
+                    Category
+                  </button>
+                  <button onClick={() => setBankViewMode('bank')}
+                          className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${bankViewMode === 'bank' ? 'bg-white shadow-sm text-indigo-700' : 'text-gray-500 hover:text-gray-700'}`}>
+                    Per Bank
+                  </button>
+                </div>
                 {/* Reval toggle */}
                 {(revalDiffEUR !== 0 || revalDiffILS !== 0) && (
                   <div className="flex bg-gray-100 rounded-lg p-0.5">
@@ -2865,7 +2964,7 @@ useEffect(() => {
             {/* Reval adjustment line removed — monthly reval impact shown in cashflow table only when both beginning & end entries exist */}
 
             {/* Category rows — collapsed by default, click to expand */}
-            {categorizedAccounts.map(cat => {
+            {(bankViewMode === 'bank' ? bankGroupedAccounts : categorizedAccounts).map(cat => {
               const catKey = `cat-${cat.name}`;
               const isCatExpanded = expandedCategories[catKey];
               return (
