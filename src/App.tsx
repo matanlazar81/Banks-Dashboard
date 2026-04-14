@@ -2312,7 +2312,7 @@ useEffect(() => {
   const toggleCategory = (key: string) => setExpandedCategories(prev => ({ ...prev, [key]: !prev[key] }));
 
   // Bank view mode: category (default) or per-bank institution
-  const [bankViewMode, setBankViewMode] = useState<'category' | 'bank'>('category');
+  const [bankViewMode, setBankViewMode] = useState<'category' | 'bank'>('bank');
 
   // ── AI Chat Callbacks (must be after displayTotalEUR, categorizedAccounts, cashflowForecast) ──
   const buildDashboardContext = useCallback(() => {
@@ -3001,11 +3001,11 @@ useEffect(() => {
                     </div>
                     {(() => {
                       const adjCatEUR = showReval ? cat.currencies.reduce((s, c) => {
-                        const isEur = c.currency === 'EUR';
+                        const isEur = c.currency === 'EUR' || c.currency.endsWith('- EUR');
                         return s + c.accounts.reduce((s2, a) => s2 + accountReval(a, isEur).revaluedEUR, 0);
                       }, 0) : cat.totalEUR;
                       const adjCatILS = showReval ? cat.currencies.reduce((s, c) => {
-                        const isEur = c.currency === 'EUR';
+                        const isEur = c.currency === 'EUR' || c.currency.endsWith('- EUR');
                         return s + c.accounts.reduce((s2, a) => s2 + accountReval(a, isEur).revaluedILS, 0);
                       }, 0) : cat.totalILS;
                       return (
@@ -3031,12 +3031,12 @@ useEffect(() => {
                                 {isCurExpanded ? <ChevronDown className="w-3.5 h-3.5 text-gray-400" /> : <ChevronRight className="w-3.5 h-3.5 text-gray-400" />}
                                 <span className="text-sm font-medium text-gray-700">{cur.currency}</span>
                                 <span className="text-xs text-gray-400">{cur.accounts.length} accounts</span>
-                                {showReval && cur.currency !== 'EUR' && cur.accounts.some(a => accountReval(a, false).revalEUR !== 0) && (
+                                {showReval && cur.currency !== 'EUR' && !cur.currency.endsWith('- EUR') && cur.accounts.some(a => accountReval(a, false).revalEUR !== 0) && (
                                   <span className="text-[10px] text-amber-600 font-medium">incl. reval</span>
                                 )}
                               </div>
                               {(() => {
-                                const isEur = cur.currency === 'EUR';
+                                const isEur = cur.currency === 'EUR' || cur.currency.endsWith('- EUR');
                                 const adjEUR = showReval
                                   ? cur.accounts.reduce((s, a) => s + accountReval(a, isEur).revaluedEUR, 0)
                                   : cur.totalEUR;
@@ -3065,7 +3065,7 @@ useEffect(() => {
                                   </thead>
                                   <tbody>
                                     {cur.accounts.map((a, i) => {
-                                      const isEur = cur.currency === 'EUR';
+                                      const isEur = cur.currency === 'EUR' || cur.currency.endsWith('- EUR');
                                       const rv = showReval ? accountReval(a, isEur) : { revalEUR: 0, revaluedEUR: a.primaryBalance, revalILS: 0, revaluedILS: a.localBalance };
                                       return (
                                         <tr key={i} className="border-b border-gray-50">
