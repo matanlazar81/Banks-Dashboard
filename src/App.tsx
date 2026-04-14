@@ -2207,19 +2207,30 @@ useEffect(() => {
   const bankGroupedAccounts = useMemo(() => {
     if (bankAccounts.length === 0) return [];
 
+    // Detect bank institution — prioritize bank name so deposits/cards fall under their bank
     const detectBank = (name: string): string => {
-      if (name.includes('Bank HPoalim') || name.includes('Bank Poalim')) return 'Bank HaPoalim';
-      if (name.includes('Bank Leumi')) return 'Bank Leumi';
-      if (name.includes('Bank Discount') || name.includes('Bank Dicount')) return 'Bank Discount';
+      // Bank names first (catches deposits, cards, and regular accounts belonging to a bank)
+      if (name.includes('Bank HPoalim') || name.includes('Bank Poalim') || name.includes('Hapoalim') || name.includes('HaPoalim')) return 'Bank HaPoalim';
+      if (name.includes('Bank Leumi') || name.includes('Leumi')) return 'Bank Leumi';
+      if (name.includes('Bank Discount') || name.includes('Bank Dicount') || name.includes('Discount')) return 'Bank Discount';
       if (name.includes('PKO')) return 'PKO';
+      // Standalone credit cards (not tied to a specific bank above)
       if (name.includes('AMEX')) return 'AMEX';
       if (name.includes('MasterCard')) return 'MasterCard';
       if (name.includes('Isracard')) return 'Isracard';
       if (name.includes('Visa')) return 'Visa';
+      // Other institutions
       if (name.includes('PAYPAL') || name.includes('PayPal')) return 'PayPal';
-      if (name.includes('Deposit')) return 'Deposits';
       if (name.includes('Crypto')) return 'Crypto';
       return 'Other';
+    };
+
+    // Detect account type within a bank (for sub-grouping labels)
+    const detectAccountType = (name: string): string => {
+      if (name.includes('Deposit')) return 'Deposit';
+      const creditCardKeywords = ['AMEX', 'MasterCard', 'Isracard', 'Visa'];
+      if (creditCardKeywords.some(k => name.includes(k))) return 'Credit Card';
+      return 'Account';
     };
 
     const detectCurrency = (name: string): string => {
@@ -2237,47 +2248,55 @@ useEffect(() => {
     const bankIcons: Record<string, { icon: string; color: string }> = {
       'Bank HaPoalim': { icon: '🏦', color: 'emerald' },
       'Bank Leumi': { icon: '🏦', color: 'blue' },
-      'Bank Discount': { icon: '🏦', color: 'teal' },
       'PKO': { icon: '🏦', color: 'indigo' },
+      'Crypto': { icon: '₿', color: 'orange' },
+      'PayPal': { icon: '🅿️', color: 'blue' },
+      'Bank Discount': { icon: '🏦', color: 'teal' },
       'AMEX': { icon: '💳', color: 'sky' },
       'MasterCard': { icon: '💳', color: 'rose' },
       'Isracard': { icon: '💳', color: 'violet' },
       'Visa': { icon: '💳', color: 'purple' },
-      'PayPal': { icon: '🅿️', color: 'blue' },
-      'Deposits': { icon: '🔒', color: 'amber' },
-      'Crypto': { icon: '₿', color: 'orange' },
       'Other': { icon: '📋', color: 'gray' },
     };
 
+    // Fixed display order as requested
+    const bankOrder = ['Bank HaPoalim', 'Bank Leumi', 'PKO', 'Crypto', 'PayPal', 'Bank Discount', 'AMEX', 'MasterCard', 'Isracard', 'Visa', 'Other'];
+
+    // Group by bank → account type → currency
     const bankMap: Record<string, Record<string, BankAccount[]>> = {};
     for (const a of bankAccounts) {
       const bank = detectBank(a.name);
+      const acctType = detectAccountType(a.name);
       const cur = detectCurrency(a.name);
+      const subKey = `${acctType} - ${cur}`;
       if (!bankMap[bank]) bankMap[bank] = {};
-      if (!bankMap[bank][cur]) bankMap[bank][cur] = [];
-      bankMap[bank][cur].push(a);
+      if (!bankMap[bank][subKey]) bankMap[bank][subKey] = [];
+      bankMap[bank][subKey].push(a);
     }
 
+    // Sub-group ordering: Accounts first, then Deposits, then Credit Cards; within each by currency
+    const typeOrder = ['Account', 'Deposit', 'Credit Card'];
     const currencyOrder = ['EUR', 'USD', 'ILS', 'GBP', 'CAD', 'CNY', 'PLN', 'Other'];
-    return Object.keys(bankMap)
-      .sort((a, b) => {
-        // Sort banks by total EUR balance descending
-        const aTotal = Object.values(bankMap[a]).flat().reduce((s, acc) => s + acc.primaryBalance, 0);
-        const bTotal = Object.values(bankMap[b]).flat().reduce((s, acc) => s + acc.primaryBalance, 0);
-        return bTotal - aTotal;
-      })
+
+    return bankOrder
+      .filter(bank => bankMap[bank])
       .map(bank => {
-        const currencies = currencyOrder
-          .filter(cur => bankMap[bank]?.[cur])
-          .map(cur => {
-            const accounts = bankMap[bank][cur];
-            return {
-              currency: cur,
-              accounts,
-              totalEUR: accounts.reduce((s, a) => s + a.primaryBalance, 0),
-              totalILS: accounts.reduce((s, a) => s + a.localBalance, 0),
-            };
-          });
+        const subKeys = Object.keys(bankMap[bank]).sort((a, b) => {
+          const [aType, aCur] = a.split(' - ');
+          const [bType, bCur] = b.split(' - ');
+          const typeIdx = typeOrder.indexOf(aType) - typeOrder.indexOf(bType);
+          if (typeIdx !== 0) return typeIdx;
+          return currencyOrder.indexOf(aCur) - currencyOrder.indexOf(bCur);
+        });
+        const currencies = subKeys.map(key => {
+          const accounts = bankMap[bank][key];
+          return {
+            currency: key, // e.g. "Account - EUR", "Deposit - ILS"
+            accounts,
+            totalEUR: accounts.reduce((s, a) => s + a.primaryBalance, 0),
+            totalILS: accounts.reduce((s, a) => s + a.localBalance, 0),
+          };
+        });
         return {
           name: bank,
           ...(bankIcons[bank] || { icon: '📋', color: 'gray' }),
