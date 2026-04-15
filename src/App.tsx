@@ -5130,7 +5130,7 @@ useEffect(() => {
                         </td>
                         <td className={`py-2.5 pr-1 text-right font-bold whitespace-nowrap ${(cashflowForecast[cashflowForecast.length - 1]?.closingBalance || 0) >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
                           {fmtC(cashflowForecast[cashflowForecast.length - 1]?.closingBalance || 0, cashflowForecast[cashflowForecast.length - 1]?.closingBalanceILS || 0)}
-                          <div className={`text-[9px] font-semibold ${totalGrowth >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                          <div className={`text-xs font-bold mt-1 ${totalGrowth >= 0 ? 'text-green-600' : 'text-red-500'}`}>
                             Net Growth: {totalGrowth >= 0 ? '+' : ''}{fmtC(totalGrowth, totalGrowthILS)}
                           </div>
                         </td>
