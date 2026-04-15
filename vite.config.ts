@@ -655,6 +655,48 @@ function banksPlugin(): Plugin {
         }
       });
 
+      // ── ARR/MRR: current run-rate + daily history ──
+      const arrSnapshotPath = path.resolve(__dirname, 'data', 'arr-history.json');
+      function loadArrHistory(): any[] {
+        try { return JSON.parse(fs.readFileSync(arrSnapshotPath, 'utf-8')); } catch { return []; }
+      }
+      function saveArrSnapshot(entry: any) {
+        const dir = path.dirname(arrSnapshotPath);
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        const history = loadArrHistory();
+        // Replace today's entry if exists, else append
+        const today = new Date().toISOString().slice(0, 10);
+        const idx = history.findIndex((h: any) => h.date === today);
+        if (idx >= 0) history[idx] = entry; else history.push(entry);
+        fs.writeFileSync(arrSnapshotPath, JSON.stringify(history, null, 2));
+      }
+      server.middlewares.use('/api/arr-current', async (_req, res) => {
+        try {
+          const sf = getSfClient();
+          if (!sf) { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ data: null })); return; }
+          const data = await sf.fetchCurrentARR();
+          // Auto-snapshot
+          const today = new Date().toISOString().slice(0, 10);
+          saveArrSnapshot({ date: today, ...data });
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ data }));
+        } catch (e: any) {
+          console.error('[SF] ARR fetch failed:', e.message);
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ data: null, error: e.message }));
+        }
+      });
+      server.middlewares.use('/api/arr-history', async (_req, res) => {
+        try {
+          const history = loadArrHistory();
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ data: history }));
+        } catch (e: any) {
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ data: [], error: e.message }));
+        }
+      });
+
       // ── Snowflake: Salary breakdown for a month ──
       server.middlewares.use('/api/sf-salary-breakdown', async (req, res) => {
         try {

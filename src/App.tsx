@@ -499,6 +499,7 @@ export default function App() {
   const [monthlyReval, setMonthlyReval] = useState<{ byMonth: Record<string, { eur: number; ils: number; hasBothEnds?: boolean }>; preYear: { eur: number; ils: number } }>({ byMonth: {}, preYear: { eur: 0, ils: 0 } });
   const [sfSalaryBudget, setSfSalaryBudget] = useState<Record<string, { eur: number; ils: number }>>({});
   const [sfFinanceBudget, setSfFinanceBudget] = useState<Record<string, { eur: number; ils: number }>>({});
+  const [arrData, setArrData] = useState<{ mrr: number; arr: number; paidMrr: number; paidArr: number; customers: number; month: string; history: { month: string; mrr: number; arr: number; paid: number; customers: number }[] } | null>(null);
   const [sfSalaryOverrides, setSfSalaryOverrides] = useState<{ account: string; fromMonth: string; toMonth: string; department: string; location: string; amountEUR: number; mode: string; comments: string; mKey: string; oldVal: number; newVal: number }[]>([]);
   const [prevMonthEndBalance, setPrevMonthEndBalance] = useState<{ eur: number; ils: number } | null>(null);
   const [churnData, setChurnData] = useState<{ year: number; totalCustomers: number; totalRevenue: number; churnedClients: number; lostRevenue: number; churnPct: number; clientChurnPct: number; monthlyImpact: number; monthsCount: number }[]>([]);
@@ -1061,6 +1062,7 @@ useEffect(() => {
     setMonthlyReval(c.monthlyReval); setNsBudget(c.nsBudget); setNsAccountId(c.nsAccountId);
     setSfBudget(c.sfBudget); if (c.sfBudget?.financeBudget) setSfFinanceBudget(c.sfBudget.financeBudget); setSfRevenue(c.sfRevenue); setSfActualsSplit(c.sfActualsSplit);
     setSfSalaryBudget(c.sfSalaryBudget); setSfSalaryOverrides(c.sfSalaryOverrides); setSfFinanceBudget(c.sfFinanceBudget || {});
+    if (c.arrData) setArrData(c.arrData);
     setSfRevenuePaid(c.sfRevenuePaid); setSfPipeline(c.sfPipeline); setSfConversion(c.sfConversion);
     setChurnData(c.churnData); setChurnMonthlyAvg(c.churnMonthlyAvg);
     setYoyRevenue(c.yoyRevenue); setPrevMonthEndBalance(c.prevMonthEndBalance);
@@ -1104,11 +1106,11 @@ useEffect(() => {
       } else {
         cache.nsBudget = { byMonth: {} };
         // Fire all SF calls in parallel
-        const [budR, revR, splitR, salBudR, revPaidR, pipeR, convR, churnR, yoyR, finBudR] = await Promise.all([
+        const [budR, revR, splitR, salBudR, revPaidR, pipeR, convR, churnR, yoyR, finBudR, arrR] = await Promise.all([
           safe('/api/sf-budget'), safe('/api/sf-revenue'), safe('/api/sf-actuals-split'),
           safe('/api/sf-salary-budget'), safe('/api/sf-revenue-paid'), safe('/api/sf-pipeline'),
           safe('/api/sf-conversion'), safe('/api/sf-churn-analysis'), safe('/api/sf-yoy-revenue'),
-          safe('/api/sf-finance-budget'),
+          safe('/api/sf-finance-budget'), safe('/api/arr-current'),
         ]);
         if (budR?.data) { cache.sfBudget = budR.data; if (budR.data.financeBudget) cache.sfFinanceBudget = budR.data.financeBudget; }
         if (revR?.data) cache.sfRevenue = revR.data;
@@ -1116,6 +1118,7 @@ useEffect(() => {
         if (salBudR?.data) cache.sfSalaryBudget = salBudR.data;
         if (salBudR?.overrides) cache.sfSalaryOverrides = salBudR.overrides;
         if (finBudR?.data) cache.sfFinanceBudget = finBudR.data;
+        if (arrR?.data) cache.arrData = arrR.data;
         if (revPaidR?.data) cache.sfRevenuePaid = revPaidR.data;
         if (pipeR?.data) cache.sfPipeline = pipeR.data;
         if (convR?.data) cache.sfConversion = convR.data;
@@ -1364,6 +1367,7 @@ useEffect(() => {
         if (churnR?.recentMonthlyAvg) setChurnMonthlyAvg(churnR.recentMonthlyAvg);
         if (yoyR?.currentYear) setYoyRevenue(yoyR);
         if (finBudR?.data) setSfFinanceBudget(finBudR.data);
+        if (arrR?.data) setArrData(arrR.data);
       } else {
         const [nsBudR] = sfResults;
         if (nsBudR) setNsBudget(nsBudR);
@@ -3369,8 +3373,48 @@ useEffect(() => {
               const throughLabel = pastCurrentMonths.length > 0 ? monthNames[pastCurrentMonths.length - 1] : (yoyRevenue ? monthNames[(yoyRevenue.throughMonth || 1) - 1] : '');
               const asOfLabel = asOfDate ? new Date(asOfDate + 'T12:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
 
+              // ARR data
+              const arrTarget = 67000000; // €67M ARR goal
+              const currentARR = arrData?.arr || 0;
+              const currentMRR = arrData?.mrr || 0;
+              const arrPct = arrTarget > 0 ? Math.round(currentARR / arrTarget * 1000) / 10 : 0;
+              const arrOnTrack = currentARR >= arrTarget;
+              const arrProgress = Math.min(100, Math.max(0, (currentARR / arrTarget) * 100));
+              const arrMonth = arrData?.month || '';
+              const arrHistory = arrData?.history || [];
+
               return (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                {/* ARR Goal */}
+                <div className={`rounded-xl shadow-sm border p-4 ${arrOnTrack ? 'bg-emerald-50 border-emerald-200' : 'bg-blue-50 border-blue-200'}`}>
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">ARR</span>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${arrOnTrack ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>{arrOnTrack ? 'On Track' : arrPct >= 90 ? 'Close' : 'Building'}</span>
+                  </div>
+                  <p className="text-xs font-medium text-gray-700 mb-2">Annual Recurring Revenue goal: {fmt(arrTarget)}</p>
+                  <div className="flex items-end gap-3 mb-2">
+                    <p className={`text-2xl font-bold ${arrOnTrack ? 'text-emerald-700' : 'text-blue-700'}`}>{currentARR > 0 ? `€${(currentARR / 1e6).toFixed(1)}M` : '—'}</p>
+                    <p className="text-xs text-gray-400 mb-1">target: €{(arrTarget / 1e6).toFixed(0)}M</p>
+                  </div>
+                  {/* Progress bar */}
+                  <div className="w-full bg-gray-200 rounded-full h-2 mb-2">
+                    <div className={`h-2 rounded-full transition-all ${arrOnTrack ? 'bg-emerald-500' : 'bg-blue-500'}`} style={{ width: `${arrProgress}%` }}></div>
+                  </div>
+                  <div className="text-[11px] space-y-1 text-gray-600">
+                    <p className="text-[10px] text-gray-400 font-semibold uppercase mt-1">Current ({arrMonth || '—'})</p>
+                    <div className="flex justify-between"><span>MRR</span><span className="font-medium">{currentMRR > 0 ? fmt(currentMRR) : '—'}</span></div>
+                    <div className="flex justify-between"><span>ARR (MRR × 12)</span><span className="font-semibold text-blue-700">{currentARR > 0 ? fmt(currentARR) : '—'}</span></div>
+                    <div className="flex justify-between"><span>Active Customers</span><span className="font-medium">{arrData?.customers || '—'}</span></div>
+                    {arrHistory.length > 1 && <>
+                      <p className="text-[10px] text-gray-400 font-semibold uppercase mt-2">Trend</p>
+                      {arrHistory.map((h, idx) => (
+                        <div key={idx} className="flex justify-between"><span>{h.month}</span><span className="font-medium">€{(h.arr / 1e6).toFixed(1)}M <span className="text-gray-400">({h.customers} cust)</span></span></div>
+                      ))}
+                    </>}
+                    <div className="flex justify-between mt-1"><span>vs Target</span><span className={`font-semibold ${arrOnTrack ? 'text-emerald-600' : 'text-red-600'}`}>{currentARR > 0 ? `${currentARR >= arrTarget ? '+' : ''}${fmt(currentARR - arrTarget)}` : '—'}</span></div>
+                  </div>
+                </div>
+
                 {/* OKR: YoY Revenue Growth */}
                 <div className={`rounded-xl shadow-sm border p-4 ${yoyOnTrack ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
                   <div className="flex items-center gap-2 mb-1">

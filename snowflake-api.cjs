@@ -1133,6 +1133,41 @@ function createSnowflakeClient(env) {
     }));
   }
 
+  // ── ARR/MRR: current run-rate from latest available monthly revenue ──
+  async function fetchCurrentARR() {
+    console.log('[Snowflake] Fetching current ARR/MRR...');
+    // Get the last 3 complete months of revenue to compute run-rate
+    const rows = await query(`
+      SELECT CAL_MONTH_START_DATE::VARCHAR AS MONTH_STR,
+             ROUND(SUM(REVENUE_AMOUNT_EUR)) AS TOTAL_REV,
+             ROUND(SUM(PAID_REVENUE_AMOUNT_EUR)) AS PAID_REV,
+             COUNT(DISTINCT CUSTOMER_ID) AS CUSTOMERS
+      FROM DL_PRODUCTION.FINANCE.FCT_MONTHLY_REVENUE__SUBSET_PAID
+      WHERE CAL_MONTH_START_DATE >= DATEADD(MONTH, -4, DATE_TRUNC('MONTH', CURRENT_DATE()))
+        AND CAL_MONTH_START_DATE < DATE_TRUNC('MONTH', CURRENT_DATE())
+      GROUP BY CAL_MONTH_START_DATE
+      ORDER BY CAL_MONTH_START_DATE DESC
+      LIMIT 3
+    `);
+    if (!rows.length) return { mrr: 0, arr: 0, customers: 0, month: '', history: [] };
+    // Latest complete month = MRR
+    const latest = rows[0];
+    const mrr = Math.round(latest.TOTAL_REV || 0);
+    const arr = mrr * 12;
+    const paidMrr = Math.round(latest.PAID_REV || 0);
+    const month = (latest.MONTH_STR || '').substring(0, 7);
+    // 3-month trend
+    const history = rows.map(r => ({
+      month: (r.MONTH_STR || '').substring(0, 7),
+      mrr: Math.round(r.TOTAL_REV || 0),
+      arr: Math.round(r.TOTAL_REV || 0) * 12,
+      paid: Math.round(r.PAID_REV || 0),
+      customers: r.CUSTOMERS || 0,
+    })).reverse();
+    console.log(`[Snowflake] ARR: €${(arr / 1e6).toFixed(1)}M (MRR: €${(mrr / 1000).toFixed(0)}K from ${month}, ${latest.CUSTOMERS} customers)`);
+    return { mrr, arr, paidMrr, paidArr: paidMrr * 12, customers: latest.CUSTOMERS || 0, month, history };
+  }
+
   return {
     query,
     testConnection,
@@ -1162,6 +1197,7 @@ function createSnowflakeClient(env) {
     fetchChurnAnalysis,
     fetchChurnDrilldown,
     fetchYoYRevenue,
+    fetchCurrentARR,
     getConnection,
   };
 }
