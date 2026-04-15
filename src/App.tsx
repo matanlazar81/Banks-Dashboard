@@ -1706,8 +1706,8 @@ useEffect(() => {
       // Low-conf pipeline for this month (not added to collections — shown separately)
       const pipelineLow = pipelineLowByMonth[mKey] || { weighted: 0, total: 0, count: 0, opps: [] as typeof lowConfPipeline };
       const pipelineBaseWeighted = pipelineLow.weighted;
-      const pipelineAdjPct = pipelineAdjPctByMonth[i] || 0;
-      const pipelineWeighted = pipelineAdjPct !== 0 ? Math.round(pipelineBaseWeighted * (1 + pipelineAdjPct / 100)) : pipelineBaseWeighted;
+      const pipelineAdjPct = pipelineAdjPctByMonth[i] ?? 100; // default 100% = full pipeline, 0% = zero
+      const pipelineWeighted = Math.round(pipelineBaseWeighted * pipelineAdjPct / 100);
       const pipelineWeightedILS = Math.round(pipelineWeighted * eurIlsRatio);
       const pipelineTotal = pipelineLow.total;
       const pipelineCount = pipelineLow.count;
@@ -4874,18 +4874,18 @@ useEffect(() => {
                           </>
                         ) : '-'}
                         </div>
-                        {!r.isPast && r.pipelineWeighted > 0 && (() => {
-                          const pAdj = pipelineAdjPctByMonth[i] || 0;
+                        {!r.isPast && (() => {
+                          const pAdj = pipelineAdjPctByMonth[i] ?? 100;
                           const hasAdj = i in pipelineAdjPctByMonth;
                           return (
                           <div className="flex items-center justify-end gap-0.5 mt-0.5" onClick={e => e.stopPropagation()}>
-                            <button onClick={() => setPipelineAdjPctByMonth(prev => ({ ...prev, [i]: (prev[i] || 0) - 10 }))}
+                            <button onClick={() => setPipelineAdjPctByMonth(prev => ({ ...prev, [i]: Math.max(0, (prev[i] ?? 100) - 10) }))}
                                     className="w-4 h-4 rounded bg-gray-100 hover:bg-teal-100 text-gray-500 text-[10px] flex items-center justify-center font-bold leading-none">−</button>
                             <input type="text" inputMode="numeric" value={pAdj}
-                                   onChange={e => { const v = e.target.value; if (v === '' || v === '-') setPipelineAdjPctByMonth(prev => ({ ...prev, [i]: v as any })); else { const n = parseInt(v); if (!isNaN(n)) setPipelineAdjPctByMonth(prev => ({ ...prev, [i]: n })); } }}
+                                   onChange={e => { const v = e.target.value; if (v === '') setPipelineAdjPctByMonth(prev => ({ ...prev, [i]: 0 })); else { const n = parseInt(v); if (!isNaN(n)) setPipelineAdjPctByMonth(prev => ({ ...prev, [i]: Math.max(0, n) })); } }}
                                    className={`w-9 text-center text-[10px] font-semibold border rounded px-0.5 py-0 ${hasAdj ? 'text-teal-700 border-teal-200 bg-teal-50' : 'text-gray-400 border-gray-200 bg-white'}`} />
                             <span className="text-[10px] text-gray-400">%</span>
-                            <button onClick={() => setPipelineAdjPctByMonth(prev => ({ ...prev, [i]: (prev[i] || 0) + 10 }))}
+                            <button onClick={() => setPipelineAdjPctByMonth(prev => ({ ...prev, [i]: (prev[i] ?? 100) + 10 }))}
                                     className="w-4 h-4 rounded bg-gray-100 hover:bg-teal-100 text-gray-500 text-[10px] flex items-center justify-center font-bold leading-none">+</button>
                             {hasAdj && (
                               <button onClick={() => {
