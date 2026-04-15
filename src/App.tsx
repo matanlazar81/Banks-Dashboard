@@ -498,6 +498,7 @@ export default function App() {
   const [sfConversion, setSfConversion] = useState<{ yearly: { year: number; won: number; lost: number; winRate: number; avgWonDays: number }[]; stages: any[]; customers: any[]; projection: any[] }>({ yearly: [], stages: [], customers: [], projection: [] });
   const [monthlyReval, setMonthlyReval] = useState<{ byMonth: Record<string, { eur: number; ils: number; hasBothEnds?: boolean }>; preYear: { eur: number; ils: number } }>({ byMonth: {}, preYear: { eur: 0, ils: 0 } });
   const [sfSalaryBudget, setSfSalaryBudget] = useState<Record<string, { eur: number; ils: number }>>({});
+  const [sfFinanceBudget, setSfFinanceBudget] = useState<Record<string, { eur: number; ils: number }>>({});
   const [sfSalaryOverrides, setSfSalaryOverrides] = useState<{ account: string; fromMonth: string; toMonth: string; department: string; location: string; amountEUR: number; mode: string; comments: string; mKey: string; oldVal: number; newVal: number }[]>([]);
   const [prevMonthEndBalance, setPrevMonthEndBalance] = useState<{ eur: number; ils: number } | null>(null);
   const [churnData, setChurnData] = useState<{ year: number; totalCustomers: number; totalRevenue: number; churnedClients: number; lostRevenue: number; churnPct: number; clientChurnPct: number; monthlyImpact: number; monthsCount: number }[]>([]);
@@ -523,6 +524,7 @@ export default function App() {
   const [expandedChart, setExpandedChart] = useState<string | null>(null);
   const [burnOverride, setBurnOverride] = useState<number | null>(null);
   const [churnOverride, setChurnOverride] = useState<Record<string, number>>({});
+  const [currencyDefensePct, setCurrencyDefensePct] = useState(50); // % of finance budget applied as reval hedge
   const [expandedKpi, setExpandedKpi] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [lastRefreshed, setLastRefreshed] = useState('');
@@ -1056,7 +1058,7 @@ useEffect(() => {
     setExpenseCategories(c.expenseCategories); setActualCollections(c.actualCollections);
     setMonthlyReval(c.monthlyReval); setNsBudget(c.nsBudget); setNsAccountId(c.nsAccountId);
     setSfBudget(c.sfBudget); setSfRevenue(c.sfRevenue); setSfActualsSplit(c.sfActualsSplit);
-    setSfSalaryBudget(c.sfSalaryBudget); setSfSalaryOverrides(c.sfSalaryOverrides);
+    setSfSalaryBudget(c.sfSalaryBudget); setSfSalaryOverrides(c.sfSalaryOverrides); setSfFinanceBudget(c.sfFinanceBudget || {});
     setSfRevenuePaid(c.sfRevenuePaid); setSfPipeline(c.sfPipeline); setSfConversion(c.sfConversion);
     setChurnData(c.churnData); setChurnMonthlyAvg(c.churnMonthlyAvg);
     setYoyRevenue(c.yoyRevenue); setPrevMonthEndBalance(c.prevMonthEndBalance);
@@ -1100,16 +1102,18 @@ useEffect(() => {
       } else {
         cache.nsBudget = { byMonth: {} };
         // Fire all SF calls in parallel
-        const [budR, revR, splitR, salBudR, revPaidR, pipeR, convR, churnR, yoyR] = await Promise.all([
+        const [budR, revR, splitR, salBudR, revPaidR, pipeR, convR, churnR, yoyR, finBudR] = await Promise.all([
           safe('/api/sf-budget'), safe('/api/sf-revenue'), safe('/api/sf-actuals-split'),
           safe('/api/sf-salary-budget'), safe('/api/sf-revenue-paid'), safe('/api/sf-pipeline'),
           safe('/api/sf-conversion'), safe('/api/sf-churn-analysis'), safe('/api/sf-yoy-revenue'),
+          safe('/api/sf-finance-budget'),
         ]);
         if (budR?.data) cache.sfBudget = budR.data;
         if (revR?.data) cache.sfRevenue = revR.data;
         if (splitR?.data) cache.sfActualsSplit = splitR.data;
         if (salBudR?.data) cache.sfSalaryBudget = salBudR.data;
         if (salBudR?.overrides) cache.sfSalaryOverrides = salBudR.overrides;
+        if (finBudR?.data) cache.sfFinanceBudget = finBudR.data;
         if (revPaidR?.data) cache.sfRevenuePaid = revPaidR.data;
         if (pipeR?.data) cache.sfPipeline = pipeR.data;
         if (convR?.data) cache.sfConversion = convR.data;
@@ -1134,6 +1138,7 @@ useEffect(() => {
       cache.sfActualsSplit = cache.sfActualsSplit || {};
       cache.sfSalaryBudget = cache.sfSalaryBudget || {};
       cache.sfSalaryOverrides = cache.sfSalaryOverrides || [];
+      cache.sfFinanceBudget = cache.sfFinanceBudget || {};
       cache.sfRevenuePaid = cache.sfRevenuePaid || {};
       cache.sfPipeline = cache.sfPipeline || [];
       cache.sfConversion = cache.sfConversion || { yearly: [], stages: [], customers: [], projection: [] };
@@ -1730,8 +1735,15 @@ useEffect(() => {
       // Revaluation impact from NS FxReval transactions
       const revalHasBothEnds = monthlyReval.byMonth?.[mKey]?.hasBothEnds || false;
       // Only apply reval when we have both beginning & end of month rates (complete month)
-      const revalImpact = revalHasBothEnds ? (monthlyReval.byMonth?.[mKey]?.eur || 0) : 0;
-      const revalImpactILS = revalHasBothEnds ? (monthlyReval.byMonth?.[mKey]?.ils || 0) : 0;
+      let revalImpact = revalHasBothEnds ? (monthlyReval.byMonth?.[mKey]?.eur || 0) : 0;
+      let revalImpactILS = revalHasBothEnds ? (monthlyReval.byMonth?.[mKey]?.ils || 0) : 0;
+      // For future months: add currency defense from Finance budget (800% GL = Unrealized Gain/Loss)
+      if (!isPastMonth && !isCurMonth && sfFinanceBudget[mKey]?.eur && currencyDefensePct > 0) {
+        const defenseEUR = Math.round(Math.abs(sfFinanceBudget[mKey].eur) * currencyDefensePct / 100);
+        const defenseILS = Math.round(Math.abs(sfFinanceBudget[mKey].ils || 0) * currencyDefensePct / 100);
+        revalImpact += defenseEUR;
+        revalImpactILS += defenseILS;
+      }
       runningBalance += revalImpact;
       runningBalanceILS += revalImpactILS;
 
@@ -1739,7 +1751,7 @@ useEffect(() => {
       rows.push({ month: label, mKey, openingBalance, openingBalanceILS, salary, salaryBase, salaryILS, vendors, vendorsBase, vendorsILS, totalOutflow, totalOutflowILS, collections, collectionsILS, collectionsActual, collectionsRemaining, collectionsForecast, collectionsRevenue, collectionsUnpaidCarry, collectionsUnpaidCarryMonth, collectionsPipeline, customers, pipelineWeighted, pipelineWeightedILS, pipelineTotal, pipelineCount, pipelineOpps, pipelineHistWinRate, pipelineDelayMonths, churnDeduction, churnDeductionILS, net, netILS, revalImpact, revalImpactILS, revalHasBothEnds, closingBalance: runningBalance, closingBalanceILS: runningBalanceILS, isCurrent: isCurMonth, isPast: isPastMonth });
     }
     return rows;
-  }, [vendorBills, arForecast, salaryData, vendorHistory, expenseCategories, book, bookLocal, actualCollections, sfBudget, sfRevenue, sfActualsSplit, salaryAdjPctByMonth, collPctByMonth, monthlyReval, sfSalaryBudget, sfRevenuePaid, sfPipeline, pipelineMinProb, sfConversion, salaryDeptAdj, salaryDeptBudgets, vendorCatAdj, vendorDetailAdj, prevMonthEndBalance, churnMonthlyAvg, churnData, churnOverride, asOfDate, nsBudget, activeYear]);
+  }, [vendorBills, arForecast, salaryData, vendorHistory, expenseCategories, book, bookLocal, actualCollections, sfBudget, sfRevenue, sfActualsSplit, salaryAdjPctByMonth, collPctByMonth, monthlyReval, sfSalaryBudget, sfRevenuePaid, sfPipeline, pipelineMinProb, sfConversion, salaryDeptAdj, salaryDeptBudgets, vendorCatAdj, vendorDetailAdj, prevMonthEndBalance, churnMonthlyAvg, churnData, churnOverride, asOfDate, nsBudget, activeYear, sfFinanceBudget, currencyDefensePct]);
 
   // ── Capture current-year cashflow for propagation to next year ──
   useEffect(() => {
@@ -3229,6 +3241,25 @@ useEffect(() => {
                 </div>
               </div>
             </div>
+
+            {/* Currency Defense control */}
+            {Object.keys(sfFinanceBudget).length > 0 && (
+              <div className="flex items-center gap-3 bg-amber-50 rounded-xl border border-amber-200 px-4 py-2.5">
+                <span className="text-xs font-medium text-amber-700">🛡️ Currency Defense</span>
+                <span className="text-[10px] text-gray-500">Budget ~{fmt(Math.round(Object.values(sfFinanceBudget).reduce((s, v) => s + Math.abs(v.eur), 0) / Math.max(1, Object.keys(sfFinanceBudget).length)))}/mo</span>
+                <div className="flex items-center gap-1.5">
+                  <button onClick={() => setCurrencyDefensePct(Math.max(0, currencyDefensePct - 10))}
+                    className="w-5 h-5 rounded bg-white hover:bg-amber-100 text-amber-700 text-xs font-bold flex items-center justify-center border border-amber-300">−</button>
+                  <input type="number" value={currencyDefensePct} min={0} max={100} step={10}
+                    onChange={(e) => setCurrencyDefensePct(Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))}
+                    className="w-12 text-center text-xs font-semibold text-amber-800 border border-amber-300 rounded px-1 py-0.5 bg-white" />
+                  <span className="text-xs text-amber-600">%</span>
+                  <button onClick={() => setCurrencyDefensePct(Math.min(100, currencyDefensePct + 10))}
+                    className="w-5 h-5 rounded bg-white hover:bg-amber-100 text-amber-700 text-xs font-bold flex items-center justify-center border border-amber-300">+</button>
+                </div>
+                <span className="text-[10px] text-gray-500">→ {fmt(Math.round(Object.values(sfFinanceBudget).reduce((s, v) => s + Math.abs(v.eur), 0) / Math.max(1, Object.keys(sfFinanceBudget).length) * currencyDefensePct / 100))}/mo added to reval</span>
+              </div>
+            )}
 
             {/* OKR Cards */}
             {(() => {

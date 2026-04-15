@@ -640,6 +640,22 @@ function banksPlugin(): Plugin {
         }
       });
 
+      // ── Snowflake: Finance / currency defense budget (800% GL accounts) ──
+      server.middlewares.use('/api/sf-finance-budget', async (_req, res) => {
+        try {
+          const sf = getSfClient();
+          const yr = getYear(_req);
+          if (!sf) { res.end(JSON.stringify({ data: {} })); return; }
+          const data = await sf.fetchFinanceBudget(yr);
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ data }));
+        } catch (e: any) {
+          console.error('[SF] Finance budget fetch failed:', e.message);
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ data: {}, error: e.message }));
+        }
+      });
+
       // ── Snowflake: Salary breakdown for a month ──
       server.middlewares.use('/api/sf-salary-breakdown', async (req, res) => {
         try {
