@@ -526,6 +526,7 @@ export default function App() {
   const [churnOverride, setChurnOverride] = useState<Record<string, number>>({});
   const [currencyDefensePct, setCurrencyDefensePct] = useState(30); // default % — used when no per-month override
   const [currencyDefensePctByMonth, setCurrencyDefensePctByMonth] = useState<Record<number, number>>({}); // per-month % override (month index 0-11)
+  const [pipelineAdjPctByMonth, setPipelineAdjPctByMonth] = useState<Record<number, number>>({}); // per-month pipeline % adjustment
   const [expandedKpi, setExpandedKpi] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [lastRefreshed, setLastRefreshed] = useState('');
@@ -1704,7 +1705,9 @@ useEffect(() => {
       }
       // Low-conf pipeline for this month (not added to collections — shown separately)
       const pipelineLow = pipelineLowByMonth[mKey] || { weighted: 0, total: 0, count: 0, opps: [] as typeof lowConfPipeline };
-      const pipelineWeighted = pipelineLow.weighted;
+      const pipelineBaseWeighted = pipelineLow.weighted;
+      const pipelineAdjPct = pipelineAdjPctByMonth[i] || 0;
+      const pipelineWeighted = pipelineAdjPct !== 0 ? Math.round(pipelineBaseWeighted * (1 + pipelineAdjPct / 100)) : pipelineBaseWeighted;
       const pipelineWeightedILS = Math.round(pipelineWeighted * eurIlsRatio);
       const pipelineTotal = pipelineLow.total;
       const pipelineCount = pipelineLow.count;
@@ -1773,7 +1776,7 @@ useEffect(() => {
       rows.push({ month: label, mKey, openingBalance, openingBalanceILS, salary, salaryBase, salaryILS, vendors, vendorsBase, vendorsILS, totalOutflow, totalOutflowILS, collections, collectionsILS, collectionsActual, collectionsRemaining, collectionsForecast, collectionsRevenue, collectionsUnpaidCarry, collectionsUnpaidCarryMonth, collectionsPipeline, customers, pipelineWeighted, pipelineWeightedILS, pipelineTotal, pipelineCount, pipelineOpps, pipelineHistWinRate, pipelineDelayMonths, churnDeduction, churnDeductionILS, net, netILS, revalImpact, revalImpactILS, revalHasBothEnds, closingBalance: runningBalance, closingBalanceILS: runningBalanceILS, isCurrent: isCurMonth, isPast: isPastMonth });
     }
     return rows;
-  }, [vendorBills, arForecast, salaryData, vendorHistory, expenseCategories, book, bookLocal, actualCollections, sfBudget, sfRevenue, sfActualsSplit, salaryAdjPctByMonth, collPctByMonth, monthlyReval, sfSalaryBudget, sfRevenuePaid, sfPipeline, pipelineMinProb, sfConversion, salaryDeptAdj, salaryDeptBudgets, vendorCatAdj, vendorDetailAdj, prevMonthEndBalance, churnMonthlyAvg, churnData, churnOverride, asOfDate, nsBudget, activeYear, sfFinanceBudget, currencyDefensePct, currencyDefensePctByMonth]);
+  }, [vendorBills, arForecast, salaryData, vendorHistory, expenseCategories, book, bookLocal, actualCollections, sfBudget, sfRevenue, sfActualsSplit, salaryAdjPctByMonth, collPctByMonth, monthlyReval, sfSalaryBudget, sfRevenuePaid, sfPipeline, pipelineMinProb, sfConversion, salaryDeptAdj, salaryDeptBudgets, vendorCatAdj, vendorDetailAdj, prevMonthEndBalance, churnMonthlyAvg, churnData, churnOverride, asOfDate, nsBudget, activeYear, sfFinanceBudget, currencyDefensePct, currencyDefensePctByMonth, pipelineAdjPctByMonth]);
 
   // ── Capture current-year cashflow for propagation to next year ──
   useEffect(() => {
@@ -4855,20 +4858,48 @@ useEffect(() => {
                           <div className="text-[10px] text-gray-400">{companyConfig.hasSF ? 'Snowflake' : 'NS Budget'} forecast × {collPctByMonth[i] ?? 100}%{r.collectionsPipeline > 0 ? ` + pipeline ${fmt(r.collectionsPipeline)}` : ''}</div>
                         )}
                       </td>
-                      <td className={`py-2.5 pr-1 text-right text-teal-700 font-medium ${r.pipelineWeighted > 0 ? 'cursor-pointer hover:underline' : ''}`}
+                      <td className={`py-2.5 pr-1 text-right text-teal-700 font-medium`}>
+                        <div className={r.pipelineWeighted > 0 ? 'cursor-pointer hover:underline' : ''}
                           onClick={() => r.pipelineWeighted > 0 && setForecastDrilldown({
                             type: 'pipeline', month: r.month, mKey: r.mKey,
                             data: { opps: r.pipelineOpps, weighted: r.pipelineWeighted, total: r.pipelineTotal, count: r.pipelineCount, winRate: r.pipelineHistWinRate, delayMonths: r.pipelineDelayMonths,
                               monthlyEffect: cashflowForecast.map(fr => ({ month: fr.month, mKey: fr.mKey, weighted: fr.pipelineWeighted, total: fr.pipelineTotal, count: fr.pipelineCount, isPast: fr.isPast, isCurrent: fr.isCurrent, opps: fr.pipelineOpps })) }
                           })}>
                         {r.pipelineWeighted > 0 ? (
-                          <div>
+                          <>
                             <span>+{fmtC(r.pipelineWeighted, r.pipelineWeightedILS)}</span>
                             <div className="text-[10px] text-gray-400">
                               {fmt(r.pipelineTotal)} total • {r.pipelineCount} opp{r.pipelineCount !== 1 ? 's' : ''}
                             </div>
-                          </div>
+                          </>
                         ) : '-'}
+                        </div>
+                        {!r.isPast && r.pipelineWeighted > 0 && (() => {
+                          const pAdj = pipelineAdjPctByMonth[i] || 0;
+                          const hasAdj = i in pipelineAdjPctByMonth;
+                          return (
+                          <div className="flex items-center justify-end gap-0.5 mt-0.5" onClick={e => e.stopPropagation()}>
+                            <button onClick={() => setPipelineAdjPctByMonth(prev => ({ ...prev, [i]: (prev[i] || 0) - 10 }))}
+                                    className="w-4 h-4 rounded bg-gray-100 hover:bg-teal-100 text-gray-500 text-[10px] flex items-center justify-center font-bold leading-none">−</button>
+                            <input type="text" inputMode="numeric" value={pAdj}
+                                   onChange={e => { const v = e.target.value; if (v === '' || v === '-') setPipelineAdjPctByMonth(prev => ({ ...prev, [i]: v as any })); else { const n = parseInt(v); if (!isNaN(n)) setPipelineAdjPctByMonth(prev => ({ ...prev, [i]: n })); } }}
+                                   className={`w-9 text-center text-[10px] font-semibold border rounded px-0.5 py-0 ${hasAdj ? 'text-teal-700 border-teal-200 bg-teal-50' : 'text-gray-400 border-gray-200 bg-white'}`} />
+                            <span className="text-[10px] text-gray-400">%</span>
+                            <button onClick={() => setPipelineAdjPctByMonth(prev => ({ ...prev, [i]: (prev[i] || 0) + 10 }))}
+                                    className="w-4 h-4 rounded bg-gray-100 hover:bg-teal-100 text-gray-500 text-[10px] flex items-center justify-center font-bold leading-none">+</button>
+                            {hasAdj && (
+                              <button onClick={() => {
+                                const clearFollowing = confirm('Also clear for remaining months?');
+                                setPipelineAdjPctByMonth(prev => { const u = { ...prev }; delete u[i]; if (clearFollowing) { for (let j = i + 1; j < 12; j++) delete u[j]; } return u; });
+                              }} className="w-4 h-4 rounded bg-red-50 hover:bg-red-100 text-red-400 hover:text-red-600 text-[10px] flex items-center justify-center font-bold leading-none" title="Clear">✕</button>
+                            )}
+                            {hasAdj && i < 11 && (
+                              <button onClick={() => setPipelineAdjPctByMonth(prev => { const u = { ...prev }; for (let j = i + 1; j < 12; j++) u[j] = prev[i] || 0; return u; })}
+                                      className="w-4 h-4 rounded bg-teal-100 hover:bg-teal-200 text-teal-600 text-[10px] flex items-center justify-center font-bold leading-none" title="Copy to remaining months">→</button>
+                            )}
+                          </div>
+                          );
+                        })()}
                       </td>
                       <td className={`py-2.5 pr-1 text-right font-medium ${r.churnDeduction > 0 ? 'text-orange-600' : 'text-gray-300'}`}>
                         {r.churnDeduction > 0 || (!r.isPast && !r.isCurrent) ? (
