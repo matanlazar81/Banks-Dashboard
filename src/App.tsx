@@ -524,7 +524,8 @@ export default function App() {
   const [expandedChart, setExpandedChart] = useState<string | null>(null);
   const [burnOverride, setBurnOverride] = useState<number | null>(null);
   const [churnOverride, setChurnOverride] = useState<Record<string, number>>({});
-  const [currencyDefensePct, setCurrencyDefensePct] = useState(50); // % of finance budget applied as reval hedge
+  const [currencyDefensePct, setCurrencyDefensePct] = useState(30); // default % — used when no per-month override
+  const [currencyDefensePctByMonth, setCurrencyDefensePctByMonth] = useState<Record<number, number>>({}); // per-month % override (month index 0-11)
   const [expandedKpi, setExpandedKpi] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [lastRefreshed, setLastRefreshed] = useState('');
@@ -1744,21 +1745,25 @@ useEffect(() => {
       // Only apply reval when we have both beginning & end of month rates (complete month)
       let revalImpact = revalHasBothEnds ? (monthlyReval.byMonth?.[mKey]?.eur || 0) : 0;
       let revalImpactILS = revalHasBothEnds ? (monthlyReval.byMonth?.[mKey]?.ils || 0) : 0;
-      // For future months: add currency defense from Finance budget (800% GL = Unrealized Gain/Loss)
-      // Sources: sfFinanceBudget (Snowflake), or fall back to budget category 'Other (800)' from SF/NS budget
-      if (!isPastMonth && !isCurMonth && currencyDefensePct > 0) {
-        let defBudget = 0;
-        if (sfFinanceBudget[mKey] && sfFinanceBudget[mKey].eur !== 0) {
-          defBudget = Math.abs(sfFinanceBudget[mKey].eur);
-        } else {
-          // Fallback: look for 'Other (800)' category in existing budget data
-          const catData = (sfBudget as any).byMonth?.[mKey] || nsBudget.byMonth[mKey]?.categories || {};
-          const fin800 = (catData as any)['Other (800)'] || 0;
-          if (fin800 !== 0) defBudget = Math.abs(fin800);
-        }
-        if (defBudget > 0) {
-          revalImpact += Math.round(defBudget * currencyDefensePct / 100);
-          revalImpactILS += Math.round(defBudget * 3.59 * currencyDefensePct / 100); // approx EUR→ILS
+      // For current + future months: add currency defense from Finance budget (acct 800029 = Unrealized Gain/Loss)
+      // Source: NetSuite budgetsmachine (account 800029), fallback to 'Other (800)' category
+      // Past months use actual reval; current & future use budget × percentage (default 50%)
+      if (!isPastMonth) {
+        const monthPct = currencyDefensePctByMonth[i] ?? currencyDefensePct; // per-month override or global default
+        if (monthPct > 0) {
+          let defBudget = 0;
+          if (sfFinanceBudget[mKey] && sfFinanceBudget[mKey].eur !== 0) {
+            defBudget = Math.abs(sfFinanceBudget[mKey].eur);
+          } else {
+            const catData = (sfBudget as any).byMonth?.[mKey] || nsBudget.byMonth[mKey]?.categories || {};
+            const fin800 = (catData as any)['Other (800)'] || 0;
+            if (fin800 !== 0) defBudget = Math.abs(fin800);
+          }
+          if (defBudget > 0) {
+            const defenseAmount = Math.round(defBudget * monthPct / 100);
+            revalImpact += defenseAmount;
+            revalImpactILS += Math.round(defenseAmount * 3.59);
+          }
         }
       }
       runningBalance += revalImpact;
@@ -1768,7 +1773,7 @@ useEffect(() => {
       rows.push({ month: label, mKey, openingBalance, openingBalanceILS, salary, salaryBase, salaryILS, vendors, vendorsBase, vendorsILS, totalOutflow, totalOutflowILS, collections, collectionsILS, collectionsActual, collectionsRemaining, collectionsForecast, collectionsRevenue, collectionsUnpaidCarry, collectionsUnpaidCarryMonth, collectionsPipeline, customers, pipelineWeighted, pipelineWeightedILS, pipelineTotal, pipelineCount, pipelineOpps, pipelineHistWinRate, pipelineDelayMonths, churnDeduction, churnDeductionILS, net, netILS, revalImpact, revalImpactILS, revalHasBothEnds, closingBalance: runningBalance, closingBalanceILS: runningBalanceILS, isCurrent: isCurMonth, isPast: isPastMonth });
     }
     return rows;
-  }, [vendorBills, arForecast, salaryData, vendorHistory, expenseCategories, book, bookLocal, actualCollections, sfBudget, sfRevenue, sfActualsSplit, salaryAdjPctByMonth, collPctByMonth, monthlyReval, sfSalaryBudget, sfRevenuePaid, sfPipeline, pipelineMinProb, sfConversion, salaryDeptAdj, salaryDeptBudgets, vendorCatAdj, vendorDetailAdj, prevMonthEndBalance, churnMonthlyAvg, churnData, churnOverride, asOfDate, nsBudget, activeYear, sfFinanceBudget, currencyDefensePct]);
+  }, [vendorBills, arForecast, salaryData, vendorHistory, expenseCategories, book, bookLocal, actualCollections, sfBudget, sfRevenue, sfActualsSplit, salaryAdjPctByMonth, collPctByMonth, monthlyReval, sfSalaryBudget, sfRevenuePaid, sfPipeline, pipelineMinProb, sfConversion, salaryDeptAdj, salaryDeptBudgets, vendorCatAdj, vendorDetailAdj, prevMonthEndBalance, churnMonthlyAvg, churnData, churnOverride, asOfDate, nsBudget, activeYear, sfFinanceBudget, currencyDefensePct, currencyDefensePctByMonth]);
 
   // ── Capture current-year cashflow for propagation to next year ──
   useEffect(() => {
@@ -3281,10 +3286,12 @@ useEffect(() => {
                 }
               }
               if (avgFinBudget === 0) return null;
+              const hasPerMonth = Object.keys(currencyDefensePctByMonth).length > 0;
               return (
               <div className="flex items-center gap-3 bg-amber-50 rounded-xl border border-amber-200 px-4 py-2.5">
                 <span className="text-xs font-medium text-amber-700">🛡️ Currency Defense</span>
                 <span className="text-[10px] text-gray-500">Budget ~{fmt(avgFinBudget)}/mo</span>
+                <span className="text-[10px] text-gray-400">Default:</span>
                 <div className="flex items-center gap-1.5">
                   <button onClick={() => setCurrencyDefensePct(Math.max(0, currencyDefensePct - 10))}
                     className="w-5 h-5 rounded bg-white hover:bg-amber-100 text-amber-700 text-xs font-bold flex items-center justify-center border border-amber-300">−</button>
@@ -3295,7 +3302,11 @@ useEffect(() => {
                   <button onClick={() => setCurrencyDefensePct(Math.min(100, currencyDefensePct + 10))}
                     className="w-5 h-5 rounded bg-white hover:bg-amber-100 text-amber-700 text-xs font-bold flex items-center justify-center border border-amber-300">+</button>
                 </div>
-                <span className="text-[10px] text-gray-500">→ {fmt(Math.round(avgFinBudget * currencyDefensePct / 100))}/mo added to reval</span>
+                <span className="text-[10px] text-gray-500">→ ~{fmt(Math.round(avgFinBudget * currencyDefensePct / 100))}/mo to reval</span>
+                {hasPerMonth && (
+                  <button onClick={() => setCurrencyDefensePctByMonth({})}
+                    className="text-[10px] text-red-500 hover:text-red-700 underline ml-1">reset all overrides</button>
+                )}
               </div>
               );
             })()}
@@ -5006,6 +5017,33 @@ useEffect(() => {
                       <td className={`py-2.5 pr-1 text-right font-bold ${r.net >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtC(r.net, r.netILS)}</td>
                       <td className={`py-2.5 pr-1 text-right font-medium ${r.revalImpact === 0 ? 'text-gray-300' : r.revalImpact > 0 ? 'text-amber-600' : 'text-amber-700'}`}>
                         {r.revalImpact !== 0 ? fmtC(r.revalImpact, r.revalImpactILS) : '-'}
+                        {!r.isPast && (() => {
+                          const mi = cashflowForecast.indexOf(r);
+                          const monthPct = currencyDefensePctByMonth[mi] ?? currencyDefensePct;
+                          const hasOverride = mi in currencyDefensePctByMonth;
+                          return (
+                          <div className="flex items-center justify-end gap-0.5 mt-0.5">
+                            <button onClick={() => setCurrencyDefensePctByMonth(prev => ({ ...prev, [mi]: (prev[mi] ?? currencyDefensePct) - 10 }))}
+                                    className="w-4 h-4 rounded bg-gray-100 hover:bg-amber-100 text-gray-500 text-[10px] flex items-center justify-center font-bold leading-none">−</button>
+                            <input type="text" inputMode="numeric" value={monthPct}
+                                   onChange={e => { const v = e.target.value; if (v === '' || v === '-') setCurrencyDefensePctByMonth(prev => ({ ...prev, [mi]: v as any })); else { const n = parseInt(v); if (!isNaN(n)) setCurrencyDefensePctByMonth(prev => ({ ...prev, [mi]: n })); } }}
+                                   className={`w-9 text-center text-[10px] font-semibold border rounded px-0.5 py-0 ${hasOverride ? 'text-amber-700 border-amber-200 bg-amber-50' : 'text-gray-400 border-gray-200 bg-white'}`} />
+                            <span className="text-[10px] text-gray-400">%</span>
+                            <button onClick={() => setCurrencyDefensePctByMonth(prev => ({ ...prev, [mi]: (prev[mi] ?? currencyDefensePct) + 10 }))}
+                                    className="w-4 h-4 rounded bg-gray-100 hover:bg-amber-100 text-gray-500 text-[10px] flex items-center justify-center font-bold leading-none">+</button>
+                            {hasOverride && (
+                              <button onClick={() => {
+                                const clearFollowing = confirm('Also clear for remaining months?');
+                                setCurrencyDefensePctByMonth(prev => { const u = { ...prev }; delete u[mi]; if (clearFollowing) { for (let j = mi + 1; j < 12; j++) delete u[j]; } return u; });
+                              }} className="w-4 h-4 rounded bg-red-50 hover:bg-red-100 text-red-400 hover:text-red-600 text-[10px] flex items-center justify-center font-bold leading-none" title="Clear">✕</button>
+                            )}
+                            {hasOverride && mi < 11 && (
+                              <button onClick={() => setCurrencyDefensePctByMonth(prev => { const u = { ...prev }; for (let j = mi + 1; j < 12; j++) u[j] = prev[mi] ?? currencyDefensePct; return u; })}
+                                      className="w-4 h-4 rounded bg-amber-100 hover:bg-amber-200 text-amber-600 text-[10px] flex items-center justify-center font-bold leading-none" title="Copy to remaining months">→</button>
+                            )}
+                          </div>
+                          );
+                        })()}
                       </td>
                       <td className={`py-2.5 pr-1 text-right font-bold whitespace-nowrap ${r.closingBalance >= 0 ? 'text-blue-700' : 'text-red-600'}`}>
                         {fmtCFull(r.closingBalance, r.closingBalanceILS)}
@@ -5048,12 +5086,25 @@ useEffect(() => {
                     <td className={`py-2.5 pr-1 text-right ${cashflowForecast.reduce((s, r) => s + r.net, 0) >= 0 ? 'text-green-700' : 'text-red-700'}`}>
                       {fmtC(cashflowForecast.reduce((s, r) => s + r.net, 0), cashflowForecast.reduce((s, r) => s + r.netILS, 0))}
                     </td>
-                    <td className="py-2.5 pr-1 text-right text-amber-600">
-                      {fmtC(cashflowForecast.reduce((s, r) => s + r.revalImpact, 0), cashflowForecast.reduce((s, r) => s + r.revalImpactILS, 0))}
-                    </td>
-                    <td className={`py-2.5 pr-1 text-right font-bold whitespace-nowrap ${(cashflowForecast[cashflowForecast.length - 1]?.closingBalance || 0) >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
-                      {fmtC(cashflowForecast[cashflowForecast.length - 1]?.closingBalance || 0, cashflowForecast[cashflowForecast.length - 1]?.closingBalanceILS || 0)}
-                    </td>
+                    {(() => {
+                      const totalNet = cashflowForecast.reduce((s, r) => s + r.net, 0);
+                      const totalNetILS = cashflowForecast.reduce((s, r) => s + r.netILS, 0);
+                      const totalReval = cashflowForecast.reduce((s, r) => s + r.revalImpact, 0);
+                      const totalRevalILS = cashflowForecast.reduce((s, r) => s + r.revalImpactILS, 0);
+                      const totalGrowth = totalNet + totalReval;
+                      const totalGrowthILS = totalNetILS + totalRevalILS;
+                      return (<>
+                        <td className="py-2.5 pr-1 text-right text-amber-600">
+                          {fmtC(totalReval, totalRevalILS)}
+                        </td>
+                        <td className={`py-2.5 pr-1 text-right font-bold whitespace-nowrap ${(cashflowForecast[cashflowForecast.length - 1]?.closingBalance || 0) >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
+                          {fmtC(cashflowForecast[cashflowForecast.length - 1]?.closingBalance || 0, cashflowForecast[cashflowForecast.length - 1]?.closingBalanceILS || 0)}
+                          <div className={`text-[9px] font-semibold ${totalGrowth >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                            Net Growth: {totalGrowth >= 0 ? '+' : ''}{fmtC(totalGrowth, totalGrowthILS)}
+                          </div>
+                        </td>
+                      </>);
+                    })()}
                   </tr>
                   {(() => {
                     const totalSalarySaving = cashflowForecast.reduce((s, r) => s + Math.max(0, r.salaryBase - r.salary), 0);

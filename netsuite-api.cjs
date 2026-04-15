@@ -1901,7 +1901,59 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
     return { byMonth };
   }
 
-  return { suiteql, suiteqlAll, fetchAgingData, fetchCollectionData, buildCollectionJson, fetchClientAnomalies, fetchAllSOsByBillingPeriod, fetchRevenueData, fetchMRRData, fetchBankBalance, fetchVendorBills, fetchVendorPaymentHistory, fetchBankAccountList, fetchBankAccountListAsOf, fetchSalaryData, fetchCashflowHistory, fetchExpenseCategoryData, fetchPaymentsByCategory, fetchCashflowBreakdown, fetchCashflowTransactions, fetchExpenseTransactions, fetchSalaryBreakdown, fetchInvoiceBasedProjection, fetchMonthlyRevaluation, fetchVendorBillsByAccount, fetchNSBudget };
+  /**
+   * Fetch currency defense budget (account 800029 — Unrealized Gain/Loss) from NetSuite.
+   * This data does NOT exist in Snowflake FCT_BUDGET (OthExpense type is not synced).
+   * Returns { '2026-01': { eur: 184092, ils: 0 }, ... } — amounts are absolute (positive).
+   */
+  async function fetchCurrencyDefenseBudget() {
+    const now = new Date();
+    const year = now.getFullYear();
+
+    const yearLookup = await suiteql(`
+      SELECT id FROM accountingperiod
+      WHERE periodname = 'FY ${year}' AND isyear = 'T'
+      FETCH FIRST 1 ROWS ONLY
+    `);
+    const yearPeriodId = yearLookup?.items?.[0]?.id;
+    if (!yearPeriodId) {
+      console.log(`[NS API] No accounting period found for FY ${year} (currency defense)`);
+      return {};
+    }
+
+    const rows = await suiteqlAll(`
+      SELECT bm.amount, ap.periodname
+      FROM budgetsmachine bm
+      JOIN budgets b ON bm.budget = b.id
+      JOIN accountingperiod ap ON bm.period = ap.id
+      JOIN account a ON b.account = a.id
+      WHERE b.subsidiary = ${subsidiaryId}
+        AND b.category = 5
+        AND b.accountingbook = 1
+        AND a.acctnumber = '800029'
+        AND ap.isyear = 'F' AND ap.isquarter = 'F'
+      ORDER BY ap.id
+    `);
+
+    const monthMap = { 'Jan': '01', 'Feb': '02', 'Mar': '03', 'Apr': '04', 'May': '05', 'Jun': '06',
+                       'Jul': '07', 'Aug': '08', 'Sep': '09', 'Oct': '10', 'Nov': '11', 'Dec': '12' };
+
+    const result = {};
+    for (const r of rows) {
+      const parts = (r.periodname || '').split(' ');
+      const mm = monthMap[parts[0]];
+      const yy = parts[1];
+      if (!mm || !yy) continue;
+      const mKey = `${yy}-${mm}`;
+      const amt = Math.abs(Math.round(parseFloat(r.amount) || 0));
+      if (amt > 0) result[mKey] = { eur: amt, ils: 0 };
+    }
+
+    console.log(`[NS API] Currency defense budget (800029): ${Object.keys(result).length} months, sample values: ${Object.entries(result).slice(0, 3).map(([k, v]) => `${k}=${v.eur}`).join(', ')}`);
+    return result;
+  }
+
+  return { suiteql, suiteqlAll, fetchAgingData, fetchCollectionData, buildCollectionJson, fetchClientAnomalies, fetchAllSOsByBillingPeriod, fetchRevenueData, fetchMRRData, fetchBankBalance, fetchVendorBills, fetchVendorPaymentHistory, fetchBankAccountList, fetchBankAccountListAsOf, fetchSalaryData, fetchCashflowHistory, fetchExpenseCategoryData, fetchPaymentsByCategory, fetchCashflowBreakdown, fetchCashflowTransactions, fetchExpenseTransactions, fetchSalaryBreakdown, fetchInvoiceBasedProjection, fetchMonthlyRevaluation, fetchVendorBillsByAccount, fetchNSBudget, fetchCurrencyDefenseBudget };
 }
 
 

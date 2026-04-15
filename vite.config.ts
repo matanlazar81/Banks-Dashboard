@@ -640,17 +640,16 @@ function banksPlugin(): Plugin {
         }
       });
 
-      // ── Snowflake: Finance / currency defense budget (800% GL accounts) ──
+      // ── Currency defense budget (account 800029 from NetSuite) ──
       server.middlewares.use('/api/sf-finance-budget', async (_req, res) => {
         try {
-          const sf = getSfClient();
-          const yr = getYear(_req);
-          if (!sf) { res.end(JSON.stringify({ data: {} })); return; }
-          const data = await sf.fetchFinanceBudget(yr);
+          const ns3 = getNsClient(3);
+          if (!ns3) { res.end(JSON.stringify({ data: {} })); return; }
+          const data = await ns3.fetchCurrencyDefenseBudget();
           res.setHeader('Content-Type', 'application/json');
           res.end(JSON.stringify({ data }));
         } catch (e: any) {
-          console.error('[SF] Finance budget fetch failed:', e.message);
+          console.error('[NS] Currency defense budget fetch failed:', e.message);
           res.setHeader('Content-Type', 'application/json');
           res.end(JSON.stringify({ data: {}, error: e.message }));
         }
@@ -909,22 +908,27 @@ function banksPlugin(): Plugin {
           let sfSalaryBudgetData = {} as any;
           let sfRevenuePaidData = {} as any;
           let sfFinanceBudgetData = {} as any;
+          // Always fetch currency defense budget fresh from NS (not in snapshot — was Snowflake before, always empty)
+          try {
+            const ns3ForDef = getNsClient(3);
+            if (ns3ForDef) sfFinanceBudgetData = await ns3ForDef.fetchCurrencyDefenseBudget().catch(() => ({}));
+          } catch {}
           if (lsSnap) {
             sfBudgetData = lsSnap.sfBudget || { totalByMonth: {} };
             sfRevenueData = lsSnap.sfRevenue || {};
             sfActualsSplitData = lsSnap.sfActualsSplit || {};
             sfSalaryBudgetData = lsSnap.sfSalaryBudget || {};
             sfRevenuePaidData = lsSnap.sfRevenuePaid || {};
-            sfFinanceBudgetData = lsSnap.sfFinanceBudget || {};
           } else if (sf) {
             try {
+              const ns3ForFinBud = getNsClient(3);
               const [bud, rev, split, salBud, revPaid, finBud] = await Promise.all([
                 sf.fetchBudgetByCategory(lsYear).catch(() => ({ byMonth: {}, totalByMonth: {} })),
                 sf.fetchRevenueProjection(lsYear).catch(() => ({ budget: {}, actuals: {} })),
                 sf.fetchMonthlyActualsSplit().catch(() => ({})),
                 sf.fetchSalaryBudget(lsYear).catch(() => ({})),
                 sf.fetchMonthlyRevenuePaid(lsYear).catch(() => ({})),
-                sf.fetchFinanceBudget(lsYear).catch(() => ({})),
+                ns3ForFinBud ? ns3ForFinBud.fetchCurrencyDefenseBudget().catch(() => ({})) : Promise.resolve({}),
               ]);
               // Apply budget overrides
               const overrides = await sf.fetchBudgetOverrides().catch(() => []);
@@ -1429,7 +1433,7 @@ function banksPlugin(): Plugin {
                 const [sfBudget, sfSalaryBudget, sfFinanceBudget, sfRevenue, sfActualsSplit, sfRevenuePaid, sfPipeline, sfConversion] = await Promise.all([
                   sf ? sf.fetchBudgetByCategory(sourceYear).catch(() => ({ byMonth: {}, totalByMonth: {} })) : { byMonth: {}, totalByMonth: {} },
                   sf ? sf.fetchSalaryBudget(sourceYear).catch(() => ({})) : {},
-                  sf ? sf.fetchFinanceBudget(sourceYear).catch(() => ({})) : {},
+                  ns3 ? ns3.fetchCurrencyDefenseBudget().catch(() => ({})) : {},
                   sf ? sf.fetchRevenueProjection(sourceYear).catch(() => ({ budget: {}, actuals: {}, targets: {} })) : { budget: {}, actuals: {}, targets: {} },
                   sf ? sf.fetchMonthlyActualsSplit().catch(() => ({})) : {},
                   sf ? sf.fetchMonthlyRevenuePaid(sourceYear).catch(() => ({})) : {},
