@@ -1741,7 +1741,8 @@ useEffect(() => {
       let revalImpact = revalHasBothEnds ? (monthlyReval.byMonth?.[mKey]?.eur || 0) : 0;
       let revalImpactILS = revalHasBothEnds ? (monthlyReval.byMonth?.[mKey]?.ils || 0) : 0;
       // For future months: add currency defense from Finance budget (800% GL = Unrealized Gain/Loss)
-      if (!isPastMonth && !isCurMonth && sfFinanceBudget[mKey]?.eur && currencyDefensePct > 0) {
+      // Snowflake stores as negative (expense), but it's a positive reval hedge → use Math.abs
+      if (!isPastMonth && !isCurMonth && currencyDefensePct > 0 && sfFinanceBudget[mKey] && sfFinanceBudget[mKey].eur !== 0) {
         const defenseEUR = Math.round(Math.abs(sfFinanceBudget[mKey].eur) * currencyDefensePct / 100);
         const defenseILS = Math.round(Math.abs(sfFinanceBudget[mKey].ils || 0) * currencyDefensePct / 100);
         revalImpact += defenseEUR;
