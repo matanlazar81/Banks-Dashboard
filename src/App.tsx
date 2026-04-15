@@ -1744,12 +1744,21 @@ useEffect(() => {
       let revalImpact = revalHasBothEnds ? (monthlyReval.byMonth?.[mKey]?.eur || 0) : 0;
       let revalImpactILS = revalHasBothEnds ? (monthlyReval.byMonth?.[mKey]?.ils || 0) : 0;
       // For future months: add currency defense from Finance budget (800% GL = Unrealized Gain/Loss)
-      // Snowflake stores as negative (expense), but it's a positive reval hedge → use Math.abs
-      if (!isPastMonth && !isCurMonth && currencyDefensePct > 0 && sfFinanceBudget[mKey] && sfFinanceBudget[mKey].eur !== 0) {
-        const defenseEUR = Math.round(Math.abs(sfFinanceBudget[mKey].eur) * currencyDefensePct / 100);
-        const defenseILS = Math.round(Math.abs(sfFinanceBudget[mKey].ils || 0) * currencyDefensePct / 100);
-        revalImpact += defenseEUR;
-        revalImpactILS += defenseILS;
+      // Sources: sfFinanceBudget (Snowflake), or fall back to budget category 'Other (800)' from SF/NS budget
+      if (!isPastMonth && !isCurMonth && currencyDefensePct > 0) {
+        let defBudget = 0;
+        if (sfFinanceBudget[mKey] && sfFinanceBudget[mKey].eur !== 0) {
+          defBudget = Math.abs(sfFinanceBudget[mKey].eur);
+        } else {
+          // Fallback: look for 'Other (800)' category in existing budget data
+          const catData = (sfBudget as any).byMonth?.[mKey] || nsBudget.byMonth[mKey]?.categories || {};
+          const fin800 = (catData as any)['Other (800)'] || 0;
+          if (fin800 !== 0) defBudget = Math.abs(fin800);
+        }
+        if (defBudget > 0) {
+          revalImpact += Math.round(defBudget * currencyDefensePct / 100);
+          revalImpactILS += Math.round(defBudget * 3.59 * currencyDefensePct / 100); // approx EUR→ILS
+        }
       }
       runningBalance += revalImpact;
       runningBalanceILS += revalImpactILS;
@@ -3250,10 +3259,31 @@ useEffect(() => {
             </div>
 
             {/* Currency Defense control */}
-            {Object.keys(sfFinanceBudget).length > 0 && (
+            {(() => {
+              // Compute avg monthly finance budget from sfFinanceBudget or fallback to 'Other (800)' category
+              let avgFinBudget = 0;
+              if (Object.keys(sfFinanceBudget).length > 0) {
+                avgFinBudget = Math.round(Object.values(sfFinanceBudget).reduce((s, v) => s + Math.abs(v.eur), 0) / Object.keys(sfFinanceBudget).length);
+              } else {
+                const sfCatMonths = Object.keys((sfBudget as any).byMonth || {});
+                const nsCatMonths = Object.keys(nsBudget.byMonth || {});
+                const catMonths = sfCatMonths.length > 0 ? sfCatMonths : nsCatMonths;
+                if (catMonths.length > 0) {
+                  let total800 = 0;
+                  let count800 = 0;
+                  for (const m of catMonths) {
+                    const catData = (sfBudget as any).byMonth?.[m] || (nsBudget.byMonth[m] as any)?.categories || {};
+                    const fin = catData['Other (800)'] || 0;
+                    if (fin !== 0) { total800 += Math.abs(fin); count800++; }
+                  }
+                  if (count800 > 0) avgFinBudget = Math.round(total800 / count800);
+                }
+              }
+              if (avgFinBudget === 0) return null;
+              return (
               <div className="flex items-center gap-3 bg-amber-50 rounded-xl border border-amber-200 px-4 py-2.5">
                 <span className="text-xs font-medium text-amber-700">🛡️ Currency Defense</span>
-                <span className="text-[10px] text-gray-500">Budget ~{fmt(Math.round(Object.values(sfFinanceBudget).reduce((s, v) => s + Math.abs(v.eur), 0) / Math.max(1, Object.keys(sfFinanceBudget).length)))}/mo</span>
+                <span className="text-[10px] text-gray-500">Budget ~{fmt(avgFinBudget)}/mo</span>
                 <div className="flex items-center gap-1.5">
                   <button onClick={() => setCurrencyDefensePct(Math.max(0, currencyDefensePct - 10))}
                     className="w-5 h-5 rounded bg-white hover:bg-amber-100 text-amber-700 text-xs font-bold flex items-center justify-center border border-amber-300">−</button>
@@ -3264,9 +3294,10 @@ useEffect(() => {
                   <button onClick={() => setCurrencyDefensePct(Math.min(100, currencyDefensePct + 10))}
                     className="w-5 h-5 rounded bg-white hover:bg-amber-100 text-amber-700 text-xs font-bold flex items-center justify-center border border-amber-300">+</button>
                 </div>
-                <span className="text-[10px] text-gray-500">→ {fmt(Math.round(Object.values(sfFinanceBudget).reduce((s, v) => s + Math.abs(v.eur), 0) / Math.max(1, Object.keys(sfFinanceBudget).length) * currencyDefensePct / 100))}/mo added to reval</span>
+                <span className="text-[10px] text-gray-500">→ {fmt(Math.round(avgFinBudget * currencyDefensePct / 100))}/mo added to reval</span>
               </div>
-            )}
+              );
+            })()}
 
             {/* OKR Cards */}
             {(() => {
