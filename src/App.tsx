@@ -3359,8 +3359,8 @@ useEffect(() => {
                     <p className="text-[10px] text-gray-400 font-semibold uppercase mt-1">Latest Snapshot — {arrLabel || '—'}{arrSnapDate ? ` (${arrSnapDate})` : ''}</p>
                     <div className="flex justify-between"><span>MRR</span><span className="font-medium">{currentMRR > 0 ? fmt(currentMRR) : '—'}</span></div>
                     <div className="flex justify-between"><span>ARR (MRR × 12)</span><span className="font-semibold text-blue-700">{currentARR > 0 ? fmt(currentARR) : '—'}</span></div>
-                    <div className="flex justify-between"><span>Active Customers</span><span className="font-medium">{arrData?.customers || '—'}</span></div>
-                    {arrAvgPerCust > 0 && <div className="flex justify-between"><span>Avg per Customer</span><span className="font-medium">{fmt(arrAvgPerCust)}/mo</span></div>}
+                    <div className="flex justify-between"><span>Active Clients (Closed Won)</span><span className="font-medium">{arrData?.customers || '—'}</span></div>
+                    {arrAvgPerCust > 0 && <div className="flex justify-between"><span>Avg MRR per Client</span><span className="font-medium">{fmt(arrAvgPerCust)}/mo</span></div>}
                     {arrHistory.length > 1 && <>
                       <p className="text-[10px] text-gray-400 font-semibold uppercase mt-2">Trend</p>
                       {arrHistory.map((h, idx) => (

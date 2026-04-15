@@ -1161,7 +1161,7 @@ function createSnowflakeClient(env) {
       customers: Math.round(r.TOTAL_CUSTOMERS || 0),
       avgPerCustomer: Math.round(r.AVG_PER_CUSTOMER || 0),
     })).reverse();
-    console.log(`[Snowflake] ARR: €${(arr / 1e6).toFixed(1)}M (MRR: €${(mrr / 1000).toFixed(0)}K, ${month}, ${customers} customers)`);
+    console.log(`[Snowflake] ARR: €${(arr / 1e6).toFixed(1)}M (MRR: €${(mrr / 1000).toFixed(0)}K, ${month}, ${customers} clients)`);
     return { mrr, arr, customers, avgPerCustomer, month, snapDate, history };
   }
 
