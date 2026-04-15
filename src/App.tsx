@@ -1316,7 +1316,7 @@ useEffect(() => {
       const sfUrls = hasSF ? [
         '/api/sf-budget', '/api/sf-revenue', '/api/sf-actuals-split', '/api/sf-salary-budget',
         '/api/sf-revenue-paid', '/api/sf-pipeline', '/api/sf-conversion', '/api/sf-churn-analysis',
-        '/api/sf-yoy-revenue', '/api/sf-finance-budget',
+        '/api/sf-yoy-revenue', '/api/sf-finance-budget', '/api/arr-current',
       ] : !hasSF ? [`/api/ns-budget${subQ}`] : [];
 
       const allResults = await Promise.all([...nsUrls, ...sfUrls].map(u => safe(u)));
@@ -1354,7 +1354,7 @@ useEffect(() => {
       // Apply SF or NS budget results
       if (hasSF) {
         setNsBudget({ byMonth: {} });
-        const [budR, revR, splitR, salBudR, revPaidR, pipeR, convR, churnR, yoyR, finBudR] = sfResults;
+        const [budR, revR, splitR, salBudR, revPaidR, pipeR, convR, churnR, yoyR, finBudR, arrR] = sfResults;
         if (budR?.data) { setSfBudget(budR.data); if (budR.data.financeBudget) setSfFinanceBudget(budR.data.financeBudget); }
         if (revR?.data) setSfRevenue(revR.data);
         if (splitR?.data) setSfActualsSplit(splitR.data);
