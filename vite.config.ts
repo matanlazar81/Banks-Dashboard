@@ -1284,7 +1284,7 @@ function banksPlugin(): Plugin {
               const oldPath = path.resolve(budgetDir, f);
               const data = JSON.parse(fs.readFileSync(oldPath, 'utf-8'));
               // Split into per-company files
-              const lsData = { sourceYear: data.sourceYear, targetYear: data.targetYear, createdAt: data.createdAt, status: data.status, sfBudget: data.sfBudget, sfSalaryBudget: data.sfSalaryBudget, sfRevenue: data.sfRevenue, sfActualsSplit: data.sfActualsSplit, sfRevenuePaid: data.sfRevenuePaid, nsBudget: data.nsBudget3 || { byMonth: {} } };
+              const lsData = { sourceYear: data.sourceYear, targetYear: data.targetYear, createdAt: data.createdAt, status: data.status, sfBudget: data.sfBudget, sfSalaryBudget: data.sfSalaryBudget, sfFinanceBudget: data.sfFinanceBudget || {}, sfRevenue: data.sfRevenue, sfActualsSplit: data.sfActualsSplit, sfRevenuePaid: data.sfRevenuePaid, nsBudget: data.nsBudget3 || { byMonth: {} } };
               const stData = { sourceYear: data.sourceYear, targetYear: data.targetYear, createdAt: data.createdAt, status: data.status, nsBudget: data.nsBudget6 || { byMonth: {} } };
               fs.writeFileSync(path.resolve(budgetDir, `${yr}-lsports.json`), JSON.stringify(lsData, null, 2));
               fs.writeFileSync(path.resolve(budgetDir, `${yr}-statscore.json`), JSON.stringify(stData, null, 2));
@@ -1426,9 +1426,10 @@ function banksPlugin(): Plugin {
               if (company === 'lsports') {
                 const sf = getSfClient();
                 const ns3 = getNsClient(3);
-                const [sfBudget, sfSalaryBudget, sfRevenue, sfActualsSplit, sfRevenuePaid, sfPipeline, sfConversion] = await Promise.all([
+                const [sfBudget, sfSalaryBudget, sfFinanceBudget, sfRevenue, sfActualsSplit, sfRevenuePaid, sfPipeline, sfConversion] = await Promise.all([
                   sf ? sf.fetchBudgetByCategory(sourceYear).catch(() => ({ byMonth: {}, totalByMonth: {} })) : { byMonth: {}, totalByMonth: {} },
                   sf ? sf.fetchSalaryBudget(sourceYear).catch(() => ({})) : {},
+                  sf ? sf.fetchFinanceBudget(sourceYear).catch(() => ({})) : {},
                   sf ? sf.fetchRevenueProjection(sourceYear).catch(() => ({ budget: {}, actuals: {}, targets: {} })) : { budget: {}, actuals: {}, targets: {} },
                   sf ? sf.fetchMonthlyActualsSplit().catch(() => ({})) : {},
                   sf ? sf.fetchMonthlyRevenuePaid(sourceYear).catch(() => ({})) : {},
@@ -1574,6 +1575,7 @@ function banksPlugin(): Plugin {
                     for (let m = 1; m <= 12; m++) flat[`${targetYear}-${String(m).padStart(2, '0')}`] = { revenue: avgRev, paid: avgRev, unpaid: 0, customers: avgCust };
                     return flat;
                   })(),
+                  sfFinanceBudget: remapMonths(sfFinanceBudget || {}),
                   nsBudget: { byMonth: remapMonths(nsBudget3.byMonth || {}) },
                   sfPipeline: sfPipeline,
                   sfConversion: sfConversion,

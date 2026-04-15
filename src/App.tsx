@@ -1237,6 +1237,9 @@ useEffect(() => {
               }
               // Keep byMonth categories from snapshot for category adjustments, override totals
               setSfBudget({ byMonth: snap.sfBudget?.byMonth || {}, totalByMonth: liveVendorTotal });
+              // Finance budget (800% GL = currency defense) from snapshot
+              if (snap.sfFinanceBudget) setSfFinanceBudget(snap.sfFinanceBudget);
+              else setSfFinanceBudget({});
               console.info(`[Snapshot] ${co} ${coYear} vendor baseline: avg(12m) = €${avgVendors.toLocaleString()}`);
               // Also override nsBudget for non-SF subsidiaries (Statscore)
               const isNonSF = !snap.sfSalaryBudget || Object.keys(snap.sfSalaryBudget).length === 0;
