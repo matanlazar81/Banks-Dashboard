@@ -4731,15 +4731,12 @@ useEffect(() => {
                     const wb = XLSX.utils.book_new();
                     XLSX.utils.book_append_sheet(wb, ws, 'Cashflow Forecast');
 
-                    // ── Baseline sheet (no Pipeline, no Churn) ──
+                    // ── Baseline file (no Pipeline, no Churn, combined Salary+Vendors) ──
                     const blHdrCols = [
                       { v: 'Month', s: hdrStyle }, { v: 'Opening Bal.', s: hdrStyle },
                       { v: 'Inflows (AR)', s: { ...hdrStyle, font: { ...hdrStyle.font, color: { rgb: '059669' } } } },
-                      { v: 'Total Inflows', s: hdrStyle }, { v: 'Salary', s: hdrStyle },
-                      { v: 'Salary Saving', s: { ...hdrStyle, font: { ...hdrStyle.font, color: { rgb: '16A34A' } } } },
-                      { v: 'Vendors', s: hdrStyle },
-                      { v: 'Vendor Saving', s: { ...hdrStyle, font: { ...hdrStyle.font, color: { rgb: '16A34A' } } } },
-                      { v: 'Total Outflow', s: hdrStyle }, { v: 'Net', s: hdrStyle },
+                      { v: 'Total Outflow', s: hdrStyle },
+                      { v: 'Net', s: hdrStyle },
                       { v: 'Reval', s: hdrStyle }, { v: 'Closing Balance', s: hdrStyle },
                     ];
                     // Recalculate closing balances without pipeline/churn
@@ -4747,8 +4744,6 @@ useEffect(() => {
                     const blRows = cashflowForecast.map(r => {
                       const status = r.isPast ? 'ACTUAL' : r.isCurrent ? 'CURRENT' : 'PROJECTED';
                       const statusColor = r.isPast ? '16A34A' : r.isCurrent ? 'D97706' : '7C3AED';
-                      const salSaving = Math.max(0, r.salaryBase - r.salary);
-                      const venSaving = Math.max(0, r.vendorsBase - r.vendors);
                       const blNet = r.collections - r.salary - r.vendors;
                       const blClosing = blRunning + blNet + r.revalImpact;
                       const blOpening = blRunning;
@@ -4761,12 +4756,7 @@ useEffect(() => {
                         { v: `${r.month}  ${status}`, s: { font: { sz: 10, color: { rgb: statusColor }, bold: true } } },
                         mkCell(blOpening, blOpening >= 0 ? '374151' : 'DC2626'),
                         mkCell(r.collections, '16A34A'),
-                        mkCell(r.collections, '047857', true),
-                        mkCell(-r.salary, 'D97706'),
-                        salSaving > 0 ? mkCell(salSaving, '16A34A') : { v: '', s: {} },
-                        mkCell(-r.vendors, '7C3AED'),
-                        venSaving > 0 ? mkCell(venSaving, '16A34A') : { v: '', s: {} },
-                        mkCell(-r.totalOutflow, 'DC2626', true),
+                        mkCell(-(r.salary + r.vendors), 'DC2626', true),
                         mkCell(blNet, blNet >= 0 ? '16A34A' : 'DC2626', true),
                         mkCell(r.revalImpact, 'D97706'),
                         mkCell(blClosing, blClosing >= 0 ? '1D4ED8' : 'DC2626', true),
@@ -4779,19 +4769,14 @@ useEffect(() => {
                       { v: 'TOTAL', s: { ...totStyle, alignment: { horizontal: 'left' } } },
                       { v: '', s: totStyle },
                       mkTot(blTotCollections, '16A34A'),
-                      mkTot(blTotCollections, '047857'),
-                      mkTot(-cashflowForecast.reduce((s,r)=>s+r.salary,0), 'D97706'),
-                      totalSalSaving > 0 ? mkTot(totalSalSaving, '16A34A') : { v: '', s: totStyle },
-                      mkTot(-cashflowForecast.reduce((s,r)=>s+r.vendors,0), '7C3AED'),
-                      totalVenSaving > 0 ? mkTot(totalVenSaving, '16A34A') : { v: '', s: totStyle },
-                      mkTot(-cashflowForecast.reduce((s,r)=>s+r.totalOutflow,0), 'DC2626'),
+                      mkTot(-cashflowForecast.reduce((s,r)=>s+r.salary+r.vendors,0), 'DC2626'),
                       mkTot(blTotNet, blTotNet >= 0 ? '16A34A' : 'DC2626'),
                       mkTot(blTotReval, 'D97706'),
                       mkTot(blRunning, blRunning >= 0 ? '1D4ED8' : 'DC2626'),
                     ];
                     const blAllData = [blHdrCols, ...blRows, blTotRow];
                     const ws2 = XLSX.utils.aoa_to_sheet(blAllData);
-                    ws2['!cols'] = [{ wch: 24 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, { wch: 13 }, { wch: 15 }, { wch: 13 }, { wch: 15 }, { wch: 14 }, { wch: 12 }, { wch: 16 }];
+                    ws2['!cols'] = [{ wch: 24 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, { wch: 14 }, { wch: 12 }, { wch: 16 }];
                     // Download file 1: Full forecast
                     const coLabel = activeCompany === 'lsports' ? 'LSports' : activeCompany === 'statscore' ? 'Statscore' : 'Consolidated';
                     const dateSuffix = new Date().toISOString().slice(0,10);
