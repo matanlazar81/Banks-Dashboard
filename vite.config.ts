@@ -908,20 +908,23 @@ function banksPlugin(): Plugin {
           let sfActualsSplitData = {} as any;
           let sfSalaryBudgetData = {} as any;
           let sfRevenuePaidData = {} as any;
+          let sfFinanceBudgetData = {} as any;
           if (lsSnap) {
             sfBudgetData = lsSnap.sfBudget || { totalByMonth: {} };
             sfRevenueData = lsSnap.sfRevenue || {};
             sfActualsSplitData = lsSnap.sfActualsSplit || {};
             sfSalaryBudgetData = lsSnap.sfSalaryBudget || {};
             sfRevenuePaidData = lsSnap.sfRevenuePaid || {};
+            sfFinanceBudgetData = lsSnap.sfFinanceBudget || {};
           } else if (sf) {
             try {
-              const [bud, rev, split, salBud, revPaid] = await Promise.all([
+              const [bud, rev, split, salBud, revPaid, finBud] = await Promise.all([
                 sf.fetchBudgetByCategory(lsYear).catch(() => ({ byMonth: {}, totalByMonth: {} })),
                 sf.fetchRevenueProjection(lsYear).catch(() => ({ budget: {}, actuals: {} })),
                 sf.fetchMonthlyActualsSplit().catch(() => ({})),
                 sf.fetchSalaryBudget(lsYear).catch(() => ({})),
                 sf.fetchMonthlyRevenuePaid(lsYear).catch(() => ({})),
+                sf.fetchFinanceBudget(lsYear).catch(() => ({})),
               ]);
               // Apply budget overrides
               const overrides = await sf.fetchBudgetOverrides().catch(() => []);
@@ -960,6 +963,7 @@ function banksPlugin(): Plugin {
               sfActualsSplitData = split;
               sfSalaryBudgetData = salBud;
               sfRevenuePaidData = revPaid;
+              sfFinanceBudgetData = finBud;
             } catch (e: any) { console.error('[Consolidated] SF data fetch failed:', e.message); }
           }
 
@@ -1097,6 +1101,7 @@ function banksPlugin(): Plugin {
               sfRevenue: sfRevenueData,
               sfActualsSplit: sfActualsSplitData,
               sfSalaryBudget: sfSalaryBudgetData,
+              sfFinanceBudget: sfFinanceBudgetData,
               sfRevenuePaid: sfRevenuePaidData,
             },
             statscore: {
