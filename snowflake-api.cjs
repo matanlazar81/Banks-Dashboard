@@ -1133,39 +1133,36 @@ function createSnowflakeClient(env) {
     }));
   }
 
-  // ── ARR/MRR: current run-rate from latest available monthly revenue ──
+  // ── ARR/MRR: from FCT_MRR_Q_SNAPSHOT (Salesforce MRR snapshots) ──
   async function fetchCurrentARR() {
-    console.log('[Snowflake] Fetching current ARR/MRR...');
-    // Get the last 3 complete months of revenue to compute run-rate
+    console.log('[Snowflake] Fetching current ARR/MRR from MRR snapshot...');
     const rows = await query(`
-      SELECT CAL_MONTH_START_DATE::VARCHAR AS MONTH_STR,
-             ROUND(SUM(REVENUE_AMOUNT_EUR)) AS TOTAL_REV,
-             ROUND(SUM(PAID_REVENUE_AMOUNT_EUR)) AS PAID_REV,
-             COUNT(DISTINCT CUSTOMER_ID) AS CUSTOMERS
-      FROM DL_PRODUCTION.FINANCE.FCT_MONTHLY_REVENUE__SUBSET_PAID
-      WHERE CAL_MONTH_START_DATE >= DATEADD(MONTH, -4, DATE_TRUNC('MONTH', CURRENT_DATE()))
-        AND CAL_MONTH_START_DATE < DATE_TRUNC('MONTH', CURRENT_DATE())
-      GROUP BY CAL_MONTH_START_DATE
-      ORDER BY CAL_MONTH_START_DATE DESC
-      LIMIT 3
+      SELECT NAME, ROUND(MRR) AS MRR, TOTAL_CUSTOMERS, ROUND(AVG_PER_CUSTOMER) AS AVG_PER_CUSTOMER,
+             SNAPSHOT_DATE::VARCHAR AS SNAP_DATE
+      FROM DL_PRODUCTION.FINANCE.FCT_MRR_Q_SNAPSHOT
+      WHERE CURRENCY_ISO_CODE = 'EUR' AND SRC_IS_DELETED = FALSE
+      ORDER BY SNAPSHOT_DATE DESC NULLS LAST, SRC_UPDATE_AT DESC
+      LIMIT 6
     `);
-    if (!rows.length) return { mrr: 0, arr: 0, customers: 0, month: '', history: [] };
-    // Latest complete month = MRR
+    if (!rows.length) return { mrr: 0, arr: 0, customers: 0, month: '', avgPerCustomer: 0, history: [] };
     const latest = rows[0];
-    const mrr = Math.round(latest.TOTAL_REV || 0);
+    const mrr = Math.round(latest.MRR || 0);
     const arr = mrr * 12;
-    const paidMrr = Math.round(latest.PAID_REV || 0);
-    const month = (latest.MONTH_STR || '').substring(0, 7);
-    // 3-month trend
+    const customers = Math.round(latest.TOTAL_CUSTOMERS || 0);
+    const avgPerCustomer = Math.round(latest.AVG_PER_CUSTOMER || 0);
+    const month = (latest.NAME || '').trim();
+    const snapDate = (latest.SNAP_DATE || '').substring(0, 10);
+    // Historical trend (last 6 snapshots)
     const history = rows.map(r => ({
-      month: (r.MONTH_STR || '').substring(0, 7),
-      mrr: Math.round(r.TOTAL_REV || 0),
-      arr: Math.round(r.TOTAL_REV || 0) * 12,
-      paid: Math.round(r.PAID_REV || 0),
-      customers: r.CUSTOMERS || 0,
+      name: (r.NAME || '').trim(),
+      snapDate: (r.SNAP_DATE || '').substring(0, 10),
+      mrr: Math.round(r.MRR || 0),
+      arr: Math.round(r.MRR || 0) * 12,
+      customers: Math.round(r.TOTAL_CUSTOMERS || 0),
+      avgPerCustomer: Math.round(r.AVG_PER_CUSTOMER || 0),
     })).reverse();
-    console.log(`[Snowflake] ARR: €${(arr / 1e6).toFixed(1)}M (MRR: €${(mrr / 1000).toFixed(0)}K from ${month}, ${latest.CUSTOMERS} customers)`);
-    return { mrr, arr, paidMrr, paidArr: paidMrr * 12, customers: latest.CUSTOMERS || 0, month, history };
+    console.log(`[Snowflake] ARR: €${(arr / 1e6).toFixed(1)}M (MRR: €${(mrr / 1000).toFixed(0)}K, ${month}, ${customers} customers)`);
+    return { mrr, arr, customers, avgPerCustomer, month, snapDate, history };
   }
 
   return {

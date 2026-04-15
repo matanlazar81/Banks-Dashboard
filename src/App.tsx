@@ -499,7 +499,7 @@ export default function App() {
   const [monthlyReval, setMonthlyReval] = useState<{ byMonth: Record<string, { eur: number; ils: number; hasBothEnds?: boolean }>; preYear: { eur: number; ils: number } }>({ byMonth: {}, preYear: { eur: 0, ils: 0 } });
   const [sfSalaryBudget, setSfSalaryBudget] = useState<Record<string, { eur: number; ils: number }>>({});
   const [sfFinanceBudget, setSfFinanceBudget] = useState<Record<string, { eur: number; ils: number }>>({});
-  const [arrData, setArrData] = useState<{ mrr: number; arr: number; paidMrr: number; paidArr: number; customers: number; month: string; history: { month: string; mrr: number; arr: number; paid: number; customers: number }[] } | null>(null);
+  const [arrData, setArrData] = useState<{ mrr: number; arr: number; customers: number; avgPerCustomer: number; month: string; snapDate: string; history: { name: string; snapDate: string; mrr: number; arr: number; customers: number; avgPerCustomer: number }[] } | null>(null);
   const [sfSalaryOverrides, setSfSalaryOverrides] = useState<{ account: string; fromMonth: string; toMonth: string; department: string; location: string; amountEUR: number; mode: string; comments: string; mKey: string; oldVal: number; newVal: number }[]>([]);
   const [prevMonthEndBalance, setPrevMonthEndBalance] = useState<{ eur: number; ils: number } | null>(null);
   const [churnData, setChurnData] = useState<{ year: number; totalCustomers: number; totalRevenue: number; churnedClients: number; lostRevenue: number; churnPct: number; clientChurnPct: number; monthlyImpact: number; monthsCount: number }[]>([]);
@@ -3271,53 +3271,6 @@ useEffect(() => {
               </div>
             </div>
 
-            {/* Currency Defense control */}
-            {(() => {
-              // Compute avg monthly finance budget from sfFinanceBudget or fallback to 'Other (800)' category
-              let avgFinBudget = 0;
-              if (Object.keys(sfFinanceBudget).length > 0) {
-                avgFinBudget = Math.round(Object.values(sfFinanceBudget).reduce((s, v) => s + Math.abs(v.eur), 0) / Object.keys(sfFinanceBudget).length);
-              } else {
-                const sfCatMonths = Object.keys((sfBudget as any).byMonth || {});
-                const nsCatMonths = Object.keys(nsBudget.byMonth || {});
-                const catMonths = sfCatMonths.length > 0 ? sfCatMonths : nsCatMonths;
-                if (catMonths.length > 0) {
-                  let total800 = 0;
-                  let count800 = 0;
-                  for (const m of catMonths) {
-                    const catData = (sfBudget as any).byMonth?.[m] || (nsBudget.byMonth[m] as any)?.categories || {};
-                    const fin = catData['Other (800)'] || 0;
-                    if (fin !== 0) { total800 += Math.abs(fin); count800++; }
-                  }
-                  if (count800 > 0) avgFinBudget = Math.round(total800 / count800);
-                }
-              }
-              if (avgFinBudget === 0) return null;
-              const hasPerMonth = Object.keys(currencyDefensePctByMonth).length > 0;
-              return (
-              <div className="flex items-center gap-3 bg-amber-50 rounded-xl border border-amber-200 px-4 py-2.5">
-                <span className="text-xs font-medium text-amber-700">🛡️ Currency Defense</span>
-                <span className="text-[10px] text-gray-500">Budget ~{fmt(avgFinBudget)}/mo</span>
-                <span className="text-[10px] text-gray-400">Default:</span>
-                <div className="flex items-center gap-1.5">
-                  <button onClick={() => setCurrencyDefensePct(Math.max(0, currencyDefensePct - 10))}
-                    className="w-5 h-5 rounded bg-white hover:bg-amber-100 text-amber-700 text-xs font-bold flex items-center justify-center border border-amber-300">−</button>
-                  <input type="number" value={currencyDefensePct} min={0} max={100} step={10}
-                    onChange={(e) => setCurrencyDefensePct(Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))}
-                    className="w-12 text-center text-xs font-semibold text-amber-800 border border-amber-300 rounded px-1 py-0.5 bg-white" />
-                  <span className="text-xs text-amber-600">%</span>
-                  <button onClick={() => setCurrencyDefensePct(Math.min(100, currencyDefensePct + 10))}
-                    className="w-5 h-5 rounded bg-white hover:bg-amber-100 text-amber-700 text-xs font-bold flex items-center justify-center border border-amber-300">+</button>
-                </div>
-                <span className="text-[10px] text-gray-500">→ ~{fmt(Math.round(avgFinBudget * currencyDefensePct / 100))}/mo to reval</span>
-                {hasPerMonth && (
-                  <button onClick={() => setCurrencyDefensePctByMonth({})}
-                    className="text-[10px] text-red-500 hover:text-red-700 underline ml-1">reset all overrides</button>
-                )}
-              </div>
-              );
-            })()}
-
             {/* OKR Cards */}
             {(() => {
               // OKR 1: YoY Revenue Growth — target 18%
@@ -3373,15 +3326,17 @@ useEffect(() => {
               const throughLabel = pastCurrentMonths.length > 0 ? monthNames[pastCurrentMonths.length - 1] : (yoyRevenue ? monthNames[(yoyRevenue.throughMonth || 1) - 1] : '');
               const asOfLabel = asOfDate ? new Date(asOfDate + 'T12:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
 
-              // ARR data
+              // ARR data (from FCT_MRR_Q_SNAPSHOT)
               const arrTarget = 67000000; // €67M ARR goal
               const currentARR = arrData?.arr || 0;
               const currentMRR = arrData?.mrr || 0;
               const arrPct = arrTarget > 0 ? Math.round(currentARR / arrTarget * 1000) / 10 : 0;
               const arrOnTrack = currentARR >= arrTarget;
               const arrProgress = Math.min(100, Math.max(0, (currentARR / arrTarget) * 100));
-              const arrMonth = arrData?.month || '';
+              const arrLabel = arrData?.month || '';
+              const arrSnapDate = arrData?.snapDate || '';
               const arrHistory = arrData?.history || [];
+              const arrAvgPerCust = arrData?.avgPerCustomer || 0;
 
               return (
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -3391,24 +3346,25 @@ useEffect(() => {
                     <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">ARR</span>
                     <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${arrOnTrack ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>{arrOnTrack ? 'On Track' : arrPct >= 90 ? 'Close' : 'Building'}</span>
                   </div>
-                  <p className="text-xs font-medium text-gray-700 mb-2">Annual Recurring Revenue goal: {fmt(arrTarget)}</p>
+                  <p className="text-xs font-medium text-gray-700 mb-2">Annual Recurring Revenue goal: €{(arrTarget / 1e6).toFixed(0)}M</p>
                   <div className="flex items-end gap-3 mb-2">
                     <p className={`text-2xl font-bold ${arrOnTrack ? 'text-emerald-700' : 'text-blue-700'}`}>{currentARR > 0 ? `€${(currentARR / 1e6).toFixed(1)}M` : '—'}</p>
-                    <p className="text-xs text-gray-400 mb-1">target: €{(arrTarget / 1e6).toFixed(0)}M</p>
+                    <p className="text-xs text-gray-400 mb-1">target: €{(arrTarget / 1e6).toFixed(0)}M ({arrPct}%)</p>
                   </div>
                   {/* Progress bar */}
                   <div className="w-full bg-gray-200 rounded-full h-2 mb-2">
                     <div className={`h-2 rounded-full transition-all ${arrOnTrack ? 'bg-emerald-500' : 'bg-blue-500'}`} style={{ width: `${arrProgress}%` }}></div>
                   </div>
                   <div className="text-[11px] space-y-1 text-gray-600">
-                    <p className="text-[10px] text-gray-400 font-semibold uppercase mt-1">Current ({arrMonth || '—'})</p>
+                    <p className="text-[10px] text-gray-400 font-semibold uppercase mt-1">Latest Snapshot — {arrLabel || '—'}{arrSnapDate ? ` (${arrSnapDate})` : ''}</p>
                     <div className="flex justify-between"><span>MRR</span><span className="font-medium">{currentMRR > 0 ? fmt(currentMRR) : '—'}</span></div>
                     <div className="flex justify-between"><span>ARR (MRR × 12)</span><span className="font-semibold text-blue-700">{currentARR > 0 ? fmt(currentARR) : '—'}</span></div>
                     <div className="flex justify-between"><span>Active Customers</span><span className="font-medium">{arrData?.customers || '—'}</span></div>
+                    {arrAvgPerCust > 0 && <div className="flex justify-between"><span>Avg per Customer</span><span className="font-medium">{fmt(arrAvgPerCust)}/mo</span></div>}
                     {arrHistory.length > 1 && <>
                       <p className="text-[10px] text-gray-400 font-semibold uppercase mt-2">Trend</p>
                       {arrHistory.map((h, idx) => (
-                        <div key={idx} className="flex justify-between"><span>{h.month}</span><span className="font-medium">€{(h.arr / 1e6).toFixed(1)}M <span className="text-gray-400">({h.customers} cust)</span></span></div>
+                        <div key={idx} className="flex justify-between"><span>{h.name}</span><span className="font-medium">€{(h.arr / 1e6).toFixed(1)}M <span className="text-gray-400">({h.customers} cust)</span></span></div>
                       ))}
                     </>}
                     <div className="flex justify-between mt-1"><span>vs Target</span><span className={`font-semibold ${arrOnTrack ? 'text-emerald-600' : 'text-red-600'}`}>{currentARR > 0 ? `${currentARR >= arrTarget ? '+' : ''}${fmt(currentARR - arrTarget)}` : '—'}</span></div>
@@ -4377,6 +4333,51 @@ useEffect(() => {
                 )}
               </div>
             </div>
+          );
+        })()}
+
+        {/* Currency Defense control — above cashflow table */}
+        {activeCompany !== 'consolidated' && cashflowForecast.length > 0 && (() => {
+          let avgFinBudget = 0;
+          if (Object.keys(sfFinanceBudget).length > 0) {
+            avgFinBudget = Math.round(Object.values(sfFinanceBudget).reduce((s, v) => s + Math.abs(v.eur), 0) / Object.keys(sfFinanceBudget).length);
+          } else {
+            const sfCatMonths = Object.keys((sfBudget as any).byMonth || {});
+            const nsCatMonths = Object.keys(nsBudget.byMonth || {});
+            const catMonths = sfCatMonths.length > 0 ? sfCatMonths : nsCatMonths;
+            if (catMonths.length > 0) {
+              let total800 = 0; let count800 = 0;
+              for (const m of catMonths) {
+                const catData = (sfBudget as any).byMonth?.[m] || (nsBudget.byMonth[m] as any)?.categories || {};
+                const fin = catData['Other (800)'] || 0;
+                if (fin !== 0) { total800 += Math.abs(fin); count800++; }
+              }
+              if (count800 > 0) avgFinBudget = Math.round(total800 / count800);
+            }
+          }
+          if (avgFinBudget === 0) return null;
+          const hasPerMonth = Object.keys(currencyDefensePctByMonth).length > 0;
+          return (
+          <div className="flex items-center gap-3 bg-amber-50 rounded-xl border border-amber-200 px-4 py-2.5">
+            <span className="text-xs font-medium text-amber-700">🛡️ Currency Defense</span>
+            <span className="text-[10px] text-gray-500">Budget ~{fmt(avgFinBudget)}/mo</span>
+            <span className="text-[10px] text-gray-400">Default:</span>
+            <div className="flex items-center gap-1.5">
+              <button onClick={() => setCurrencyDefensePct(Math.max(0, currencyDefensePct - 10))}
+                className="w-5 h-5 rounded bg-white hover:bg-amber-100 text-amber-700 text-xs font-bold flex items-center justify-center border border-amber-300">−</button>
+              <input type="number" value={currencyDefensePct} min={0} max={100} step={10}
+                onChange={(e) => setCurrencyDefensePct(Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))}
+                className="w-12 text-center text-xs font-semibold text-amber-800 border border-amber-300 rounded px-1 py-0.5 bg-white" />
+              <span className="text-xs text-amber-600">%</span>
+              <button onClick={() => setCurrencyDefensePct(Math.min(100, currencyDefensePct + 10))}
+                className="w-5 h-5 rounded bg-white hover:bg-amber-100 text-amber-700 text-xs font-bold flex items-center justify-center border border-amber-300">+</button>
+            </div>
+            <span className="text-[10px] text-gray-500">→ ~{fmt(Math.round(avgFinBudget * currencyDefensePct / 100))}/mo to reval</span>
+            {hasPerMonth && (
+              <button onClick={() => setCurrencyDefensePctByMonth({})}
+                className="text-[10px] text-red-500 hover:text-red-700 underline ml-1">reset all overrides</button>
+            )}
+          </div>
           );
         })()}
 
