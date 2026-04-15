@@ -4792,9 +4792,17 @@ useEffect(() => {
                     const blAllData = [blHdrCols, ...blRows, blTotRow];
                     const ws2 = XLSX.utils.aoa_to_sheet(blAllData);
                     ws2['!cols'] = [{ wch: 24 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, { wch: 15 }, { wch: 13 }, { wch: 15 }, { wch: 13 }, { wch: 15 }, { wch: 14 }, { wch: 12 }, { wch: 16 }];
-                    XLSX.utils.book_append_sheet(wb, ws2, 'Baseline (No Pipeline+Churn)');
+                    // Download file 1: Full forecast
+                    const coLabel = activeCompany === 'lsports' ? 'LSports' : activeCompany === 'statscore' ? 'Statscore' : 'Consolidated';
+                    const dateSuffix = new Date().toISOString().slice(0,10);
+                    XLSX.writeFile(wb, `Cashflow_${coLabel}_${activeYear}_${dateSuffix}.xlsx`);
 
-                    XLSX.writeFile(wb, `Cashflow_${activeCompany === 'lsports' ? 'LSports' : activeCompany === 'statscore' ? 'Statscore' : 'Consolidated'}_${activeYear}_${new Date().toISOString().slice(0,10)}.xlsx`);
+                    // Download file 2: Baseline (no Pipeline/Churn) — after short delay so browser allows both
+                    setTimeout(() => {
+                      const wb2 = XLSX.utils.book_new();
+                      XLSX.utils.book_append_sheet(wb2, ws2, 'Baseline (No Pipeline+Churn)');
+                      XLSX.writeFile(wb2, `Cashflow_Baseline_${coLabel}_${activeYear}_${dateSuffix}.xlsx`);
+                    }, 500);
                   }}
                   className="text-[10px] text-green-600 hover:text-green-800 bg-green-50 border border-green-200 rounded-lg px-2 py-1 transition-colors"
                   title="Download as Excel"
