@@ -153,8 +153,27 @@ function createSnowflakeClient(env) {
       totalBudgetByMonth[month].ils += r.BUDGET_ILS || 0;
     }
 
-    console.log(`[Snowflake] Budget: ${Object.keys(byMonth).length} months, ${rows.length} category-months`);
-    return { byMonth, totalByMonth: totalBudgetByMonth };
+    // Also fetch Finance/currency defense budget (800% GL accounts) in the same call
+    const finRows = await query(`
+      SELECT BUDGET_MONTH_DATE::VARCHAR AS MONTH_STR,
+             ROUND(SUM(b.AMOUNT_EUR_CC)) AS BUDGET_EUR,
+             ROUND(SUM(b.AMOUNT_ILS_CC)) AS BUDGET_ILS
+      FROM DL_PRODUCTION.FINANCE.FCT_BUDGET b
+      JOIN DL_PRODUCTION.FINANCE.DIM_GL_ACCOUNT g ON b.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
+      WHERE b.SUBSIDIARY_ID = 3
+        AND g.GL_ACCOUNT_NUMBER LIKE '800%'
+        AND b.BUDGET_MONTH_DATE >= '${yr}-01-01'
+        AND b.BUDGET_MONTH_DATE <= '${yr}-12-31'
+      GROUP BY BUDGET_MONTH_DATE::VARCHAR
+      ORDER BY MONTH_STR
+    `);
+    const financeBudget = {};
+    for (const r of finRows) {
+      const month = (r.MONTH_STR || '').substring(0, 7);
+      financeBudget[month] = { eur: Math.round(r.BUDGET_EUR || 0), ils: Math.round(r.BUDGET_ILS || 0) };
+    }
+    console.log(`[Snowflake] Budget: ${Object.keys(byMonth).length} months, ${rows.length} category-months, finance(800%): ${Object.keys(financeBudget).length} months${Object.values(financeBudget)[0] ? ` sample: ${JSON.stringify(Object.values(financeBudget)[0])}` : ''}`);
+    return { byMonth, totalByMonth: totalBudgetByMonth, financeBudget };
   }
 
   // ── Monthly actual expenses (all, for budget vs actual comparison) ──

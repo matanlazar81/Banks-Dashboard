@@ -1057,7 +1057,7 @@ useEffect(() => {
     setARForecast(c.arForecast); setSalaryData(c.salaryData); setVendorHistory(c.vendorHistory);
     setExpenseCategories(c.expenseCategories); setActualCollections(c.actualCollections);
     setMonthlyReval(c.monthlyReval); setNsBudget(c.nsBudget); setNsAccountId(c.nsAccountId);
-    setSfBudget(c.sfBudget); setSfRevenue(c.sfRevenue); setSfActualsSplit(c.sfActualsSplit);
+    setSfBudget(c.sfBudget); if (c.sfBudget?.financeBudget) setSfFinanceBudget(c.sfBudget.financeBudget); setSfRevenue(c.sfRevenue); setSfActualsSplit(c.sfActualsSplit);
     setSfSalaryBudget(c.sfSalaryBudget); setSfSalaryOverrides(c.sfSalaryOverrides); setSfFinanceBudget(c.sfFinanceBudget || {});
     setSfRevenuePaid(c.sfRevenuePaid); setSfPipeline(c.sfPipeline); setSfConversion(c.sfConversion);
     setChurnData(c.churnData); setChurnMonthlyAvg(c.churnMonthlyAvg);
@@ -1108,7 +1108,7 @@ useEffect(() => {
           safe('/api/sf-conversion'), safe('/api/sf-churn-analysis'), safe('/api/sf-yoy-revenue'),
           safe('/api/sf-finance-budget'),
         ]);
-        if (budR?.data) cache.sfBudget = budR.data;
+        if (budR?.data) { cache.sfBudget = budR.data; if (budR.data.financeBudget) cache.sfFinanceBudget = budR.data.financeBudget; }
         if (revR?.data) cache.sfRevenue = revR.data;
         if (splitR?.data) cache.sfActualsSplit = splitR.data;
         if (salBudR?.data) cache.sfSalaryBudget = salBudR.data;
@@ -1237,8 +1237,9 @@ useEffect(() => {
               }
               // Keep byMonth categories from snapshot for category adjustments, override totals
               setSfBudget({ byMonth: snap.sfBudget?.byMonth || {}, totalByMonth: liveVendorTotal });
-              // Finance budget (800% GL = currency defense) from snapshot
-              if (snap.sfFinanceBudget) setSfFinanceBudget(snap.sfFinanceBudget);
+              // Finance budget (800% GL = currency defense) — from sfBudget.financeBudget or snapshot
+              if (snap.sfBudget?.financeBudget) setSfFinanceBudget(snap.sfBudget.financeBudget);
+              else if (snap.sfFinanceBudget) setSfFinanceBudget(snap.sfFinanceBudget);
               else setSfFinanceBudget({});
               console.info(`[Snapshot] ${co} ${coYear} vendor baseline: avg(12m) = €${avgVendors.toLocaleString()}`);
               // Also override nsBudget for non-SF subsidiaries (Statscore)
@@ -1256,11 +1257,11 @@ useEffect(() => {
                 else setNsBudget({ byMonth: {} });
               }
             } else {
-              if (snap.sfBudget) setSfBudget(snap.sfBudget);
+              if (snap.sfBudget) { setSfBudget(snap.sfBudget); if (snap.sfBudget.financeBudget) setSfFinanceBudget(snap.sfBudget.financeBudget); }
               else setSfBudget({ totalByMonth: {} });
               if (snap.sfSalaryBudget) setSfSalaryBudget(snap.sfSalaryBudget);
               else setSfSalaryBudget({});
-              if (snap.sfFinanceBudget) setSfFinanceBudget(snap.sfFinanceBudget);
+              if (snap.sfFinanceBudget && !Object.keys(sfFinanceBudget).length) setSfFinanceBudget(snap.sfFinanceBudget);
               else setSfFinanceBudget({});
               if (snap.nsBudget) setNsBudget(snap.nsBudget);
               else setNsBudget({ byMonth: {} });
@@ -1349,7 +1350,7 @@ useEffect(() => {
       if (hasSF) {
         setNsBudget({ byMonth: {} });
         const [budR, revR, splitR, salBudR, revPaidR, pipeR, convR, churnR, yoyR, finBudR] = sfResults;
-        if (budR?.data) setSfBudget(budR.data);
+        if (budR?.data) { setSfBudget(budR.data); if (budR.data.financeBudget) setSfFinanceBudget(budR.data.financeBudget); }
         if (revR?.data) setSfRevenue(revR.data);
         if (splitR?.data) setSfActualsSplit(splitR.data);
         if (salBudR?.data) setSfSalaryBudget(salBudR.data);
