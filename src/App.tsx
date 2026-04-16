@@ -4934,8 +4934,8 @@ useEffect(() => {
             </div>
 
             {/* Cashflow Table — Opening → Inflows → Outflows → Net → Closing */}
-            <div className="overflow-x-auto" style={{ maxWidth: '100%' }}>
-              <table className="text-[11px]" style={{ minWidth: '1800px', width: '1800px' }}>
+            <div style={{ overflowX: 'scroll', maxWidth: '100%' }}>
+              <table className="w-full text-[11px]" style={{ minWidth: '1400px' }}>
                 <thead>
                   <tr className="text-left text-gray-400 uppercase border-b-2 border-gray-200">
                     <th className="pb-2 pr-1 whitespace-nowrap">Month</th>
@@ -4949,7 +4949,7 @@ useEffect(() => {
                     <th className="pb-2 pr-1 text-right text-red-600 whitespace-nowrap">Total Outflow</th>
                     <th className="pb-2 pr-1 text-right whitespace-nowrap">Net</th>
                     <th className="pb-2 pr-1 text-right text-amber-500 whitespace-nowrap">Reval</th>
-                    <th className="pb-2 pr-1 text-right text-blue-700 whitespace-nowrap sticky right-0 bg-white z-10" style={{ boxShadow: '-4px 0 8px -4px rgba(0,0,0,0.08)' }}>Closing Balance</th>
+                    <th className="pb-2 pr-1 text-right text-blue-700 whitespace-nowrap">Closing Balance</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -5280,7 +5280,7 @@ useEffect(() => {
                           );
                         })()}
                       </td>
-                      <td className={`py-2.5 pr-1 text-right font-bold whitespace-nowrap sticky right-0 z-10 ${r.closingBalance >= 0 ? 'text-blue-700' : 'text-red-600'} ${r.isCurrent ? 'bg-blue-50' : r.isPast ? 'bg-gray-50' : 'bg-white'}`} style={{ boxShadow: '-4px 0 8px -4px rgba(0,0,0,0.08)' }}>
+                      <td className={`py-2.5 pr-1 text-right font-bold whitespace-nowrap ${r.closingBalance >= 0 ? 'text-blue-700' : 'text-red-600'}`}>
                         {fmtCFull(r.closingBalance, r.closingBalanceILS)}
                         {compareCashflow && compareCashflow[i] && (() => {
                           const delta = r.closingBalance - compareCashflow[i].closingBalance;
@@ -5332,7 +5332,7 @@ useEffect(() => {
                         <td className="py-2.5 pr-1 text-right text-amber-600">
                           {fmtC(totalReval, totalRevalILS)}
                         </td>
-                        <td className={`py-2.5 pr-1 text-right font-bold whitespace-nowrap sticky right-0 z-10 bg-gray-50 ${(cashflowForecast[cashflowForecast.length - 1]?.closingBalance || 0) >= 0 ? 'text-emerald-700' : 'text-red-600'}`} style={{ boxShadow: '-4px 0 8px -4px rgba(0,0,0,0.08)' }}>
+                        <td className={`py-2.5 pr-1 text-right font-bold whitespace-nowrap ${(cashflowForecast[cashflowForecast.length - 1]?.closingBalance || 0) >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
                           {fmtC(cashflowForecast[cashflowForecast.length - 1]?.closingBalance || 0, cashflowForecast[cashflowForecast.length - 1]?.closingBalanceILS || 0)}
                           <div className={`text-xs font-bold mt-1 ${totalGrowth >= 0 ? 'text-green-600' : 'text-red-500'}`}>
                             Net Growth: {totalGrowth >= 0 ? '+' : ''}{fmtC(totalGrowth, totalGrowthILS)}
@@ -5357,7 +5357,7 @@ useEffect(() => {
                         <td className="py-2 pr-1 text-right">{fmt(totalSaving)}</td>
                         <td className="py-2 pr-1 text-right">{fmt(totalSaving)}</td>
                         <td className="py-2 pr-1 text-right"></td>
-                        <td className="py-2 pr-1 text-right sticky right-0 bg-green-50" style={{ boxShadow: '-4px 0 8px -4px rgba(0,0,0,0.08)' }}>{fmt(totalSaving)}</td>
+                        <td className="py-2 pr-1 text-right">{fmt(totalSaving)}</td>
                       </tr>
                       <tr className="bg-emerald-50 font-bold text-emerald-800 whitespace-nowrap">
                         <td className="py-2 pr-1" colSpan={6}>TOTAL AFTER SAVINGS</td>
@@ -5366,7 +5366,7 @@ useEffect(() => {
                         <td className="py-2 pr-1 text-right">-{fmt(totalOutflowAfter)}</td>
                         <td className={`py-2 pr-1 text-right ${cashflowForecast.reduce((s, r) => s + r.net, 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmt(cashflowForecast.reduce((s, r) => s + r.net, 0))}</td>
                         <td className="py-2 pr-1 text-right text-amber-600">{fmt(cashflowForecast.reduce((s, r) => s + r.revalImpact, 0))}</td>
-                        <td className={`py-2 pr-1 text-right sticky right-0 bg-emerald-50 ${(cashflowForecast[cashflowForecast.length - 1]?.closingBalance || 0) >= 0 ? 'text-emerald-700' : 'text-red-600'}`} style={{ boxShadow: '-4px 0 8px -4px rgba(0,0,0,0.08)' }}>{fmt(cashflowForecast[cashflowForecast.length - 1]?.closingBalance || 0)}</td>
+                        <td className={`py-2 pr-1 text-right ${(cashflowForecast[cashflowForecast.length - 1]?.closingBalance || 0) >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>{fmt(cashflowForecast[cashflowForecast.length - 1]?.closingBalance || 0)}</td>
                       </tr>
                     </>);
                   })()}
