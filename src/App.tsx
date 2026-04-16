@@ -1635,8 +1635,9 @@ useEffect(() => {
         const manualEUR = eurIlsRatio > 0 ? Math.round(salaryManualILS[mKey] / eurIlsRatio) : 0;
         salaryBase = manualEUR;
         salary = manualEUR; // no adjustments on top — this IS the final value
-      } else if (useLastActual && !(isPastMonth || isCurMonth)) {
+      } else if (useLastActual && !isPastMonth) {
         // "Last Actual" mode: project last actual month's recurring salary per dept
+        // (applies to current month too if no actual data yet)
         let lastActualTotal = Object.values(salaryActualsByDept[lastActualSalaryMonth]).reduce((s, v) => s + (v as { eur: number }).eur, 0);
         // Apply GSheets salary overrides for this month (same as budget mode applies server-side)
         const monthOvrs = sfSalaryOverrides.filter(o => o.mKey === mKey);
