@@ -5808,7 +5808,9 @@ useEffect(() => {
                                       } else {
                                         setForecastDrilldown(prev => prev ? { ...prev, data: { ...prev.data, __summaryExpandedLever: leverKey } } : null);
                                         if (!cachedDetail) {
-                                          fetch(`/api/sf-headcount-lever-detail?eventType=${encodeURIComponent(c.type)}&eventSubType=${encodeURIComponent(c.subType)}&fromMonth=${forecastDrilldown.mKey}`).then(r => r.json()).then(j => {
+                                          // Fetch all events from Jan (not fromMonth) to show full cumulative detail
+                                          const yearStart = forecastDrilldown.mKey.slice(0, 4) + '-01';
+                                          fetch(`/api/sf-headcount-lever-detail?eventType=${encodeURIComponent(c.type)}&eventSubType=${encodeURIComponent(c.subType)}&fromMonth=${yearStart}`).then(r => r.json()).then(j => {
                                             setForecastDrilldown(prev => prev ? { ...prev, data: { ...prev.data, __leverDetails: { ...(prev.data.__leverDetails || {}), [leverKey]: j.data || [] } } } : null);
                                           }).catch(() => {});
                                         }
@@ -5840,7 +5842,7 @@ useEffect(() => {
                                                 <th className="pb-0.5 text-right">Cost (EUR)</th>
                                               </tr></thead>
                                               <tbody>
-                                                {cachedDetail.filter((dd: any) => dd.month >= forecastDrilldown.mKey || dd.status === 'Open' || !dd.employeeId).map((dd: any, di: number) => (
+                                                {cachedDetail.filter((dd: any) => dd.month <= forecastDrilldown.mKey).map((dd: any, di: number) => (
                                                   <tr key={di} className="border-b border-blue-50">
                                                     <td className="py-0.5 text-gray-600">{dd.department || '—'}</td>
                                                     <td className="py-0.5 text-gray-600">{dd.position || '—'}</td>
