@@ -5847,15 +5847,16 @@ useEffect(() => {
                                   const colorClass = isIncrease ? 'text-red-600' : 'text-green-700';
                                   const dotColor = isIncrease ? 'bg-red-500' : 'bg-green-500';
                                   const leverKey = `${c.type}/${c.subType}`;
-                                  const isExpanded = forecastDrilldown.data?.__summaryExpandedLever === leverKey;
+                                  const expandedLevers: string[] = forecastDrilldown.data?.__summaryExpandedLevers || [];
+                                  const isExpanded = expandedLevers.includes(leverKey);
                                   const cachedDetail = (forecastDrilldown.data?.__leverDetails || {})[leverKey];
                                   return (
                                     <Fragment key={ci}>
                                     <tr className="border-b border-blue-100 bg-blue-50/20 cursor-pointer hover:bg-blue-100/50" onClick={() => {
                                       if (isExpanded) {
-                                        setForecastDrilldown(prev => prev ? { ...prev, data: { ...prev.data, __summaryExpandedLever: null } } : null);
+                                        setForecastDrilldown(prev => prev ? { ...prev, data: { ...prev.data, __summaryExpandedLevers: (prev.data?.__summaryExpandedLevers || []).filter((k: string) => k !== leverKey) } } : null);
                                       } else {
-                                        setForecastDrilldown(prev => prev ? { ...prev, data: { ...prev.data, __summaryExpandedLever: leverKey } } : null);
+                                        setForecastDrilldown(prev => prev ? { ...prev, data: { ...prev.data, __summaryExpandedLevers: [...(prev.data?.__summaryExpandedLevers || []), leverKey] } } : null);
                                         if (!cachedDetail) {
                                           // Fetch events from after last actual month (only future projection events)
                                           const fromM = lastActualSalaryMonth ? lastActualSalaryMonth.replace(/-(\d+)$/, (_, d) => `-${String(parseInt(d) + 1).padStart(2, '0')}`) : forecastDrilldown.mKey;
@@ -6105,11 +6106,9 @@ useEffect(() => {
                                 {(() => {
                                   const totalBudgetEUR = deptEntries.reduce((s, [, v]) => s + v, 0);
                                   const totalHC = deptEntries.reduce((s, [d]) => s + (deptHeadcount[d]?.count || 0), 0);
-                                  // Headcount lever net impact (ILS → EUR conversion)
-                                  const hcCum = (forecastDrilldown.data as any)?.headcount?.cumulative;
-                                  const hcNetILS = hcCum ? hcCum.reduce((s: number, c: any) => s + (c.type === 'increase' ? c.totalCost : -c.totalCost), 0) : 0;
-                                  const ilsToEur = adjustedCurrent > 0 && adjustedCurrentLocal > 0 ? adjustedCurrent / adjustedCurrentLocal : 1 / 3.7;
-                                  const hcNetEUR = Math.round(hcNetILS * ilsToEur);
+                                  // Use same HC impact data as summary (monthlyHCImpact) for consistency
+                                  const hcNetILS = monthlyHCImpact[forecastDrilldown.mKey]?.running || 0;
+                                  const hcNetEUR = ilsRate > 0 ? Math.round(hcNetILS / ilsRate) : 0;
                                   return (<>
                                 <tr className="border-t-2 border-amber-300 font-bold">
                                   <td className="py-1.5">Total Base</td>
