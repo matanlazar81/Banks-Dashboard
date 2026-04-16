@@ -653,17 +653,22 @@ function createSnowflakeClient(env) {
   }
 
   // ── Monthly headcount impact summary (for forecast calculation) ──
-  // Returns net ILS impact per month from all HC events, plus per-category cumulative breakdown
-  async function fetchMonthlyHCImpact(year) {
+  // Returns net ILS impact per month from FUTURE HC events only (after lastActualMonth)
+  async function fetchMonthlyHCImpact(year, lastActualMonth) {
     const yr = year || 2026;
-    console.log(`[Snowflake] Fetching monthly HC impact for ${yr}...`);
+    // Only count events AFTER the last actual month — earlier events are already in the actual salary base
+    const startMonth = lastActualMonth ? lastActualMonth.replace(/-\d+$/, m => {
+      const num = parseInt(m.slice(1)) + 1;
+      return `-${String(num).padStart(2, '0')}`;
+    }) : `${yr}-01`;
+    console.log(`[Snowflake] Fetching monthly HC impact for ${yr} from ${startMonth}...`);
     const rows = await query(`
       SELECT TO_CHAR(EVENT_MONTH_DATE, 'YYYY-MM') AS MONTH,
              EVENT_TYPE, EVENT_SUB_TYPE,
              COUNT(*) AS CNT,
              ROUND(SUM(EMPLOYER_COST)) AS TOTAL_COST
       FROM DL_PRODUCTION.HR.FCT_HEADCOUNT_EVENT
-      WHERE EVENT_MONTH_DATE >= '${yr}-01-01'
+      WHERE EVENT_MONTH_DATE >= TO_DATE('${startMonth}-01')
         AND EVENT_MONTH_DATE <= '${yr}-12-31'
       GROUP BY TO_CHAR(EVENT_MONTH_DATE, 'YYYY-MM'), EVENT_TYPE, EVENT_SUB_TYPE
       ORDER BY MONTH, EVENT_TYPE, EVENT_SUB_TYPE

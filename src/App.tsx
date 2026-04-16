@@ -1126,7 +1126,6 @@ useEffect(() => {
           safe('/api/sf-salary-budget'), safe('/api/sf-revenue-paid'), safe('/api/sf-pipeline'),
           safe('/api/sf-conversion'), safe('/api/sf-churn-analysis'), safe('/api/sf-yoy-revenue'),
           safe('/api/sf-finance-budget'), safe('/api/arr-current'), safe('/api/sf-salary-actuals-by-dept'),
-          safe('/api/sf-monthly-hc-impact'),
         ]);
         if (budR?.data) { cache.sfBudget = budR.data; if (budR.data.financeBudget) cache.sfFinanceBudget = budR.data.financeBudget; }
         if (revR?.data) cache.sfRevenue = revR.data;
@@ -1142,6 +1141,9 @@ useEffect(() => {
         if (churnR?.recentMonthlyAvg) cache.churnMonthlyAvg = churnR.recentMonthlyAvg;
         if (yoyR?.currentYear) cache.yoyRevenue = yoyR;
         if (salActDeptR?.byMonth) { cache.salaryActualsByDept = salActDeptR.byMonth; cache.lastActualSalaryMonth = salActDeptR.lastActualMonth || ''; }
+        // Fetch HC impact now that we know lastActualMonth
+        const lastAct = salActDeptR?.lastActualMonth || '';
+        const hcImpactR = await safe(`/api/sf-monthly-hc-impact${lastAct ? `?lastActual=${lastAct}` : ''}`);
         if (hcImpactR && !hcImpactR.error) cache.monthlyHCImpact = hcImpactR;
       }
       // Fill defaults for missing fields
@@ -1338,7 +1340,6 @@ useEffect(() => {
         '/api/sf-budget', '/api/sf-revenue', '/api/sf-actuals-split', '/api/sf-salary-budget',
         '/api/sf-revenue-paid', '/api/sf-pipeline', '/api/sf-conversion', '/api/sf-churn-analysis',
         '/api/sf-yoy-revenue', '/api/sf-finance-budget', '/api/arr-current', '/api/sf-salary-actuals-by-dept',
-        '/api/sf-monthly-hc-impact',
       ] : !hasSF ? [`/api/ns-budget${subQ}`] : [];
 
       const allResults = await Promise.all([...nsUrls, ...sfUrls].map(u => safe(u)));
@@ -1376,7 +1377,7 @@ useEffect(() => {
       // Apply SF or NS budget results
       if (hasSF) {
         setNsBudget({ byMonth: {} });
-        const [budR, revR, splitR, salBudR, revPaidR, pipeR, convR, churnR, yoyR, finBudR, arrR, salActDeptR2, hcImpactR2] = sfResults;
+        const [budR, revR, splitR, salBudR, revPaidR, pipeR, convR, churnR, yoyR, finBudR, arrR, salActDeptR2] = sfResults;
         if (budR?.data) { setSfBudget(budR.data); if (budR.data.financeBudget) setSfFinanceBudget(budR.data.financeBudget); }
         if (revR?.data) setSfRevenue(revR.data);
         if (splitR?.data) setSfActualsSplit(splitR.data);
@@ -1391,6 +1392,9 @@ useEffect(() => {
         if (finBudR?.data) setSfFinanceBudget(finBudR.data);
         if (arrR?.data) setArrData(arrR.data);
         if (salActDeptR2?.byMonth) { setSalaryActualsByDept(salActDeptR2.byMonth); setLastActualSalaryMonth(salActDeptR2.lastActualMonth || ''); }
+        // Fetch HC impact now that we know lastActualMonth
+        const lastAct2 = salActDeptR2?.lastActualMonth || '';
+        const hcImpactR2 = await safe(`/api/sf-monthly-hc-impact${lastAct2 ? `?lastActual=${lastAct2}` : ''}`);
         if (hcImpactR2 && !hcImpactR2.error) setMonthlyHCImpact(hcImpactR2);
       } else {
         const [nsBudR] = sfResults;
@@ -5808,9 +5812,9 @@ useEffect(() => {
                                       } else {
                                         setForecastDrilldown(prev => prev ? { ...prev, data: { ...prev.data, __summaryExpandedLever: leverKey } } : null);
                                         if (!cachedDetail) {
-                                          // Fetch all events from Jan (not fromMonth) to show full cumulative detail
-                                          const yearStart = forecastDrilldown.mKey.slice(0, 4) + '-01';
-                                          fetch(`/api/sf-headcount-lever-detail?eventType=${encodeURIComponent(c.type)}&eventSubType=${encodeURIComponent(c.subType)}&fromMonth=${yearStart}`).then(r => r.json()).then(j => {
+                                          // Fetch events from after last actual month (only future projection events)
+                                          const fromM = lastActualSalaryMonth ? lastActualSalaryMonth.replace(/-(\d+)$/, (_, d) => `-${String(parseInt(d) + 1).padStart(2, '0')}`) : forecastDrilldown.mKey;
+                                          fetch(`/api/sf-headcount-lever-detail?eventType=${encodeURIComponent(c.type)}&eventSubType=${encodeURIComponent(c.subType)}&fromMonth=${fromM}`).then(r => r.json()).then(j => {
                                             setForecastDrilldown(prev => prev ? { ...prev, data: { ...prev.data, __leverDetails: { ...(prev.data.__leverDetails || {}), [leverKey]: j.data || [] } } } : null);
                                           }).catch(() => {});
                                         }
@@ -5842,7 +5846,7 @@ useEffect(() => {
                                                 <th className="pb-0.5 text-right">Cost (EUR)</th>
                                               </tr></thead>
                                               <tbody>
-                                                {cachedDetail.filter((dd: any) => dd.month <= forecastDrilldown.mKey).map((dd: any, di: number) => (
+                                                {cachedDetail.filter((dd: any) => dd.month <= forecastDrilldown.mKey && (!lastActualSalaryMonth || dd.month > lastActualSalaryMonth)).map((dd: any, di: number) => (
                                                   <tr key={di} className="border-b border-blue-50">
                                                     <td className="py-0.5 text-gray-600">{dd.department || '—'}</td>
                                                     <td className="py-0.5 text-gray-600">{dd.position || '—'}</td>

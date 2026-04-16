@@ -677,8 +677,10 @@ function banksPlugin(): Plugin {
         try {
           const sf = getSfClient();
           const yr = getYear(_req);
+          const url = new URL(_req.url || '', 'http://localhost');
+          const lastActual = url.searchParams.get('lastActual') || '';
           if (!sf) { res.end(JSON.stringify({})); return; }
-          const data = await sf.fetchMonthlyHCImpact(yr);
+          const data = await sf.fetchMonthlyHCImpact(yr, lastActual);
           res.setHeader('Content-Type', 'application/json');
           res.end(JSON.stringify(data));
         } catch (e: any) {
