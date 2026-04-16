@@ -5914,10 +5914,20 @@ useEffect(() => {
                                   );
                                 })}
                               </tbody>
-                              <tfoot><tr className="border-t-2 border-amber-300 font-bold">
-                                  <td className="py-1.5">Total</td>
-                                  <td className="py-1.5 text-right text-violet-700 whitespace-nowrap tabular-nums">{fmt(deptEntries.reduce((s, [, v]) => s + v, 0))}</td>
-                                  <td className="py-1.5 text-center tabular-nums">{deptEntries.reduce((s, [d]) => s + (deptHeadcount[d]?.count || 0), 0)}</td>
+                              <tfoot>
+                                {(() => {
+                                  const totalBudgetEUR = deptEntries.reduce((s, [, v]) => s + v, 0);
+                                  const totalHC = deptEntries.reduce((s, [d]) => s + (deptHeadcount[d]?.count || 0), 0);
+                                  // Headcount lever net impact (ILS → EUR conversion)
+                                  const hcCum = (forecastDrilldown.data as any)?.headcount?.cumulative;
+                                  const hcNetILS = hcCum ? hcCum.reduce((s: number, c: any) => s + (c.type === 'increase' ? c.totalCost : -c.totalCost), 0) : 0;
+                                  const ilsToEur = adjustedCurrent > 0 && adjustedCurrentLocal > 0 ? adjustedCurrent / adjustedCurrentLocal : 1 / 3.7;
+                                  const hcNetEUR = Math.round(hcNetILS * ilsToEur);
+                                  return (<>
+                                <tr className="border-t-2 border-amber-300 font-bold">
+                                  <td className="py-1.5">Total Base</td>
+                                  <td className="py-1.5 text-right text-violet-700 whitespace-nowrap tabular-nums">{fmt(totalBudgetEUR)}</td>
+                                  <td className="py-1.5 text-center tabular-nums">{totalHC}</td>
                                   <td className="py-1.5 text-center">
                                     {hasAnyDeptAdj && <button onClick={() => { setSalaryDeptAdj({}); setHeadcountAdj({}); }}
                                             className="text-[9px] text-red-500 hover:text-red-700 underline">reset all</button>}
@@ -5937,7 +5947,23 @@ useEffect(() => {
                                       return totalPeople !== 0 ? <div className="text-[9px] font-normal text-blue-500 mt-0.5">≈ {totalPeople > 0 ? '+' : ''}{totalPeople} people</div> : null;
                                     })()}</>)}
                                   </td>
-                                </tr></tfoot>
+                                </tr>
+                                {hcNetEUR !== 0 && (
+                                  <tr className="border-t border-amber-200 text-[10px]">
+                                    <td className="py-1 text-gray-500">+ HC Levers (Hired/Term/Leave)</td>
+                                    <td className={`py-1 text-right whitespace-nowrap tabular-nums ${hcNetEUR >= 0 ? 'text-red-500' : 'text-green-600'}`}>{hcNetEUR >= 0 ? '+' : ''}{fmt(hcNetEUR)}</td>
+                                    <td colSpan={4}></td>
+                                  </tr>
+                                )}
+                                {hcNetEUR !== 0 && (
+                                  <tr className="border-t border-amber-300 font-bold">
+                                    <td className="py-1">Effective Total</td>
+                                    <td className="py-1 text-right text-violet-800 whitespace-nowrap tabular-nums">{fmt(totalBudgetEUR + hcNetEUR)}</td>
+                                    <td colSpan={4}></td>
+                                  </tr>
+                                )}
+                                </>); })()}
+                                </tfoot>
                             </table>
                             </div>
                           </div>
