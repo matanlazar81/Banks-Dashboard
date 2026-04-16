@@ -623,6 +623,14 @@ export default function App() {
       }).catch(() => {});
     }
   }, [salaryDeptAdj, salaryDeptBudgets]);
+  // Salary projection mode: 'budget' (FCT_BUDGET) or 'lastActual' (last actual month projected forward)
+  const [salaryProjectionMode, setSalaryProjectionMode] = useState<'budget' | 'lastActual'>(() => {
+    try { return (localStorage.getItem('banks-salary-proj-mode') as 'budget' | 'lastActual') || 'budget'; } catch { return 'budget'; }
+  });
+  useEffect(() => { try { localStorage.setItem('banks-salary-proj-mode', salaryProjectionMode); } catch {} }, [salaryProjectionMode]);
+  // Salary actuals by department (for lastActual projection mode)
+  const [salaryActualsByDept, setSalaryActualsByDept] = useState<Record<string, Record<string, { eur: number; ils: number }>>>({});
+  const [lastActualSalaryMonth, setLastActualSalaryMonth] = useState('');
   // Per-vendor-category adjustments — persisted across sessions
   const [vendorCatAdj, setVendorCatAdj] = useState<Record<string, Record<string, number>>>(() => {
     try { const saved = localStorage.getItem('banks-vendor-cat-adj'); return saved ? JSON.parse(saved) : {}; } catch { return {}; }
@@ -1070,6 +1078,7 @@ useEffect(() => {
     setChurnData(c.churnData); setChurnMonthlyAvg(c.churnMonthlyAvg);
     setYoyRevenue(c.yoyRevenue); setPrevMonthEndBalance(c.prevMonthEndBalance);
     setSalaryDeptBudgets(c.salaryDeptBudgets);
+    setSalaryActualsByDept(c.salaryActualsByDept || {}); setLastActualSalaryMonth(c.lastActualSalaryMonth || '');
     return true;
   }, []);
 
@@ -1109,11 +1118,11 @@ useEffect(() => {
       } else {
         cache.nsBudget = { byMonth: {} };
         // Fire all SF calls in parallel
-        const [budR, revR, splitR, salBudR, revPaidR, pipeR, convR, churnR, yoyR, finBudR, arrR] = await Promise.all([
+        const [budR, revR, splitR, salBudR, revPaidR, pipeR, convR, churnR, yoyR, finBudR, arrR, salActDeptR] = await Promise.all([
           safe('/api/sf-budget'), safe('/api/sf-revenue'), safe('/api/sf-actuals-split'),
           safe('/api/sf-salary-budget'), safe('/api/sf-revenue-paid'), safe('/api/sf-pipeline'),
           safe('/api/sf-conversion'), safe('/api/sf-churn-analysis'), safe('/api/sf-yoy-revenue'),
-          safe('/api/sf-finance-budget'), safe('/api/arr-current'),
+          safe('/api/sf-finance-budget'), safe('/api/arr-current'), safe('/api/sf-salary-actuals-by-dept'),
         ]);
         if (budR?.data) { cache.sfBudget = budR.data; if (budR.data.financeBudget) cache.sfFinanceBudget = budR.data.financeBudget; }
         if (revR?.data) cache.sfRevenue = revR.data;
@@ -1128,6 +1137,7 @@ useEffect(() => {
         if (churnR?.data) cache.churnData = churnR.data;
         if (churnR?.recentMonthlyAvg) cache.churnMonthlyAvg = churnR.recentMonthlyAvg;
         if (yoyR?.currentYear) cache.yoyRevenue = yoyR;
+        if (salActDeptR?.byMonth) { cache.salaryActualsByDept = salActDeptR.byMonth; cache.lastActualSalaryMonth = salActDeptR.lastActualMonth || ''; }
       }
       // Fill defaults for missing fields
       cache.bankData = cache.bankData || { openingBalance: 0, dailyBalances: [], currentBalance: 0 };
@@ -1155,6 +1165,8 @@ useEffect(() => {
       cache.yoyRevenue = cache.yoyRevenue || null;
       cache.prevMonthEndBalance = cache.prevMonthEndBalance || null;
       cache.salaryDeptBudgets = cache.salaryDeptBudgets || {};
+      cache.salaryActualsByDept = cache.salaryActualsByDept || {};
+      cache.lastActualSalaryMonth = cache.lastActualSalaryMonth || '';
       companyDataCache.current[co] = cache;
       console.info(`[Prefetch] ${co} data cached successfully`);
     } catch (e: any) { console.error(`[Prefetch] ${co} failed:`, e.message); }
@@ -1319,7 +1331,7 @@ useEffect(() => {
       const sfUrls = hasSF ? [
         '/api/sf-budget', '/api/sf-revenue', '/api/sf-actuals-split', '/api/sf-salary-budget',
         '/api/sf-revenue-paid', '/api/sf-pipeline', '/api/sf-conversion', '/api/sf-churn-analysis',
-        '/api/sf-yoy-revenue', '/api/sf-finance-budget', '/api/arr-current',
+        '/api/sf-yoy-revenue', '/api/sf-finance-budget', '/api/arr-current', '/api/sf-salary-actuals-by-dept',
       ] : !hasSF ? [`/api/ns-budget${subQ}`] : [];
 
       const allResults = await Promise.all([...nsUrls, ...sfUrls].map(u => safe(u)));
@@ -1357,7 +1369,7 @@ useEffect(() => {
       // Apply SF or NS budget results
       if (hasSF) {
         setNsBudget({ byMonth: {} });
-        const [budR, revR, splitR, salBudR, revPaidR, pipeR, convR, churnR, yoyR, finBudR, arrR] = sfResults;
+        const [budR, revR, splitR, salBudR, revPaidR, pipeR, convR, churnR, yoyR, finBudR, arrR, salActDeptR2] = sfResults;
         if (budR?.data) { setSfBudget(budR.data); if (budR.data.financeBudget) setSfFinanceBudget(budR.data.financeBudget); }
         if (revR?.data) setSfRevenue(revR.data);
         if (splitR?.data) setSfActualsSplit(splitR.data);
@@ -1371,6 +1383,7 @@ useEffect(() => {
         if (yoyR?.currentYear) setYoyRevenue(yoyR);
         if (finBudR?.data) setSfFinanceBudget(finBudR.data);
         if (arrR?.data) setArrData(arrR.data);
+        if (salActDeptR2?.byMonth) { setSalaryActualsByDept(salActDeptR2.byMonth); setLastActualSalaryMonth(salActDeptR2.lastActualMonth || ''); }
       } else {
         const [nsBudR] = sfResults;
         if (nsBudR) setNsBudget(nsBudR);
@@ -1378,6 +1391,7 @@ useEffect(() => {
         setSfSalaryBudget({}); setSfSalaryOverrides([]); setSfRevenuePaid({});
         setSfPipeline([]); setSfConversion({ yearly: [], stages: [], customers: [], projection: [] });
         setChurnData([]); setChurnMonthlyAvg(0); setYoyRevenue(null); setSalaryDeptBudgets({});
+        setSalaryActualsByDept({}); setLastActualSalaryMonth('');
       }
       setLastRefreshed(new Date().toLocaleDateString('en-GB') + ' ' + new Date().toLocaleTimeString('en-GB'));
     } catch (e: any) {
@@ -1572,15 +1586,23 @@ useEffect(() => {
           else delete effectiveDeptAdj[dept]; // explicitly set to 0 = clear
         }
       }
+      // Dept adjustment delta — uses last-actual dept amounts when in lastActual mode
       let deptAdjDelta = 0;
-      if (Object.keys(effectiveDeptAdj).length > 0 && salaryDeptBudgets[mKey]) {
-        for (const [dept, pct] of Object.entries(effectiveDeptAdj)) {
-          const deptBudget = salaryDeptBudgets[mKey][dept] || 0;
-          deptAdjDelta += Math.round(deptBudget * (pct / 100));
+      const useLastActual = salaryProjectionMode === 'lastActual' && lastActualSalaryMonth && salaryActualsByDept[lastActualSalaryMonth];
+      const deptBasis = useLastActual ? salaryActualsByDept[lastActualSalaryMonth] : null;
+      if (Object.keys(effectiveDeptAdj).length > 0) {
+        const deptSource = deptBasis
+          ? Object.fromEntries(Object.entries(deptBasis).map(([d, v]) => [d, (v as { eur: number }).eur]))
+          : salaryDeptBudgets[mKey];
+        if (deptSource) {
+          for (const [dept, pct] of Object.entries(effectiveDeptAdj)) {
+            const deptBudget = deptSource[dept] || 0;
+            deptAdjDelta += Math.round(deptBudget * (pct / 100));
+          }
         }
       }
 
-      // ── SALARY: SF actuals (past/current) → NS actuals (past) → SF budget → NS budget → fallback ──
+      // ── SALARY: SF actuals (past/current) → NS actuals (past) → SF budget / lastActual → NS budget → fallback ──
       let salary: number;
       let salaryBase: number; // base salary WITHOUT scenario adjustments (for delta display)
       const actualSalaryEntry = salaryData.find(s => s.month === mKey);
@@ -1591,6 +1613,11 @@ useEffect(() => {
         // NS actual salary data (used for non-SF subsidiaries like Statscore)
         salary = actualSalaryEntry.amountEUR;
         salaryBase = salary;
+      } else if (useLastActual && !(isPastMonth || isCurMonth)) {
+        // "Last Actual" mode: project last actual month's recurring salary per dept
+        const lastActualTotal = Object.values(salaryActualsByDept[lastActualSalaryMonth]).reduce((s, v) => s + (v as { eur: number }).eur, 0);
+        salaryBase = Math.round(lastActualTotal);
+        salary = Math.round(lastActualTotal * monthMultiplier) + deptAdjDelta;
       } else if (sfSalaryBudget[mKey]?.eur > 0) {
         salaryBase = Math.round(sfSalaryBudget[mKey].eur);
         salary = Math.round(sfSalaryBudget[mKey].eur * monthMultiplier) + deptAdjDelta;
@@ -1783,7 +1810,7 @@ useEffect(() => {
       rows.push({ month: label, mKey, openingBalance, openingBalanceILS, salary, salaryBase, salaryILS, vendors, vendorsBase, vendorsILS, totalOutflow, totalOutflowILS, collections, collectionsILS, collectionsActual, collectionsRemaining, collectionsForecast, collectionsRevenue, collectionsUnpaidCarry, collectionsUnpaidCarryMonth, collectionsPipeline, customers, pipelineWeighted, pipelineWeightedILS, pipelineTotal, pipelineCount, pipelineOpps, pipelineHistWinRate, pipelineDelayMonths, churnDeduction, churnDeductionILS, net, netILS, revalImpact, revalImpactILS, revalHasBothEnds, closingBalance: runningBalance, closingBalanceILS: runningBalanceILS, isCurrent: isCurMonth, isPast: isPastMonth });
     }
     return rows;
-  }, [vendorBills, arForecast, salaryData, vendorHistory, expenseCategories, book, bookLocal, actualCollections, sfBudget, sfRevenue, sfActualsSplit, salaryAdjPctByMonth, collPctByMonth, monthlyReval, sfSalaryBudget, sfRevenuePaid, sfPipeline, pipelineMinProb, sfConversion, salaryDeptAdj, salaryDeptBudgets, vendorCatAdj, vendorDetailAdj, prevMonthEndBalance, churnMonthlyAvg, churnData, churnOverride, asOfDate, nsBudget, activeYear, sfFinanceBudget, currencyDefensePct, currencyDefensePctByMonth, pipelineAdjPctByMonth]);
+  }, [vendorBills, arForecast, salaryData, vendorHistory, expenseCategories, book, bookLocal, actualCollections, sfBudget, sfRevenue, sfActualsSplit, salaryAdjPctByMonth, collPctByMonth, monthlyReval, sfSalaryBudget, sfRevenuePaid, sfPipeline, pipelineMinProb, sfConversion, salaryDeptAdj, salaryDeptBudgets, vendorCatAdj, vendorDetailAdj, prevMonthEndBalance, churnMonthlyAvg, churnData, churnOverride, asOfDate, nsBudget, activeYear, sfFinanceBudget, currencyDefensePct, currencyDefensePctByMonth, pipelineAdjPctByMonth, salaryProjectionMode, salaryActualsByDept, lastActualSalaryMonth]);
 
   // ── Capture current-year cashflow for propagation to next year ──
   useEffect(() => {
@@ -1818,13 +1845,19 @@ useEffect(() => {
       const cAllAdjM = Object.keys(cd.salaryDeptAdj || {}).filter(k => k <= mKey).sort();
       for (const ak of cAllAdjM) { for (const [dep, p] of Object.entries(cd.salaryDeptAdj[ak])) { if (p !== 0) cEffDept[dep] = p; else delete cEffDept[dep]; } }
       let cDeptDelta = 0;
-      if (Object.keys(cEffDept).length > 0 && salaryDeptBudgets[mKey]) {
-        for (const [dep, p] of Object.entries(cEffDept)) { cDeptDelta += Math.round((salaryDeptBudgets[mKey][dep] || 0) * (p / 100)); }
+      const cUseLastActual = salaryProjectionMode === 'lastActual' && lastActualSalaryMonth && salaryActualsByDept[lastActualSalaryMonth];
+      const cDeptBasis = cUseLastActual ? Object.fromEntries(Object.entries(salaryActualsByDept[lastActualSalaryMonth]).map(([d, v]) => [d, (v as { eur: number }).eur])) : salaryDeptBudgets[mKey];
+      if (Object.keys(cEffDept).length > 0 && cDeptBasis) {
+        for (const [dep, p] of Object.entries(cEffDept)) { cDeptDelta += Math.round((cDeptBasis[dep] || 0) * (p / 100)); }
       }
       let salary: number;
       const cActSal = salaryData.find(s => s.month === mKey);
       if ((isPast || isCur) && sfActualsSplit[mKey]?.salary > 0) { salary = sfActualsSplit[mKey].salary; }
       else if ((isPast || isCur) && cActSal && cActSal.amountEUR > 0) { salary = cActSal.amountEUR; }
+      else if (cUseLastActual && !(isPast || isCur)) {
+        const cLastTotal = Object.values(salaryActualsByDept[lastActualSalaryMonth]).reduce((s, v) => s + (v as { eur: number }).eur, 0);
+        salary = Math.round(cLastTotal * cMult) + cDeptDelta;
+      }
       else if (sfSalaryBudget[mKey]?.eur > 0) { salary = Math.round(sfSalaryBudget[mKey].eur * cMult) + cDeptDelta; }
       else if (nsBudget.byMonth[mKey]?.salary > 0) { salary = Math.round(nsBudget.byMonth[mKey].salary * cMult); }
       else { salary = prevSal > 0 ? Math.round(prevSal * cMult) : lastSalary; }
@@ -1863,7 +1896,7 @@ useEffect(() => {
       rows.push({ salary, vendors, collections, totalOutflow, net, closingBalance: runBal });
     }
     return rows;
-  }, [salaryData, vendorBills, book, bookLocal, adjustedCurrent, adjustedCurrentLocal, monthlyReval, sfActualsSplit, sfSalaryBudget, sfBudget, sfRevenue, sfRevenuePaid, actualCollections, salaryDeptBudgets, sfPipeline, prevMonthEndBalance]);
+  }, [salaryData, vendorBills, book, bookLocal, adjustedCurrent, adjustedCurrentLocal, monthlyReval, sfActualsSplit, sfSalaryBudget, sfBudget, sfRevenue, sfRevenuePaid, actualCollections, salaryDeptBudgets, sfPipeline, prevMonthEndBalance, salaryProjectionMode, salaryActualsByDept, lastActualSalaryMonth]);
 
   // Compare scenario cashflow (inline header delta)
   const compareCashflow = useMemo(() => {
@@ -5597,8 +5630,13 @@ useEffect(() => {
                   const hc = d.headcount;
                   const adj = forecastDrilldown.adjPct || 0;
                   const multiplier = 1 + (adj / 100);
-                  const budgetTotal = d.budget.reduce((s: number, r: any) => s + (r.amountEUR || 0), 0);
-                  const budgetTotalILS = d.budget.reduce((s: number, r: any) => s + (r.amountILS || 0), 0);
+                  const useLastActualInDrill = salaryProjectionMode === 'lastActual' && lastActualSalaryMonth && salaryActualsByDept[lastActualSalaryMonth];
+                  const budgetTotal = useLastActualInDrill
+                    ? Object.values(salaryActualsByDept[lastActualSalaryMonth]).reduce((s, v) => s + (v as { eur: number }).eur, 0)
+                    : d.budget.reduce((s: number, r: any) => s + (r.amountEUR || 0), 0);
+                  const budgetTotalILS = useLastActualInDrill
+                    ? Object.values(salaryActualsByDept[lastActualSalaryMonth]).reduce((s, v) => s + (v as { eur: number; ils: number }).ils, 0)
+                    : d.budget.reduce((s: number, r: any) => s + (r.amountILS || 0), 0);
                   const adjustedTotal = Math.round(budgetTotal * multiplier);
                   const adjustedTotalILS = Math.round(budgetTotalILS * multiplier);
                   // Compute per-department lever deltas from per-employee overrides
@@ -5627,7 +5665,11 @@ useEffect(() => {
                   const monthDeptAdj2 = salaryDeptAdj[forecastDrilldown.mKey] || {};
                   const deptAdjDeltaByDept: Record<string, number> = {};
                   const deptBudgetTotals: Record<string, number> = {};
-                  for (const row of d.budget) { deptBudgetTotals[row.department] = (deptBudgetTotals[row.department] || 0) + (row.amountEUR || 0); }
+                  if (useLastActualInDrill) {
+                    for (const [dept, v] of Object.entries(salaryActualsByDept[lastActualSalaryMonth])) { deptBudgetTotals[dept] = (v as { eur: number }).eur; }
+                  } else {
+                    for (const row of d.budget) { deptBudgetTotals[row.department] = (deptBudgetTotals[row.department] || 0) + (row.amountEUR || 0); }
+                  }
                   for (const [dept, pct] of Object.entries(monthDeptAdj2)) {
                     if (pct !== 0) deptAdjDeltaByDept[dept] = Math.round((deptBudgetTotals[dept] || 0) * (pct / 100));
                   }
@@ -5644,9 +5686,23 @@ useEffect(() => {
                   const toILS = (eur: number) => Math.round(eur * ilsRate);
                   return (
                     <div className="space-y-4">
+                      {/* Salary projection mode toggle */}
+                      {hasBudget && lastActualSalaryMonth && (
+                        <div className="flex items-center gap-2 text-xs">
+                          <span className="text-gray-500">Projection basis:</span>
+                          <button
+                            className={`px-2 py-0.5 rounded ${salaryProjectionMode === 'budget' ? 'bg-violet-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                            onClick={() => setSalaryProjectionMode('budget')}
+                          >Budget</button>
+                          <button
+                            className={`px-2 py-0.5 rounded ${salaryProjectionMode === 'lastActual' ? 'bg-amber-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                            onClick={() => setSalaryProjectionMode('lastActual')}
+                          >Last Actual ({lastActualSalaryMonth})</button>
+                        </div>
+                      )}
                       {/* Summary box */}
                       <div className="bg-gray-50 rounded-lg p-3">
-                        <p className="text-xs text-gray-400 mb-2 uppercase">Summary{hasAnyAdjustment ? ' — adjustments applied' : ''}</p>
+                        <p className="text-xs text-gray-400 mb-2 uppercase">Summary{hasAnyAdjustment ? ' — adjustments applied' : ''}{salaryProjectionMode === 'lastActual' ? ' — using last actual' : ''}</p>
                         <table className="w-full text-xs">
                           <tbody>
                             <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600">Budget (original)</td><td className="py-1.5 text-right"><span className="font-bold text-violet-700">{fmt(budgetTotal)}</span><br/><span className="text-[10px] text-gray-400">{fmtILS(toILS(budgetTotal))}</span></td></tr>
@@ -5703,9 +5759,14 @@ useEffect(() => {
                         const curMKey = `${now2.getFullYear()}-${String(now2.getMonth() + 1).padStart(2, '0')}`;
                         const isProjected = forecastDrilldown.mKey > curMKey;
                         if (!isProjected) return null;
-                        // Group budget by department
+                        // Group budget by department — use last-actual dept data when in lastActual mode
                         const deptTotals: Record<string, number> = {};
-                        for (const row of d.budget) { deptTotals[row.department] = (deptTotals[row.department] || 0) + (row.amountEUR || 0); }
+                        const useLastActualDept = salaryProjectionMode === 'lastActual' && lastActualSalaryMonth && salaryActualsByDept[lastActualSalaryMonth];
+                        if (useLastActualDept) {
+                          for (const [dept, v] of Object.entries(salaryActualsByDept[lastActualSalaryMonth])) { deptTotals[dept] = (v as { eur: number }).eur; }
+                        } else {
+                          for (const row of d.budget) { deptTotals[row.department] = (deptTotals[row.department] || 0) + (row.amountEUR || 0); }
+                        }
                         const deptEntries = Object.entries(deptTotals).sort((a, b) => b[1] - a[1]);
                         const mKey = forecastDrilldown.mKey;
                         // Compute effective adjustments (cascade from earlier months)
@@ -5870,7 +5931,7 @@ useEffect(() => {
                       })()}
                       {hasBudget && (
                         <div>
-                          <p className="text-xs text-gray-400 mb-2">{forecastDrilldown.data?.__nsMode ? 'Budget Breakdown (NetSuite budgetsmachine)' : `Budget Breakdown (Snowflake FCT_BUDGET — levers, new hires, etc.)${hasAnyAdjustment ? ` — showing original → adjusted` : ''}${adj !== 0 ? ` (${adj > 0 ? '+' : ''}${adj}%)` : ''}${hasLeverOverrides ? ' + lever overrides' : ''}`}</p>
+                          <p className="text-xs text-gray-400 mb-2">{forecastDrilldown.data?.__nsMode ? 'Budget Breakdown (NetSuite budgetsmachine)' : useLastActualInDrill ? `Budget Breakdown (Last Actual ${lastActualSalaryMonth} — recurring payroll accounts only)${hasAnyAdjustment ? ` — showing original → adjusted` : ''}` : `Budget Breakdown (Snowflake FCT_BUDGET — levers, new hires, etc.)${hasAnyAdjustment ? ` — showing original → adjusted` : ''}${adj !== 0 ? ` (${adj > 0 ? '+' : ''}${adj}%)` : ''}${hasLeverOverrides ? ' + lever overrides' : ''}`}</p>
                           <table className="w-full text-xs">
                             <thead><tr className="text-left text-gray-400 uppercase border-b">
                               <th className="pb-1 pr-2">Department</th><th className="pb-1 pr-2">Account #</th><th className="pb-1 pr-2">Name</th>

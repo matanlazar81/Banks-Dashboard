@@ -1208,6 +1208,43 @@ function createSnowflakeClient(env) {
     }));
   }
 
+  // ── Salary actuals by department (for "Last Actual" projection mode) ──
+  // Excludes one-time/irregular accounts so the projection base is stable month-to-month
+  async function fetchSalaryActualsByDept(year) {
+    const yr = year || 2026;
+    console.log(`[Snowflake] Fetching salary actuals by dept for ${yr}...`);
+    const rows = await query(`
+      SELECT d.DEPARTMENT_NAME AS DEPT,
+             DATE_TRUNC('month', e.CAL_MONTH_START_DATE)::VARCHAR AS MONTH_STR,
+             ROUND(SUM(e.AMOUNT_EUR)) AS AMOUNT_EUR,
+             ROUND(SUM(e.AMOUNT_ILS)) AS AMOUNT_ILS
+      FROM DL_PRODUCTION.FINANCE.FCT_EXPENSE e
+      JOIN DL_PRODUCTION.FINANCE.DIM_GL_ACCOUNT g ON e.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
+      LEFT JOIN DL_PRODUCTION.FINANCE.DIM_DEPARTMENT d ON e.DEPARTMENT_ID = d.DEPARTMENT_ID
+      WHERE e.SUBSIDIARY_ID = 3
+        AND e.SOURCE = 'netsuite'
+        AND g.IS_PAYROLL = TRUE
+        AND g.GL_ACCOUNT_NUMBER NOT IN ('760038','76003','760023','760020','760017','760029','760014','760015','760008')
+        AND e.CAL_MONTH_START_DATE >= '${yr}-01-01'
+        AND e.CAL_MONTH_START_DATE <= '${yr}-12-31'
+      GROUP BY d.DEPARTMENT_NAME, DATE_TRUNC('month', e.CAL_MONTH_START_DATE)::VARCHAR
+      ORDER BY MONTH_STR, DEPT
+    `);
+
+    const byMonth = {};
+    let lastActualMonth = '';
+    for (const r of rows) {
+      const m = (r.MONTH_STR || '').substring(0, 7);
+      if (!byMonth[m]) byMonth[m] = {};
+      const dept = r.DEPT || 'Unassigned';
+      byMonth[m][dept] = { eur: Math.round(r.AMOUNT_EUR || 0), ils: Math.round(r.AMOUNT_ILS || 0) };
+      if (m > lastActualMonth) lastActualMonth = m;
+    }
+
+    console.log(`[Snowflake] Salary actuals by dept: ${Object.keys(byMonth).length} months, last=${lastActualMonth}`);
+    return { byMonth, lastActualMonth };
+  }
+
   return {
     query,
     testConnection,
@@ -1239,6 +1276,7 @@ function createSnowflakeClient(env) {
     fetchYoYRevenue,
     fetchCurrentARR,
     fetchExpenseExport,
+    fetchSalaryActualsByDept,
     getConnection,
   };
 }

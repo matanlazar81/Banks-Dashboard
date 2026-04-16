@@ -656,6 +656,22 @@ function banksPlugin(): Plugin {
         }
       });
 
+      // ── GET /api/sf-salary-actuals-by-dept — actual payroll by dept (recurring accounts only) ──
+      server.middlewares.use('/api/sf-salary-actuals-by-dept', async (_req, res) => {
+        try {
+          const sf = getSfClient();
+          const yr = getYear(_req);
+          if (!sf) { res.end(JSON.stringify({ byMonth: {}, lastActualMonth: '' })); return; }
+          const data = await sf.fetchSalaryActualsByDept(yr);
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify(data));
+        } catch (e: any) {
+          console.error('[SF] Salary actuals by dept fetch failed:', e.message);
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ byMonth: {}, lastActualMonth: '', error: e.message }));
+        }
+      });
+
       // ── Currency defense budget (account 800029 from NetSuite) ──
       server.middlewares.use('/api/sf-finance-budget', async (_req, res) => {
         try {
