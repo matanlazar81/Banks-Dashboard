@@ -8415,8 +8415,123 @@ useEffect(() => {
                         { s: { r: 3, c: 20 }, e: { r: 3, c: 21 } },
                       ];
 
+                      // ── Delta Deep Dive: by Department × Month × Source ──
+                      const allMonths = [...new Set(expenseExportData.map(r => r.month))].sort();
+                      const allDepts = [...new Set(expenseExportData.map(r => r.department || 'Unassigned'))].sort();
+                      const allSources = [...new Set(expenseExportData.map(r => r.source))].sort();
+
+                      // Sheet 10a: Salary delta by Department × Month
+                      const deptSalaryRows: any[][] = [];
+                      for (const dept of allDepts) {
+                        const row: any[] = [dept];
+                        let deptTotalBI = 0, deptTotalDB = 0;
+                        for (const m of allMonths) {
+                          const biAmt = Math.round(expenseExportData.filter(r => r.month === m && r.department === dept && r.isPayroll).reduce((s, r) => s + r.amountEUR, 0));
+                          const budgetAmt = Math.round(salaryDeptBudgets[m]?.[dept] || 0);
+                          const fc2 = cashflowForecast.find(f => f.mKey === m);
+                          const isPast = fc2?.isPast;
+                          const dbAmt = isPast ? biAmt : budgetAmt; // past=actual, future=budget
+                          const delta = dbAmt - biAmt;
+                          deptTotalBI += biAmt;
+                          deptTotalDB += dbAmt;
+                          row.push(biAmt, dbAmt, delta);
+                        }
+                        row.push(deptTotalBI, deptTotalDB, deptTotalDB - deptTotalBI);
+                        if (deptTotalBI !== 0 || deptTotalDB !== 0) deptSalaryRows.push(row);
+                      }
+                      const deptSalHdr = ['Department', ...allMonths.flatMap(m => [`BI ${m.slice(5)}`, `DB ${m.slice(5)}`, `Delta`]), 'BI Total', 'DB Total', 'Delta Total'];
+                      const ws10 = XLSX.utils.aoa_to_sheet([
+                        [{ v: 'Salary Delta by Department × Month', t: 's', s: { font: { bold: true, sz: 14 } } }],
+                        [{ v: 'BI = FCT_EXPENSE all sources (IS_PAYROLL=true). DB = Dashboard salary (actuals for past, budget for future). Delta = DB - BI.', t: 's', s: { font: { color: { rgb: '666666' }, sz: 10 } } }],
+                        [],
+                        deptSalHdr.map(h => ({ v: h, t: 's', s: hdrStyle(h.startsWith('Delta') ? 'DC2626' : h.startsWith('BI') ? '7C3AED' : h.startsWith('DB') ? '059669' : '374151') })),
+                        ...deptSalaryRows.map(row => row.map((v: any, ci: number) => {
+                          if (ci === 0) return v;
+                          if ((ci - 1) % 3 === 2 && v !== 0) return { v, t: 'n', s: v > 0 ? { font: { color: { rgb: 'DC2626' } }, ...redFill } : { font: { color: { rgb: '16A34A' } }, ...greenFill } };
+                          return { v, t: 'n' };
+                        })),
+                        [],
+                        ['TOTAL', ...allMonths.flatMap((_, mi) => {
+                          const biT = deptSalaryRows.reduce((s, r) => s + (r[1 + mi * 3] || 0), 0);
+                          const dbT = deptSalaryRows.reduce((s, r) => s + (r[2 + mi * 3] || 0), 0);
+                          return [Math.round(biT), Math.round(dbT), Math.round(dbT - biT)];
+                        }), Math.round(deptSalaryRows.reduce((s, r) => s + (r[r.length - 3] || 0), 0)), Math.round(deptSalaryRows.reduce((s, r) => s + (r[r.length - 2] || 0), 0)), Math.round(deptSalaryRows.reduce((s, r) => s + (r[r.length - 1] || 0), 0))].map((v, i) => i === 0 ? { v, t: 's', s: boldStyle } : { v, t: 'n', s: boldStyle }),
+                      ]);
+                      ws10['!cols'] = [{ wch: 18 }, ...allMonths.flatMap(() => [{ wch: 12 }, { wch: 12 }, { wch: 11 }]), { wch: 12 }, { wch: 12 }, { wch: 12 }];
+
+                      // Sheet 10b: Salary by Source × Month (what makes up the BI number)
+                      const srcSalaryRows: any[][] = [];
+                      for (const src of allSources) {
+                        const row: any[] = [src];
+                        let srcTotal = 0;
+                        for (const m of allMonths) {
+                          const amt = Math.round(expenseExportData.filter(r => r.month === m && r.source === src && r.isPayroll).reduce((s, r) => s + r.amountEUR, 0));
+                          srcTotal += amt;
+                          row.push(amt);
+                        }
+                        row.push(srcTotal);
+                        if (srcTotal !== 0) srcSalaryRows.push(row);
+                      }
+                      const srcSalHdr = ['Source', ...allMonths.map(m => m.slice(5)), 'Total'];
+                      const ws11 = XLSX.utils.aoa_to_sheet([
+                        [{ v: 'Salary by SOURCE Type × Month (BI composition)', t: 's', s: { font: { bold: true, sz: 14 } } }],
+                        [{ v: 'Shows what FCT_EXPENSE sources make up the BI salary number. "netsuite" = actual postings. Others = payroll projections.', t: 's', s: { font: { color: { rgb: '666666' }, sz: 10 } } }],
+                        [],
+                        srcSalHdr.map(h => ({ v: h, t: 's', s: hdrStyle('7C3AED') })),
+                        ...srcSalaryRows.sort((a, b) => (b[b.length - 1] as number) - (a[a.length - 1] as number)).map(row => row.map((v: any, ci: number) => {
+                          if (ci === 0) return { v, t: 's', s: v === 'netsuite' ? { font: { bold: true, color: { rgb: '059669' } } } : { font: { color: { rgb: 'EA580C' } } } };
+                          return { v, t: 'n' };
+                        })),
+                        [],
+                        ['TOTAL', ...allMonths.map((_, mi) => Math.round(srcSalaryRows.reduce((s, r) => s + (r[mi + 1] || 0), 0))), Math.round(srcSalaryRows.reduce((s, r) => s + (r[r.length - 1] || 0), 0))].map((v, i) => i === 0 ? { v, t: 's', s: boldStyle } : { v, t: 'n', s: boldStyle }),
+                      ]);
+                      ws11['!cols'] = [{ wch: 25 }, ...allMonths.map(() => ({ wch: 12 })), { wch: 13 }];
+
+                      // Sheet 10c: Vendor delta by Cost Center × Month
+                      const allCostCenters = [...new Set(expenseExportData.filter(r => !r.isPayroll && !r.accountNumber?.startsWith('800')).map(r => r.costCenter || 'Unassigned'))].sort();
+                      const ccVendorRows: any[][] = [];
+                      for (const cc of allCostCenters) {
+                        const row: any[] = [cc];
+                        let ccTotalBI = 0, ccTotalBudget = 0;
+                        for (const m of allMonths) {
+                          const biAmt = Math.round(expenseExportData.filter(r => r.month === m && r.costCenter === cc && !r.isPayroll && !r.accountNumber?.startsWith('800')).reduce((s, r) => s + r.amountEUR, 0));
+                          const budgetAmt = Math.round((sfBudget.byMonth?.[m] || {})[cc] || 0);
+                          const fc2 = cashflowForecast.find(f => f.mKey === m);
+                          const isPast = fc2?.isPast;
+                          const dbAmt = isPast ? biAmt : budgetAmt;
+                          const delta = dbAmt - biAmt;
+                          ccTotalBI += biAmt;
+                          ccTotalBudget += dbAmt;
+                          row.push(biAmt, dbAmt, delta);
+                        }
+                        row.push(ccTotalBI, ccTotalBudget, ccTotalBudget - ccTotalBI);
+                        if (ccTotalBI !== 0 || ccTotalBudget !== 0) ccVendorRows.push(row);
+                      }
+                      const ccVendHdr = ['Cost Center', ...allMonths.flatMap(m => [`BI ${m.slice(5)}`, `DB ${m.slice(5)}`, `Delta`]), 'BI Total', 'DB Total', 'Delta Total'];
+                      const ws12 = XLSX.utils.aoa_to_sheet([
+                        [{ v: 'Vendor Delta by Cost Center × Month', t: 's', s: { font: { bold: true, sz: 14 } } }],
+                        [{ v: 'BI = FCT_EXPENSE all sources (non-payroll, non-800). DB = Dashboard vendors (actuals for past, budget for future). Delta = DB - BI.', t: 's', s: { font: { color: { rgb: '666666' }, sz: 10 } } }],
+                        [],
+                        ccVendHdr.map(h => ({ v: h, t: 's', s: hdrStyle(h.startsWith('Delta') ? 'DC2626' : h.startsWith('BI') ? '7C3AED' : h.startsWith('DB') ? '059669' : '374151') })),
+                        ...ccVendorRows.sort((a, b) => Math.abs(b[b.length - 1] as number) - Math.abs(a[a.length - 1] as number)).map(row => row.map((v: any, ci: number) => {
+                          if (ci === 0) return v;
+                          if ((ci - 1) % 3 === 2 && v !== 0) return { v, t: 'n', s: v > 0 ? { font: { color: { rgb: 'DC2626' } }, ...redFill } : { font: { color: { rgb: '16A34A' } }, ...greenFill } };
+                          return { v, t: 'n' };
+                        })),
+                        [],
+                        ['TOTAL', ...allMonths.flatMap((_, mi) => {
+                          const biT = ccVendorRows.reduce((s, r) => s + (r[1 + mi * 3] || 0), 0);
+                          const dbT = ccVendorRows.reduce((s, r) => s + (r[2 + mi * 3] || 0), 0);
+                          return [Math.round(biT), Math.round(dbT), Math.round(dbT - biT)];
+                        }), Math.round(ccVendorRows.reduce((s, r) => s + (r[r.length - 3] || 0), 0)), Math.round(ccVendorRows.reduce((s, r) => s + (r[r.length - 2] || 0), 0)), Math.round(ccVendorRows.reduce((s, r) => s + (r[r.length - 1] || 0), 0))].map((v, i) => i === 0 ? { v, t: 's', s: boldStyle } : { v, t: 'n', s: boldStyle }),
+                      ]);
+                      ws12['!cols'] = [{ wch: 32 }, ...allMonths.flatMap(() => [{ wch: 12 }, { wch: 12 }, { wch: 11 }]), { wch: 12 }, { wch: 12 }, { wch: 12 }];
+
                       const wb = XLSX.utils.book_new();
                       XLSX.utils.book_append_sheet(wb, ws9, 'Reconciliation');
+                      XLSX.utils.book_append_sheet(wb, ws10, 'Salary Delta by Dept');
+                      XLSX.utils.book_append_sheet(wb, ws11, 'Salary by Source Type');
+                      XLSX.utils.book_append_sheet(wb, ws12, 'Vendor Delta by CostCenter');
                       XLSX.utils.book_append_sheet(wb, ws5, 'Dashboard Forecast');
                       XLSX.utils.book_append_sheet(wb, ws, 'Raw Transactions');
                       XLSX.utils.book_append_sheet(wb, ws6, 'Vendor Budget by Category');
@@ -8429,7 +8544,7 @@ useEffect(() => {
                     }}
                     className="px-4 py-2 bg-emerald-600 text-white text-sm rounded-lg hover:bg-emerald-700 flex items-center gap-2"
                   >
-                    <DollarSign className="w-4 h-4" /> Download Excel ({expenseExportData.length.toLocaleString()} rows, 9 sheets)
+                    <DollarSign className="w-4 h-4" /> Download Excel ({expenseExportData.length.toLocaleString()} rows, 12 sheets)
                   </button>
                 )}
                 {expenseExportData && (
