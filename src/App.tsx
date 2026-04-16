@@ -1121,7 +1121,7 @@ useEffect(() => {
       } else {
         cache.nsBudget = { byMonth: {} };
         // Fire all SF calls in parallel
-        const [budR, revR, splitR, salBudR, revPaidR, pipeR, convR, churnR, yoyR, finBudR, arrR, salActDeptR, hcImpactR] = await Promise.all([
+        const [budR, revR, splitR, salBudR, revPaidR, pipeR, convR, churnR, yoyR, finBudR, arrR, salActDeptR] = await Promise.all([
           safe('/api/sf-budget'), safe('/api/sf-revenue'), safe('/api/sf-actuals-split'),
           safe('/api/sf-salary-budget'), safe('/api/sf-revenue-paid'), safe('/api/sf-pipeline'),
           safe('/api/sf-conversion'), safe('/api/sf-churn-analysis'), safe('/api/sf-yoy-revenue'),
