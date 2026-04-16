@@ -5891,15 +5891,40 @@ useEffect(() => {
                                                 <th className="pb-0.5 text-right">Cost (EUR)</th>
                                               </tr></thead>
                                               <tbody>
-                                                {cachedDetail.filter((dd: any) => dd.month <= forecastDrilldown.mKey && (!lastActualSalaryMonth || dd.month > lastActualSalaryMonth)).map((dd: any, di: number) => (
-                                                  <tr key={di} className="border-b border-blue-50">
-                                                    <td className="py-0.5 text-gray-600">{dd.department || '—'}</td>
-                                                    <td className="py-0.5 text-gray-600">{dd.position || '—'}</td>
-                                                    <td className="py-0.5 text-gray-500">{dd.month || '—'}</td>
-                                                    <td className={`py-0.5 text-right ${colorClass}`}>{fmtILS(dd.cost || 0)}</td>
-                                                    <td className={`py-0.5 text-right ${colorClass}`}>{fmt(ilsRate > 0 ? Math.round((dd.cost || 0) / ilsRate) : 0)}</td>
-                                                  </tr>
-                                                ))}
+                                                {(() => {
+                                                  const filtered = cachedDetail.filter((dd: any) => dd.month <= forecastDrilldown.mKey && (!lastActualSalaryMonth || dd.month > lastActualSalaryMonth));
+                                                  const rowOvrs = leverOverrides[leverKey] || {};
+                                                  return filtered.map((dd: any, di: number) => {
+                                                    const overriddenCost = rowOvrs[di] !== undefined ? rowOvrs[di] : dd.cost;
+                                                    const isAmended = rowOvrs[di] !== undefined && rowOvrs[di] !== dd.cost;
+                                                    return (
+                                                    <tr key={di} className="border-b border-blue-50">
+                                                      <td className="py-0.5 text-gray-600">{dd.department || '—'}</td>
+                                                      <td className="py-0.5 text-gray-600">{dd.position || '—'}</td>
+                                                      <td className="py-0.5 text-gray-500">{dd.month || '—'}</td>
+                                                      <td className={`py-0.5 text-right ${isAmended ? 'text-gray-400 line-through text-[10px]' : colorClass}`}>{fmtILS(dd.cost || 0)}</td>
+                                                      <td className="py-0.5 text-right">
+                                                        <input
+                                                          type="text"
+                                                          inputMode="numeric"
+                                                          value={overriddenCost === 0 ? '0' : (overriddenCost || '').toLocaleString()}
+                                                          onChange={e => {
+                                                            const raw = e.target.value.replace(/[^0-9]/g, '');
+                                                            const v = raw === '' ? dd.cost : parseInt(raw);
+                                                            setLeverOverrides(prev => ({
+                                                              ...prev,
+                                                              [leverKey]: { ...(prev[leverKey] || {}), [di]: isNaN(v) ? dd.cost : v }
+                                                            }));
+                                                          }}
+                                                          className={`w-20 text-right text-[11px] border rounded px-1 py-0.5 ${isAmended ? 'text-amber-700 border-amber-300 bg-amber-50 font-medium' : `${colorClass} border-gray-200 bg-white`}`}
+                                                        />
+                                                        {isAmended && <div className="text-[9px] text-amber-500">{fmt(ilsRate > 0 ? Math.round(overriddenCost / ilsRate) : 0)} EUR</div>}
+                                                        {!isAmended && <div className="text-[9px] text-gray-400">{fmt(ilsRate > 0 ? Math.round((dd.cost || 0) / ilsRate) : 0)} EUR</div>}
+                                                      </td>
+                                                    </tr>
+                                                    );
+                                                  });
+                                                })()}
                                               </tbody>
                                             </table>
                                           )}
@@ -6257,8 +6282,8 @@ useEffect(() => {
                           </table>
                         </div>
                       )}
-                      {/* Headcount events (HiBob levers) */}
-                      {hc && (hc.events?.length > 0 || hc.cumulative?.length > 0) && (
+                      {/* Headcount events (HiBob levers) — hidden when shown in summary above */}
+                      {hc && (hc.events?.length > 0 || hc.cumulative?.length > 0) && !monthlyHCImpact[forecastDrilldown.mKey]?.categories?.length && (
                         <div>
                           <p id="hc-levers-section" className="text-xs text-gray-400 mb-2">Salary Projection Levers (HiBob → Snowflake)</p>
                           {/* Cumulative impact summary */}
