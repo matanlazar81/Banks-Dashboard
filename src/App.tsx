@@ -4428,6 +4428,19 @@ useEffect(() => {
                 {companyConfig.hasSF ? 'Snowflake: salary + vendor actuals/projections | NetSuite: collections (incl I/C) + Snowflake forecast' : 'NetSuite: all data (collections, salary, vendors) + NS Budget forecast'}
               </p>
               <div className="flex items-center gap-2 ml-4 shrink-0">
+                {lastActualSalaryMonth && companyConfig.hasSF && (
+                  <div className="flex items-center gap-1.5 text-[11px] mr-2">
+                    <span className="text-gray-400">Salary:</span>
+                    <button
+                      className={`px-1.5 py-0.5 rounded ${salaryProjectionMode === 'budget' ? 'bg-violet-600 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
+                      onClick={() => setSalaryProjectionMode('budget')}
+                    >Budget</button>
+                    <button
+                      className={`px-1.5 py-0.5 rounded ${salaryProjectionMode === 'lastActual' ? 'bg-amber-600 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
+                      onClick={() => setSalaryProjectionMode('lastActual')}
+                    >Actual ({lastActualSalaryMonth.slice(5)})</button>
+                  </div>
+                )}
                 {(Object.values(salaryAdjPctByMonth).some(v => v !== 0) || Object.keys(collPctByMonth).length > 0 || Object.keys(salaryDeptAdj).length > 0) && (() => {
                   const hasSalary = Object.values(salaryAdjPctByMonth).some(v => v !== 0);
                   const hasInflows = Object.keys(collPctByMonth).length > 0;
