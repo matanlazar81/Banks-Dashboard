@@ -5914,17 +5914,17 @@ useEffect(() => {
                                   );
                                 })}
                               </tbody>
-                              {hasAnyDeptAdj && (
-                                <tfoot><tr className="border-t-2 border-amber-300 font-bold">
-                                  <td className="py-1.5" colSpan={2}>Total Department Adjustment</td>
-                                  <td className="py-1.5"></td>
+                              <tfoot><tr className="border-t-2 border-amber-300 font-bold">
+                                  <td className="py-1.5">Total</td>
+                                  <td className="py-1.5 text-right text-violet-700 whitespace-nowrap tabular-nums">{fmt(deptEntries.reduce((s, [, v]) => s + v, 0))}</td>
+                                  <td className="py-1.5 text-center tabular-nums">{deptEntries.reduce((s, [d]) => s + (deptHeadcount[d]?.count || 0), 0)}</td>
                                   <td className="py-1.5 text-center">
-                                    <button onClick={() => { setSalaryDeptAdj({}); setHeadcountAdj({}); }}
-                                            className="text-[9px] text-red-500 hover:text-red-700 underline">reset all</button>
+                                    {hasAnyDeptAdj && <button onClick={() => { setSalaryDeptAdj({}); setHeadcountAdj({}); }}
+                                            className="text-[9px] text-red-500 hover:text-red-700 underline">reset all</button>}
                                   </td>
                                   <td className="py-1.5"></td>
-                                  <td className={`py-1.5 text-right font-bold ${totalDeptImpact >= 0 ? 'text-red-600' : 'text-green-700'}`}>
-                                    {totalDeptImpact >= 0 ? '+' : ''}{fmt(totalDeptImpact)}
+                                  <td className={`py-1.5 text-right font-bold whitespace-nowrap tabular-nums ${!hasAnyDeptAdj ? 'text-gray-300' : totalDeptImpact >= 0 ? 'text-red-600' : 'text-green-700'}`}>
+                                    {!hasAnyDeptAdj ? '—' : (<>{totalDeptImpact >= 0 ? '+' : ''}{fmt(totalDeptImpact)}
                                     {(() => {
                                       const totalPeople = deptEntries.reduce((s, [dept]) => {
                                         const eff2 = effectiveAdj[dept];
@@ -5935,10 +5935,9 @@ useEffect(() => {
                                         return s + Math.round(Math.round((deptTotals[dept] || 0) * (eff2.pct / 100)) / cpp);
                                       }, 0);
                                       return totalPeople !== 0 ? <div className="text-[9px] font-normal text-blue-500 mt-0.5">≈ {totalPeople > 0 ? '+' : ''}{totalPeople} people</div> : null;
-                                    })()}
+                                    })()}</>)}
                                   </td>
                                 </tr></tfoot>
-                              )}
                             </table>
                             </div>
                           </div>
