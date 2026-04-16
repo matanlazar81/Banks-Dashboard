@@ -694,12 +694,14 @@ function createSnowflakeClient(env) {
         categoryCumulative[key].cost += cat.type === 'increase' ? cat.cost : -cat.cost;
         categoryCumulative[key].count += cat.count;
       }
+      // Deep-copy cumulative state so each month has its own snapshot
+      const catSnapshot = Object.entries(categoryCumulative)
+        .filter(([, v]) => v.cost !== 0)
+        .map(([subType, v]) => ({ subType, type: v.type, count: v.count, runningCost: Math.round(v.cost) }));
       byMonth[m] = {
         net: Math.round(monthNet[m] || 0),
         running: Math.round(running),
-        categories: Object.entries(categoryCumulative).map(([subType, v]) => ({
-          subType, type: v.type, count: v.count, runningCost: Math.round(v.cost),
-        })),
+        categories: catSnapshot,
       };
     }
     console.log(`[Snowflake] Monthly HC impact: ${Object.keys(monthNet).length} months with events, final running=${Math.round(running)}`);

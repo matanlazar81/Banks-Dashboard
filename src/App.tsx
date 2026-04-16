@@ -4935,7 +4935,7 @@ useEffect(() => {
                     <th className="pb-2 pr-1 text-right text-red-600 whitespace-nowrap">Total Outflow</th>
                     <th className="pb-2 pr-1 text-right whitespace-nowrap">Net</th>
                     <th className="pb-2 pr-1 text-right text-amber-500 whitespace-nowrap">Reval</th>
-                    <th className="pb-2 pr-1 text-right text-blue-700 whitespace-nowrap">Closing Balance</th>
+                    <th className="pb-2 pr-1 text-right text-blue-700 whitespace-nowrap sticky right-0 bg-white z-10" style={{ boxShadow: '-4px 0 8px -4px rgba(0,0,0,0.08)' }}>Closing Balance</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -5803,6 +5803,7 @@ useEffect(() => {
                                       setForecastDrilldown(prev => prev ? { ...prev, data: { ...prev.data, __expandedLever: leverKey, __leverDetail: null } } : null);
                                       fetch(`/api/sf-headcount-lever-detail?eventType=${encodeURIComponent(c.type)}&eventSubType=${encodeURIComponent(c.subType)}&fromMonth=${forecastDrilldown.mKey}`).then(r => r.json()).then(j => {
                                         setForecastDrilldown(prev => prev ? { ...prev, data: { ...prev.data, __leverDetail: j.data || [], __leverDetails: { ...(prev.data.__leverDetails || {}), [leverKey]: j.data || [] } } } : null);
+                                        setTimeout(() => document.getElementById('hc-levers-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
                                       }).catch(() => {});
                                     }}>
                                       <td className="py-1 pl-5">
@@ -6168,7 +6169,7 @@ useEffect(() => {
                       {/* Headcount events (HiBob levers) */}
                       {hc && (hc.events?.length > 0 || hc.cumulative?.length > 0) && (
                         <div>
-                          <p className="text-xs text-gray-400 mb-2">Salary Projection Levers (HiBob → Snowflake)</p>
+                          <p id="hc-levers-section" className="text-xs text-gray-400 mb-2">Salary Projection Levers (HiBob → Snowflake)</p>
                           {/* Cumulative impact summary */}
                           {hc.cumulative?.length > 0 && (() => {
                             const ilsToEurRate = adjustedCurrent > 0 && adjustedCurrentLocal > 0 ? adjustedCurrent / adjustedCurrentLocal : 1 / 3.7;
