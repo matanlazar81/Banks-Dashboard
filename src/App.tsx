@@ -3989,15 +3989,15 @@ useEffect(() => {
                 <thead>
                   <tr className="text-left text-gray-400 uppercase border-b-2 border-gray-200">
                     <th className="pb-2 pr-1 whitespace-nowrap">Month</th>
-                    <th className="pb-2 pr-1 text-right whitespace-nowrap">Opening Bal.</th>
-                    <th className="pb-2 pr-1 text-right text-green-600 whitespace-nowrap">Collections</th>
-                    <th className="pb-2 pr-1 text-right text-amber-600 whitespace-nowrap">Salary</th>
-                    <th className="pb-2 pr-1 text-right text-violet-600 whitespace-nowrap">Vendors</th>
-                    <th className="pb-2 pr-1 text-right text-red-600 whitespace-nowrap">Total Outflow</th>
-                    <th className="pb-2 pr-1 text-right text-orange-500 whitespace-nowrap">I/C Elim.<div className="text-[8px] font-normal normal-case text-gray-400">Revenue | Expense</div></th>
-                    <th className="pb-2 pr-1 text-right text-amber-500 whitespace-nowrap">Reval</th>
-                    <th className="pb-2 pr-1 text-right whitespace-nowrap">Net</th>
-                    <th className="pb-2 pr-1 text-right text-blue-700 whitespace-nowrap">Closing Balance</th>
+                    <th className="pb-2 px-0.5 text-right whitespace-nowrap">Opening Bal.</th>
+                    <th className="pb-2 px-0.5 text-right text-green-600 whitespace-nowrap">Collections</th>
+                    <th className="pb-2 px-0.5 text-right text-amber-600 whitespace-nowrap">Salary</th>
+                    <th className="pb-2 px-0.5 text-right text-violet-600 whitespace-nowrap">Vendors</th>
+                    <th className="pb-2 px-0.5 text-right text-red-600 whitespace-nowrap">Total Outflow</th>
+                    <th className="pb-2 px-0.5 text-right text-orange-500 whitespace-nowrap">I/C Elim.<div className="text-[8px] font-normal normal-case text-gray-400">Revenue | Expense</div></th>
+                    <th className="pb-2 px-0.5 text-right text-amber-500 whitespace-nowrap">Reval</th>
+                    <th className="pb-2 px-0.5 text-right whitespace-nowrap">Net</th>
+                    <th className="pb-2 px-0.5 text-right text-blue-700 whitespace-nowrap">Closing Balance</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -4934,22 +4934,22 @@ useEffect(() => {
             </div>
 
             {/* Cashflow Table — Opening → Inflows → Outflows → Net → Closing */}
-            <div style={{ overflowX: 'auto', width: '100%' }}>
-              <table className="text-[11px]" style={{ minWidth: '1700px', width: '100%' }}>
+            <div style={{ width: '100%' }}>
+              <table className="text-[10px] w-full" style={{ tableLayout: 'auto' }}>
                 <thead>
                   <tr className="text-left text-gray-400 uppercase border-b-2 border-gray-200">
                     <th className="pb-2 pr-1 whitespace-nowrap">Month</th>
-                    <th className="pb-2 pr-1 text-right whitespace-nowrap">Opening Bal.</th>
-                    <th className="pb-2 pr-1 text-right text-green-600 whitespace-nowrap">Inflows (AR)</th>
-                    <th className="pb-2 pr-1 text-right text-teal-600 whitespace-nowrap">Pipeline<div className="text-[8px] font-normal normal-case text-gray-400">{pipelineMinProb}% • {cashflowForecast[0]?.pipelineHistWinRate || 33}% wr • +{cashflowForecast[0]?.pipelineDelayMonths || 2}m</div></th>
-                    <th className="pb-2 pr-1 text-right text-orange-600 whitespace-nowrap">Churn<div className="text-[8px] font-normal normal-case text-gray-400">{(() => { const cy = churnData.find(c => c.year === activeYear); return cy && cy.monthlyImpact > 0 ? `${activeYear} impact: €${Math.round(cy.monthlyImpact / 1000)}K/mo` : `6m avg: €${Math.round(churnMonthlyAvg / 1000)}K/mo`; })()}</div></th>
-                    <th className="pb-2 pr-1 text-right text-emerald-700 whitespace-nowrap">Total Inflows</th>
-                    <th className="pb-2 pr-1 text-right text-amber-600 whitespace-nowrap">Salary</th>
-                    <th className="pb-2 pr-1 text-right text-violet-600 whitespace-nowrap">Vendors</th>
-                    <th className="pb-2 pr-1 text-right text-red-600 whitespace-nowrap">Total Outflow</th>
-                    <th className="pb-2 pr-1 text-right whitespace-nowrap">Net</th>
-                    <th className="pb-2 pr-1 text-right text-amber-500 whitespace-nowrap">Reval</th>
-                    <th className="pb-2 pr-1 text-right text-blue-700 whitespace-nowrap">Closing Balance</th>
+                    <th className="pb-2 px-0.5 text-right whitespace-nowrap">Opening Bal.</th>
+                    <th className="pb-2 px-0.5 text-right text-green-600 whitespace-nowrap">Inflows (AR)</th>
+                    <th className="pb-2 px-0.5 text-right text-teal-600 whitespace-nowrap">Pipeline<div className="text-[8px] font-normal normal-case text-gray-400">{pipelineMinProb}% • {cashflowForecast[0]?.pipelineHistWinRate || 33}% wr • +{cashflowForecast[0]?.pipelineDelayMonths || 2}m</div></th>
+                    <th className="pb-2 px-0.5 text-right text-orange-600 whitespace-nowrap">Churn<div className="text-[8px] font-normal normal-case text-gray-400">{(() => { const cy = churnData.find(c => c.year === activeYear); return cy && cy.monthlyImpact > 0 ? `${activeYear} impact: €${Math.round(cy.monthlyImpact / 1000)}K/mo` : `6m avg: €${Math.round(churnMonthlyAvg / 1000)}K/mo`; })()}</div></th>
+                    <th className="pb-2 px-0.5 text-right text-emerald-700 whitespace-nowrap">Total Inflows</th>
+                    <th className="pb-2 px-0.5 text-right text-amber-600 whitespace-nowrap">Salary</th>
+                    <th className="pb-2 px-0.5 text-right text-violet-600 whitespace-nowrap">Vendors</th>
+                    <th className="pb-2 px-0.5 text-right text-red-600 whitespace-nowrap">Total Outflow</th>
+                    <th className="pb-2 px-0.5 text-right whitespace-nowrap">Net</th>
+                    <th className="pb-2 px-0.5 text-right text-amber-500 whitespace-nowrap">Reval</th>
+                    <th className="pb-2 px-0.5 text-right text-blue-700 whitespace-nowrap">Closing Balance</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -4964,7 +4964,7 @@ useEffect(() => {
                           : <span className="ml-2 text-[10px] bg-violet-100 text-violet-700 px-1.5 py-0.5 rounded-full font-medium">PROJECTED</span>
                         }
                       </td>
-                      <td className={`py-2.5 pr-1 text-right font-medium ${r.openingBalance >= 0 ? 'text-gray-700' : 'text-red-600'} ${(r.isCurrent || r.isPast) ? 'cursor-pointer hover:underline' : ''}`}
+                      <td className={`py-2.5 px-0.5 text-right font-medium ${r.openingBalance >= 0 ? 'text-gray-700' : 'text-red-600'} ${(r.isCurrent || r.isPast) ? 'cursor-pointer hover:underline' : ''}`}
                           onClick={() => {
                             if (!(r.isCurrent || r.isPast)) return;
                             // Get end of previous month
@@ -4981,7 +4981,7 @@ useEffect(() => {
                         {r.isCurrent && prevMonthEndBalance && <span className="text-[9px] text-amber-500 ml-0.5" title="Anchored to actual bank balance">*</span>}
                         {(r.isCurrent || r.isPast) && <span className="text-[10px] text-blue-400 ml-1">→</span>}
                       </td>
-                      <td className="py-2.5 pr-1 text-right text-green-600 font-medium">
+                      <td className="py-2.5 px-0.5 text-right text-green-600 font-medium">
                         <div className="flex items-center justify-end gap-1">
                           {!r.isPast && (r.collectionsForecast > 0 || r.isCurrent) && (
                             <div className="flex items-center gap-0.5 mr-1">
@@ -5047,7 +5047,7 @@ useEffect(() => {
                           <div className="text-[10px] text-gray-400">{companyConfig.hasSF ? 'Snowflake' : 'NS Budget'} forecast × {collPctByMonth[i] ?? 100}%{r.collectionsPipeline > 0 ? ` + pipeline ${fmt(r.collectionsPipeline)}` : ''}</div>
                         )}
                       </td>
-                      <td className={`py-2.5 pr-1 text-right text-teal-700 font-medium`}>
+                      <td className={`py-2.5 px-0.5 text-right text-teal-700 font-medium`}>
                         <div className={r.pipelineWeighted > 0 ? 'cursor-pointer hover:underline' : ''}
                           onClick={() => r.pipelineWeighted > 0 && setForecastDrilldown({
                             type: 'pipeline', month: r.month, mKey: r.mKey,
@@ -5090,7 +5090,7 @@ useEffect(() => {
                           );
                         })()}
                       </td>
-                      <td className={`py-2.5 pr-1 text-right font-medium ${r.churnDeduction > 0 ? 'text-orange-600' : 'text-gray-300'}`}>
+                      <td className={`py-2.5 px-0.5 text-right font-medium ${r.churnDeduction > 0 ? 'text-orange-600' : 'text-gray-300'}`}>
                         {r.churnDeduction > 0 || (!r.isPast && !r.isCurrent) ? (
                           <div className="flex flex-col items-end gap-0.5">
                             <span className="cursor-pointer hover:underline" onClick={() => {
@@ -5121,10 +5121,10 @@ useEffect(() => {
                           </div>
                         ) : '-'}
                       </td>
-                      <td className="py-2.5 pr-1 text-right text-emerald-700 font-bold whitespace-nowrap">
+                      <td className="py-2.5 px-0.5 text-right text-emerald-700 font-bold whitespace-nowrap">
                         {fmtC(r.collections + r.pipelineWeighted - r.churnDeduction, r.collectionsILS + r.pipelineWeightedILS - r.churnDeductionILS)}
                       </td>
-                      <td className="py-2.5 pr-1 text-right text-amber-700 font-medium whitespace-nowrap">
+                      <td className="py-2.5 px-0.5 text-right text-amber-700 font-medium whitespace-nowrap">
                         <div className="flex items-center justify-end gap-1">
                           {!r.isPast && (() => {
                             // Compute dept adj % for display
@@ -5207,7 +5207,7 @@ useEffect(() => {
                           </span>
                         </div>
                       </td>
-                      <td className="py-2.5 pr-1 text-right text-violet-700 font-medium whitespace-nowrap cursor-pointer hover:underline"
+                      <td className="py-2.5 px-0.5 text-right text-violet-700 font-medium whitespace-nowrap cursor-pointer hover:underline"
                           onClick={() => {
                             // Compute historical avg from SF actuals or NS vendor history (12-month trailing)
                             const nsVendorByMonth: Record<string, number> = {};
@@ -5248,9 +5248,9 @@ useEffect(() => {
                         })()}
                         {r.vendors > 0 && r.vendors === r.vendorsBase && <span className="text-[10px] text-violet-400 ml-1">→</span>}
                       </td>
-                      <td className="py-2.5 pr-1 text-right text-red-600 font-bold">-{fmtC(r.totalOutflow, r.totalOutflowILS)}</td>
-                      <td className={`py-2.5 pr-1 text-right font-bold ${r.net >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtC(r.net, r.netILS)}</td>
-                      <td className={`py-2.5 pr-1 text-right font-medium ${r.revalImpact === 0 ? 'text-gray-300' : r.revalImpact > 0 ? 'text-amber-600' : 'text-amber-700'}`}>
+                      <td className="py-2.5 px-0.5 text-right text-red-600 font-bold">-{fmtC(r.totalOutflow, r.totalOutflowILS)}</td>
+                      <td className={`py-2.5 px-0.5 text-right font-bold ${r.net >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtC(r.net, r.netILS)}</td>
+                      <td className={`py-2.5 px-0.5 text-right font-medium ${r.revalImpact === 0 ? 'text-gray-300' : r.revalImpact > 0 ? 'text-amber-600' : 'text-amber-700'}`}>
                         {r.revalImpact !== 0 ? fmtC(r.revalImpact, r.revalImpactILS) : '-'}
                         {!r.isPast && (() => {
                           const mi = cashflowForecast.indexOf(r);
@@ -5280,7 +5280,7 @@ useEffect(() => {
                           );
                         })()}
                       </td>
-                      <td className={`py-2.5 pr-1 text-right font-bold whitespace-nowrap ${r.closingBalance >= 0 ? 'text-blue-700' : 'text-red-600'}`}>
+                      <td className={`py-2.5 px-0.5 text-right font-bold whitespace-nowrap ${r.closingBalance >= 0 ? 'text-blue-700' : 'text-red-600'}`}>
                         {fmtCFull(r.closingBalance, r.closingBalanceILS)}
                         {compareCashflow && compareCashflow[i] && (() => {
                           const delta = r.closingBalance - compareCashflow[i].closingBalance;
@@ -5295,16 +5295,16 @@ useEffect(() => {
                   <tr className="border-t-2 border-gray-300 font-bold bg-gray-50 whitespace-nowrap">
                     <td className="py-2.5 pr-1 text-gray-800">TOTAL{cashflowForecast.some(r => r.salary !== r.salaryBase || r.vendors !== r.vendorsBase) ? ' (BEFORE SAVINGS)' : ''}</td>
                     <td className="py-2.5 pr-1"></td>
-                    <td className="py-2.5 pr-1 text-right text-green-700">
+                    <td className="py-2.5 px-0.5 text-right text-green-700">
                       {fmtC(cashflowForecast.reduce((s, r) => s + r.collections, 0), cashflowForecast.reduce((s, r) => s + r.collectionsILS, 0))}
                     </td>
-                    <td className="py-2.5 pr-1 text-right text-teal-700">
+                    <td className="py-2.5 px-0.5 text-right text-teal-700">
                       +{fmtC(cashflowForecast.reduce((s, r) => s + r.pipelineWeighted, 0), cashflowForecast.reduce((s, r) => s + r.pipelineWeightedILS, 0))}
                     </td>
-                    <td className="py-2.5 pr-1 text-right text-orange-600">
+                    <td className="py-2.5 px-0.5 text-right text-orange-600">
                       {cashflowForecast.reduce((s, r) => s + r.churnDeduction, 0) > 0 ? `-${fmtC(cashflowForecast.reduce((s, r) => s + r.churnDeduction, 0), cashflowForecast.reduce((s, r) => s + r.churnDeductionILS, 0))}` : '-'}
                     </td>
-                    <td className="py-2.5 pr-1 text-right text-emerald-700">
+                    <td className="py-2.5 px-0.5 text-right text-emerald-700">
                       {fmtC(cashflowForecast.reduce((s, r) => s + r.collections + r.pipelineWeighted - r.churnDeduction, 0), cashflowForecast.reduce((s, r) => s + r.collectionsILS + r.pipelineWeightedILS - r.churnDeductionILS, 0))}
                     </td>
                     {(() => {
@@ -5313,12 +5313,12 @@ useEffect(() => {
                       const venTotal = cashflowForecast.reduce((s, r) => s + (hasSavings ? r.vendorsBase : r.vendors), 0);
                       const outTotal = salTotal + venTotal;
                       return (<>
-                        <td className="py-2.5 pr-1 text-right text-amber-700">-{fmt(salTotal)}</td>
-                        <td className="py-2.5 pr-1 text-right text-violet-700">-{fmt(venTotal)}</td>
-                        <td className="py-2.5 pr-1 text-right text-red-700">-{fmt(outTotal)}</td>
+                        <td className="py-2.5 px-0.5 text-right text-amber-700">-{fmt(salTotal)}</td>
+                        <td className="py-2.5 px-0.5 text-right text-violet-700">-{fmt(venTotal)}</td>
+                        <td className="py-2.5 px-0.5 text-right text-red-700">-{fmt(outTotal)}</td>
                       </>);
                     })()}
-                    <td className={`py-2.5 pr-1 text-right ${cashflowForecast.reduce((s, r) => s + r.net, 0) >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                    <td className={`py-2.5 px-0.5 text-right ${cashflowForecast.reduce((s, r) => s + r.net, 0) >= 0 ? 'text-green-700' : 'text-red-700'}`}>
                       {fmtC(cashflowForecast.reduce((s, r) => s + r.net, 0), cashflowForecast.reduce((s, r) => s + r.netILS, 0))}
                     </td>
                     {(() => {
@@ -5329,10 +5329,10 @@ useEffect(() => {
                       const totalGrowth = totalNet + totalReval;
                       const totalGrowthILS = totalNetILS + totalRevalILS;
                       return (<>
-                        <td className="py-2.5 pr-1 text-right text-amber-600">
+                        <td className="py-2.5 px-0.5 text-right text-amber-600">
                           {fmtC(totalReval, totalRevalILS)}
                         </td>
-                        <td className={`py-2.5 pr-1 text-right font-bold whitespace-nowrap ${(cashflowForecast[cashflowForecast.length - 1]?.closingBalance || 0) >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
+                        <td className={`py-2.5 px-0.5 text-right font-bold whitespace-nowrap ${(cashflowForecast[cashflowForecast.length - 1]?.closingBalance || 0) >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
                           {fmtC(cashflowForecast[cashflowForecast.length - 1]?.closingBalance || 0, cashflowForecast[cashflowForecast.length - 1]?.closingBalanceILS || 0)}
                           <div className={`text-xs font-bold mt-1 ${totalGrowth >= 0 ? 'text-green-600' : 'text-red-500'}`}>
                             Net Growth: {totalGrowth >= 0 ? '+' : ''}{fmtC(totalGrowth, totalGrowthILS)}
