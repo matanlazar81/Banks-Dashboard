@@ -5792,30 +5792,70 @@ useEffect(() => {
                                   <td className="py-1 pl-3 text-[10px] text-blue-500 uppercase font-medium" colSpan={2}>HC Levers — cumulative through {forecastDrilldown.month}</td>
                                 </tr>
                                 {monthlyHCImpact[forecastDrilldown.mKey].categories.map((c: any, ci: number) => {
-                                  const catCostILS = c.runningCost || 0; // already signed: positive = cost increase, negative = savings
+                                  const catCostILS = c.runningCost || 0;
                                   const catCostEUR = ilsRate > 0 ? Math.round(catCostILS / ilsRate) : 0;
                                   const isIncrease = c.type === 'increase';
                                   const colorClass = isIncrease ? 'text-red-600' : 'text-green-700';
                                   const dotColor = isIncrease ? 'bg-red-500' : 'bg-green-500';
+                                  const leverKey = `${c.type}/${c.subType}`;
+                                  const isExpanded = forecastDrilldown.data?.__summaryExpandedLever === leverKey;
+                                  const cachedDetail = (forecastDrilldown.data?.__leverDetails || {})[leverKey];
                                   return (
-                                    <tr key={ci} className="border-b border-blue-100 bg-blue-50/20 cursor-pointer hover:bg-blue-100/50" onClick={() => {
-                                      const leverKey = `${c.type}/${c.subType}`;
-                                      setForecastDrilldown(prev => prev ? { ...prev, data: { ...prev.data, __expandedLever: leverKey, __leverDetail: null } } : null);
-                                      fetch(`/api/sf-headcount-lever-detail?eventType=${encodeURIComponent(c.type)}&eventSubType=${encodeURIComponent(c.subType)}&fromMonth=${forecastDrilldown.mKey}`).then(r => r.json()).then(j => {
-                                        setForecastDrilldown(prev => prev ? { ...prev, data: { ...prev.data, __leverDetail: j.data || [], __leverDetails: { ...(prev.data.__leverDetails || {}), [leverKey]: j.data || [] } } } : null);
-                                        setTimeout(() => document.getElementById('hc-levers-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
-                                      }).catch(() => {});
+                                    <Fragment key={ci}>
+                                    <tr className="border-b border-blue-100 bg-blue-50/20 cursor-pointer hover:bg-blue-100/50" onClick={() => {
+                                      if (isExpanded) {
+                                        setForecastDrilldown(prev => prev ? { ...prev, data: { ...prev.data, __summaryExpandedLever: null } } : null);
+                                      } else {
+                                        setForecastDrilldown(prev => prev ? { ...prev, data: { ...prev.data, __summaryExpandedLever: leverKey } } : null);
+                                        if (!cachedDetail) {
+                                          fetch(`/api/sf-headcount-lever-detail?eventType=${encodeURIComponent(c.type)}&eventSubType=${encodeURIComponent(c.subType)}&fromMonth=${forecastDrilldown.mKey}`).then(r => r.json()).then(j => {
+                                            setForecastDrilldown(prev => prev ? { ...prev, data: { ...prev.data, __leverDetails: { ...(prev.data.__leverDetails || {}), [leverKey]: j.data || [] } } } : null);
+                                          }).catch(() => {});
+                                        }
+                                      }
                                     }}>
                                       <td className="py-1 pl-5">
                                         <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1.5 ${dotColor}`}></span>
                                         <span className={`${colorClass} text-xs underline decoration-dotted`}>{c.subType}</span>
                                         <span className="text-gray-400 text-[10px] ml-1">({c.count})</span>
+                                        <span className="text-gray-300 text-[10px] ml-1">{isExpanded ? '▼' : '▶'}</span>
                                       </td>
                                       <td className={`py-1 text-right ${colorClass}`}>
                                         <span className="font-medium">{catCostEUR >= 0 ? '+' : ''}{fmt(catCostEUR)}</span>
                                         <span className="text-[10px] opacity-60 ml-1">{catCostILS >= 0 ? '+' : ''}{fmtILS(Math.abs(catCostILS))}</span>
                                       </td>
                                     </tr>
+                                    {isExpanded && (
+                                      <tr><td colSpan={2} className="p-0">
+                                        <div className="bg-blue-50/40 px-5 py-2 border-b border-blue-100">
+                                          {!cachedDetail && <p className="text-[10px] text-gray-400 italic">Loading...</p>}
+                                          {cachedDetail && cachedDetail.length === 0 && <p className="text-[10px] text-gray-400 italic">No detail data</p>}
+                                          {cachedDetail && cachedDetail.length > 0 && (
+                                            <table className="w-full text-[11px]">
+                                              <thead><tr className="text-gray-400 text-[9px] uppercase border-b border-blue-200">
+                                                <th className="pb-0.5 text-left">Department</th>
+                                                <th className="pb-0.5 text-left">Position</th>
+                                                <th className="pb-0.5 text-left">Month</th>
+                                                <th className="pb-0.5 text-right">Cost (ILS)</th>
+                                                <th className="pb-0.5 text-right">Cost (EUR)</th>
+                                              </tr></thead>
+                                              <tbody>
+                                                {cachedDetail.filter((dd: any) => dd.month >= forecastDrilldown.mKey || dd.status === 'Open' || !dd.employeeId).map((dd: any, di: number) => (
+                                                  <tr key={di} className="border-b border-blue-50">
+                                                    <td className="py-0.5 text-gray-600">{dd.department || '—'}</td>
+                                                    <td className="py-0.5 text-gray-600">{dd.position || '—'}</td>
+                                                    <td className="py-0.5 text-gray-500">{dd.month || '—'}</td>
+                                                    <td className={`py-0.5 text-right ${colorClass}`}>{fmtILS(dd.cost || 0)}</td>
+                                                    <td className={`py-0.5 text-right ${colorClass}`}>{fmt(ilsRate > 0 ? Math.round((dd.cost || 0) / ilsRate) : 0)}</td>
+                                                  </tr>
+                                                ))}
+                                              </tbody>
+                                            </table>
+                                          )}
+                                        </div>
+                                      </td></tr>
+                                    )}
+                                    </Fragment>
                                   );
                                 })}
                                 <tr className="border-b border-blue-200 bg-blue-50/30 font-bold">
