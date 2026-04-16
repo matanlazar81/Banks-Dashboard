@@ -6232,6 +6232,24 @@ useEffect(() => {
                                             const welfarePct = totalHc > 0 ? Math.round((totalHcDelta / totalHc) * 100) : 0;
                                             setVendorCatAdj(prev => ({ ...prev, [mKey]: { ...(prev[mKey] || {}), Welfare: welfarePct } }));
                                           }
+                                          // Also cascade manual salary % adjustment from this month through December
+                                          // so the display of "-X%" appears on all subsequent months
+                                          if (total > 0) {
+                                            const monthIdxStart = parseInt(mKey.split('-')[1]) - 1;
+                                            const deptTotalSum = Object.values(deptTotals).reduce((s, v) => s + v, 0);
+                                            setSalaryAdjPctByMonth(prev => {
+                                              const next = { ...prev };
+                                              // Recompute cumulative dept impact for each subsequent month and set global %
+                                              for (let mi = monthIdxStart; mi <= 11; mi++) {
+                                                // Use combined dept impact including this new delta for the cascade
+                                                const combinedDeptAdj = { ...(salaryDeptAdj[mKey] || {}), [dept]: costPerPerson > 0 ? Math.round((newDelta * costPerPerson / total) * 100) : 0 };
+                                                const combinedImpact = Object.entries(combinedDeptAdj).reduce((s, [dp, p]) => s + Math.round((deptTotals[dp] || 0) * (p as number / 100)), 0);
+                                                const pct = deptTotalSum > 0 ? Math.round((combinedImpact / deptTotalSum) * 100 * 10) / 10 : 0;
+                                                next[mi] = pct;
+                                              }
+                                              return next;
+                                            });
+                                          }
                                         };
                                         return (
                                       <td className="py-1.5 pr-2">
