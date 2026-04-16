@@ -5786,20 +5786,19 @@ useEffect(() => {
                             ) : (
                               <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600 pl-3 text-gray-400">Department adjustments</td><td className="py-1.5 text-right text-gray-400">-</td></tr>
                             )}
-                            {hasHcImpact && hc?.cumulative ? (
+                            {hasHcImpact && monthlyHCImpact[forecastDrilldown.mKey]?.categories ? (
                               <>
                                 <tr className="border-b border-blue-200 bg-blue-50/30">
-                                  <td className="py-1 pl-3 text-[10px] text-blue-500 uppercase font-medium" colSpan={2}>HC Levers — cumulative {forecastDrilldown.month}</td>
+                                  <td className="py-1 pl-3 text-[10px] text-blue-500 uppercase font-medium" colSpan={2}>HC Levers — cumulative through {forecastDrilldown.month}</td>
                                 </tr>
-                                {hc.cumulative.map((c: any, ci: number) => {
-                                  const catCostILS = c.totalCost || 0;
+                                {monthlyHCImpact[forecastDrilldown.mKey].categories.map((c: any, ci: number) => {
+                                  const catCostILS = c.runningCost || 0; // already signed: positive = cost increase, negative = savings
                                   const catCostEUR = ilsRate > 0 ? Math.round(catCostILS / ilsRate) : 0;
-                                  const sign = c.type === 'increase' ? '+' : '-';
-                                  const colorClass = c.type === 'increase' ? 'text-red-600' : 'text-green-700';
-                                  const dotColor = c.type === 'increase' ? 'bg-red-500' : 'bg-green-500';
+                                  const isIncrease = c.type === 'increase';
+                                  const colorClass = isIncrease ? 'text-red-600' : 'text-green-700';
+                                  const dotColor = isIncrease ? 'bg-red-500' : 'bg-green-500';
                                   return (
                                     <tr key={ci} className="border-b border-blue-100 bg-blue-50/20 cursor-pointer hover:bg-blue-100/50" onClick={() => {
-                                      // Scroll down to the Headcount Impact section and expand this lever
                                       const leverKey = `${c.type}/${c.subType}`;
                                       setForecastDrilldown(prev => prev ? { ...prev, data: { ...prev.data, __expandedLever: leverKey, __leverDetail: null } } : null);
                                       fetch(`/api/sf-headcount-lever-detail?eventType=${encodeURIComponent(c.type)}&eventSubType=${encodeURIComponent(c.subType)}&fromMonth=${forecastDrilldown.mKey}`).then(r => r.json()).then(j => {
@@ -5812,8 +5811,8 @@ useEffect(() => {
                                         <span className="text-gray-400 text-[10px] ml-1">({c.count})</span>
                                       </td>
                                       <td className={`py-1 text-right ${colorClass}`}>
-                                        <span className="font-medium">{sign}{fmt(catCostEUR)}</span>
-                                        <span className="text-[10px] opacity-60 ml-1">{sign}{fmtILS(catCostILS)}</span>
+                                        <span className="font-medium">{catCostEUR >= 0 ? '+' : ''}{fmt(catCostEUR)}</span>
+                                        <span className="text-[10px] opacity-60 ml-1">{catCostILS >= 0 ? '+' : ''}{fmtILS(Math.abs(catCostILS))}</span>
                                       </td>
                                     </tr>
                                   );

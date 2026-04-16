@@ -653,36 +653,54 @@ function createSnowflakeClient(env) {
   }
 
   // ── Monthly headcount impact summary (for forecast calculation) ──
-  // Returns net ILS impact per month from all HC events (hires, terms, leave end, open positions)
+  // Returns net ILS impact per month from all HC events, plus per-category cumulative breakdown
   async function fetchMonthlyHCImpact(year) {
     const yr = year || 2026;
     console.log(`[Snowflake] Fetching monthly HC impact for ${yr}...`);
     const rows = await query(`
       SELECT TO_CHAR(EVENT_MONTH_DATE, 'YYYY-MM') AS MONTH,
-             EVENT_TYPE,
+             EVENT_TYPE, EVENT_SUB_TYPE,
+             COUNT(*) AS CNT,
              ROUND(SUM(EMPLOYER_COST)) AS TOTAL_COST
       FROM DL_PRODUCTION.HR.FCT_HEADCOUNT_EVENT
       WHERE EVENT_MONTH_DATE >= '${yr}-01-01'
         AND EVENT_MONTH_DATE <= '${yr}-12-31'
-      GROUP BY TO_CHAR(EVENT_MONTH_DATE, 'YYYY-MM'), EVENT_TYPE
-      ORDER BY MONTH
+      GROUP BY TO_CHAR(EVENT_MONTH_DATE, 'YYYY-MM'), EVENT_TYPE, EVENT_SUB_TYPE
+      ORDER BY MONTH, EVENT_TYPE, EVENT_SUB_TYPE
     `);
-    // Build cumulative running impact per month
     const byMonth = {};
     let running = 0;
     const allMonths = [];
     for (let m = 1; m <= 12; m++) allMonths.push(`${yr}-${String(m).padStart(2, '0')}`);
-    // First pass: aggregate net per month
+    // First pass: aggregate net per month + per-category detail
     const monthNet = {};
+    const monthCategories = {}; // month → [{type, subType, count, cost}]
     for (const r of rows) {
       const m = r.MONTH;
       if (!monthNet[m]) monthNet[m] = 0;
-      monthNet[m] += r.EVENT_TYPE === 'increase' ? (r.TOTAL_COST || 0) : -(r.TOTAL_COST || 0);
+      if (!monthCategories[m]) monthCategories[m] = [];
+      const signed = r.EVENT_TYPE === 'increase' ? (r.TOTAL_COST || 0) : -(r.TOTAL_COST || 0);
+      monthNet[m] += signed;
+      monthCategories[m].push({ type: r.EVENT_TYPE, subType: r.EVENT_SUB_TYPE, count: r.CNT, cost: Math.round(r.TOTAL_COST || 0) });
     }
-    // Second pass: build cumulative running total
+    // Second pass: build cumulative running totals (overall + per category)
+    const categoryCumulative = {}; // subType → running ILS total
     for (const m of allMonths) {
       running += (monthNet[m] || 0);
-      byMonth[m] = { net: Math.round(monthNet[m] || 0), running: Math.round(running) };
+      // Update per-category cumulative
+      for (const cat of (monthCategories[m] || [])) {
+        const key = cat.subType;
+        if (!categoryCumulative[key]) categoryCumulative[key] = { type: cat.type, cost: 0, count: 0 };
+        categoryCumulative[key].cost += cat.type === 'increase' ? cat.cost : -cat.cost;
+        categoryCumulative[key].count += cat.count;
+      }
+      byMonth[m] = {
+        net: Math.round(monthNet[m] || 0),
+        running: Math.round(running),
+        categories: Object.entries(categoryCumulative).map(([subType, v]) => ({
+          subType, type: v.type, count: v.count, runningCost: Math.round(v.cost),
+        })),
+      };
     }
     console.log(`[Snowflake] Monthly HC impact: ${Object.keys(monthNet).length} months with events, final running=${Math.round(running)}`);
     return byMonth;
