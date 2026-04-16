@@ -2641,7 +2641,7 @@ useEffect(() => {
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
       <div className="bg-white border-b shadow-sm sticky top-0 z-40">
-        <div className="max-w-[1400px] mx-auto px-4 py-5 flex items-center gap-4">
+        <div className="max-w-[1800px] mx-auto px-4 py-5 flex items-center gap-4">
           {/* Left: Title */}
           <div className="flex-shrink-0">
             <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-3">
@@ -2880,7 +2880,7 @@ useEffect(() => {
         </div>
       )}
 
-      <div className="max-w-[1400px] mx-auto px-4 py-6 space-y-6">
+      <div className="max-w-[1800px] mx-auto px-4 py-6 space-y-6">
 
         {isLoading && (activeCompany === 'consolidated' ? !consolidatedData : (activeYears[activeCompany] || currentYear) === currentYear ? bankData.dailyBalances.length === 0 : !cashflowForecast?.length) && (
           <div className="flex items-center justify-center py-16 gap-3">
@@ -4934,8 +4934,8 @@ useEffect(() => {
             </div>
 
             {/* Cashflow Table — Opening → Inflows → Outflows → Net → Closing */}
-            <div style={{ overflowX: 'scroll', maxWidth: '100%' }}>
-              <table className="w-full text-[11px]" style={{ minWidth: '1400px' }}>
+            <div style={{ overflowX: 'auto', width: '100%' }}>
+              <table className="text-[11px]" style={{ minWidth: '1700px', width: '100%' }}>
                 <thead>
                   <tr className="text-left text-gray-400 uppercase border-b-2 border-gray-200">
                     <th className="pb-2 pr-1 whitespace-nowrap">Month</th>
