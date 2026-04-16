@@ -8257,9 +8257,156 @@ useEffect(() => {
                       ]);
                       ws8['!cols'] = [{ wch: 14 }, { wch: 25 }, { wch: 15 }, { wch: 14 }, { wch: 50 }];
 
+                      // ── Reconciliation sheet: Snowflake raw vs Dashboard computed, side-by-side ──
+                      const reconRows: any[][] = [];
+                      const greenFill = { fill: { fgColor: { rgb: 'DCFCE7' } } };
+                      const redFill = { fill: { fgColor: { rgb: 'FEE2E2' } } };
+                      const yellowFill = { fill: { fgColor: { rgb: 'FEF9C3' } } };
+                      const boldStyle = { font: { bold: true } };
+
+                      for (const fc of cashflowForecast) {
+                        // Snowflake raw actuals from export data
+                        const rawMonthRows = expenseExportData.filter(r => r.month === fc.mKey);
+                        const rawSalary = Math.round(rawMonthRows.filter(r => r.isPayroll).reduce((s, r) => s + r.amountEUR, 0));
+                        const rawVendors = Math.round(rawMonthRows.filter(r => !r.isPayroll && !r.accountNumber?.startsWith('800')).reduce((s, r) => s + r.amountEUR, 0));
+                        const rawFinance = Math.round(rawMonthRows.filter(r => r.accountNumber?.startsWith('800')).reduce((s, r) => s + r.amountEUR, 0));
+                        const rawTotal = rawSalary + rawVendors + rawFinance;
+
+                        // Dashboard computed values
+                        const dbSalary = Math.round(fc.salary);
+                        const dbVendors = Math.round(fc.vendors);
+                        const dbSalaryBase = Math.round(fc.salaryBase);
+                        const dbVendorsBase = Math.round(fc.vendorsBase);
+                        const dbTotal = dbSalary + dbVendors;
+
+                        // Budget sources
+                        const budgetSalary = Math.round(sfSalaryBudget[fc.mKey]?.eur || 0);
+                        const budgetVendors = Math.round(sfBudget.totalByMonth[fc.mKey]?.eur || 0);
+                        const monthOvr = sfSalaryOverrides.filter(o => o.mKey === fc.mKey);
+                        const ovrImpact = Math.round(monthOvr.reduce((s, o) => s + (o.mode === 'Override' ? (o.newVal - o.oldVal) : o.amountEUR), 0));
+
+                        // Salary adjustments
+                        const salAdj = salaryAdjPctByMonth[parseInt(fc.mKey.split('-')[1]) - 1] || 0;
+                        const salAdjImpact = salAdj !== 0 ? Math.round(budgetSalary * salAdj / 100) : 0;
+                        const deptAdjs = salaryDeptAdj[fc.mKey] || {};
+                        const deptAdjDesc = Object.entries(deptAdjs).filter(([,v]) => v !== 0).map(([d, p]) => `${d}: ${p}%`).join(', ');
+
+                        // Vendor adjustments
+                        const vcAdjs = vendorCatAdj[fc.mKey] || {};
+                        const vcAdjDesc = Object.entries(vcAdjs).filter(([,v]) => v !== 0).map(([c, p]) => `${c}: ${p}%`).join(', ');
+
+                        // Deltas
+                        const salaryDelta = dbSalary - rawSalary;
+                        const vendorDelta = dbVendors - rawVendors;
+                        const totalDelta = dbTotal - rawTotal;
+
+                        // Status & source explanation
+                        const status = fc.isPast ? 'Actual' : fc.isCurrent ? 'Current' : 'Forecast';
+                        let salarySource = '';
+                        let vendorSource = '';
+                        if (fc.isPast) {
+                          salarySource = rawSalary > 0 ? 'SF Actual (FCT_EXPENSE)' : 'NS Actual';
+                          vendorSource = rawVendors > 0 ? 'SF Actual (FCT_EXPENSE)' : 'NS Actual';
+                        } else {
+                          salarySource = budgetSalary > 0 ? 'SF Budget (FCT_BUDGET)' : 'NS Budget';
+                          if (ovrImpact !== 0) salarySource += ' + Override';
+                          if (salAdj !== 0) salarySource += ` + ${salAdj}% adj`;
+                          if (deptAdjDesc) salarySource += ` + dept(${deptAdjDesc})`;
+                          vendorSource = budgetVendors > 0 ? 'SF Budget (FCT_BUDGET)' : 'NS Budget';
+                          if (vcAdjDesc) vendorSource += ` + cat(${vcAdjDesc})`;
+                        }
+
+                        reconRows.push([
+                          fc.mKey, status,
+                          // Snowflake raw
+                          rawSalary, rawVendors, rawFinance, rawTotal,
+                          // Dashboard
+                          dbSalary, dbVendors, dbTotal,
+                          // Budget inputs
+                          budgetSalary, budgetVendors,
+                          // Adjustments
+                          ovrImpact, salAdjImpact,
+                          // Deltas
+                          salaryDelta, vendorDelta, totalDelta,
+                          // Sources
+                          salarySource, vendorSource,
+                        ]);
+                      }
+
+                      const ws9 = XLSX.utils.aoa_to_sheet([
+                        [{ v: 'Reconciliation: Snowflake Raw vs Dashboard', t: 's', s: { font: { bold: true, sz: 14 } } }],
+                        [{ v: 'Side-by-side comparison showing where and why the dashboard diverges from raw Snowflake data', t: 's', s: { font: { color: { rgb: '666666' }, sz: 10 } } }],
+                        [],
+                        // Section headers
+                        [
+                          '', '',
+                          { v: '── SNOWFLAKE RAW (FCT_EXPENSE) ──', t: 's', s: { font: { bold: true, color: { rgb: '7C3AED' } } } }, '', '', '',
+                          { v: '── DASHBOARD (computed) ──', t: 's', s: { font: { bold: true, color: { rgb: '059669' } } } }, '', '',
+                          { v: '── BUDGET INPUTS ──', t: 's', s: { font: { bold: true, color: { rgb: '2563EB' } } } }, '',
+                          { v: '── ADJUSTMENTS ──', t: 's', s: { font: { bold: true, color: { rgb: 'D97706' } } } }, '',
+                          { v: '── DELTA (Dashboard - Raw) ──', t: 's', s: { font: { bold: true, color: { rgb: 'DC2626' } } } }, '', '',
+                          { v: '── SOURCE / EXPLANATION ──', t: 's', s: { font: { bold: true, color: { rgb: '6B7280' } } } }, '',
+                        ],
+                        [
+                          'Month', 'Status',
+                          'Raw Salary', 'Raw Vendors', 'Raw Finance(800)', 'Raw Total',
+                          'DB Salary', 'DB Vendors', 'DB Total',
+                          'Budget Salary', 'Budget Vendors',
+                          'Salary Override', 'Salary % Adj',
+                          'Salary Delta', 'Vendor Delta', 'Total Delta',
+                          'Salary Source', 'Vendor Source',
+                        ].map(h => ({ v: h, t: 's', s: hdrStyle('374151') })),
+                        ...reconRows.map(row => row.map((v: any, ci: number) => {
+                          // Color-code deltas
+                          if (ci >= 13 && ci <= 15 && typeof v === 'number' && v !== 0) {
+                            return { v, t: 'n', s: v > 0 ? { font: { color: { rgb: 'DC2626' } }, ...redFill } : { font: { color: { rgb: '16A34A' } }, ...greenFill } };
+                          }
+                          // Color-code status
+                          if (ci === 1) {
+                            const fill = v === 'Actual' ? greenFill : v === 'Current' ? yellowFill : { fill: { fgColor: { rgb: 'EDE9FE' } } };
+                            return { v, t: 's', s: { ...fill, font: { bold: true } } };
+                          }
+                          return v;
+                        })),
+                        [],
+                        // Totals row
+                        [{ v: 'TOTAL', t: 's', s: boldStyle }, '', ...[2,3,4,5,6,7,8,9,10,11,12,13,14,15].map(ci => ({ v: Math.round(reconRows.reduce((s, r) => s + ((r[ci] as number) || 0), 0)), t: 'n', s: boldStyle })), '', ''],
+                        [],
+                        [],
+                        [{ v: 'LEGEND', t: 's', s: { font: { bold: true, sz: 12 } } }],
+                        ['Raw Salary/Vendors/Finance', 'Sum of FCT_EXPENSE rows from the Raw Transactions sheet, split by IS_PAYROLL and GL 800% prefix'],
+                        ['DB Salary/Vendors', 'The final numbers the dashboard uses in the cashflow forecast (after ALL adjustments)'],
+                        ['Budget Salary/Vendors', 'The original budget from FCT_BUDGET before any dashboard adjustments'],
+                        ['Salary Override', 'Impact from Google Sheets salary overrides (Increment/Override mode)'],
+                        ['Salary % Adj', 'Impact from manual scenario percentage adjustment on salary'],
+                        ['Delta = Dashboard - Raw', 'Positive = dashboard projects MORE than raw actuals; Negative = dashboard projects LESS'],
+                        ['Past months (Actual)', 'Dashboard uses SF actuals → delta should be ~0 (small rounding only)'],
+                        ['Future months (Forecast)', 'Dashboard uses budget + adjustments → delta shows the gap between budget assumptions and what raw data would show (usually raw=0 for future)'],
+                      ]);
+                      ws9['!cols'] = [
+                        { wch: 9 }, { wch: 9 },
+                        { wch: 13 }, { wch: 13 }, { wch: 14 }, { wch: 13 },
+                        { wch: 13 }, { wch: 13 }, { wch: 13 },
+                        { wch: 14 }, { wch: 14 },
+                        { wch: 14 }, { wch: 13 },
+                        { wch: 13 }, { wch: 13 }, { wch: 13 },
+                        { wch: 40 }, { wch: 40 },
+                      ];
+                      ws9['!merges'] = [
+                        { s: { r: 0, c: 0 }, e: { r: 0, c: 17 } },
+                        { s: { r: 1, c: 0 }, e: { r: 1, c: 17 } },
+                        { s: { r: 3, c: 2 }, e: { r: 3, c: 5 } },
+                        { s: { r: 3, c: 6 }, e: { r: 3, c: 8 } },
+                        { s: { r: 3, c: 9 }, e: { r: 3, c: 10 } },
+                        { s: { r: 3, c: 11 }, e: { r: 3, c: 12 } },
+                        { s: { r: 3, c: 13 }, e: { r: 3, c: 15 } },
+                        { s: { r: 3, c: 16 }, e: { r: 3, c: 17 } },
+                      ];
+
                       const wb = XLSX.utils.book_new();
-                      XLSX.utils.book_append_sheet(wb, ws, 'Raw Transactions');
+                      XLSX.utils.book_append_sheet(wb, ws9, 'Reconciliation');
                       XLSX.utils.book_append_sheet(wb, ws5, 'Dashboard Forecast');
+                      XLSX.utils.book_append_sheet(wb, ws, 'Raw Transactions');
                       XLSX.utils.book_append_sheet(wb, ws6, 'Vendor Budget by Category');
                       XLSX.utils.book_append_sheet(wb, ws7, 'Salary Budget + Overrides');
                       XLSX.utils.book_append_sheet(wb, ws8, 'Assumptions & Config');
@@ -8270,7 +8417,7 @@ useEffect(() => {
                     }}
                     className="px-4 py-2 bg-emerald-600 text-white text-sm rounded-lg hover:bg-emerald-700 flex items-center gap-2"
                   >
-                    <DollarSign className="w-4 h-4" /> Download Excel ({expenseExportData.length.toLocaleString()} rows, 8 sheets)
+                    <DollarSign className="w-4 h-4" /> Download Excel ({expenseExportData.length.toLocaleString()} rows, 9 sheets)
                   </button>
                 )}
                 {expenseExportData && (
