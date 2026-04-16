@@ -1615,7 +1615,15 @@ useEffect(() => {
         salaryBase = salary;
       } else if (useLastActual && !(isPastMonth || isCurMonth)) {
         // "Last Actual" mode: project last actual month's recurring salary per dept
-        const lastActualTotal = Object.values(salaryActualsByDept[lastActualSalaryMonth]).reduce((s, v) => s + (v as { eur: number }).eur, 0);
+        let lastActualTotal = Object.values(salaryActualsByDept[lastActualSalaryMonth]).reduce((s, v) => s + (v as { eur: number }).eur, 0);
+        // Apply GSheets salary overrides for this month (same as budget mode applies server-side)
+        const monthOvrs = sfSalaryOverrides.filter(o => o.mKey === mKey);
+        let overrideDelta = 0;
+        for (const ov of monthOvrs) {
+          if (ov.mode === 'Override') overrideDelta += (ov.newVal - ov.oldVal);
+          else overrideDelta += ov.amountEUR;
+        }
+        lastActualTotal += overrideDelta;
         salaryBase = Math.round(lastActualTotal);
         salary = Math.round(lastActualTotal * monthMultiplier) + deptAdjDelta;
       } else if (sfSalaryBudget[mKey]?.eur > 0) {
@@ -1855,7 +1863,9 @@ useEffect(() => {
       if ((isPast || isCur) && sfActualsSplit[mKey]?.salary > 0) { salary = sfActualsSplit[mKey].salary; }
       else if ((isPast || isCur) && cActSal && cActSal.amountEUR > 0) { salary = cActSal.amountEUR; }
       else if (cUseLastActual && !(isPast || isCur)) {
-        const cLastTotal = Object.values(salaryActualsByDept[lastActualSalaryMonth]).reduce((s, v) => s + (v as { eur: number }).eur, 0);
+        let cLastTotal = Object.values(salaryActualsByDept[lastActualSalaryMonth]).reduce((s, v) => s + (v as { eur: number }).eur, 0);
+        const cMonthOvrs = sfSalaryOverrides.filter(o => o.mKey === mKey);
+        for (const ov of cMonthOvrs) { cLastTotal += ov.mode === 'Override' ? (ov.newVal - ov.oldVal) : ov.amountEUR; }
         salary = Math.round(cLastTotal * cMult) + cDeptDelta;
       }
       else if (sfSalaryBudget[mKey]?.eur > 0) { salary = Math.round(sfSalaryBudget[mKey].eur * cMult) + cDeptDelta; }
