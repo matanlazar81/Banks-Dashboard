@@ -5756,61 +5756,107 @@ useEffect(() => {
                           <button
                             className="ml-auto px-2 py-0.5 rounded bg-emerald-600 text-white hover:bg-emerald-700 flex items-center gap-1"
                             onClick={() => {
-                              const hdrStyle = (rgb: string) => ({ font: { bold: true, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb } }, alignment: { horizontal: 'center' as const } });
-                              const boldStyle = { font: { bold: true } };
-                              const redCell = { font: { color: { rgb: 'DC2626' } } };
-                              const greenCell = { font: { color: { rgb: '059669' } } };
-                              const violetCell = { font: { color: { rgb: '7C3AED' }, bold: true } };
-                              const totalStyle = { font: { bold: true, color: { rgb: '047857' } }, fill: { fgColor: { rgb: 'ECFDF5' } } };
-                              const rows: any[] = [];
-                              rows.push([{ v: `Salary Drilldown — ${forecastDrilldown.month} (${salaryProjectionMode === 'lastActual' ? 'Last Actual' : 'Budget'} mode)`, s: { font: { bold: true, sz: 14 } } }]);
-                              rows.push([]);
-                              rows.push(['Item', 'EUR', 'ILS'].map(h => ({ v: h, t: 's', s: hdrStyle('7C3AED') })));
-                              rows.push([{ v: 'Budget (original)', t: 's' }, { v: budgetTotal, t: 'n', s: violetCell }, { v: toILS(budgetTotal), t: 'n', s: violetCell }]);
-                              if (hasSfOverrides) monthOverrides.forEach(ov => {
-                                const delta = ov.mode === 'Override' ? (ov.newVal - ov.oldVal) : ov.amountEUR;
-                                rows.push([{ v: `Salary Override (GSheets): ${ov.comments || ''}`, t: 's', s: { font: { color: { rgb: 'EA580C' } } } }, { v: delta, t: 'n', s: delta >= 0 ? redCell : greenCell }, { v: toILS(delta), t: 'n' }]);
-                              });
-                              if (adj !== 0) rows.push([{ v: `Manual Adjustment (${adj > 0 ? '+' : ''}${adj}%)`, t: 's', s: { font: { color: { rgb: '2563EB' } } } }, { v: adjustedTotal - budgetTotal, t: 'n', s: (adjustedTotal - budgetTotal) >= 0 ? redCell : greenCell }, { v: toILS(adjustedTotal - budgetTotal), t: 'n' }]);
-                              if (totalDeptImpact !== 0) rows.push([{ v: 'Department Adjustments', t: 's', s: { font: { color: { rgb: 'B45309' } } } }, { v: totalDeptImpact, t: 'n', s: totalDeptImpact >= 0 ? redCell : greenCell }, { v: toILS(totalDeptImpact), t: 'n' }]);
-                              if (hasHcImpact) {
+                              try {
+                                const hdrStyle = (rgb: string) => ({ font: { bold: true, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb } }, alignment: { horizontal: 'center' as const } });
+                                const boldStyle = { font: { bold: true } };
+                                const redCell = { font: { color: { rgb: 'DC2626' } } };
+                                const greenCell = { font: { color: { rgb: '059669' } } };
+                                const violetCell = { font: { color: { rgb: '7C3AED' }, bold: true } };
+                                const totalStyle = { font: { bold: true, color: { rgb: '047857' } }, fill: { fgColor: { rgb: 'ECFDF5' } } };
+                                // All needed data from scope
+                                const bt = budgetTotal;
+                                const ilsR = ilsRate;
+                                const atot = adjustedTotal;
+                                const adjV = adj;
+                                const hcOk = hasHcImpact;
+                                const hcE = hcImpactEUR;
+                                const hcI = hcImpactILS;
+                                const actT = actualTotal;
+                                const hasAct = hasActuals;
+                                const mKeyX = forecastDrilldown.mKey;
+                                const monthLabel = forecastDrilldown.month;
+                                // Compute missing values safely
+                                const ovsX = sfSalaryOverrides.filter(o => o.mKey === mKeyX);
+                                const sfOvTotalX = ovsX.reduce((s, o) => s + (o.mode === 'Override' ? (o.newVal - o.oldVal) : o.amountEUR), 0);
+                                // Dept data: use lastActual or budget d.budget
+                                const useLA = salaryProjectionMode === 'lastActual' && lastActualSalaryMonth && salaryActualsByDept[lastActualSalaryMonth];
+                                const deptTot: Record<string, number> = {};
+                                if (useLA) {
+                                  for (const [dep, v] of Object.entries(salaryActualsByDept[lastActualSalaryMonth])) deptTot[dep] = (v as { eur: number }).eur;
+                                } else {
+                                  for (const row of d.budget) deptTot[row.department] = (deptTot[row.department] || 0) + (row.amountEUR || 0);
+                                }
+                                const deptEntriesX = Object.entries(deptTot).sort((a, b) => b[1] - a[1]);
+                                // Effective dept adj
+                                const effAdjX: Record<string, number> = {};
+                                const adjMsX = Object.keys(salaryDeptAdj).filter(k => k <= mKeyX && k.slice(0,4) === mKeyX.slice(0,4)).sort();
+                                for (const ak of adjMsX) for (const [dp, p] of Object.entries(salaryDeptAdj[ak])) { if (p !== 0) effAdjX[dp] = p; else delete effAdjX[dp]; }
+                                const totalDeptImpactX = Object.entries(effAdjX).reduce((s, [dp, pc]) => s + Math.round((deptTot[dp] || 0) * (pc / 100)), 0);
+
+                                const rows: any[] = [];
+                                rows.push([{ v: `Salary Drilldown — ${monthLabel} (${salaryProjectionMode === 'lastActual' ? 'Last Actual' : 'Budget'} mode)`, s: { font: { bold: true, sz: 14 } } }]);
                                 rows.push([]);
-                                rows.push([{ v: `HC Levers — cumulative through ${forecastDrilldown.month}`, t: 's', s: { font: { bold: true, color: { rgb: '1E40AF' } } } }]);
-                                (monthlyHCImpact[forecastDrilldown.mKey]?.categories || []).filter((c: any) => c.runningCost !== 0).forEach((c: any) => {
-                                  const costEUR = ilsRate > 0 ? Math.round((c.runningCost || 0) / ilsRate) : 0;
-                                  if (costEUR === 0) return;
-                                  const color = c.type === 'increase' ? redCell : greenCell;
-                                  rows.push([{ v: `  ${c.subType} (${c.count})`, t: 's' }, { v: costEUR, t: 'n', s: color }, { v: c.runningCost, t: 'n', s: color }]);
+                                rows.push(['Item', 'EUR', 'ILS'].map(h => ({ v: h, t: 's', s: hdrStyle('7C3AED') })));
+                                rows.push([{ v: 'Budget (original)', t: 's' }, { v: bt, t: 'n', s: violetCell }, { v: Math.round(bt * ilsR), t: 'n', s: violetCell }]);
+                                ovsX.forEach(ov => {
+                                  const delta = ov.mode === 'Override' ? (ov.newVal - ov.oldVal) : ov.amountEUR;
+                                  rows.push([{ v: `Salary Override (GSheets): ${ov.comments || ''}`, t: 's', s: { font: { color: { rgb: 'EA580C' } } } }, { v: delta, t: 'n', s: delta >= 0 ? redCell : greenCell }, { v: Math.round(delta * ilsR), t: 'n' }]);
                                 });
-                                rows.push([{ v: 'Net HC Impact', t: 's', s: boldStyle }, { v: hcImpactEUR, t: 'n', s: { ...boldStyle, ...(hcImpactEUR >= 0 ? redCell : greenCell) } }, { v: hcImpactILS, t: 'n', s: boldStyle }]);
-                              }
-                              rows.push([]);
-                              const finalEUR = adjustedTotal + totalDeptImpact + sfOverrideTotal + (hasHcImpact ? hcImpactEUR : 0);
-                              rows.push([{ v: 'Budget (adjusted) — Effective Total', t: 's', s: totalStyle }, { v: finalEUR, t: 'n', s: totalStyle }, { v: toILS(finalEUR), t: 'n', s: totalStyle }]);
-                              if (hasActuals) rows.push([{ v: 'Actual', t: 's' }, { v: actualTotal, t: 'n', s: { font: { color: { rgb: 'B45309' }, bold: true } } }, { v: toILS(actualTotal), t: 'n' }]);
-                              // Department breakdown
-                              rows.push([]);
-                              rows.push([{ v: 'Department Breakdown', t: 's', s: { font: { bold: true, sz: 12 } } }]);
-                              rows.push(['Department', salaryProjectionMode === 'lastActual' ? 'Actual EUR' : 'Budget EUR', 'HC', 'HC Adj', 'Adjust %', 'Impact EUR'].map(h => ({ v: h, t: 's', s: hdrStyle('D97706') })));
-                              deptEntries.forEach(([dept, total]) => {
-                                const eff = effectiveAdj[dept];
-                                const pct = eff?.pct || 0;
-                                const impact = Math.round(total * (pct / 100));
-                                const hcC = deptHeadcount[dept]?.count || 0;
+                                if (adjV !== 0) rows.push([{ v: `Manual Adjustment (${adjV > 0 ? '+' : ''}${adjV}%)`, t: 's', s: { font: { color: { rgb: '2563EB' } } } }, { v: atot - bt, t: 'n', s: (atot - bt) >= 0 ? redCell : greenCell }, { v: Math.round((atot - bt) * ilsR), t: 'n' }]);
+                                if (totalDeptImpactX !== 0) rows.push([{ v: 'Department Adjustments', t: 's', s: { font: { color: { rgb: 'B45309' } } } }, { v: totalDeptImpactX, t: 'n', s: totalDeptImpactX >= 0 ? redCell : greenCell }, { v: Math.round(totalDeptImpactX * ilsR), t: 'n' }]);
+                                if (hcOk) {
+                                  rows.push([]);
+                                  rows.push([{ v: `HC Levers — cumulative through ${monthLabel}`, t: 's', s: { font: { bold: true, color: { rgb: '1E40AF' } } } }]);
+                                  rows.push(['Category', 'EUR', 'ILS', 'Count'].map(h => ({ v: h, t: 's', s: hdrStyle('1E40AF') })));
+                                  (monthlyHCImpact[mKeyX]?.categories || []).filter((c: any) => c.runningCost !== 0).forEach((c: any) => {
+                                    const costEUR = ilsR > 0 ? Math.round((c.runningCost || 0) / ilsR) : 0;
+                                    if (costEUR === 0) return;
+                                    const color = c.type === 'increase' ? redCell : greenCell;
+                                    rows.push([{ v: c.subType, t: 's' }, { v: costEUR, t: 'n', s: color }, { v: c.runningCost, t: 'n', s: color }, { v: c.count, t: 'n' }]);
+                                  });
+                                  rows.push([{ v: 'Net HC Impact', t: 's', s: boldStyle }, { v: hcE, t: 'n', s: { ...boldStyle, ...(hcE >= 0 ? redCell : greenCell) } }, { v: hcI, t: 'n', s: boldStyle }, {}]);
+                                }
+                                rows.push([]);
+                                const finalEUR = atot + totalDeptImpactX + sfOvTotalX + (hcOk ? hcE : 0);
+                                rows.push([{ v: 'Budget (adjusted) — Effective Total', t: 's', s: totalStyle }, { v: finalEUR, t: 'n', s: totalStyle }, { v: Math.round(finalEUR * ilsR), t: 'n', s: totalStyle }]);
+                                if (hasAct) rows.push([{ v: 'Actual', t: 's' }, { v: actT, t: 'n', s: { font: { color: { rgb: 'B45309' }, bold: true } } }, { v: Math.round(actT * ilsR), t: 'n' }]);
+                                // Department breakdown
+                                rows.push([]);
+                                rows.push([{ v: 'Department Breakdown', t: 's', s: { font: { bold: true, sz: 12 } } }]);
+                                rows.push(['Department', salaryProjectionMode === 'lastActual' ? 'Actual EUR' : 'Budget EUR', 'HC', 'HC Adj', 'Adjust %', 'Impact EUR'].map(h => ({ v: h, t: 's', s: hdrStyle('D97706') })));
+                                deptEntriesX.forEach(([dept, total]) => {
+                                  const pct = effAdjX[dept] || 0;
+                                  const impact = Math.round(total * (pct / 100));
+                                  const hcC = deptHeadcount[dept]?.count || 0;
+                                  const hcAdjV = headcountAdj[mKeyX]?.[dept] || 0;
+                                  rows.push([
+                                    { v: dept, t: 's', s: { font: { bold: true } } },
+                                    { v: total, t: 'n', s: violetCell },
+                                    { v: hcC, t: 'n' },
+                                    { v: hcAdjV, t: 'n', s: hcAdjV !== 0 ? { font: { color: { rgb: '2563EB' }, bold: true } } : {} },
+                                    { v: pct !== 0 ? `${pct}%` : '-', t: 's', s: pct !== 0 ? { font: { color: { rgb: '2563EB' }, bold: true } } : {} },
+                                    { v: impact, t: 'n', s: impact > 0 ? redCell : (impact < 0 ? greenCell : {}) },
+                                  ]);
+                                });
+                                // Totals row
+                                const totalBudgetSum = deptEntriesX.reduce((s, [, v]) => s + v, 0);
+                                const totalHcSum = deptEntriesX.reduce((s, [dp]) => s + (deptHeadcount[dp]?.count || 0), 0);
                                 rows.push([
-                                  { v: dept, t: 's', s: { font: { bold: true } } },
-                                  { v: total, t: 'n', s: violetCell },
-                                  { v: hcC, t: 'n' },
-                                  { v: 0, t: 'n' },
-                                  { v: `${pct}%`, t: 's' },
-                                  { v: impact, t: 'n', s: impact >= 0 ? redCell : (impact < 0 ? greenCell : {}) },
+                                  { v: 'TOTAL', t: 's', s: boldStyle },
+                                  { v: totalBudgetSum, t: 'n', s: { ...boldStyle, ...violetCell } },
+                                  { v: totalHcSum, t: 'n', s: boldStyle },
+                                  {}, {},
+                                  { v: totalDeptImpactX, t: 'n', s: { ...boldStyle, ...(totalDeptImpactX >= 0 ? redCell : greenCell) } },
                                 ]);
-                              });
-                              const ws = XLSX.utils.aoa_to_sheet(rows);
-                              ws['!cols'] = [{ wch: 42 }, { wch: 16 }, { wch: 16 }, { wch: 10 }, { wch: 10 }, { wch: 14 }];
-                              const wb = XLSX.utils.book_new();
-                              XLSX.utils.book_append_sheet(wb, ws, `${forecastDrilldown.month}`);
-                              XLSX.writeFile(wb, `Salary_Drilldown_${forecastDrilldown.mKey}_${new Date().toISOString().slice(0, 10)}.xlsx`);
+                                const ws = XLSX.utils.aoa_to_sheet(rows);
+                                ws['!cols'] = [{ wch: 42 }, { wch: 16 }, { wch: 16 }, { wch: 10 }, { wch: 10 }, { wch: 14 }];
+                                const wb = XLSX.utils.book_new();
+                                XLSX.utils.book_append_sheet(wb, ws, monthLabel.replace(/\s/g, '_').slice(0, 31));
+                                XLSX.writeFile(wb, `Salary_Drilldown_${mKeyX}_${new Date().toISOString().slice(0, 10)}.xlsx`);
+                              } catch (err: any) {
+                                alert('Export failed: ' + (err?.message || String(err)));
+                                console.error('Export error:', err);
+                              }
                             }}
                           >📥 Export</button>
                         </div>
