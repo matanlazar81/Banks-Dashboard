@@ -8257,7 +8257,7 @@ useEffect(() => {
                       ]);
                       ws8['!cols'] = [{ wch: 14 }, { wch: 25 }, { wch: 15 }, { wch: 14 }, { wch: 50 }];
 
-                      // ── Reconciliation sheet: Snowflake raw vs Dashboard computed, side-by-side ──
+                      // ── Reconciliation sheet: BI (all sources) vs Dashboard, with adjustment waterfall ──
                       const reconRows: any[][] = [];
                       const greenFill = { fill: { fgColor: { rgb: 'DCFCE7' } } };
                       const redFill = { fill: { fgColor: { rgb: 'FEE2E2' } } };
@@ -8265,184 +8265,154 @@ useEffect(() => {
                       const boldStyle = { font: { bold: true } };
 
                       for (const fc of cashflowForecast) {
-                        // Snowflake raw — split by source
                         const rawMonthRows = expenseExportData.filter(r => r.month === fc.mKey);
-                        const nsRows = rawMonthRows.filter(r => r.source === 'netsuite');
-                        const overrideRows = rawMonthRows.filter(r => r.source !== 'netsuite');
+                        const status = fc.isPast ? 'Actual' : fc.isCurrent ? 'Current' : 'Forecast';
 
-                        // "netsuite" source only (what the dashboard uses for actuals)
-                        const nsSalary = Math.round(nsRows.filter(r => r.isPayroll).reduce((s, r) => s + r.amountEUR, 0));
-                        const nsVendors = Math.round(nsRows.filter(r => !r.isPayroll && !r.accountNumber?.startsWith('800')).reduce((s, r) => s + r.amountEUR, 0));
-                        const nsFinance = Math.round(nsRows.filter(r => r.accountNumber?.startsWith('800')).reduce((s, r) => s + r.amountEUR, 0));
+                        // BI / Snowflake totals (ALL sources — matches your CSV/BI system)
+                        const biSalary = Math.round(rawMonthRows.filter(r => r.isPayroll).reduce((s, r) => s + r.amountEUR, 0));
+                        const biVendors = Math.round(rawMonthRows.filter(r => !r.isPayroll && !r.accountNumber?.startsWith('800')).reduce((s, r) => s + r.amountEUR, 0));
+                        const biFinance = Math.round(rawMonthRows.filter(r => r.accountNumber?.startsWith('800')).reduce((s, r) => s + r.amountEUR, 0));
+                        const biTotal = biSalary + biVendors + biFinance;
 
-                        // Non-netsuite sources (future_cost_override, future_cost_increment, etc.)
-                        const ovrSalary = Math.round(overrideRows.filter(r => r.isPayroll).reduce((s, r) => s + r.amountEUR, 0));
-                        const ovrVendors = Math.round(overrideRows.filter(r => !r.isPayroll && !r.accountNumber?.startsWith('800')).reduce((s, r) => s + r.amountEUR, 0));
-                        const ovrSources = [...new Set(overrideRows.map(r => r.source))].join(', ');
-
-                        // All sources combined
-                        const rawSalary = nsSalary + ovrSalary;
-                        const rawVendors = nsVendors + ovrVendors;
-                        const rawTotal = Math.round(rawMonthRows.reduce((s, r) => s + r.amountEUR, 0));
-
-                        // Dashboard computed values
+                        // Dashboard computed values (what the forecast table shows)
                         const dbSalary = Math.round(fc.salary);
                         const dbVendors = Math.round(fc.vendors);
                         const dbTotal = dbSalary + dbVendors;
 
-                        // Budget sources
+                        // Dashboard salary waterfall: Budget → + Override → + % Adj → + Dept Adj → = Final
                         const budgetSalary = Math.round(sfSalaryBudget[fc.mKey]?.eur || 0);
-                        const budgetVendors = Math.round(sfBudget.totalByMonth[fc.mKey]?.eur || 0);
                         const monthOvr = sfSalaryOverrides.filter(o => o.mKey === fc.mKey);
-                        const gsOvrImpact = Math.round(monthOvr.reduce((s, o) => s + (o.mode === 'Override' ? (o.newVal - o.oldVal) : o.amountEUR), 0));
-
-                        // Salary adjustments
+                        const gsOverride = Math.round(monthOvr.reduce((s, o) => s + (o.mode === 'Override' ? (o.newVal - o.oldVal) : o.amountEUR), 0));
                         const salAdj = salaryAdjPctByMonth[parseInt(fc.mKey.split('-')[1]) - 1] || 0;
                         const salAdjImpact = salAdj !== 0 ? Math.round(budgetSalary * salAdj / 100) : 0;
                         const deptAdjs = salaryDeptAdj[fc.mKey] || {};
-                        const deptAdjDesc = Object.entries(deptAdjs).filter(([,v]) => v !== 0).map(([d, p]) => `${d}: ${p}%`).join(', ');
+                        const deptAdjTotal = Object.entries(deptAdjs).filter(([,v]) => v !== 0).reduce((s, [dept, pct]) => {
+                          const deptBudget = salaryDeptBudgets[fc.mKey]?.[dept] || 0;
+                          return s + Math.round(deptBudget * ((pct as number) / 100));
+                        }, 0);
 
-                        // Vendor adjustments
+                        // Dashboard vendor waterfall: Budget → + Cat Adj → = Final
+                        const budgetVendors = Math.round(sfBudget.totalByMonth[fc.mKey]?.eur || 0);
                         const vcAdjs = vendorCatAdj[fc.mKey] || {};
-                        const vcAdjDesc = Object.entries(vcAdjs).filter(([,v]) => v !== 0).map(([c, p]) => `${c}: ${p}%`).join(', ');
+                        const vcAdjTotal = Object.entries(vcAdjs).filter(([,v]) => v !== 0).reduce((s, [cat, pct]) => {
+                          const catBudget = (sfBudget.byMonth?.[fc.mKey] || {})[cat] || 0;
+                          return s + Math.round(catBudget * ((pct as number) / 100));
+                        }, 0);
 
-                        // Deltas: dashboard vs netsuite-source-only (apples-to-apples)
-                        const salaryDelta = dbSalary - nsSalary;
-                        const vendorDelta = dbVendors - nsVendors;
-                        const totalDelta = dbTotal - (nsSalary + nsVendors);
+                        // Deltas: Dashboard vs BI (the meaningful comparison)
+                        const salaryDelta = dbSalary - biSalary;
+                        const vendorDelta = dbVendors - biVendors;
+                        const totalDelta = dbTotal - biTotal;
 
-                        // Status & source explanation
-                        const status = fc.isPast ? 'Actual' : fc.isCurrent ? 'Current' : 'Forecast';
-                        let salarySource = '';
-                        let vendorSource = '';
-                        let deltaExplanation = '';
+                        // Non-netsuite source breakdown (for info)
+                        const nonNsSources = [...new Set(rawMonthRows.filter(r => r.source !== 'netsuite').map(r => r.source))].join(', ');
+
+                        // Explanation
+                        let explanation = '';
                         if (fc.isPast) {
-                          salarySource = 'SF Actual (SOURCE=netsuite)';
-                          vendorSource = 'SF Actual (SOURCE=netsuite)';
-                          if (salaryDelta !== 0 || vendorDelta !== 0) deltaExplanation = 'Rounding or GL filter differences';
-                        } else if (fc.isCurrent) {
-                          salarySource = budgetSalary > 0 ? 'SF Budget (not partial actuals)' : 'NS Budget';
-                          vendorSource = budgetVendors > 0 ? 'SF Budget (not partial actuals)' : 'NS Budget';
-                          deltaExplanation = 'Current month: DB uses budget, raw has partial actuals';
+                          explanation = salaryDelta === 0 && vendorDelta === 0 ? 'Match — both use SF actuals (SOURCE=netsuite)' : 'Small rounding difference';
                         } else {
-                          salarySource = budgetSalary > 0 ? 'SF Budget (FCT_BUDGET)' : 'NS Budget';
-                          if (gsOvrImpact !== 0) salarySource += ` + GSheets Override(${gsOvrImpact > 0 ? '+' : ''}${gsOvrImpact})`;
-                          if (salAdj !== 0) salarySource += ` + ${salAdj}% adj(${salAdjImpact > 0 ? '+' : ''}${salAdjImpact})`;
-                          if (deptAdjDesc) salarySource += ` + dept(${deptAdjDesc})`;
-                          vendorSource = budgetVendors > 0 ? 'SF Budget (FCT_BUDGET)' : 'NS Budget';
-                          if (vcAdjDesc) vendorSource += ` + cat(${vcAdjDesc})`;
-                          deltaExplanation = ovrSources ? `Raw includes non-netsuite: ${ovrSources}` : 'DB uses budget, raw has no netsuite actuals';
+                          const parts: string[] = [];
+                          if (biSalary !== budgetSalary && biSalary > 0) parts.push(`BI salary(${biSalary.toLocaleString()}) includes: ${nonNsSources || 'netsuite'}`);
+                          if (gsOverride !== 0) parts.push(`GSheets override: ${gsOverride.toLocaleString()}`);
+                          if (salAdjImpact !== 0) parts.push(`Salary ${salAdj}% adj: ${salAdjImpact.toLocaleString()}`);
+                          if (deptAdjTotal !== 0) parts.push(`Dept adj: ${deptAdjTotal.toLocaleString()}`);
+                          if (vcAdjTotal !== 0) parts.push(`Vendor cat adj: ${vcAdjTotal.toLocaleString()}`);
+                          if (parts.length === 0) parts.push('DB uses FCT_BUDGET, BI uses FCT_EXPENSE (different tables)');
+                          explanation = parts.join(' | ');
                         }
 
                         reconRows.push([
                           fc.mKey, status,
-                          // Snowflake netsuite-only (comparable to dashboard)
-                          nsSalary, nsVendors, nsFinance,
-                          // Non-netsuite rows in FCT_EXPENSE
-                          ovrSalary, ovrVendors, ovrSources || '—',
-                          // All raw combined
-                          rawSalary, rawVendors, rawTotal,
+                          // BI / Snowflake (all sources)
+                          biSalary, biVendors, biFinance, biTotal,
                           // Dashboard
                           dbSalary, dbVendors, dbTotal,
-                          // Budget inputs
-                          budgetSalary, budgetVendors,
-                          // Google Sheets + scenario adjustments
-                          gsOvrImpact, salAdjImpact,
-                          // Delta (DB vs netsuite-only)
+                          // Salary waterfall
+                          budgetSalary, gsOverride, salAdjImpact, deptAdjTotal, dbSalary,
+                          // Vendor waterfall
+                          budgetVendors, vcAdjTotal, dbVendors,
+                          // Deltas
                           salaryDelta, vendorDelta, totalDelta,
-                          // Sources
-                          salarySource, vendorSource, deltaExplanation,
+                          // Info
+                          nonNsSources || '—', explanation,
                         ]);
                       }
 
-                      const reconColCount = 24;
                       const ws9 = XLSX.utils.aoa_to_sheet([
-                        [{ v: 'Reconciliation: Snowflake Raw vs Dashboard', t: 's', s: { font: { bold: true, sz: 14 } } }],
-                        [{ v: 'IMPORTANT: Raw "netsuite" columns = SOURCE=netsuite only (what dashboard uses for actuals). Non-netsuite = future_cost_override/increment rows in FCT_EXPENSE.', t: 's', s: { font: { color: { rgb: '991B1B' }, sz: 10, bold: true } } }],
-                        [{ v: 'Delta = Dashboard minus NS-only Raw. For past months delta should be ~0. For future months, dashboard uses FCT_BUDGET + adjustments while raw has no netsuite actuals.', t: 's', s: { font: { color: { rgb: '666666' }, sz: 10 } } }],
+                        [{ v: 'Reconciliation: BI (Snowflake All Sources) vs Dashboard', t: 's', s: { font: { bold: true, sz: 14 } } }],
+                        [{ v: 'BI columns = your CSV/BI system (all FCT_EXPENSE sources). Dashboard = what the cashflow forecast shows. Delta = Dashboard minus BI.', t: 's', s: { font: { color: { rgb: '666666' }, sz: 10 } } }],
                         [],
-                        // Section headers
                         [
                           '', '',
-                          { v: '── SOURCE=netsuite (dashboard input) ──', t: 's', s: { font: { bold: true, color: { rgb: '7C3AED' } } } }, '', '',
-                          { v: '── Non-netsuite (FCT_EXPENSE other) ──', t: 's', s: { font: { bold: true, color: { rgb: 'EA580C' } } } }, '', '',
-                          { v: '── ALL RAW COMBINED ──', t: 's', s: { font: { bold: true, color: { rgb: '6B7280' } } } }, '', '',
-                          { v: '── DASHBOARD (computed) ──', t: 's', s: { font: { bold: true, color: { rgb: '059669' } } } }, '', '',
-                          { v: '── BUDGET INPUTS ──', t: 's', s: { font: { bold: true, color: { rgb: '2563EB' } } } }, '',
-                          { v: '── ADJUSTMENTS ──', t: 's', s: { font: { bold: true, color: { rgb: 'D97706' } } } }, '',
-                          { v: '── DELTA (DB vs NS-only) ──', t: 's', s: { font: { bold: true, color: { rgb: 'DC2626' } } } }, '', '',
-                          { v: '── EXPLANATION ──', t: 's', s: { font: { bold: true, color: { rgb: '6B7280' } } } }, '', '',
+                          { v: '── BI / SNOWFLAKE (all sources) ──', t: 's', s: { font: { bold: true, color: { rgb: '7C3AED' } } } }, '', '', '',
+                          { v: '── DASHBOARD (final) ──', t: 's', s: { font: { bold: true, color: { rgb: '059669' } } } }, '', '',
+                          { v: '── SALARY WATERFALL ──', t: 's', s: { font: { bold: true, color: { rgb: '2563EB' } } } }, '', '', '', '',
+                          { v: '── VENDOR WATERFALL ──', t: 's', s: { font: { bold: true, color: { rgb: 'D97706' } } } }, '', '',
+                          { v: '── DELTA (DB − BI) ──', t: 's', s: { font: { bold: true, color: { rgb: 'DC2626' } } } }, '', '',
+                          { v: '── INFO ──', t: 's', s: { font: { bold: true, color: { rgb: '6B7280' } } } }, '',
                         ],
                         [
                           'Month', 'Status',
-                          'NS Salary', 'NS Vendors', 'NS Finance(800)',
-                          'Ovr Salary', 'Ovr Vendors', 'Ovr Sources',
-                          'All Salary', 'All Vendors', 'All Total',
+                          'BI Salary', 'BI Vendors', 'BI Finance', 'BI Total',
                           'DB Salary', 'DB Vendors', 'DB Total',
-                          'Budget Salary', 'Budget Vendors',
-                          'GSheets Ovr', 'Salary % Adj',
-                          'Salary Delta', 'Vendor Delta', 'Total Delta',
-                          'Salary Source', 'Vendor Source', 'Delta Explanation',
+                          'Sal Budget', 'GSheets Ovr', 'Sal % Adj', 'Dept Adj', '= DB Salary',
+                          'Vend Budget', 'Cat Adj', '= DB Vendors',
+                          'Sal Delta', 'Vend Delta', 'Total Delta',
+                          'Non-NS Sources', 'Explanation',
                         ].map(h => ({ v: h, t: 's', s: hdrStyle('374151') })),
                         ...reconRows.map(row => row.map((v: any, ci: number) => {
-                          // Color-code deltas (cols 18-20)
-                          if (ci >= 18 && ci <= 20 && typeof v === 'number' && v !== 0) {
+                          // Color-code deltas (cols 17-19)
+                          if (ci >= 17 && ci <= 19 && typeof v === 'number' && v !== 0) {
                             return { v, t: 'n', s: v > 0 ? { font: { color: { rgb: 'DC2626' } }, ...redFill } : { font: { color: { rgb: '16A34A' } }, ...greenFill } };
-                          }
-                          // Color-code non-netsuite amounts (cols 5-6)
-                          if ((ci === 5 || ci === 6) && typeof v === 'number' && v !== 0) {
-                            return { v, t: 'n', s: { font: { color: { rgb: 'EA580C' } }, fill: { fgColor: { rgb: 'FFF7ED' } } } };
                           }
                           // Color-code status
                           if (ci === 1) {
                             const fill = v === 'Actual' ? greenFill : v === 'Current' ? yellowFill : { fill: { fgColor: { rgb: 'EDE9FE' } } };
                             return { v, t: 's', s: { ...fill, font: { bold: true } } };
                           }
+                          // Color-code waterfall result columns (13, 16)
+                          if ((ci === 13 || ci === 16) && typeof v === 'number') {
+                            return { v, t: 'n', s: { font: { bold: true, color: { rgb: '059669' } } } };
+                          }
                           return v;
                         })),
                         [],
-                        // Totals row
-                        [{ v: 'TOTAL', t: 's', s: boldStyle }, '', ...[2,3,4,5,6].map(ci => ({ v: Math.round(reconRows.reduce((s, r) => s + ((r[ci] as number) || 0), 0)), t: 'n', s: boldStyle })), '', ...[8,9,10,11,12,13,14,15,16,17,18,19,20].map(ci => ({ v: Math.round(reconRows.reduce((s, r) => s + ((r[ci] as number) || 0), 0)), t: 'n', s: boldStyle })), '', '', ''],
+                        [{ v: 'TOTAL', t: 's', s: boldStyle }, '', ...[2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19].map(ci => ({ v: Math.round(reconRows.reduce((s, r) => s + ((r[ci] as number) || 0), 0)), t: 'n', s: boldStyle })), '', ''],
                         [],
                         [],
-                        [{ v: 'LEGEND', t: 's', s: { font: { bold: true, sz: 12 } } }],
-                        ['NS Salary/Vendors/Finance', 'FCT_EXPENSE rows where SOURCE=netsuite — this is what the dashboard uses for past-month actuals'],
-                        ['Ovr Salary/Vendors', 'FCT_EXPENSE rows where SOURCE != netsuite (future_cost_override, future_cost_increment) — NOT used by dashboard for actuals'],
-                        ['All Salary/Vendors/Total', 'All FCT_EXPENSE rows regardless of source — matches your BI/CSV exports'],
-                        ['DB Salary/Vendors/Total', 'Dashboard final computed values — past months use NS actuals, future months use budget + all adjustments'],
-                        ['Budget Salary/Vendors', 'Original FCT_BUDGET values before any dashboard adjustments'],
-                        ['GSheets Override', 'Google Sheets salary override impact (Increment/Override mode)'],
-                        ['Salary % Adj', 'Manual scenario % adjustment impact on salary budget'],
-                        ['Delta (DB vs NS-only)', 'Dashboard minus netsuite-source-only raw. Past=~0 (both use actuals). Future=budget gap (raw has no NS actuals)'],
-                        ['WHY DELTAS EXIST:', ''],
-                        ['  Past months', 'Should be ~0. Any gap = rounding differences or GL account filter mismatch'],
-                        ['  Current month', 'Dashboard uses BUDGET (not partial actuals), raw has partial month netsuite data'],
-                        ['  Future months', 'Dashboard uses budget+adjustments, raw NS actuals are 0. Non-netsuite overrides may exist in FCT_EXPENSE'],
-                        ['  Your BI/CSV', 'Includes ALL sources (netsuite + overrides). Compare "All" columns to your CSV, and "DB" columns to the dashboard'],
+                        [{ v: 'HOW TO READ THIS SHEET', t: 's', s: { font: { bold: true, sz: 12 } } }],
+                        ['BI Salary/Vendors/Total', 'All FCT_EXPENSE rows (all sources: netsuite + budget_based + payroll future baseline + Terminated + Hired etc.) — matches your BI/CSV'],
+                        ['DB Salary/Vendors/Total', 'Dashboard cashflow forecast final values — what you see in the forecast table'],
+                        ['Salary Waterfall', 'Budget (FCT_BUDGET) + GSheets Override + Scenario % Adj + Dept Adj = Dashboard Salary'],
+                        ['Vendor Waterfall', 'Budget (FCT_BUDGET) + Category Adjustments = Dashboard Vendors'],
+                        ['Delta (DB - BI)', 'Difference between what dashboard shows and what BI/Snowflake has'],
+                        ['Non-NS Sources', 'FCT_EXPENSE sources other than "netsuite" — payroll projections, hires, terminations, etc.'],
+                        [],
+                        [{ v: 'WHY DELTAS EXIST', t: 's', s: { font: { bold: true, sz: 12 } } }],
+                        ['Past months (Actual)', 'Dashboard uses FCT_EXPENSE SOURCE=netsuite. BI includes ALL sources. Delta ≈ 0 because non-netsuite rows are 0 for past months.'],
+                        ['Current month', 'Dashboard uses FCT_BUDGET (not partial actuals). BI has partial netsuite + payroll projections. Delta = budget vs actuals-so-far.'],
+                        ['Future months', 'Dashboard: FCT_BUDGET + GSheets overrides + scenario adjustments. BI: FCT_EXPENSE payroll projections (budget_based, Terminated, Hired, etc.). These are DIFFERENT projection systems — gaps are expected.'],
+                        ['Salary gap pattern', 'BI typically higher (includes all payroll line items). Dashboard uses simpler FCT_BUDGET + overrides. Example: Jun BI=2,523K vs DB=2,375K — the -148K gap = GSheets leave-end override (-42K) + different baseline assumptions.'],
                       ]);
                       ws9['!cols'] = [
                         { wch: 9 }, { wch: 9 },
-                        { wch: 12 }, { wch: 12 }, { wch: 13 },
-                        { wch: 12 }, { wch: 12 }, { wch: 28 },
+                        { wch: 12 }, { wch: 12 }, { wch: 11 }, { wch: 12 },
                         { wch: 12 }, { wch: 12 }, { wch: 12 },
+                        { wch: 12 }, { wch: 11 }, { wch: 11 }, { wch: 11 }, { wch: 12 },
+                        { wch: 12 }, { wch: 11 }, { wch: 12 },
                         { wch: 12 }, { wch: 12 }, { wch: 12 },
-                        { wch: 13 }, { wch: 13 },
-                        { wch: 12 }, { wch: 12 },
-                        { wch: 12 }, { wch: 12 }, { wch: 12 },
-                        { wch: 45 }, { wch: 45 }, { wch: 50 },
+                        { wch: 35 }, { wch: 70 },
                       ];
                       ws9['!merges'] = [
-                        { s: { r: 0, c: 0 }, e: { r: 0, c: reconColCount - 1 } },
-                        { s: { r: 1, c: 0 }, e: { r: 1, c: reconColCount - 1 } },
-                        { s: { r: 2, c: 0 }, e: { r: 2, c: reconColCount - 1 } },
-                        { s: { r: 4, c: 2 }, e: { r: 4, c: 4 } },
-                        { s: { r: 4, c: 5 }, e: { r: 4, c: 7 } },
-                        { s: { r: 4, c: 8 }, e: { r: 4, c: 10 } },
-                        { s: { r: 4, c: 11 }, e: { r: 4, c: 13 } },
-                        { s: { r: 4, c: 14 }, e: { r: 4, c: 15 } },
-                        { s: { r: 4, c: 16 }, e: { r: 4, c: 17 } },
-                        { s: { r: 4, c: 18 }, e: { r: 4, c: 20 } },
-                        { s: { r: 4, c: 21 }, e: { r: 4, c: 23 } },
+                        { s: { r: 0, c: 0 }, e: { r: 0, c: 21 } },
+                        { s: { r: 1, c: 0 }, e: { r: 1, c: 21 } },
+                        { s: { r: 3, c: 2 }, e: { r: 3, c: 5 } },
+                        { s: { r: 3, c: 6 }, e: { r: 3, c: 8 } },
+                        { s: { r: 3, c: 9 }, e: { r: 3, c: 13 } },
+                        { s: { r: 3, c: 14 }, e: { r: 3, c: 16 } },
+                        { s: { r: 3, c: 17 }, e: { r: 3, c: 19 } },
+                        { s: { r: 3, c: 20 }, e: { r: 3, c: 21 } },
                       ];
 
                       const wb = XLSX.utils.book_new();
