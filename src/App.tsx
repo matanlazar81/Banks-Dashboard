@@ -631,6 +631,8 @@ export default function App() {
   // Salary actuals by department (for lastActual projection mode)
   const [salaryActualsByDept, setSalaryActualsByDept] = useState<Record<string, Record<string, { eur: number; ils: number }>>>({});
   const [lastActualSalaryMonth, setLastActualSalaryMonth] = useState('');
+  // Monthly headcount impact (ILS) — cumulative running total per month from HC events
+  const [monthlyHCImpact, setMonthlyHCImpact] = useState<Record<string, { net: number; running: number }>>({});
   // Per-vendor-category adjustments — persisted across sessions
   const [vendorCatAdj, setVendorCatAdj] = useState<Record<string, Record<string, number>>>(() => {
     try { const saved = localStorage.getItem('banks-vendor-cat-adj'); return saved ? JSON.parse(saved) : {}; } catch { return {}; }
@@ -1079,6 +1081,7 @@ useEffect(() => {
     setYoyRevenue(c.yoyRevenue); setPrevMonthEndBalance(c.prevMonthEndBalance);
     setSalaryDeptBudgets(c.salaryDeptBudgets);
     setSalaryActualsByDept(c.salaryActualsByDept || {}); setLastActualSalaryMonth(c.lastActualSalaryMonth || '');
+    setMonthlyHCImpact(c.monthlyHCImpact || {});
     return true;
   }, []);
 
@@ -1118,11 +1121,12 @@ useEffect(() => {
       } else {
         cache.nsBudget = { byMonth: {} };
         // Fire all SF calls in parallel
-        const [budR, revR, splitR, salBudR, revPaidR, pipeR, convR, churnR, yoyR, finBudR, arrR, salActDeptR] = await Promise.all([
+        const [budR, revR, splitR, salBudR, revPaidR, pipeR, convR, churnR, yoyR, finBudR, arrR, salActDeptR, hcImpactR] = await Promise.all([
           safe('/api/sf-budget'), safe('/api/sf-revenue'), safe('/api/sf-actuals-split'),
           safe('/api/sf-salary-budget'), safe('/api/sf-revenue-paid'), safe('/api/sf-pipeline'),
           safe('/api/sf-conversion'), safe('/api/sf-churn-analysis'), safe('/api/sf-yoy-revenue'),
           safe('/api/sf-finance-budget'), safe('/api/arr-current'), safe('/api/sf-salary-actuals-by-dept'),
+          safe('/api/sf-monthly-hc-impact'),
         ]);
         if (budR?.data) { cache.sfBudget = budR.data; if (budR.data.financeBudget) cache.sfFinanceBudget = budR.data.financeBudget; }
         if (revR?.data) cache.sfRevenue = revR.data;
@@ -1138,6 +1142,7 @@ useEffect(() => {
         if (churnR?.recentMonthlyAvg) cache.churnMonthlyAvg = churnR.recentMonthlyAvg;
         if (yoyR?.currentYear) cache.yoyRevenue = yoyR;
         if (salActDeptR?.byMonth) { cache.salaryActualsByDept = salActDeptR.byMonth; cache.lastActualSalaryMonth = salActDeptR.lastActualMonth || ''; }
+        if (hcImpactR && !hcImpactR.error) cache.monthlyHCImpact = hcImpactR;
       }
       // Fill defaults for missing fields
       cache.bankData = cache.bankData || { openingBalance: 0, dailyBalances: [], currentBalance: 0 };
@@ -1167,6 +1172,7 @@ useEffect(() => {
       cache.salaryDeptBudgets = cache.salaryDeptBudgets || {};
       cache.salaryActualsByDept = cache.salaryActualsByDept || {};
       cache.lastActualSalaryMonth = cache.lastActualSalaryMonth || '';
+      cache.monthlyHCImpact = cache.monthlyHCImpact || {};
       companyDataCache.current[co] = cache;
       console.info(`[Prefetch] ${co} data cached successfully`);
     } catch (e: any) { console.error(`[Prefetch] ${co} failed:`, e.message); }
@@ -1332,6 +1338,7 @@ useEffect(() => {
         '/api/sf-budget', '/api/sf-revenue', '/api/sf-actuals-split', '/api/sf-salary-budget',
         '/api/sf-revenue-paid', '/api/sf-pipeline', '/api/sf-conversion', '/api/sf-churn-analysis',
         '/api/sf-yoy-revenue', '/api/sf-finance-budget', '/api/arr-current', '/api/sf-salary-actuals-by-dept',
+        '/api/sf-monthly-hc-impact',
       ] : !hasSF ? [`/api/ns-budget${subQ}`] : [];
 
       const allResults = await Promise.all([...nsUrls, ...sfUrls].map(u => safe(u)));
@@ -1369,7 +1376,7 @@ useEffect(() => {
       // Apply SF or NS budget results
       if (hasSF) {
         setNsBudget({ byMonth: {} });
-        const [budR, revR, splitR, salBudR, revPaidR, pipeR, convR, churnR, yoyR, finBudR, arrR, salActDeptR2] = sfResults;
+        const [budR, revR, splitR, salBudR, revPaidR, pipeR, convR, churnR, yoyR, finBudR, arrR, salActDeptR2, hcImpactR2] = sfResults;
         if (budR?.data) { setSfBudget(budR.data); if (budR.data.financeBudget) setSfFinanceBudget(budR.data.financeBudget); }
         if (revR?.data) setSfRevenue(revR.data);
         if (splitR?.data) setSfActualsSplit(splitR.data);
@@ -1384,6 +1391,7 @@ useEffect(() => {
         if (finBudR?.data) setSfFinanceBudget(finBudR.data);
         if (arrR?.data) setArrData(arrR.data);
         if (salActDeptR2?.byMonth) { setSalaryActualsByDept(salActDeptR2.byMonth); setLastActualSalaryMonth(salActDeptR2.lastActualMonth || ''); }
+        if (hcImpactR2 && !hcImpactR2.error) setMonthlyHCImpact(hcImpactR2);
       } else {
         const [nsBudR] = sfResults;
         if (nsBudR) setNsBudget(nsBudR);
@@ -1391,7 +1399,7 @@ useEffect(() => {
         setSfSalaryBudget({}); setSfSalaryOverrides([]); setSfRevenuePaid({});
         setSfPipeline([]); setSfConversion({ yearly: [], stages: [], customers: [], projection: [] });
         setChurnData([]); setChurnMonthlyAvg(0); setYoyRevenue(null); setSalaryDeptBudgets({});
-        setSalaryActualsByDept({}); setLastActualSalaryMonth('');
+        setSalaryActualsByDept({}); setLastActualSalaryMonth(''); setMonthlyHCImpact({});
       }
       setLastRefreshed(new Date().toLocaleDateString('en-GB') + ' ' + new Date().toLocaleTimeString('en-GB'));
     } catch (e: any) {
@@ -1624,6 +1632,10 @@ useEffect(() => {
           else overrideDelta += ov.amountEUR;
         }
         lastActualTotal += overrideDelta;
+        // Add headcount event impact (ILS → EUR) — cumulative running total for this month
+        const hcImpactILS = monthlyHCImpact[mKey]?.running || 0;
+        const hcImpactEUR = eurIlsRatio > 0 ? Math.round(hcImpactILS / eurIlsRatio) : 0;
+        lastActualTotal += hcImpactEUR;
         salaryBase = Math.round(lastActualTotal);
         salary = Math.round(lastActualTotal * monthMultiplier) + deptAdjDelta;
       } else if (sfSalaryBudget[mKey]?.eur > 0) {
@@ -1818,7 +1830,7 @@ useEffect(() => {
       rows.push({ month: label, mKey, openingBalance, openingBalanceILS, salary, salaryBase, salaryILS, vendors, vendorsBase, vendorsILS, totalOutflow, totalOutflowILS, collections, collectionsILS, collectionsActual, collectionsRemaining, collectionsForecast, collectionsRevenue, collectionsUnpaidCarry, collectionsUnpaidCarryMonth, collectionsPipeline, customers, pipelineWeighted, pipelineWeightedILS, pipelineTotal, pipelineCount, pipelineOpps, pipelineHistWinRate, pipelineDelayMonths, churnDeduction, churnDeductionILS, net, netILS, revalImpact, revalImpactILS, revalHasBothEnds, closingBalance: runningBalance, closingBalanceILS: runningBalanceILS, isCurrent: isCurMonth, isPast: isPastMonth });
     }
     return rows;
-  }, [vendorBills, arForecast, salaryData, vendorHistory, expenseCategories, book, bookLocal, actualCollections, sfBudget, sfRevenue, sfActualsSplit, salaryAdjPctByMonth, collPctByMonth, monthlyReval, sfSalaryBudget, sfRevenuePaid, sfPipeline, pipelineMinProb, sfConversion, salaryDeptAdj, salaryDeptBudgets, vendorCatAdj, vendorDetailAdj, prevMonthEndBalance, churnMonthlyAvg, churnData, churnOverride, asOfDate, nsBudget, activeYear, sfFinanceBudget, currencyDefensePct, currencyDefensePctByMonth, pipelineAdjPctByMonth, salaryProjectionMode, salaryActualsByDept, lastActualSalaryMonth]);
+  }, [vendorBills, arForecast, salaryData, vendorHistory, expenseCategories, book, bookLocal, actualCollections, sfBudget, sfRevenue, sfActualsSplit, salaryAdjPctByMonth, collPctByMonth, monthlyReval, sfSalaryBudget, sfRevenuePaid, sfPipeline, pipelineMinProb, sfConversion, salaryDeptAdj, salaryDeptBudgets, vendorCatAdj, vendorDetailAdj, prevMonthEndBalance, churnMonthlyAvg, churnData, churnOverride, asOfDate, nsBudget, activeYear, sfFinanceBudget, currencyDefensePct, currencyDefensePctByMonth, pipelineAdjPctByMonth, salaryProjectionMode, salaryActualsByDept, lastActualSalaryMonth, monthlyHCImpact]);
 
   // ── Capture current-year cashflow for propagation to next year ──
   useEffect(() => {
@@ -1866,6 +1878,8 @@ useEffect(() => {
         let cLastTotal = Object.values(salaryActualsByDept[lastActualSalaryMonth]).reduce((s, v) => s + (v as { eur: number }).eur, 0);
         const cMonthOvrs = sfSalaryOverrides.filter(o => o.mKey === mKey);
         for (const ov of cMonthOvrs) { cLastTotal += ov.mode === 'Override' ? (ov.newVal - ov.oldVal) : ov.amountEUR; }
+        const cHcImpILS = monthlyHCImpact[mKey]?.running || 0;
+        cLastTotal += eurIlsRatio > 0 ? Math.round(cHcImpILS / eurIlsRatio) : 0;
         salary = Math.round(cLastTotal * cMult) + cDeptDelta;
       }
       else if (sfSalaryBudget[mKey]?.eur > 0) { salary = Math.round(sfSalaryBudget[mKey].eur * cMult) + cDeptDelta; }
@@ -1906,7 +1920,7 @@ useEffect(() => {
       rows.push({ salary, vendors, collections, totalOutflow, net, closingBalance: runBal });
     }
     return rows;
-  }, [salaryData, vendorBills, book, bookLocal, adjustedCurrent, adjustedCurrentLocal, monthlyReval, sfActualsSplit, sfSalaryBudget, sfBudget, sfRevenue, sfRevenuePaid, actualCollections, salaryDeptBudgets, sfPipeline, prevMonthEndBalance, salaryProjectionMode, salaryActualsByDept, lastActualSalaryMonth]);
+  }, [salaryData, vendorBills, book, bookLocal, adjustedCurrent, adjustedCurrentLocal, monthlyReval, sfActualsSplit, sfSalaryBudget, sfBudget, sfRevenue, sfRevenuePaid, actualCollections, salaryDeptBudgets, sfPipeline, prevMonthEndBalance, salaryProjectionMode, salaryActualsByDept, lastActualSalaryMonth, monthlyHCImpact]);
 
   // Compare scenario cashflow (inline header delta)
   const compareCashflow = useMemo(() => {

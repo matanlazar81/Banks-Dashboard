@@ -672,6 +672,22 @@ function banksPlugin(): Plugin {
         }
       });
 
+      // ── GET /api/sf-monthly-hc-impact — cumulative headcount event impact per month ──
+      server.middlewares.use('/api/sf-monthly-hc-impact', async (_req, res) => {
+        try {
+          const sf = getSfClient();
+          const yr = getYear(_req);
+          if (!sf) { res.end(JSON.stringify({})); return; }
+          const data = await sf.fetchMonthlyHCImpact(yr);
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify(data));
+        } catch (e: any) {
+          console.error('[SF] Monthly HC impact fetch failed:', e.message);
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ error: e.message }));
+        }
+      });
+
       // ── Currency defense budget (account 800029 from NetSuite) ──
       server.middlewares.use('/api/sf-finance-budget', async (_req, res) => {
         try {

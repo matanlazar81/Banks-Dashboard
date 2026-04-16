@@ -652,6 +652,42 @@ function createSnowflakeClient(env) {
     };
   }
 
+  // ── Monthly headcount impact summary (for forecast calculation) ──
+  // Returns net ILS impact per month from all HC events (hires, terms, leave end, open positions)
+  async function fetchMonthlyHCImpact(year) {
+    const yr = year || 2026;
+    console.log(`[Snowflake] Fetching monthly HC impact for ${yr}...`);
+    const rows = await query(`
+      SELECT TO_CHAR(EVENT_MONTH_DATE, 'YYYY-MM') AS MONTH,
+             EVENT_TYPE,
+             ROUND(SUM(EMPLOYER_COST)) AS TOTAL_COST
+      FROM DL_PRODUCTION.HR.FCT_HEADCOUNT_EVENT
+      WHERE EVENT_MONTH_DATE >= '${yr}-01-01'
+        AND EVENT_MONTH_DATE <= '${yr}-12-31'
+      GROUP BY TO_CHAR(EVENT_MONTH_DATE, 'YYYY-MM'), EVENT_TYPE
+      ORDER BY MONTH
+    `);
+    // Build cumulative running impact per month
+    const byMonth = {};
+    let running = 0;
+    const allMonths = [];
+    for (let m = 1; m <= 12; m++) allMonths.push(`${yr}-${String(m).padStart(2, '0')}`);
+    // First pass: aggregate net per month
+    const monthNet = {};
+    for (const r of rows) {
+      const m = r.MONTH;
+      if (!monthNet[m]) monthNet[m] = 0;
+      monthNet[m] += r.EVENT_TYPE === 'increase' ? (r.TOTAL_COST || 0) : -(r.TOTAL_COST || 0);
+    }
+    // Second pass: build cumulative running total
+    for (const m of allMonths) {
+      running += (monthNet[m] || 0);
+      byMonth[m] = { net: Math.round(monthNet[m] || 0), running: Math.round(running) };
+    }
+    console.log(`[Snowflake] Monthly HC impact: ${Object.keys(monthNet).length} months with events, final running=${Math.round(running)}`);
+    return byMonth;
+  }
+
   // Fetch all events for a specific lever type (e.g. all "Terminated" events in a year)
   async function fetchHeadcountLeverDetail(eventType, eventSubType, fromMonth, year) {
     const yr = year || 2026;
@@ -1277,6 +1313,7 @@ function createSnowflakeClient(env) {
     fetchCurrentARR,
     fetchExpenseExport,
     fetchSalaryActualsByDept,
+    fetchMonthlyHCImpact,
     getConnection,
   };
 }
