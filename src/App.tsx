@@ -6111,6 +6111,8 @@ useEffect(() => {
                           <p className="text-xs text-gray-400 mb-2">Salary Projection Levers (HiBob → Snowflake)</p>
                           {/* Cumulative impact summary */}
                           {hc.cumulative?.length > 0 && (() => {
+                            const ilsToEurRate = adjustedCurrent > 0 && adjustedCurrentLocal > 0 ? adjustedCurrent / adjustedCurrentLocal : 1 / 3.7;
+                            const ilsToEur = (ils: number) => Math.round(ils * ilsToEurRate);
                             const mKeyPrefix = forecastDrilldown.mKey; // e.g. "2026-06"
                             const detailOverrides = leverOverrides;
                             const hasOverrides = Object.values(detailOverrides).some((m: any) => Object.keys(m).length > 0);
@@ -6185,16 +6187,18 @@ useEffect(() => {
                                       }
                                     }}>
                                       <td className="py-1.5 pr-2">
-                                        <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1.5 ${c.type === 'increase' ? 'bg-green-500' : 'bg-red-500'}`}></span>
-                                        <span className={`${c.type === 'increase' ? 'text-green-700' : 'text-red-600'} underline decoration-dotted cursor-pointer`}>{c.subType}</span>
+                                        <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1.5 ${c.type === 'increase' ? 'bg-red-500' : 'bg-green-500'}`}></span>
+                                        <span className={`${c.type === 'increase' ? 'text-red-600' : 'text-green-700'} underline decoration-dotted cursor-pointer`}>{c.subType}</span>
                                         <span className="text-gray-400 ml-1 text-[10px]">{isExpanded ? '▼' : '▶'}</span>
                                       </td>
                                       <td className="py-1.5 pr-2 text-right text-gray-600">{c.count}</td>
                                       <td className={`py-1.5 pr-2 text-right ${isAmended ? 'text-gray-400 line-through' : 'font-medium'} ${c.type === 'increase' ? 'text-red-600' : 'text-green-700'}`}>
                                         {c.type === 'increase' ? '+' : '-'}{fmtILS(c.totalCost)}
+                                        <div className="text-[10px] opacity-60">{c.type === 'increase' ? '+' : '-'}{fmt(ilsToEur(c.totalCost))}</div>
                                       </td>
                                       <td className={`py-1.5 pr-2 text-right font-medium ${isAmended ? 'text-amber-700' : 'text-gray-500'}`}>
                                         {c.type === 'increase' ? '+' : '-'}{fmtILS(amendedCost)}
+                                        <div className="text-[10px] opacity-60">{c.type === 'increase' ? '+' : '-'}{fmt(ilsToEur(amendedCost))}</div>
                                         {!isAmended && <span className="text-[10px] italic text-gray-300 ml-1">▶</span>}
                                       </td>
                                     </tr>
@@ -6293,9 +6297,11 @@ useEffect(() => {
                                   <td className="py-1.5" colSpan={2}>Net Impact</td>
                                   <td className={`py-1.5 pr-2 text-right ${hasOverrides ? 'text-gray-400 line-through' : ''} ${origNet >= 0 ? 'text-red-600' : 'text-green-700'}`}>
                                     {origNet >= 0 ? '+' : '-'}{fmtILS(Math.abs(origNet))}
+                                    <div className="text-[10px] opacity-60">{origNet >= 0 ? '+' : '-'}{fmt(ilsToEur(Math.abs(origNet)))}</div>
                                   </td>
                                   <td className={`py-1.5 pr-2 text-right font-bold ${amendedNet >= 0 ? 'text-red-600' : 'text-green-700'}`}>
                                     {amendedNet >= 0 ? '+' : '-'}{fmtILS(Math.abs(amendedNet))}
+                                    <div className="text-[10px] opacity-60">{amendedNet >= 0 ? '+' : '-'}{fmt(ilsToEur(Math.abs(amendedNet)))}</div>
                                     {hasOverrides && <span className="text-amber-600 text-[10px] ml-1">({pctChange >= 0 ? '+' : ''}{pctChange}%)</span>}
                                   </td>
                                 </tr></tfoot>
@@ -6310,6 +6316,8 @@ useEffect(() => {
                                 Monthly Timeline {forecastDrilldown.data?.__showMonthlyTimeline === false ? '▶' : '▼'}
                               </p>
                               {forecastDrilldown.data?.__showMonthlyTimeline !== false && (() => {
+                                const ilsToEurRate2 = adjustedCurrent > 0 && adjustedCurrentLocal > 0 ? adjustedCurrent / adjustedCurrentLocal : 1 / 3.7;
+                                const ilsToEur = (ils: number) => Math.round(ils * ilsToEurRate2);
                                 const mKey = forecastDrilldown.mKey;
                                 const detOverrides = leverOverrides;
                                 const cachedDetails = (forecastDrilldown.data?.__leverDetails || {}) as Record<string, any[]>;
@@ -6345,7 +6353,7 @@ useEffect(() => {
                                 return (
                                   <table className="w-full text-xs mb-2">
                                     <thead><tr className="text-left text-gray-400 uppercase border-b">
-                                      <th className="pb-1 pr-2">Month</th><th className="pb-1 pr-2 text-right">Events</th><th className="pb-1 pr-2 text-right text-green-600">Hires</th><th className="pb-1 pr-2 text-right text-red-500">Terms</th><th className="pb-1 pr-2 text-right">Net</th><th className="pb-1 pr-2 text-right">Running</th>
+                                      <th className="pb-1 pr-2">Month</th><th className="pb-1 pr-2 text-right">Events</th><th className="pb-1 pr-2 text-right text-red-500">Hires</th><th className="pb-1 pr-2 text-right text-green-600">Terms</th><th className="pb-1 pr-2 text-right">Net</th><th className="pb-1 pr-2 text-right">Running</th>
                                     </tr></thead>
                                     <tbody>
                                       {months.map(m => {
@@ -6355,10 +6363,10 @@ useEffect(() => {
                                           <tr key={m} className="border-b border-gray-100">
                                             <td className="py-1 pr-1 text-gray-600">{m}</td>
                                             <td className="py-1 pr-1 text-right text-gray-500">{d.count}</td>
-                                            <td className="py-1 pr-1 text-right text-red-600">{d.increases > 0 ? `+${fmtILS(d.increases)}` : '-'}</td>
-                                            <td className="py-1 pr-1 text-right text-green-700">{d.decreases > 0 ? `-${fmtILS(d.decreases)}` : '-'}</td>
-                                            <td className={`py-1 pr-1 text-right font-medium ${d.net >= 0 ? 'text-red-600' : 'text-green-700'}`}>{d.net >= 0 ? '+' : '-'}{fmtILS(Math.abs(d.net))}</td>
-                                            <td className={`py-1 pr-1 text-right font-medium ${running >= 0 ? 'text-red-600' : 'text-green-700'}`}>{running >= 0 ? '+' : '-'}{fmtILS(Math.abs(running))}</td>
+                                            <td className="py-1 pr-1 text-right text-red-600">{d.increases > 0 ? <>{`+${fmtILS(d.increases)}`}<div className="text-[10px] opacity-60">+{fmt(ilsToEur(d.increases))}</div></> : '-'}</td>
+                                            <td className="py-1 pr-1 text-right text-green-700">{d.decreases > 0 ? <>{`-${fmtILS(d.decreases)}`}<div className="text-[10px] opacity-60">-{fmt(ilsToEur(d.decreases))}</div></> : '-'}</td>
+                                            <td className={`py-1 pr-1 text-right font-medium ${d.net >= 0 ? 'text-red-600' : 'text-green-700'}`}>{d.net >= 0 ? '+' : '-'}{fmtILS(Math.abs(d.net))}<div className="text-[10px] opacity-60">{d.net >= 0 ? '+' : '-'}{fmt(ilsToEur(Math.abs(d.net)))}</div></td>
+                                            <td className={`py-1 pr-1 text-right font-medium ${running >= 0 ? 'text-red-600' : 'text-green-700'}`}>{running >= 0 ? '+' : '-'}{fmtILS(Math.abs(running))}<div className="text-[10px] opacity-60">{running >= 0 ? '+' : '-'}{fmt(ilsToEur(Math.abs(running)))}</div></td>
                                           </tr>
                                         );
                                       })}
