@@ -1630,11 +1630,6 @@ useEffect(() => {
         // NS actual salary data (used for non-SF subsidiaries like Statscore)
         salary = actualSalaryEntry.amountEUR;
         salaryBase = salary;
-      } else if (salaryManualILS[mKey] !== undefined && !isPastMonth) {
-        // Manual ILS override — user entered exact ILS amount (works for current & future months)
-        const manualEUR = eurIlsRatio > 0 ? Math.round(salaryManualILS[mKey] / eurIlsRatio) : 0;
-        salaryBase = manualEUR;
-        salary = manualEUR; // no adjustments on top — this IS the final value
       } else if (useLastActual && !isPastMonth) {
         // "Last Actual" mode: project last actual month's recurring salary per dept
         // (applies to current month too if no actual data yet)
@@ -1670,6 +1665,11 @@ useEffect(() => {
           salary = lastSalary;
           salaryBase = salary;
         }
+      }
+      // Apply manual ILS override as additive adjustment on top of calculated salary
+      if (salaryManualILS[mKey] !== undefined && !isPastMonth) {
+        const manualDeltaEUR = eurIlsRatio > 0 ? Math.round(salaryManualILS[mKey] / eurIlsRatio) : 0;
+        salary += manualDeltaEUR;
       }
       prevMonthSalary = salary;
 
@@ -6098,12 +6098,11 @@ useEffect(() => {
                             {(adj !== 0 || hasSfOverrides || hasDeptAdj2 || hasHcImpact || salaryManualILS[forecastDrilldown.mKey] !== undefined) && (() => {
                               const manualILS = salaryManualILS[forecastDrilldown.mKey];
                               const hasManual = manualILS !== undefined;
-                              const finalEUR = hasManual
-                                ? (ilsRate > 0 ? Math.round(manualILS / ilsRate) : 0)
-                                : (adjustedTotal + totalDeptAdjDelta + sfOverrideTotal + (hasHcImpact ? hcImpactEUR : 0));
-                              const finalILS = hasManual ? manualILS : toILS(finalEUR);
+                              const manualDeltaEUR = hasManual && ilsRate > 0 ? Math.round(manualILS / ilsRate) : 0;
+                              const finalEUR = adjustedTotal + totalDeptAdjDelta + sfOverrideTotal + (hasHcImpact ? hcImpactEUR : 0) + manualDeltaEUR;
+                              const finalILS = toILS(finalEUR);
                               return (
-                                <tr className="border-b border-gray-200"><td className={`py-1.5 font-semibold ${hasManual ? 'text-purple-700' : 'text-gray-600'}`}>Budget (adjusted){hasManual ? ' — MANUAL OVERRIDE' : ''}</td><td className="py-1.5 text-right"><span className={`font-bold ${hasManual ? 'text-purple-700' : 'text-green-700'}`}>{fmt(finalEUR)}</span><br/><span className="text-[10px] text-gray-400">{fmtILS(finalILS)}</span></td></tr>
+                                <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600 font-semibold">Budget (adjusted)</td><td className="py-1.5 text-right"><span className="font-bold text-green-700">{fmt(finalEUR)}</span><br/><span className="text-[10px] text-gray-400">{fmtILS(finalILS)}</span></td></tr>
                               );
                             })()}
                             {hasActuals && <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600">Actual ({forecastDrilldown.data?.__nsMode ? 'NetSuite' : 'Snowflake'})</td><td className="py-1.5 text-right"><span className="font-bold text-amber-700">{fmt(actualTotal)}</span><br/><span className="text-[10px] text-gray-400">{fmtILS(toILS(actualTotal))}</span></td></tr>}
