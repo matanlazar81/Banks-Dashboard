@@ -631,6 +631,11 @@ export default function App() {
   // Salary actuals by department (for lastActual projection mode)
   const [salaryActualsByDept, setSalaryActualsByDept] = useState<Record<string, Record<string, { eur: number; ils: number }>>>({});
   const [lastActualSalaryMonth, setLastActualSalaryMonth] = useState('');
+  // Manual salary override per month (ILS) — user enters exact ILS amount, converted to EUR for forecast
+  const [salaryManualILS, setSalaryManualILS] = useState<Record<string, number>>(() => {
+    try { const saved = localStorage.getItem('banks-salary-manual-ils'); return saved ? JSON.parse(saved) : {}; } catch { return {}; }
+  });
+  useEffect(() => { try { localStorage.setItem('banks-salary-manual-ils', JSON.stringify(salaryManualILS)); } catch {} }, [salaryManualILS]);
   // Monthly headcount impact (ILS) — cumulative running total per month from HC events
   const [monthlyHCImpact, setMonthlyHCImpact] = useState<Record<string, { net: number; running: number }>>({});
   // Per-vendor-category adjustments — persisted across sessions
@@ -1625,6 +1630,11 @@ useEffect(() => {
         // NS actual salary data (used for non-SF subsidiaries like Statscore)
         salary = actualSalaryEntry.amountEUR;
         salaryBase = salary;
+      } else if (salaryManualILS[mKey] && !(isPastMonth || isCurMonth)) {
+        // Manual ILS override — user entered exact ILS amount
+        const manualEUR = eurIlsRatio > 0 ? Math.round(salaryManualILS[mKey] / eurIlsRatio) : 0;
+        salaryBase = manualEUR;
+        salary = manualEUR; // no adjustments on top — this IS the final value
       } else if (useLastActual && !(isPastMonth || isCurMonth)) {
         // "Last Actual" mode: project last actual month's recurring salary per dept
         let lastActualTotal = Object.values(salaryActualsByDept[lastActualSalaryMonth]).reduce((s, v) => s + (v as { eur: number }).eur, 0);
@@ -1834,7 +1844,7 @@ useEffect(() => {
       rows.push({ month: label, mKey, openingBalance, openingBalanceILS, salary, salaryBase, salaryILS, vendors, vendorsBase, vendorsILS, totalOutflow, totalOutflowILS, collections, collectionsILS, collectionsActual, collectionsRemaining, collectionsForecast, collectionsRevenue, collectionsUnpaidCarry, collectionsUnpaidCarryMonth, collectionsPipeline, customers, pipelineWeighted, pipelineWeightedILS, pipelineTotal, pipelineCount, pipelineOpps, pipelineHistWinRate, pipelineDelayMonths, churnDeduction, churnDeductionILS, net, netILS, revalImpact, revalImpactILS, revalHasBothEnds, closingBalance: runningBalance, closingBalanceILS: runningBalanceILS, isCurrent: isCurMonth, isPast: isPastMonth });
     }
     return rows;
-  }, [vendorBills, arForecast, salaryData, vendorHistory, expenseCategories, book, bookLocal, actualCollections, sfBudget, sfRevenue, sfActualsSplit, salaryAdjPctByMonth, collPctByMonth, monthlyReval, sfSalaryBudget, sfRevenuePaid, sfPipeline, pipelineMinProb, sfConversion, salaryDeptAdj, salaryDeptBudgets, vendorCatAdj, vendorDetailAdj, prevMonthEndBalance, churnMonthlyAvg, churnData, churnOverride, asOfDate, nsBudget, activeYear, sfFinanceBudget, currencyDefensePct, currencyDefensePctByMonth, pipelineAdjPctByMonth, salaryProjectionMode, salaryActualsByDept, lastActualSalaryMonth, monthlyHCImpact]);
+  }, [vendorBills, arForecast, salaryData, vendorHistory, expenseCategories, book, bookLocal, actualCollections, sfBudget, sfRevenue, sfActualsSplit, salaryAdjPctByMonth, collPctByMonth, monthlyReval, sfSalaryBudget, sfRevenuePaid, sfPipeline, pipelineMinProb, sfConversion, salaryDeptAdj, salaryDeptBudgets, vendorCatAdj, vendorDetailAdj, prevMonthEndBalance, churnMonthlyAvg, churnData, churnOverride, asOfDate, nsBudget, activeYear, sfFinanceBudget, currencyDefensePct, currencyDefensePctByMonth, pipelineAdjPctByMonth, salaryProjectionMode, salaryActualsByDept, lastActualSalaryMonth, monthlyHCImpact, salaryManualILS]);
 
   // ── Capture current-year cashflow for propagation to next year ──
   useEffect(() => {
@@ -5778,6 +5788,40 @@ useEffect(() => {
                             <tr className="border-b border-gray-200">
                               <td className="py-1.5 text-gray-600 pl-3">{adj !== 0 ? <span className="text-blue-700">Manual adjustment ({adj > 0 ? '+' : ''}{adj}%)</span> : <span className="text-gray-400">Manual adjustment (0%)</span>}</td>
                               <td className={`py-1.5 text-right ${adj !== 0 ? (adjustedTotal - budgetTotal >= 0 ? 'text-red-600' : 'text-green-700') : 'text-gray-400'}`}>{adj !== 0 ? <><span className="font-bold">{adjustedTotal - budgetTotal >= 0 ? '+' : ''}{fmt(adjustedTotal - budgetTotal)}</span><br/><span className="text-[10px] opacity-60">{fmtILS(toILS(adjustedTotal - budgetTotal))}</span></> : '-'}</td>
+                            </tr>
+                            {/* Manual ILS salary override */}
+                            <tr className="border-b border-gray-200">
+                              <td className="py-1.5 text-gray-600 pl-3">
+                                <span className={salaryManualILS[forecastDrilldown.mKey] ? 'text-purple-700 font-medium' : 'text-gray-400'}>Salary override (ILS)</span>
+                              </td>
+                              <td className="py-1.5 text-right">
+                                <div className="flex items-center justify-end gap-1.5">
+                                  <input
+                                    type="text"
+                                    inputMode="numeric"
+                                    placeholder={fmtILS(toILS(budgetTotal))}
+                                    value={salaryManualILS[forecastDrilldown.mKey] ? salaryManualILS[forecastDrilldown.mKey].toLocaleString() : ''}
+                                    onChange={e => {
+                                      const raw = e.target.value.replace(/[^0-9-]/g, '');
+                                      if (raw === '' || raw === '-') {
+                                        setSalaryManualILS(prev => { const n = { ...prev }; delete n[forecastDrilldown.mKey]; return n; });
+                                        return;
+                                      }
+                                      const v = parseInt(raw);
+                                      if (!isNaN(v)) setSalaryManualILS(prev => ({ ...prev, [forecastDrilldown.mKey]: v }));
+                                    }}
+                                    className={`w-28 text-right text-xs border rounded px-1.5 py-1 ${salaryManualILS[forecastDrilldown.mKey] ? 'text-purple-700 border-purple-300 bg-purple-50 font-medium' : 'text-gray-400 border-gray-200 bg-white'}`}
+                                  />
+                                  <span className="text-[10px] text-gray-400">₪</span>
+                                  {salaryManualILS[forecastDrilldown.mKey] && (
+                                    <button onClick={() => setSalaryManualILS(prev => { const n = { ...prev }; delete n[forecastDrilldown.mKey]; return n; })}
+                                      className="text-[10px] text-red-400 hover:text-red-600">✕</button>
+                                  )}
+                                </div>
+                                {salaryManualILS[forecastDrilldown.mKey] && (
+                                  <div className="text-[10px] text-purple-600 mt-0.5">= {fmt(ilsRate > 0 ? Math.round(salaryManualILS[forecastDrilldown.mKey] / ilsRate) : 0)} EUR</div>
+                                )}
+                              </td>
                             </tr>
                             {hasDeptAdj2 ? (
                               <tr className="border-b border-amber-200 bg-amber-50/50">
