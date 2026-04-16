@@ -5716,11 +5716,15 @@ useEffect(() => {
                   const monthOverrides = sfSalaryOverrides.filter(o => o.mKey === forecastDrilldown.mKey);
                   const sfOverrideTotal = monthOverrides.reduce((s, o) => s + (o.mode === 'Override' ? (o.newVal - o.oldVal) : o.amountEUR), 0);
                   const hasSfOverrides = monthOverrides.length > 0;
-                  const hasAnyAdjustment = adj !== 0 || hasLeverOverrides || hasSfOverrides || hasDeptAdj2;
                   const actualTotal = d.actuals.reduce((s: number, r: any) => s + (r.amountEUR || 0), 0);
                   const finalBudget = adjustedTotal; // already includes SF overrides (applied server-side) + manual adj
                   const ilsRate = adjustedCurrent > 0 ? adjustedCurrentLocal / adjustedCurrent : 3.7;
                   const toILS = (eur: number) => Math.round(eur * ilsRate);
+                  // HC lever impact for this month (ILS → EUR)
+                  const hcImpactILS = monthlyHCImpact[forecastDrilldown.mKey]?.running || 0;
+                  const hcImpactEUR = ilsRate > 0 ? Math.round(hcImpactILS / ilsRate) : 0;
+                  const hasHcImpact = useLastActualInDrill && hcImpactEUR !== 0;
+                  const hasAnyAdjustment = adj !== 0 || hasLeverOverrides || hasSfOverrides || hasDeptAdj2 || hasHcImpact;
                   return (
                     <div className="space-y-4">
                       {/* Salary projection mode toggle */}
@@ -5782,8 +5786,19 @@ useEffect(() => {
                             ) : (
                               <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600 pl-3 text-gray-400">Department adjustments</td><td className="py-1.5 text-right text-gray-400">-</td></tr>
                             )}
-                            {(adj !== 0 || hasSfOverrides || hasDeptAdj2) && (
-                              <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600 font-semibold">Budget (adjusted)</td><td className="py-1.5 text-right"><span className="font-bold text-green-700">{fmt(adjustedTotal + totalDeptAdjDelta + sfOverrideTotal)}</span><br/><span className="text-[10px] text-gray-400">{fmtILS(toILS(adjustedTotal + totalDeptAdjDelta + sfOverrideTotal))}</span></td></tr>
+                            {hasHcImpact ? (
+                              <tr className="border-b border-blue-200 bg-blue-50/50">
+                                <td className="py-1.5 pl-3">
+                                  <span className="text-blue-700 font-medium">HC Levers (Hired/Term/Leave)</span>
+                                  <span className="text-[10px] text-blue-400 ml-1">cumulative {forecastDrilldown.month}</span>
+                                </td>
+                                <td className={`py-1.5 text-right ${hcImpactEUR >= 0 ? 'text-red-600' : 'text-green-700'}`}><span className="font-bold">{hcImpactEUR >= 0 ? '+' : ''}{fmt(hcImpactEUR)}</span><br/><span className="text-[10px] opacity-60">{fmtILS(hcImpactILS)}</span></td>
+                              </tr>
+                            ) : useLastActualInDrill ? (
+                              <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600 pl-3 text-gray-400">HC Levers (no events)</td><td className="py-1.5 text-right text-gray-400">-</td></tr>
+                            ) : null}
+                            {(adj !== 0 || hasSfOverrides || hasDeptAdj2 || hasHcImpact) && (
+                              <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600 font-semibold">Budget (adjusted)</td><td className="py-1.5 text-right"><span className="font-bold text-green-700">{fmt(adjustedTotal + totalDeptAdjDelta + sfOverrideTotal + (hasHcImpact ? hcImpactEUR : 0))}</span><br/><span className="text-[10px] text-gray-400">{fmtILS(toILS(adjustedTotal + totalDeptAdjDelta + sfOverrideTotal + (hasHcImpact ? hcImpactEUR : 0)))}</span></td></tr>
                             )}
                             {hasActuals && <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600">Actual ({forecastDrilldown.data?.__nsMode ? 'NetSuite' : 'Snowflake'})</td><td className="py-1.5 text-right"><span className="font-bold text-amber-700">{fmt(actualTotal)}</span><br/><span className="text-[10px] text-gray-400">{fmtILS(toILS(actualTotal))}</span></td></tr>}
                             {hasActuals && (() => { const variance = (hasAnyAdjustment ? adjustedTotal + totalDeptAdjDelta + sfOverrideTotal : budgetTotal) - actualTotal; return <tr><td className="py-1.5 text-gray-600">Variance (Budget − Actual)</td><td className={`py-1.5 text-right ${variance >= 0 ? 'text-green-700' : 'text-red-600'}`}><span className="font-bold">{variance >= 0 ? '+' : ''}{fmt(variance)}</span><br/><span className="text-[10px] opacity-60">{fmtILS(toILS(variance))}</span></td></tr>; })()}
