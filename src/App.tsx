@@ -5379,7 +5379,15 @@ useEffect(() => {
                         <td className="py-2 pr-1 text-right">-{fmt(totalOutflowAfter)}</td>
                         <td className={`py-2 pr-1 text-right ${cashflowForecast.reduce((s, r) => s + r.net, 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmt(cashflowForecast.reduce((s, r) => s + r.net, 0))}</td>
                         <td className="py-2 pr-1 text-right text-amber-600">{fmt(cashflowForecast.reduce((s, r) => s + r.revalImpact, 0))}</td>
-                        <td className={`py-2 pr-1 text-right ${(cashflowForecast[cashflowForecast.length - 1]?.closingBalance || 0) >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>{fmt(cashflowForecast[cashflowForecast.length - 1]?.closingBalance || 0)}</td>
+                        <td className={`py-2 pr-1 text-right ${(cashflowForecast[cashflowForecast.length - 1]?.closingBalance || 0) >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
+                          {fmt(cashflowForecast[cashflowForecast.length - 1]?.closingBalance || 0)}
+                          {(() => {
+                            const totalNetAfter = cashflowForecast.reduce((s, r) => s + r.net, 0);
+                            const totalRevalAfter = cashflowForecast.reduce((s, r) => s + r.revalImpact, 0);
+                            const totalGrowthAfter = totalNetAfter + totalRevalAfter;
+                            return <div className={`text-xs font-bold mt-1 ${totalGrowthAfter >= 0 ? 'text-green-600' : 'text-red-500'}`}>Net Growth: {totalGrowthAfter >= 0 ? '+' : ''}{fmt(totalGrowthAfter)}</div>;
+                          })()}
+                        </td>
                       </tr>
                     </>);
                   })()}
