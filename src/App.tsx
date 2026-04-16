@@ -5326,8 +5326,9 @@ useEffect(() => {
                       const totalNetActual = cashflowForecast.reduce((s, r) => s + r.net, 0);
                       const totalNetILSActual = cashflowForecast.reduce((s, r) => s + r.netILS, 0);
                       // BEFORE SAVINGS: subtract the savings from net (since base outflow was higher)
+                      const ilsRateForSavings = adjustedCurrent > 0 ? adjustedCurrentLocal / adjustedCurrent : 3.7;
                       const totalNet = hasSavings ? totalNetActual - (salSavings + venSavings) : totalNetActual;
-                      const totalNetILS = hasSavings ? totalNetILSActual - Math.round((salSavings + venSavings) * eurIlsRatio) : totalNetILSActual;
+                      const totalNetILS = hasSavings ? totalNetILSActual - Math.round((salSavings + venSavings) * ilsRateForSavings) : totalNetILSActual;
                       const totalReval = cashflowForecast.reduce((s, r) => s + r.revalImpact, 0);
                       const totalRevalILS = cashflowForecast.reduce((s, r) => s + r.revalImpactILS, 0);
                       const totalGrowth = totalNet + totalReval;
@@ -5336,7 +5337,7 @@ useEffect(() => {
                       const finalClosingILS = (cashflowForecast[cashflowForecast.length - 1]?.closingBalanceILS || 0);
                       // BEFORE SAVINGS closing = after-savings closing MINUS total savings
                       const closingBeforeSavings = hasSavings ? finalClosing - (salSavings + venSavings) : finalClosing;
-                      const closingBeforeSavingsILS = hasSavings ? finalClosingILS - Math.round((salSavings + venSavings) * eurIlsRatio) : finalClosingILS;
+                      const closingBeforeSavingsILS = hasSavings ? finalClosingILS - Math.round((salSavings + venSavings) * ilsRateForSavings) : finalClosingILS;
                       return (<>
                         <td className={`py-2.5 px-0.5 text-right ${totalNet >= 0 ? 'text-green-700' : 'text-red-700'}`}>
                           {fmtC(totalNet, totalNetILS)}
