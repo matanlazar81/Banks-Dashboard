@@ -4935,7 +4935,7 @@ useEffect(() => {
 
             {/* Cashflow Table — Opening → Inflows → Outflows → Net → Closing */}
             <div className="overflow-x-auto" style={{ maxWidth: '100%' }}>
-              <table className="w-full text-[11px] min-w-[1500px]">
+              <table className="text-[11px]" style={{ minWidth: '1800px', width: '1800px' }}>
                 <thead>
                   <tr className="text-left text-gray-400 uppercase border-b-2 border-gray-200">
                     <th className="pb-2 pr-1 whitespace-nowrap">Month</th>
