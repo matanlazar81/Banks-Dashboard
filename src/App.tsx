@@ -4935,7 +4935,7 @@ useEffect(() => {
 
             {/* Cashflow Table — Opening → Inflows → Outflows → Net → Closing */}
             <div className="overflow-x-auto" style={{ maxWidth: '100%' }}>
-              <table className="w-full text-[11px] min-w-[1200px]">
+              <table className="w-full text-[11px] min-w-[1500px]">
                 <thead>
                   <tr className="text-left text-gray-400 uppercase border-b-2 border-gray-200">
                     <th className="pb-2 pr-1 whitespace-nowrap">Month</th>
@@ -5741,7 +5741,7 @@ useEffect(() => {
                   const hasAnyAdjustment = adj !== 0 || hasLeverOverrides || hasSfOverrides || hasDeptAdj2 || hasHcImpact;
                   return (
                     <div className="space-y-4">
-                      {/* Salary projection mode toggle */}
+                      {/* Salary projection mode toggle + Export */}
                       {hasBudget && lastActualSalaryMonth && (
                         <div className="flex items-center gap-2 text-xs">
                           <span className="text-gray-500">Projection basis:</span>
@@ -5753,6 +5753,66 @@ useEffect(() => {
                             className={`px-2 py-0.5 rounded ${salaryProjectionMode === 'lastActual' ? 'bg-amber-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
                             onClick={() => setSalaryProjectionMode('lastActual')}
                           >Last Actual ({lastActualSalaryMonth})</button>
+                          <button
+                            className="ml-auto px-2 py-0.5 rounded bg-emerald-600 text-white hover:bg-emerald-700 flex items-center gap-1"
+                            onClick={() => {
+                              const hdrStyle = (rgb: string) => ({ font: { bold: true, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb } }, alignment: { horizontal: 'center' as const } });
+                              const boldStyle = { font: { bold: true } };
+                              const redCell = { font: { color: { rgb: 'DC2626' } } };
+                              const greenCell = { font: { color: { rgb: '059669' } } };
+                              const violetCell = { font: { color: { rgb: '7C3AED' }, bold: true } };
+                              const totalStyle = { font: { bold: true, color: { rgb: '047857' } }, fill: { fgColor: { rgb: 'ECFDF5' } } };
+                              const rows: any[] = [];
+                              rows.push([{ v: `Salary Drilldown — ${forecastDrilldown.month} (${salaryProjectionMode === 'lastActual' ? 'Last Actual' : 'Budget'} mode)`, s: { font: { bold: true, sz: 14 } } }]);
+                              rows.push([]);
+                              rows.push(['Item', 'EUR', 'ILS'].map(h => ({ v: h, t: 's', s: hdrStyle('7C3AED') })));
+                              rows.push([{ v: 'Budget (original)', t: 's' }, { v: budgetTotal, t: 'n', s: violetCell }, { v: toILS(budgetTotal), t: 'n', s: violetCell }]);
+                              if (hasSfOverrides) monthOverrides.forEach(ov => {
+                                const delta = ov.mode === 'Override' ? (ov.newVal - ov.oldVal) : ov.amountEUR;
+                                rows.push([{ v: `Salary Override (GSheets): ${ov.comments || ''}`, t: 's', s: { font: { color: { rgb: 'EA580C' } } } }, { v: delta, t: 'n', s: delta >= 0 ? redCell : greenCell }, { v: toILS(delta), t: 'n' }]);
+                              });
+                              if (adj !== 0) rows.push([{ v: `Manual Adjustment (${adj > 0 ? '+' : ''}${adj}%)`, t: 's', s: { font: { color: { rgb: '2563EB' } } } }, { v: adjustedTotal - budgetTotal, t: 'n', s: (adjustedTotal - budgetTotal) >= 0 ? redCell : greenCell }, { v: toILS(adjustedTotal - budgetTotal), t: 'n' }]);
+                              if (totalDeptImpact !== 0) rows.push([{ v: 'Department Adjustments', t: 's', s: { font: { color: { rgb: 'B45309' } } } }, { v: totalDeptImpact, t: 'n', s: totalDeptImpact >= 0 ? redCell : greenCell }, { v: toILS(totalDeptImpact), t: 'n' }]);
+                              if (hasHcImpact) {
+                                rows.push([]);
+                                rows.push([{ v: `HC Levers — cumulative through ${forecastDrilldown.month}`, t: 's', s: { font: { bold: true, color: { rgb: '1E40AF' } } } }]);
+                                (monthlyHCImpact[forecastDrilldown.mKey]?.categories || []).filter((c: any) => c.runningCost !== 0).forEach((c: any) => {
+                                  const costEUR = ilsRate > 0 ? Math.round((c.runningCost || 0) / ilsRate) : 0;
+                                  if (costEUR === 0) return;
+                                  const color = c.type === 'increase' ? redCell : greenCell;
+                                  rows.push([{ v: `  ${c.subType} (${c.count})`, t: 's' }, { v: costEUR, t: 'n', s: color }, { v: c.runningCost, t: 'n', s: color }]);
+                                });
+                                rows.push([{ v: 'Net HC Impact', t: 's', s: boldStyle }, { v: hcImpactEUR, t: 'n', s: { ...boldStyle, ...(hcImpactEUR >= 0 ? redCell : greenCell) } }, { v: hcImpactILS, t: 'n', s: boldStyle }]);
+                              }
+                              rows.push([]);
+                              const finalEUR = adjustedTotal + totalDeptImpact + sfOverrideTotal + (hasHcImpact ? hcImpactEUR : 0);
+                              rows.push([{ v: 'Budget (adjusted) — Effective Total', t: 's', s: totalStyle }, { v: finalEUR, t: 'n', s: totalStyle }, { v: toILS(finalEUR), t: 'n', s: totalStyle }]);
+                              if (hasActuals) rows.push([{ v: 'Actual', t: 's' }, { v: actualTotal, t: 'n', s: { font: { color: { rgb: 'B45309' }, bold: true } } }, { v: toILS(actualTotal), t: 'n' }]);
+                              // Department breakdown
+                              rows.push([]);
+                              rows.push([{ v: 'Department Breakdown', t: 's', s: { font: { bold: true, sz: 12 } } }]);
+                              rows.push(['Department', salaryProjectionMode === 'lastActual' ? 'Actual EUR' : 'Budget EUR', 'HC', 'HC Adj', 'Adjust %', 'Impact EUR'].map(h => ({ v: h, t: 's', s: hdrStyle('D97706') })));
+                              deptEntries.forEach(([dept, total]) => {
+                                const eff = effectiveAdj[dept];
+                                const pct = eff?.pct || 0;
+                                const impact = Math.round(total * (pct / 100));
+                                const hcC = deptHeadcount[dept]?.count || 0;
+                                rows.push([
+                                  { v: dept, t: 's', s: { font: { bold: true } } },
+                                  { v: total, t: 'n', s: violetCell },
+                                  { v: hcC, t: 'n' },
+                                  { v: 0, t: 'n' },
+                                  { v: `${pct}%`, t: 's' },
+                                  { v: impact, t: 'n', s: impact >= 0 ? redCell : (impact < 0 ? greenCell : {}) },
+                                ]);
+                              });
+                              const ws = XLSX.utils.aoa_to_sheet(rows);
+                              ws['!cols'] = [{ wch: 42 }, { wch: 16 }, { wch: 16 }, { wch: 10 }, { wch: 10 }, { wch: 14 }];
+                              const wb = XLSX.utils.book_new();
+                              XLSX.utils.book_append_sheet(wb, ws, `${forecastDrilldown.month}`);
+                              XLSX.writeFile(wb, `Salary_Drilldown_${forecastDrilldown.mKey}_${new Date().toISOString().slice(0, 10)}.xlsx`);
+                            }}
+                          >📥 Export</button>
                         </div>
                       )}
                       {/* Summary box */}
@@ -6134,20 +6194,39 @@ useEffect(() => {
                                     })()}</>)}
                                   </td>
                                 </tr>
+                                {hasSfOverrides && (
+                                  <tr className="border-t border-amber-200 text-[10px] bg-orange-50/30">
+                                    <td className="py-1 text-orange-600">+ Salary Override (Google Sheets)</td>
+                                    <td className={`py-1 text-right whitespace-nowrap tabular-nums ${sfOverrideTotal >= 0 ? 'text-red-500' : 'text-green-600'}`}>{sfOverrideTotal >= 0 ? '+' : ''}{fmt(sfOverrideTotal)}</td>
+                                    <td colSpan={4}></td>
+                                  </tr>
+                                )}
+                                {adj !== 0 && (
+                                  <tr className="border-t border-amber-200 text-[10px] bg-blue-50/30">
+                                    <td className="py-1 text-blue-600">+ Manual Adjustment ({adj > 0 ? '+' : ''}{adj}%)</td>
+                                    <td className={`py-1 text-right whitespace-nowrap tabular-nums ${(adjustedTotal - budgetTotal) >= 0 ? 'text-red-500' : 'text-green-600'}`}>{(adjustedTotal - budgetTotal) >= 0 ? '+' : ''}{fmt(adjustedTotal - budgetTotal)}</td>
+                                    <td colSpan={4}></td>
+                                  </tr>
+                                )}
+                                {totalDeptImpact !== 0 && (
+                                  <tr className="border-t border-amber-200 text-[10px] bg-amber-50/50">
+                                    <td className="py-1 text-amber-700">+ Dept Adjustment</td>
+                                    <td className={`py-1 text-right whitespace-nowrap tabular-nums ${totalDeptImpact >= 0 ? 'text-red-500' : 'text-green-600'}`}>{totalDeptImpact >= 0 ? '+' : ''}{fmt(totalDeptImpact)}</td>
+                                    <td colSpan={4}></td>
+                                  </tr>
+                                )}
                                 {hcNetEUR !== 0 && (
-                                  <tr className="border-t border-amber-200 text-[10px]">
-                                    <td className="py-1 text-gray-500">+ HC Levers (Hired/Term/Leave)</td>
+                                  <tr className="border-t border-amber-200 text-[10px] bg-blue-50/40">
+                                    <td className="py-1 text-blue-700">+ HC Levers (Hired/Term/Leave)</td>
                                     <td className={`py-1 text-right whitespace-nowrap tabular-nums ${hcNetEUR >= 0 ? 'text-red-500' : 'text-green-600'}`}>{hcNetEUR >= 0 ? '+' : ''}{fmt(hcNetEUR)}</td>
                                     <td colSpan={4}></td>
                                   </tr>
                                 )}
-                                {hcNetEUR !== 0 && (
-                                  <tr className="border-t border-amber-300 font-bold">
-                                    <td className="py-1">Effective Total</td>
-                                    <td className="py-1 text-right text-violet-800 whitespace-nowrap tabular-nums">{fmt(totalBudgetEUR + hcNetEUR)}</td>
-                                    <td colSpan={4}></td>
-                                  </tr>
-                                )}
+                                <tr className="border-t-2 border-amber-400 font-bold bg-amber-50">
+                                  <td className="py-1.5">Effective Total (matches Budget adjusted)</td>
+                                  <td className="py-1.5 text-right text-green-700 whitespace-nowrap tabular-nums">{fmt(adjustedTotal + totalDeptImpact + sfOverrideTotal + (hasHcImpact ? hcNetEUR : 0))}</td>
+                                  <td colSpan={4}></td>
+                                </tr>
                                 </>); })()}
                                 </tfoot>
                             </table>
