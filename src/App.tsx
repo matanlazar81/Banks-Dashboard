@@ -5790,14 +5790,15 @@ useEffect(() => {
                             ) : (
                               <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600 pl-3 text-gray-400">Department adjustments</td><td className="py-1.5 text-right text-gray-400">-</td></tr>
                             )}
-                            {hasHcImpact && monthlyHCImpact[forecastDrilldown.mKey]?.categories ? (
+                            {hasHcImpact && monthlyHCImpact[forecastDrilldown.mKey]?.categories?.length > 0 ? (
                               <>
                                 <tr className="border-b border-blue-200 bg-blue-50/30">
                                   <td className="py-1 pl-3 text-[10px] text-blue-500 uppercase font-medium" colSpan={2}>HC Levers — cumulative through {forecastDrilldown.month}{!useLastActualInDrill ? ' (info only — included in budget)' : ''}</td>
                                 </tr>
-                                {monthlyHCImpact[forecastDrilldown.mKey].categories.map((c: any, ci: number) => {
+                                {monthlyHCImpact[forecastDrilldown.mKey].categories.filter((c: any) => c.runningCost !== 0).map((c: any, ci: number) => {
                                   const catCostILS = c.runningCost || 0;
                                   const catCostEUR = ilsRate > 0 ? Math.round(catCostILS / ilsRate) : 0;
+                                  if (catCostEUR === 0) return null;
                                   const isIncrease = c.type === 'increase';
                                   const colorClass = isIncrease ? 'text-red-600' : 'text-green-700';
                                   const dotColor = isIncrease ? 'bg-red-500' : 'bg-green-500';
