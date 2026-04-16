@@ -1165,6 +1165,49 @@ function createSnowflakeClient(env) {
     return { mrr, arr, customers, avgPerCustomer, month, snapDate, history };
   }
 
+  // ── Full expense export for data comparison (all line items) ──
+  async function fetchExpenseExport(year) {
+    const yr = year || 2026;
+    console.log(`[Snowflake] Fetching full expense export for ${yr}...`);
+    const rows = await query(`
+      SELECT TO_CHAR(e.CAL_MONTH_START_DATE, 'YYYY-MM') AS MONTH,
+             e.SOURCE,
+             g.PARENT_GL_ACCOUNT_NAME AS COST_CENTER,
+             d.DEPARTMENT_NAME AS DEPARTMENT,
+             d.GROUP_NAME AS GRP,
+             g.GL_ACCOUNT_NUMBER AS ACCOUNT_NUMBER,
+             g.GL_ACCOUNT_NAME AS ACCOUNT_NAME,
+             g.IS_PAYROLL,
+             g.GL_ACCOUNT_TYPE AS ACCOUNT_TYPE,
+             ROUND(e.AMOUNT_EUR, 2) AS AMOUNT_EUR,
+             ROUND(e.AMOUNT_ILS, 2) AS AMOUNT_ILS,
+             e.MEMO,
+             e.CAL_MONTH_START_DATE AS TRANSACTION_DATE
+      FROM DL_PRODUCTION.FINANCE.FCT_EXPENSE e
+      JOIN DL_PRODUCTION.FINANCE.DIM_GL_ACCOUNT g ON e.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
+      LEFT JOIN DL_PRODUCTION.FINANCE.DIM_DEPARTMENT d ON e.DEPARTMENT_ID = d.DEPARTMENT_ID
+      WHERE e.SUBSIDIARY_ID = 3
+        AND YEAR(e.CAL_MONTH_START_DATE) = ${yr}
+      ORDER BY e.CAL_MONTH_START_DATE, d.DEPARTMENT_NAME, g.GL_ACCOUNT_NUMBER
+    `);
+    console.log(`[Snowflake] Expense export: ${rows.length} rows for ${yr}`);
+    return rows.map(r => ({
+      month: r.MONTH,
+      source: r.SOURCE || '',
+      costCenter: r.COST_CENTER || '',
+      department: r.DEPARTMENT || 'Unassigned',
+      group: r.GRP || '',
+      accountNumber: r.ACCOUNT_NUMBER || '',
+      accountName: r.ACCOUNT_NAME || '',
+      isPayroll: r.IS_PAYROLL || false,
+      accountType: r.ACCOUNT_TYPE || '',
+      amountEUR: r.AMOUNT_EUR || 0,
+      amountILS: r.AMOUNT_ILS || 0,
+      memo: r.MEMO || '',
+      transactionDate: r.TRANSACTION_DATE ? String(r.TRANSACTION_DATE).substring(0, 10) : '',
+    }));
+  }
+
   return {
     query,
     testConnection,
@@ -1195,6 +1238,7 @@ function createSnowflakeClient(env) {
     fetchChurnDrilldown,
     fetchYoYRevenue,
     fetchCurrentARR,
+    fetchExpenseExport,
     getConnection,
   };
 }

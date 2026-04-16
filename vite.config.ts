@@ -365,6 +365,22 @@ function banksPlugin(): Plugin {
         } catch (e: any) { res.end(JSON.stringify({ data: {}, error: e.message })); }
       });
 
+      // ── Snowflake: Full expense export for data comparison ──
+      server.middlewares.use('/api/sf-expense-export', async (req, res) => {
+        try {
+          const sf = getSfClient();
+          const url = new URL(req.url || '', `http://${req.headers.host}`);
+          const year = parseInt(url.searchParams.get('year') || '') || new Date().getFullYear();
+          if (!sf) { res.end(JSON.stringify({ data: [] })); return; }
+          const data = await sf.fetchExpenseExport(year);
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ data, count: data.length }));
+        } catch (e: any) {
+          console.error('[SF] Expense export failed:', e.message);
+          res.end(JSON.stringify({ data: [], error: e.message }));
+        }
+      });
+
       // ── Snowflake: Vendor breakdown for a month ──
       server.middlewares.use('/api/sf-vendor-breakdown', async (req, res) => {
         try {

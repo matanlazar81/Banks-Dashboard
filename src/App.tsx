@@ -507,6 +507,9 @@ export default function App() {
   const [churnDrilldown, setChurnDrilldown] = useState<{ year: number; data: any[] | 'loading' } | null>(null);
   const [nsAccountId, setNsAccountId] = useState('');
   const [asOfDate, setAsOfDate] = useState<string>(''); // YYYY-MM-DD or empty for live
+  const [expenseExportData, setExpenseExportData] = useState<any[] | null>(null);
+  const [expenseExportLoading, setExpenseExportLoading] = useState(false);
+  const [expenseExportOpen, setExpenseExportOpen] = useState(false);
   const [yoyRevenue, setYoyRevenue] = useState<{ currentYear: number; priorYear: number; throughMonth: number; currentYearRev?: number; priorYearRev?: number; currentYearPaid?: number; priorYearPaid?: number; currentYearCustomers?: number; priorYearCustomers?: number } | null>(null);
   const [asOfDateRaw, setAsOfDateRaw] = useState(''); // raw text typed in date input
   // ── Per-company data cache (avoid re-fetching when switching tabs) ──
@@ -5133,10 +5136,25 @@ useEffect(() => {
                             const histMonths = trail.map(k => ({ month: k, vendors: (actSrc[k] as any).vendors || 0, salary: (actSrc[k] as any).salary || 0 }));
                             const budgetTotal = sfBudget.totalByMonth[r.mKey]?.eur || nsBudget.byMonth[r.mKey]?.vendors || 0;
                             const nsVendAct = nsVendorByMonth[r.mKey] || 0;
-                            setForecastDrilldown({ type: 'vendors', month: r.month, mKey: r.mKey, data: {
-                              ...(sfBudget.byMonth?.[r.mKey] || nsBudget.byMonth[r.mKey]?.categories || expenseCategories.byMonth?.[r.mKey] || {}),
-                              __vendorMeta: { budgetTotal, histAvg, histMonths, actual: sfActualsSplit[r.mKey]?.vendors || nsVendAct, used: r.vendors }
-                            }});
+                            const vendorMeta = { budgetTotal, histAvg, histMonths, actual: sfActualsSplit[r.mKey]?.vendors || nsVendAct, used: r.vendors };
+                            if (r.isPast || r.isCurrent) {
+                              // Past & current months: show actuals from FCT_EXPENSE, not budget
+                              setForecastDrilldown({ type: 'vendors', month: r.month, mKey: r.mKey, data: { __vendorMeta: vendorMeta } });
+                              fetch(`/api/sf-vendor-breakdown?month=${r.mKey}`)
+                                .then(res => res.json())
+                                .then(j => {
+                                  const byCategory: Record<string, number> = {};
+                                  for (const row of (j.data || [])) {
+                                    byCategory[row.category] = (byCategory[row.category] || 0) + (row.amountEUR || 0);
+                                  }
+                                  setForecastDrilldown(prev => prev ? { ...prev, data: { ...byCategory, __vendorMeta: prev.data.__vendorMeta } } : null);
+                                });
+                            } else {
+                              setForecastDrilldown({ type: 'vendors', month: r.month, mKey: r.mKey, data: {
+                                ...(sfBudget.byMonth?.[r.mKey] || nsBudget.byMonth[r.mKey]?.categories || expenseCategories.byMonth?.[r.mKey] || {}),
+                                __vendorMeta: vendorMeta
+                              }});
+                            }
                           }}>
                         {r.vendors > 0 ? `-${fmtC(r.vendors, r.vendorsILS)}` : '-'}
                         {!r.isPast && r.vendorsBase > 0 && r.vendors !== r.vendorsBase && (() => {
@@ -5672,10 +5690,10 @@ useEffect(() => {
                               <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600 pl-3 text-gray-400">Department adjustments</td><td className="py-1.5 text-right text-gray-400">-</td></tr>
                             )}
                             {(adj !== 0 || hasSfOverrides || hasDeptAdj2) && (
-                              <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600 font-semibold">Budget (adjusted)</td><td className="py-1.5 text-right"><span className="font-bold text-green-700">{fmt(adjustedTotal + totalDeptAdjDelta)}</span><br/><span className="text-[10px] text-gray-400">{fmtILS(toILS(adjustedTotal + totalDeptAdjDelta))}</span></td></tr>
+                              <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600 font-semibold">Budget (adjusted)</td><td className="py-1.5 text-right"><span className="font-bold text-green-700">{fmt(adjustedTotal + totalDeptAdjDelta + sfOverrideTotal)}</span><br/><span className="text-[10px] text-gray-400">{fmtILS(toILS(adjustedTotal + totalDeptAdjDelta + sfOverrideTotal))}</span></td></tr>
                             )}
                             {hasActuals && <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600">Actual ({forecastDrilldown.data?.__nsMode ? 'NetSuite' : 'Snowflake'})</td><td className="py-1.5 text-right"><span className="font-bold text-amber-700">{fmt(actualTotal)}</span><br/><span className="text-[10px] text-gray-400">{fmtILS(toILS(actualTotal))}</span></td></tr>}
-                            {hasActuals && (() => { const variance = (hasAnyAdjustment ? adjustedTotal + totalDeptAdjDelta : budgetTotal) - actualTotal; return <tr><td className="py-1.5 text-gray-600">Variance (Budget − Actual)</td><td className={`py-1.5 text-right ${variance >= 0 ? 'text-green-700' : 'text-red-600'}`}><span className="font-bold">{variance >= 0 ? '+' : ''}{fmt(variance)}</span><br/><span className="text-[10px] opacity-60">{fmtILS(toILS(variance))}</span></td></tr>; })()}
+                            {hasActuals && (() => { const variance = (hasAnyAdjustment ? adjustedTotal + totalDeptAdjDelta + sfOverrideTotal : budgetTotal) - actualTotal; return <tr><td className="py-1.5 text-gray-600">Variance (Budget − Actual)</td><td className={`py-1.5 text-right ${variance >= 0 ? 'text-green-700' : 'text-red-600'}`}><span className="font-bold">{variance >= 0 ? '+' : ''}{fmt(variance)}</span><br/><span className="text-[10px] opacity-60">{fmtILS(toILS(variance))}</span></td></tr>; })()}
                           </tbody>
                         </table>
                       </div>
@@ -5890,8 +5908,11 @@ useEffect(() => {
                                     const deptPctShare = deptBudgetTotals[r.department] ? r.amountEUR / deptBudgetTotals[r.department] : 0;
                                     const deptPctDeltaEUR = Math.round((deptAdjDeltaByDept[r.department] || 0) * deptPctShare);
                                     const deptPctDeltaILS = Math.round(deptPctDeltaEUR / eurIlsRatio);
-                                    const adjEUR = Math.round(r.amountEUR * multiplier) + deptDeltaEUR + deptPctDeltaEUR;
-                                    const adjILS = Math.round(r.amountILS * multiplier) + deptDelta + deptPctDeltaILS;
+                                    // Distribute SF salary override proportionally across departments
+                                    const sfOvShare = budgetTotal > 0 ? Math.round(sfOverrideTotal * (r.amountEUR / budgetTotal)) : 0;
+                                    const sfOvShareILS = budgetTotalILS > 0 ? Math.round(sfOverrideTotal / (budgetTotal / budgetTotalILS) * (r.amountILS / budgetTotalILS)) : 0;
+                                    const adjEUR = Math.round(r.amountEUR * multiplier) + deptDeltaEUR + deptPctDeltaEUR + sfOvShare;
+                                    const adjILS = Math.round(r.amountILS * multiplier) + deptDelta + deptPctDeltaILS + sfOvShareILS;
                                     const isChanged = hasAnyAdjustment && (adj !== 0 || deptDelta !== 0 || deptPctAdj !== 0);
                                     const _isFuture = forecastDrilldown.mKey >= `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}`;
                                     const salaryTotalEUR = d.budget.reduce((s: number, x: any) => s + Math.abs(x.amountEUR || 0), 0);
@@ -5952,8 +5973,8 @@ useEffect(() => {
                                 const totalLeverDeltaILS = Object.values(deptLeverDelta).reduce((s, d) => s + d, 0);
                                 const avgRatio = budgetTotalILS > 0 ? budgetTotal / budgetTotalILS : (1/3.75);
                                 const totalLeverDeltaEUR = Math.round(totalLeverDeltaILS * avgRatio);
-                                const grandAdjEUR = adjustedTotal + totalLeverDeltaEUR;
-                                const grandAdjILS = adjustedTotalILS + totalLeverDeltaILS;
+                                const grandAdjEUR = adjustedTotal + totalLeverDeltaEUR + totalDeptAdjDelta + sfOverrideTotal;
+                                const grandAdjILS = adjustedTotalILS + totalLeverDeltaILS + Math.round(totalDeptAdjDelta / (budgetTotal > 0 ? budgetTotal / budgetTotalILS : 1/3.75)) + Math.round(sfOverrideTotal / (budgetTotal > 0 ? budgetTotal / budgetTotalILS : 1/3.75));
                                 if (hasAnyAdjustment) {
                                   return (<>
                                     <td className="py-1.5 pr-2 text-right text-gray-400 line-through">{fmt(budgetTotal)}</td>
@@ -7154,7 +7175,7 @@ useEffect(() => {
                     {forecastDrilldown.type !== 'churn' && (() => {
                       const _now3 = new Date();
                       const _curMKey3 = `${_now3.getFullYear()}-${String(_now3.getMonth()+1).padStart(2,'0')}`;
-                      const _isFutureCat = forecastDrilldown.mKey >= _curMKey3;
+                      const _isFutureCat = forecastDrilldown.mKey > _curMKey3;
                       const _catEntries = Object.entries(forecastDrilldown.data as Record<string, number>).filter(([k]) => !k.startsWith('__'));
                       const _catTotal = _catEntries.reduce((s, [, v]) => s + Math.abs(typeof v === 'number' ? v : 0), 0);
                       // Compute effective vendor category adjustments (cascading)
@@ -7174,7 +7195,7 @@ useEffect(() => {
                         return s + Math.round((typeof amt === 'number' ? amt : 0) * (adj / 100));
                       }, 0);
                       return (<><p className="text-xs text-gray-500 mb-2">
-                      {forecastDrilldown.type === 'vendors' ? 'Snowflake Budget Breakdown — click category for details' : 'Budget Breakdown'}
+                      {forecastDrilldown.type === 'vendors' ? (_isFutureCat ? 'Snowflake Budget Breakdown — click category for details' : 'Snowflake Actuals Breakdown — click category for details') : 'Budget Breakdown'}
                     </p>
                     <table className="w-full text-xs">
                       <thead><tr className="text-left text-gray-400 uppercase border-b">
@@ -7193,11 +7214,13 @@ useEffect(() => {
                               onClick={() => {
                                 const savedCategories = forecastDrilldown.data as Record<string, number>;
                                 setForecastDrilldown(prev => prev ? { ...prev, data: 'loading', categoryData: savedCategories, categoryName: cat } : null);
-                                if (forecastDrilldown.mKey >= _curMKey3) {
+                                if (forecastDrilldown.mKey > _curMKey3) {
+                                  // Future months: show budget detail
                                   fetch(`/api/sf-budget-detail?month=${forecastDrilldown.mKey}&category=${encodeURIComponent(cat)}`)
                                     .then(r => r.json())
                                     .then(r => setForecastDrilldown(prev => prev ? { ...prev, data: r.data || [] } : null));
                                 } else {
+                                  // Past & current months: show actuals from FCT_EXPENSE
                                   fetch(`/api/sf-vendor-breakdown?month=${forecastDrilldown.mKey}`)
                                     .then(r => r.json())
                                     .then(r => {
@@ -8028,6 +8051,286 @@ useEffect(() => {
             </div>
           );
         })()}
+
+        {/* ── Data Comparison Export Section ── */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 mt-6 overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between cursor-pointer hover:bg-gray-50"
+               onClick={() => setExpenseExportOpen(!expenseExportOpen)}>
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-semibold text-gray-700">{expenseExportOpen ? '▼' : '▶'} Data Comparison Export</span>
+              <span className="text-xs text-gray-400">Snowflake FCT_EXPENSE — all transactions for BI cross-validation</span>
+            </div>
+            {expenseExportData && <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-medium">{expenseExportData.length.toLocaleString()} rows loaded</span>}
+          </div>
+          {expenseExportOpen && (
+            <div className="p-4">
+              <div className="flex items-center gap-3 mb-4">
+                <button
+                  onClick={() => {
+                    setExpenseExportLoading(true);
+                    fetch(`/api/sf-expense-export?year=${new Date().getFullYear()}`)
+                      .then(r => r.json())
+                      .then(j => { setExpenseExportData(j.data || []); setExpenseExportLoading(false); })
+                      .catch(() => setExpenseExportLoading(false));
+                  }}
+                  disabled={expenseExportLoading}
+                  className="px-4 py-2 bg-violet-600 text-white text-sm rounded-lg hover:bg-violet-700 disabled:opacity-50 flex items-center gap-2"
+                >
+                  {expenseExportLoading ? <><Loader2 className="w-4 h-4 animate-spin" /> Loading from Snowflake...</> : <><RefreshCw className="w-4 h-4" /> {expenseExportData ? 'Reload' : 'Load'} {new Date().getFullYear()} Data</>}
+                </button>
+                {expenseExportData && expenseExportData.length > 0 && (
+                  <button
+                    onClick={() => {
+                      const hdr = ['Month', 'Source', 'Cost Center', 'Department', 'Group', 'Account Number', 'Account Name', 'Is Payroll', 'Account Type', 'Expense EUR', 'Expense ILS', 'Memo', 'Transaction Date'];
+                      const dataRows = expenseExportData.map(r => [r.month, r.source, r.costCenter, r.department, r.group, r.accountNumber, r.accountName, r.isPayroll ? 'Yes' : 'No', r.accountType, r.amountEUR, r.amountILS, r.memo, r.transactionDate]);
+                      // Add subtotals by Cost Center
+                      const byCostCenter: Record<string, { eur: number; ils: number; count: number }> = {};
+                      for (const r of expenseExportData) {
+                        const k = r.costCenter || 'Unassigned';
+                        if (!byCostCenter[k]) byCostCenter[k] = { eur: 0, ils: 0, count: 0 };
+                        byCostCenter[k].eur += r.amountEUR; byCostCenter[k].ils += r.amountILS; byCostCenter[k].count++;
+                      }
+                      const byDept: Record<string, { eur: number; ils: number; count: number }> = {};
+                      for (const r of expenseExportData) {
+                        const k = r.department || 'Unassigned';
+                        if (!byDept[k]) byDept[k] = { eur: 0, ils: 0, count: 0 };
+                        byDept[k].eur += r.amountEUR; byDept[k].ils += r.amountILS; byDept[k].count++;
+                      }
+                      const byMonth: Record<string, { eur: number; ils: number; salary: number; vendors: number }> = {};
+                      for (const r of expenseExportData) {
+                        if (!byMonth[r.month]) byMonth[r.month] = { eur: 0, ils: 0, salary: 0, vendors: 0 };
+                        byMonth[r.month].eur += r.amountEUR; byMonth[r.month].ils += r.amountILS;
+                        if (r.isPayroll) byMonth[r.month].salary += r.amountEUR; else byMonth[r.month].vendors += r.amountEUR;
+                      }
+
+                      const ws = XLSX.utils.aoa_to_sheet([
+                        [{ v: `Snowflake Expense Export — ${new Date().getFullYear()}`, t: 's', s: { font: { bold: true, sz: 14 } } }],
+                        [{ v: `Exported: ${new Date().toISOString().slice(0, 19)}  |  Subsidiary: 3  |  Rows: ${expenseExportData.length}`, t: 's', s: { font: { color: { rgb: '666666' }, sz: 10 } } }],
+                        [],
+                        hdr.map(h => ({ v: h, t: 's', s: { font: { bold: true, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: '7C3AED' } }, alignment: { horizontal: 'center' } } })),
+                        ...dataRows,
+                      ]);
+                      ws['!cols'] = [{ wch: 9 }, { wch: 12 }, { wch: 30 }, { wch: 16 }, { wch: 18 }, { wch: 14 }, { wch: 30 }, { wch: 10 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 40 }, { wch: 14 }];
+                      ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 12 } }, { s: { r: 1, c: 0 }, e: { r: 1, c: 12 } }];
+                      ws['!autofilter'] = { ref: `A4:M${4 + dataRows.length}` };
+
+                      // Cost Center summary sheet
+                      const ccRows = Object.entries(byCostCenter).sort(([,a],[,b]) => b.eur - a.eur);
+                      const ccTotal = ccRows.reduce((s, [,v]) => s + v.eur, 0);
+                      const ws2 = XLSX.utils.aoa_to_sheet([
+                        [{ v: 'Summary by Cost Center', t: 's', s: { font: { bold: true, sz: 13 } } }],
+                        [],
+                        ['Cost Center', 'EUR', 'ILS', 'Rows', '%'].map(h => ({ v: h, t: 's', s: { font: { bold: true, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: '059669' } } } })),
+                        ...ccRows.map(([k, v]) => [k, Math.round(v.eur), Math.round(v.ils), v.count, ccTotal > 0 ? `${(v.eur / ccTotal * 100).toFixed(1)}%` : '']),
+                        [],
+                        [{ v: 'TOTAL', t: 's', s: { font: { bold: true } } }, Math.round(ccTotal), Math.round(ccRows.reduce((s,[,v]) => s + v.ils, 0)), ccRows.reduce((s,[,v]) => s + v.count, 0), '100%'],
+                      ]);
+                      ws2['!cols'] = [{ wch: 35 }, { wch: 14 }, { wch: 14 }, { wch: 8 }, { wch: 8 }];
+
+                      // Department summary sheet
+                      const dRows = Object.entries(byDept).sort(([,a],[,b]) => b.eur - a.eur);
+                      const dTotal = dRows.reduce((s, [,v]) => s + v.eur, 0);
+                      const ws3 = XLSX.utils.aoa_to_sheet([
+                        [{ v: 'Summary by Department', t: 's', s: { font: { bold: true, sz: 13 } } }],
+                        [],
+                        ['Department', 'EUR', 'ILS', 'Rows', '%'].map(h => ({ v: h, t: 's', s: { font: { bold: true, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: '2563EB' } } } })),
+                        ...dRows.map(([k, v]) => [k, Math.round(v.eur), Math.round(v.ils), v.count, dTotal > 0 ? `${(v.eur / dTotal * 100).toFixed(1)}%` : '']),
+                        [],
+                        [{ v: 'TOTAL', t: 's', s: { font: { bold: true } } }, Math.round(dTotal), Math.round(dRows.reduce((s,[,v]) => s + v.ils, 0)), dRows.reduce((s,[,v]) => s + v.count, 0), '100%'],
+                      ]);
+                      ws3['!cols'] = [{ wch: 20 }, { wch: 14 }, { wch: 14 }, { wch: 8 }, { wch: 8 }];
+
+                      // Monthly summary sheet
+                      const mRows = Object.entries(byMonth).sort(([a],[b]) => a.localeCompare(b));
+                      const ws4 = XLSX.utils.aoa_to_sheet([
+                        [{ v: 'Summary by Month', t: 's', s: { font: { bold: true, sz: 13 } } }],
+                        [],
+                        ['Month', 'Salary EUR', 'Vendors EUR', 'Total EUR', 'Total ILS'].map(h => ({ v: h, t: 's', s: { font: { bold: true, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: 'DC2626' } } } })),
+                        ...mRows.map(([k, v]) => [k, Math.round(v.salary), Math.round(v.vendors), Math.round(v.eur), Math.round(v.ils)]),
+                        [],
+                        [{ v: 'TOTAL', t: 's', s: { font: { bold: true } } }, Math.round(mRows.reduce((s,[,v]) => s + v.salary, 0)), Math.round(mRows.reduce((s,[,v]) => s + v.vendors, 0)), Math.round(mRows.reduce((s,[,v]) => s + v.eur, 0)), Math.round(mRows.reduce((s,[,v]) => s + v.ils, 0))],
+                      ]);
+                      ws4['!cols'] = [{ wch: 10 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }];
+
+                      // ── Dashboard Forecast sheet (computed values with all adjustments) ──
+                      const hdrStyle = (rgb: string) => ({ font: { bold: true, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb } }, alignment: { horizontal: 'center' as const } });
+                      const curMo = `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}`;
+                      const fcRows = cashflowForecast.map(r => [
+                        r.month, r.mKey,
+                        r.isPast ? 'Actual' : r.isCurrent ? 'Current' : 'Forecast',
+                        Math.round(r.salary), Math.round(r.salaryBase),
+                        Math.round(r.vendors), Math.round(r.vendorsBase),
+                        Math.round(r.collections),
+                        Math.round(r.totalOutflow),
+                        Math.round(r.net),
+                        Math.round(r.revalImpact),
+                        Math.round(r.openingBalance),
+                        Math.round(r.closingBalance),
+                        Math.round(r.salaryILS), Math.round(r.vendorsILS), Math.round(r.collectionsILS),
+                      ]);
+                      const ws5 = XLSX.utils.aoa_to_sheet([
+                        [{ v: 'Dashboard Cashflow Forecast — All Adjustments Applied', t: 's', s: { font: { bold: true, sz: 14 } } }],
+                        [{ v: `Includes: scenario adjustments, salary overrides (Google Sheets), dept adjustments, vendor category adjustments, headcount levers, pipeline, currency defense`, t: 's', s: { font: { color: { rgb: '666666' }, sz: 10 } } }],
+                        [],
+                        ['Month', 'Key', 'Status', 'Salary EUR', 'Salary Base', 'Vendors EUR', 'Vendors Base', 'Collections', 'Total Outflow', 'Net', 'Reval Impact', 'Opening Bal', 'Closing Bal', 'Salary ILS', 'Vendors ILS', 'Collections ILS'].map(h => ({ v: h, t: 's', s: hdrStyle('7C3AED') })),
+                        ...fcRows,
+                        [],
+                        [{ v: 'TOTAL', t: 's', s: { font: { bold: true } } }, '', '', ...([3,4,5,6,7,8,9,10].map(ci => Math.round(fcRows.reduce((s, r) => s + (r[ci] as number), 0)))), '', Math.round(fcRows[fcRows.length-1]?.[12] as number || 0), ...([13,14,15].map(ci => Math.round(fcRows.reduce((s, r) => s + (r[ci] as number), 0))))],
+                      ]);
+                      ws5['!cols'] = [{ wch: 18 }, { wch: 9 }, { wch: 9 }, { wch: 13 }, { wch: 13 }, { wch: 13 }, { wch: 13 }, { wch: 13 }, { wch: 13 }, { wch: 12 }, { wch: 12 }, { wch: 13 }, { wch: 13 }, { wch: 13 }, { wch: 13 }, { wch: 13 }];
+                      ws5['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 15 } }, { s: { r: 1, c: 0 }, e: { r: 1, c: 15 } }];
+
+                      // ── Vendor Budget by Category per Month sheet ──
+                      const allCatMonths = Object.keys(sfBudget.byMonth || {}).sort();
+                      const allCats = [...new Set(allCatMonths.flatMap(m => Object.keys(sfBudget.byMonth?.[m] || {})))].sort();
+                      const catHdr = ['Category', ...allCatMonths.map(m => m.slice(2)), 'Total'];
+                      const catRows = allCats.map(cat => {
+                        const vals = allCatMonths.map(m => Math.round((sfBudget.byMonth?.[m] || {})[cat] || 0));
+                        return [cat, ...vals, vals.reduce((s, v) => s + v, 0)];
+                      });
+                      const catTotalRow = ['TOTAL', ...allCatMonths.map((_, i) => catRows.reduce((s, r) => s + (r[i+1] as number), 0)), catRows.reduce((s, r) => s + (r[r.length-1] as number), 0)];
+                      const ws6 = XLSX.utils.aoa_to_sheet([
+                        [{ v: 'Vendor Budget by Category (Snowflake FCT_BUDGET)', t: 's', s: { font: { bold: true, sz: 13 } } }],
+                        [{ v: 'These are the BUDGET numbers used in the dashboard for future months', t: 's', s: { font: { color: { rgb: '666666' }, sz: 10 } } }],
+                        [],
+                        catHdr.map(h => ({ v: h, t: 's', s: hdrStyle('059669') })),
+                        ...catRows,
+                        [],
+                        catTotalRow.map((v, i) => i === 0 ? { v, t: 's', s: { font: { bold: true } } } : { v, t: 'n', s: { font: { bold: true } } }),
+                      ]);
+                      ws6['!cols'] = [{ wch: 32 }, ...allCatMonths.map(() => ({ wch: 11 })), { wch: 13 }];
+
+                      // ── Salary Budget by Month sheet ──
+                      const salBudgetRows = Object.entries(sfSalaryBudget).sort(([a],[b]) => a.localeCompare(b)).map(([m, v]) => {
+                        const ovr = sfSalaryOverrides.filter(o => o.mKey === m);
+                        const ovrTotal = ovr.reduce((s, o) => s + (o.mode === 'Override' ? (o.newVal - o.oldVal) : o.amountEUR), 0);
+                        const ovrDesc = ovr.map(o => `${o.comments || o.department || 'override'}: ${o.mode === 'Override' ? Math.round(o.newVal - o.oldVal) : Math.round(o.amountEUR)}`).join('; ');
+                        return [m, Math.round(v.eur), Math.round(v.ils), Math.round(ovrTotal), ovrDesc, Math.round(v.eur + ovrTotal)];
+                      });
+                      const ws7 = XLSX.utils.aoa_to_sheet([
+                        [{ v: 'Salary Budget + Overrides (Snowflake FCT_BUDGET + Google Sheets)', t: 's', s: { font: { bold: true, sz: 13 } } }],
+                        [],
+                        ['Month', 'Budget EUR', 'Budget ILS', 'Override EUR', 'Override Details', 'Adjusted EUR'].map(h => ({ v: h, t: 's', s: hdrStyle('2563EB') })),
+                        ...salBudgetRows,
+                        [],
+                        [{ v: 'TOTAL', t: 's', s: { font: { bold: true } } }, Math.round(salBudgetRows.reduce((s, r) => s + (r[1] as number), 0)), Math.round(salBudgetRows.reduce((s, r) => s + (r[2] as number), 0)), Math.round(salBudgetRows.reduce((s, r) => s + (r[3] as number), 0)), '', Math.round(salBudgetRows.reduce((s, r) => s + (r[5] as number), 0))],
+                      ]);
+                      ws7['!cols'] = [{ wch: 10 }, { wch: 13 }, { wch: 13 }, { wch: 13 }, { wch: 50 }, { wch: 13 }];
+
+                      // ── Assumptions & Config sheet ──
+                      const ws8 = XLSX.utils.aoa_to_sheet([
+                        [{ v: 'Dashboard Assumptions & Configuration', t: 's', s: { font: { bold: true, sz: 14 } } }],
+                        [],
+                        [{ v: 'General', t: 's', s: { font: { bold: true, sz: 12, color: { rgb: '7C3AED' } } } }],
+                        ['Subsidiary', 3],
+                        ['Year', new Date().getFullYear()],
+                        ['Export Date', new Date().toISOString().slice(0, 19)],
+                        ['Snowflake Source', 'FCT_EXPENSE (actuals) + FCT_BUDGET (forecast)'],
+                        ['Pipeline Min Probability', `${pipelineMinProb}%`],
+                        ['Pipeline Win Rate (historical)', `${cashflowForecast[0]?.pipelineHistWinRate || '-'}%`],
+                        ['Pipeline Delay Months', cashflowForecast[0]?.pipelineDelayMonths || '-'],
+                        [],
+                        [{ v: 'Salary Adjustments (Scenario)', t: 's', s: { font: { bold: true, sz: 12, color: { rgb: '2563EB' } } } }],
+                        ['Month', 'Adjustment %'],
+                        ...Object.entries(salaryAdjPctByMonth).filter(([,v]) => v !== 0).map(([m, v]) => [m, `${v}%`]),
+                        ...(Object.entries(salaryAdjPctByMonth).filter(([,v]) => v !== 0).length === 0 ? [['(none)', '']] : []),
+                        [],
+                        [{ v: 'Department Salary Adjustments', t: 's', s: { font: { bold: true, sz: 12, color: { rgb: 'D97706' } } } }],
+                        ['Month', 'Department', 'Adjustment %'],
+                        ...Object.entries(salaryDeptAdj).flatMap(([m, depts]) => Object.entries(depts).filter(([,v]) => v !== 0).map(([dept, pct]) => [m, dept, `${pct}%`])),
+                        ...(Object.entries(salaryDeptAdj).flatMap(([, d]) => Object.entries(d).filter(([,v]) => v !== 0)).length === 0 ? [['(none)', '', '']] : []),
+                        [],
+                        [{ v: 'Vendor Category Adjustments', t: 's', s: { font: { bold: true, sz: 12, color: { rgb: '059669' } } } }],
+                        ['Month', 'Category', 'Adjustment %'],
+                        ...Object.entries(vendorCatAdj).flatMap(([m, cats]) => Object.entries(cats).filter(([,v]) => v !== 0).map(([cat, pct]) => [m, cat, `${pct}%`])),
+                        ...(Object.entries(vendorCatAdj).flatMap(([, c]) => Object.entries(c).filter(([,v]) => v !== 0)).length === 0 ? [['(none)', '', '']] : []),
+                        [],
+                        [{ v: 'Collection Rate Adjustments', t: 's', s: { font: { bold: true, sz: 12, color: { rgb: 'DC2626' } } } }],
+                        ['Month', 'Collection %'],
+                        ...Object.entries(collPctByMonth).map(([m, v]) => [m, `${v}%`]),
+                        ...(Object.keys(collPctByMonth).length === 0 ? [['(none)', '']] : []),
+                        [],
+                        [{ v: 'Google Sheets Salary Overrides', t: 's', s: { font: { bold: true, sz: 12, color: { rgb: 'EA580C' } } } }],
+                        ['Month', 'Department', 'Mode', 'Amount EUR', 'Comments'],
+                        ...sfSalaryOverrides.map(o => [o.mKey, o.department || o.account, o.mode, o.mode === 'Override' ? Math.round(o.newVal - o.oldVal) : Math.round(o.amountEUR), o.comments || '']),
+                        ...(sfSalaryOverrides.length === 0 ? [['(none)', '', '', '', '']] : []),
+                      ]);
+                      ws8['!cols'] = [{ wch: 14 }, { wch: 25 }, { wch: 15 }, { wch: 14 }, { wch: 50 }];
+
+                      const wb = XLSX.utils.book_new();
+                      XLSX.utils.book_append_sheet(wb, ws, 'Raw Transactions');
+                      XLSX.utils.book_append_sheet(wb, ws5, 'Dashboard Forecast');
+                      XLSX.utils.book_append_sheet(wb, ws6, 'Vendor Budget by Category');
+                      XLSX.utils.book_append_sheet(wb, ws7, 'Salary Budget + Overrides');
+                      XLSX.utils.book_append_sheet(wb, ws8, 'Assumptions & Config');
+                      XLSX.utils.book_append_sheet(wb, ws2, 'Raw - By Cost Center');
+                      XLSX.utils.book_append_sheet(wb, ws3, 'Raw - By Department');
+                      XLSX.utils.book_append_sheet(wb, ws4, 'Raw - By Month');
+                      XLSX.writeFile(wb, `Dashboard_Data_Export_${new Date().getFullYear()}_${new Date().toISOString().slice(0, 10)}.xlsx`);
+                    }}
+                    className="px-4 py-2 bg-emerald-600 text-white text-sm rounded-lg hover:bg-emerald-700 flex items-center gap-2"
+                  >
+                    <DollarSign className="w-4 h-4" /> Download Excel ({expenseExportData.length.toLocaleString()} rows, 8 sheets)
+                  </button>
+                )}
+                {expenseExportData && (
+                  <span className="text-xs text-gray-400">
+                    Total EUR: <span className="font-semibold text-gray-600">{fmt(expenseExportData.reduce((s, r) => s + r.amountEUR, 0))}</span>
+                    {' | '}Payroll: <span className="font-semibold text-blue-600">{fmt(expenseExportData.filter(r => r.isPayroll).reduce((s, r) => s + r.amountEUR, 0))}</span>
+                    {' | '}Vendors: <span className="font-semibold text-violet-600">{fmt(expenseExportData.filter(r => !r.isPayroll).reduce((s, r) => s + r.amountEUR, 0))}</span>
+                  </span>
+                )}
+              </div>
+
+              {/* Preview table */}
+              {expenseExportData && expenseExportData.length > 0 && (
+                <div className="border border-gray-200 rounded-lg overflow-hidden">
+                  <div className="max-h-[500px] overflow-auto">
+                    <table className="w-full text-xs">
+                      <thead className="sticky top-0 z-10">
+                        <tr className="bg-violet-50 text-left text-[10px] text-violet-700 uppercase">
+                          <th className="px-2 py-2 font-semibold">Month</th>
+                          <th className="px-2 py-2 font-semibold">Source</th>
+                          <th className="px-2 py-2 font-semibold">Cost Center</th>
+                          <th className="px-2 py-2 font-semibold">Department</th>
+                          <th className="px-2 py-2 font-semibold">Group</th>
+                          <th className="px-2 py-2 font-semibold">Account #</th>
+                          <th className="px-2 py-2 font-semibold">Account Name</th>
+                          <th className="px-2 py-2 font-semibold text-right">EUR</th>
+                          <th className="px-2 py-2 font-semibold text-right">ILS</th>
+                          <th className="px-2 py-2 font-semibold">Memo</th>
+                          <th className="px-2 py-2 font-semibold">Date</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {expenseExportData.slice(0, 200).map((r, i) => (
+                          <tr key={i} className={`border-t border-gray-100 ${r.isPayroll ? 'bg-blue-50/30' : ''} hover:bg-gray-50`}>
+                            <td className="px-2 py-1.5 text-gray-600 whitespace-nowrap">{r.month}</td>
+                            <td className="px-2 py-1.5 text-gray-500">{r.source}</td>
+                            <td className="px-2 py-1.5 text-violet-700 font-medium truncate max-w-[180px]">{r.costCenter}</td>
+                            <td className="px-2 py-1.5 text-gray-700">{r.department}</td>
+                            <td className="px-2 py-1.5 text-gray-500">{r.group}</td>
+                            <td className="px-2 py-1.5 text-gray-500 font-mono">{r.accountNumber}</td>
+                            <td className="px-2 py-1.5 text-gray-600 truncate max-w-[200px]">{r.accountName}</td>
+                            <td className={`px-2 py-1.5 text-right font-medium tabular-nums ${r.amountEUR >= 0 ? 'text-gray-700' : 'text-red-600'}`}>{fmtFull(r.amountEUR)}</td>
+                            <td className={`px-2 py-1.5 text-right tabular-nums text-gray-400 ${r.amountILS < 0 ? 'text-red-400' : ''}`}>{fmtILS(r.amountILS)}</td>
+                            <td className="px-2 py-1.5 text-gray-400 truncate max-w-[200px]" title={r.memo}>{r.memo}</td>
+                            <td className="px-2 py-1.5 text-gray-400 whitespace-nowrap">{r.transactionDate}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {expenseExportData.length > 200 && (
+                    <div className="text-center text-xs text-gray-400 py-2 bg-gray-50 border-t">
+                      Showing first 200 of {expenseExportData.length.toLocaleString()} rows — download Excel for full dataset
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
 
         <div className="text-center text-xs text-gray-400 py-4">
           Banks Dashboard | Subsidiary {companyConfig.subsidiary} | Data from NetSuite SuiteQL{companyConfig.hasSF ? ' + Snowflake' : ''}
