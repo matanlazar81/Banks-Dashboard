@@ -5800,14 +5800,15 @@ useEffect(() => {
                               <p className="text-xs text-amber-600 font-medium">Department Adjustments — {forecastDrilldown.month}</p>
                               {hasAnyDeptAdj && <span className="text-[10px] text-amber-500">≈ {totalSalaryPct >= 0 ? '+' : ''}{totalSalaryPct.toFixed(1)}% of total salary</span>}
                             </div>
-                            <table className="w-full text-xs">
+                            <div className="overflow-x-auto">
+                            <table className="w-full text-xs table-fixed" style={{ minWidth: '540px' }}>
                               <thead><tr className="text-left text-[10px] text-amber-500 uppercase border-b border-amber-200">
-                                <th className="pb-1 pr-2">Department</th>
-                                <th className="pb-1 pr-2 text-right">Budget EUR</th>
-                                <th className="pb-1 pr-1 text-center">HC</th>
-                                <th className="pb-1 pr-2 text-center w-[100px]">HC Adj</th>
-                                <th className="pb-1 pr-2 text-center w-[120px]">Adjust %</th>
-                                <th className="pb-1 text-right">Impact</th>
+                                <th className="pb-1 pr-2" style={{ width: '28%' }}>Department</th>
+                                <th className="pb-1 pr-2 text-right whitespace-nowrap" style={{ width: '18%' }}>{useLastActualDept ? 'Actual EUR' : 'Budget EUR'}</th>
+                                <th className="pb-1 pr-1 text-center" style={{ width: '8%' }}>HC</th>
+                                <th className="pb-1 pr-2 text-center" style={{ width: '18%' }}>HC Adj</th>
+                                <th className="pb-1 pr-2 text-center" style={{ width: '16%' }}>Adjust %</th>
+                                <th className="pb-1 text-right whitespace-nowrap" style={{ width: '12%' }}>Impact</th>
                               </tr></thead>
                               <tbody>
                                 {deptEntries.map(([dept, total]) => {
@@ -5842,9 +5843,9 @@ useEffect(() => {
                                   }
                                   return (
                                     <tr key={dept} className={`border-b border-amber-100 ${inherited && pct !== 0 ? 'bg-amber-50/80' : ''}`}>
-                                      <td className="py-1.5 pr-2 text-gray-700 font-medium">{dept}</td>
-                                      <td className="py-1.5 pr-2 text-right text-violet-700">{fmt(total)}</td>
-                                      <td className="py-1.5 pr-1 text-center text-gray-500">{hcCount || '—'}</td>
+                                      <td className="py-1.5 pr-2 text-gray-700 font-medium truncate">{dept}</td>
+                                      <td className="py-1.5 pr-2 text-right text-violet-700 whitespace-nowrap tabular-nums">{fmt(total)}</td>
+                                      <td className="py-1.5 pr-1 text-center text-gray-500 tabular-nums">{hcCount || '—'}</td>
                                       {(() => {
                                         // Helper: apply HC delta → auto-set salary % and Welfare vendor %
                                         const applyHcDelta = (newDelta: number) => {
@@ -5903,7 +5904,7 @@ useEffect(() => {
                                       </td>
                                         );
                                       })()}
-                                      <td className={`py-1.5 text-right font-bold ${pct === 0 ? 'text-gray-300' : impact >= 0 ? 'text-red-600' : 'text-green-700'}`}>
+                                      <td className={`py-1.5 text-right font-bold whitespace-nowrap tabular-nums ${pct === 0 ? 'text-gray-300' : impact >= 0 ? 'text-red-600' : 'text-green-700'}`}>
                                         {pct === 0 ? '—' : (<>
                                           {impact >= 0 ? '+' : ''}{fmt(impact)}
                                           {costPerPerson > 0 && <div className="text-[9px] font-normal text-blue-500 mt-0.5">≈ {impact > 0 ? '+' : ''}{Math.round(impact / costPerPerson)} people</div>}
@@ -5939,6 +5940,7 @@ useEffect(() => {
                                 </tr></tfoot>
                               )}
                             </table>
+                            </div>
                           </div>
                         );
                       })()}
@@ -8601,10 +8603,125 @@ useEffect(() => {
                       ]);
                       ws12['!cols'] = [{ wch: 32 }, ...allMonths.flatMap(() => [{ wch: 12 }, { wch: 12 }, { wch: 11 }]), { wch: 12 }, { wch: 12 }, { wch: 12 }];
 
+                      // ── Sheet: Salary Forecast — Budget Mode ──
+                      const budgetFcRows: any[][] = [];
+                      const budgetDeptRows: any[][] = [];
+                      const allDeptsBudget = new Set<string>();
+                      for (const m of allMonths) {
+                        const fc = cashflowForecast.find(f => f.mKey === m);
+                        const budgetBase = Math.round(sfSalaryBudget[m]?.eur || 0);
+                        const ov = sfSalaryOverrides.filter(o => o.mKey === m);
+                        const ovDelta = ov.reduce((s: number, o: any) => s + (o.mode === 'Override' ? (o.newVal - o.oldVal) : o.amountEUR), 0);
+                        const adjPct = salaryAdjPctByMonth[allMonths.indexOf(m)] || 0;
+                        const adjDelta = adjPct !== 0 ? Math.round(budgetBase * adjPct / 100) : 0;
+                        // Dept adjustment delta
+                        const effDeptAdj: Record<string, number> = {};
+                        const adjMs = Object.keys(salaryDeptAdj).filter(k => k <= m && k.slice(0,4) === m.slice(0,4)).sort();
+                        for (const ak of adjMs) { for (const [d, p] of Object.entries(salaryDeptAdj[ak])) { if (p !== 0) effDeptAdj[d] = p; else delete effDeptAdj[d]; } }
+                        let deptDelta = 0;
+                        if (salaryDeptBudgets[m]) {
+                          for (const [d, p] of Object.entries(effDeptAdj)) { deptDelta += Math.round((salaryDeptBudgets[m][d] || 0) * (p / 100)); }
+                        }
+                        const biSalary = Math.round(expenseExportData.filter(r => r.month === m && r.isPayroll).reduce((s, r) => s + r.amountEUR, 0));
+                        const dashVal = fc?.salary || 0;
+                        budgetFcRows.push([m.slice(5), budgetBase, ovDelta, adjPct !== 0 ? `${adjPct}%` : '', adjDelta, deptDelta, Math.round(dashVal), biSalary, Math.round(dashVal) - biSalary]);
+                        // Per-dept data
+                        if (salaryDeptBudgets[m]) {
+                          for (const [d, v] of Object.entries(salaryDeptBudgets[m])) { allDeptsBudget.add(d); }
+                        }
+                      }
+                      // Per-dept breakdown
+                      const sortedDeptsBudget = [...allDeptsBudget].sort();
+                      for (const dept of sortedDeptsBudget) {
+                        const row: any[] = [dept];
+                        let dTotal = 0;
+                        for (const m of allMonths) {
+                          const v = salaryDeptBudgets[m]?.[dept] || 0;
+                          row.push(Math.round(v));
+                          dTotal += v;
+                        }
+                        row.push(Math.round(dTotal));
+                        if (dTotal !== 0) budgetDeptRows.push(row);
+                      }
+                      const wsBudgetFc = XLSX.utils.aoa_to_sheet([
+                        [{ v: 'Salary Forecast — Budget Mode (FCT_BUDGET)', t: 's', s: { font: { bold: true, sz: 14 } } }],
+                        [{ v: 'How the dashboard projects salary using Snowflake budget data + adjustments', t: 's', s: { font: { color: { rgb: '666666' }, sz: 10 } } }],
+                        [],
+                        ['Month', 'FCT_BUDGET Base', 'GSheets Override', 'Manual Adj %', 'Manual Adj EUR', 'Dept Adj EUR', 'Dashboard Final', 'BI Value', 'Delta'].map(h => ({ v: h, t: 's', s: hdrStyle('7C3AED') })),
+                        ...budgetFcRows.map(row => row.map((v: any, ci: number) => {
+                          if (ci === 0 || ci === 3) return { v, t: 's' };
+                          if (ci === 8) return { v, t: 'n', s: v > 0 ? { font: { color: { rgb: 'DC2626' } } } : v < 0 ? { font: { color: { rgb: '059669' } } } : {} };
+                          return { v, t: 'n' };
+                        })),
+                        [],
+                        ['TOTAL', ...budgetFcRows.reduce((acc, row) => { row.forEach((v: any, i: number) => { if (i > 0 && i !== 3 && typeof v === 'number') acc[i] = (acc[i] || 0) + v; }); return acc; }, [] as any[]).slice(1).map((v: any, i: number) => i === 2 ? '' : Math.round(v || 0))].map((v, i) => i === 0 ? { v, t: 's', s: boldStyle } : typeof v === 'number' ? { v, t: 'n', s: boldStyle } : { v, t: 's', s: boldStyle }),
+                        [],
+                        [{ v: 'Budget by Department × Month', t: 's', s: { font: { bold: true, sz: 12 } } }],
+                        [],
+                        ['Department', ...allMonths.map(m => m.slice(5)), 'Total'].map(h => ({ v: h, t: 's', s: hdrStyle('6D28D9') })),
+                        ...budgetDeptRows.sort((a, b) => (b[b.length - 1] as number) - (a[a.length - 1] as number)).map(row => row.map((v: any, ci: number) => ci === 0 ? { v, t: 's', s: { font: { bold: true } } } : { v, t: 'n' })),
+                      ]);
+                      wsBudgetFc['!cols'] = [{ wch: 20 }, { wch: 15 }, { wch: 15 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 15 }, { wch: 12 }, { wch: 12 }];
+
+                      // ── Sheet: Salary Forecast — Last Actual Mode ──
+                      const lastActRows: any[][] = [];
+                      const lastActDeptRows: any[][] = [];
+                      const lastActDepts = lastActualSalaryMonth && salaryActualsByDept[lastActualSalaryMonth] ? salaryActualsByDept[lastActualSalaryMonth] : {};
+                      const lastActTotal = Object.values(lastActDepts).reduce((s, v) => s + ((v as { eur: number }).eur || 0), 0);
+                      for (const m of allMonths) {
+                        const fc = cashflowForecast.find(f => f.mKey === m);
+                        const isPast = fc?.isPast || false;
+                        const isCur = fc?.isCurrent || false;
+                        const base = (!isPast && !isCur) ? Math.round(lastActTotal) : 0;
+                        const adjPct = salaryAdjPctByMonth[allMonths.indexOf(m)] || 0;
+                        const adjDelta = adjPct !== 0 && base > 0 ? Math.round(base * adjPct / 100) : 0;
+                        // Dept adj using last-actual dept as basis
+                        const effDeptAdj2: Record<string, number> = {};
+                        const adjMs2 = Object.keys(salaryDeptAdj).filter(k => k <= m && k.slice(0,4) === m.slice(0,4)).sort();
+                        for (const ak of adjMs2) { for (const [d, p] of Object.entries(salaryDeptAdj[ak])) { if (p !== 0) effDeptAdj2[d] = p; else delete effDeptAdj2[d]; } }
+                        let deptDelta2 = 0;
+                        for (const [d, p] of Object.entries(effDeptAdj2)) { deptDelta2 += Math.round(((lastActDepts[d] as any)?.eur || 0) * (p / 100)); }
+                        const projectedVal = (!isPast && !isCur) ? Math.round(base * (1 + adjPct / 100)) + deptDelta2 : 0;
+                        const biSalary2 = Math.round(expenseExportData.filter(r => r.month === m && r.isPayroll).reduce((s, r) => s + r.amountEUR, 0));
+                        const actual = (isPast || isCur) ? Math.round(fc?.salary || 0) : 0;
+                        lastActRows.push([m.slice(5), isPast || isCur ? 'Actual' : `Proj (${lastActualSalaryMonth || 'N/A'})`, base, adjPct !== 0 ? `${adjPct}%` : '', adjDelta, deptDelta2, isPast || isCur ? actual : projectedVal, biSalary2, (isPast || isCur ? actual : projectedVal) - biSalary2]);
+                      }
+                      // Per-dept breakdown for last actual
+                      const sortedLastActDepts = Object.entries(lastActDepts).sort((a, b) => (b[1] as any).eur - (a[1] as any).eur);
+                      for (const [dept, v] of sortedLastActDepts) {
+                        const eur = (v as { eur: number }).eur;
+                        if (Math.abs(eur) < 10) continue;
+                        lastActDeptRows.push([dept, Math.round(eur)]);
+                      }
+                      const wsLastActFc = XLSX.utils.aoa_to_sheet([
+                        [{ v: `Salary Forecast — Last Actual Mode (based on ${lastActualSalaryMonth || 'N/A'})`, t: 's', s: { font: { bold: true, sz: 14 } } }],
+                        [{ v: 'Projects salary using last actual month\'s recurring payroll (excl. one-time accounts) per department', t: 's', s: { font: { color: { rgb: '666666' }, sz: 10 } } }],
+                        [{ v: `Excluded accounts: 760038, 76003, 760023, 760020, 760017, 760029, 760014, 760015, 760008 (one-time/irregular)`, t: 's', s: { font: { color: { rgb: '999999' }, sz: 9 } } }],
+                        [],
+                        ['Month', 'Mode', 'Last Actual Base', 'Manual Adj %', 'Manual Adj EUR', 'Dept Adj EUR', 'Dashboard Value', 'BI Value', 'Delta'].map(h => ({ v: h, t: 's', s: hdrStyle('D97706') })),
+                        ...lastActRows.map(row => row.map((v: any, ci: number) => {
+                          if (ci === 0 || ci === 1 || ci === 3) return { v, t: 's', s: ci === 1 && v === 'Actual' ? { font: { color: { rgb: '059669' }, bold: true } } : {} };
+                          if (ci === 8) return { v, t: 'n', s: v > 0 ? { font: { color: { rgb: 'DC2626' } } } : v < 0 ? { font: { color: { rgb: '059669' } } } : {} };
+                          return { v, t: 'n' };
+                        })),
+                        [],
+                        ['TOTAL', '', ...lastActRows.reduce((acc, row) => { [2,4,5,6,7,8].forEach(i => { if (typeof row[i] === 'number') acc[i] = (acc[i] || 0) + row[i]; }); return acc; }, [] as any[]).slice(2).map((v: any) => Math.round(v || 0))].map((v, i) => i === 0 || i === 1 ? { v, t: 's', s: boldStyle } : { v, t: 'n', s: boldStyle }),
+                        [],
+                        [{ v: `Department Breakdown — ${lastActualSalaryMonth || 'N/A'} (recurring payroll only)`, t: 's', s: { font: { bold: true, sz: 12 } } }],
+                        [],
+                        ['Department', 'Monthly EUR'].map(h => ({ v: h, t: 's', s: hdrStyle('B45309') })),
+                        ...lastActDeptRows.map(row => [{ v: row[0], t: 's', s: { font: { bold: true } } }, { v: row[1], t: 'n' }]),
+                        [],
+                        ['TOTAL', Math.round(lastActTotal)].map((v, i) => i === 0 ? { v, t: 's', s: boldStyle } : { v, t: 'n', s: boldStyle }),
+                      ]);
+                      wsLastActFc['!cols'] = [{ wch: 20 }, { wch: 18 }, { wch: 16 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 15 }, { wch: 12 }, { wch: 12 }];
+
                       const wb = XLSX.utils.book_new();
                       XLSX.utils.book_append_sheet(wb, ws9, 'Reconciliation');
                       XLSX.utils.book_append_sheet(wb, ws10, 'Salary Delta by Dept');
                       XLSX.utils.book_append_sheet(wb, ws11, 'Salary by Source Type');
+                      XLSX.utils.book_append_sheet(wb, wsBudgetFc, 'Salary Fc - Budget');
+                      XLSX.utils.book_append_sheet(wb, wsLastActFc, 'Salary Fc - Last Actual');
                       XLSX.utils.book_append_sheet(wb, ws12, 'Vendor Delta by CostCenter');
                       XLSX.utils.book_append_sheet(wb, ws5, 'Dashboard Forecast');
                       XLSX.utils.book_append_sheet(wb, ws, 'Raw Transactions');
@@ -8618,7 +8735,7 @@ useEffect(() => {
                     }}
                     className="px-4 py-2 bg-emerald-600 text-white text-sm rounded-lg hover:bg-emerald-700 flex items-center gap-2"
                   >
-                    <DollarSign className="w-4 h-4" /> Download Excel ({expenseExportData.length.toLocaleString()} rows, 12 sheets)
+                    <DollarSign className="w-4 h-4" /> Download Excel ({expenseExportData.length.toLocaleString()} rows, 14 sheets)
                   </button>
                 )}
                 {expenseExportData && (
