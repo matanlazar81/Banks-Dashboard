@@ -6137,14 +6137,16 @@ useEffect(() => {
                               {hasAnyDeptAdj && <span className="text-[10px] text-amber-500">≈ {totalSalaryPct >= 0 ? '+' : ''}{totalSalaryPct.toFixed(1)}% of total salary</span>}
                             </div>
                             <div className="overflow-x-auto">
-                            <table className="w-full text-xs table-fixed" style={{ minWidth: '540px' }}>
+                            <table className="w-full text-xs table-fixed" style={{ minWidth: '700px' }}>
                               <thead><tr className="text-left text-[10px] text-amber-500 uppercase border-b border-amber-200">
-                                <th className="pb-1 pr-2" style={{ width: '28%' }}>Department</th>
-                                <th className="pb-1 pr-2 text-right whitespace-nowrap" style={{ width: '18%' }}>{useLastActualDept ? 'Actual EUR' : 'Budget EUR'}</th>
-                                <th className="pb-1 pr-1 text-center" style={{ width: '8%' }}>HC</th>
-                                <th className="pb-1 pr-2 text-center" style={{ width: '18%' }}>HC Adj</th>
-                                <th className="pb-1 pr-2 text-center" style={{ width: '16%' }}>Adjust %</th>
-                                <th className="pb-1 text-right whitespace-nowrap" style={{ width: '12%' }}>Impact</th>
+                                <th className="pb-1 pr-2" style={{ width: '20%' }}>Department</th>
+                                <th className="pb-1 pr-2 text-right whitespace-nowrap" style={{ width: '14%' }}>{useLastActualDept ? 'Actual EUR' : 'Budget EUR'}</th>
+                                <th className="pb-1 pr-1 text-right text-blue-500 whitespace-nowrap" style={{ width: '12%' }}>HC Impact</th>
+                                <th className="pb-1 pr-1 text-right text-violet-600 whitespace-nowrap" style={{ width: '14%' }}>Effective</th>
+                                <th className="pb-1 pr-1 text-center" style={{ width: '6%' }}>HC</th>
+                                <th className="pb-1 pr-2 text-center" style={{ width: '14%' }}>HC Adj</th>
+                                <th className="pb-1 pr-2 text-center" style={{ width: '12%' }}>Adjust %</th>
+                                <th className="pb-1 text-right whitespace-nowrap" style={{ width: '8%' }}>Impact</th>
                               </tr></thead>
                               <tbody>
                                 {deptEntries.map(([dept, total]) => {
@@ -6177,10 +6179,16 @@ useEffect(() => {
                                     // Derive % from HC
                                     displayPct = Math.round((displayHc * costPerPerson / total) * 100);
                                   }
+                                  // HC Lever impact attributed to this department (ILS → EUR)
+                                  const deptHcILS = monthlyHCImpact[mKey]?.byDept?.[dept] || 0;
+                                  const deptHcEUR = ilsRate > 0 ? Math.round(deptHcILS / ilsRate) : 0;
+                                  const deptEffective = total + deptHcEUR;
                                   return (
                                     <tr key={dept} className={`border-b border-amber-100 ${inherited && pct !== 0 ? 'bg-amber-50/80' : ''}`}>
                                       <td className="py-1.5 pr-2 text-gray-700 font-medium truncate">{dept}</td>
                                       <td className="py-1.5 pr-2 text-right text-violet-700 whitespace-nowrap tabular-nums">{fmt(total)}</td>
+                                      <td className={`py-1.5 pr-1 text-right whitespace-nowrap tabular-nums ${deptHcEUR === 0 ? 'text-gray-300' : deptHcEUR > 0 ? 'text-red-500' : 'text-green-600'}`}>{deptHcEUR === 0 ? '—' : (deptHcEUR > 0 ? '+' : '') + fmt(deptHcEUR)}</td>
+                                      <td className="py-1.5 pr-1 text-right text-violet-800 font-semibold whitespace-nowrap tabular-nums">{fmt(deptEffective)}</td>
                                       <td className="py-1.5 pr-1 text-center text-gray-500 tabular-nums">{hcCount || '—'}</td>
                                       {(() => {
                                         // Helper: apply HC delta → auto-set salary % and Welfare vendor %
@@ -6261,6 +6269,8 @@ useEffect(() => {
                                 <tr className="border-t-2 border-amber-300 font-bold">
                                   <td className="py-1.5">Total Base</td>
                                   <td className="py-1.5 text-right text-violet-700 whitespace-nowrap tabular-nums">{fmt(totalBudgetEUR)}</td>
+                                  <td className={`py-1.5 text-right whitespace-nowrap tabular-nums ${hcNetEUR === 0 ? 'text-gray-300' : hcNetEUR > 0 ? 'text-red-500' : 'text-green-600'}`}>{hcNetEUR === 0 ? '—' : (hcNetEUR > 0 ? '+' : '') + fmt(hcNetEUR)}</td>
+                                  <td className="py-1.5 text-right text-violet-800 whitespace-nowrap tabular-nums">{fmt(totalBudgetEUR + hcNetEUR)}</td>
                                   <td className="py-1.5 text-center tabular-nums">{totalHC}</td>
                                   <td className="py-1.5 text-center">
                                     {hasAnyDeptAdj && <button onClick={() => { setSalaryDeptAdj({}); setHeadcountAdj({}); }}
@@ -6286,34 +6296,34 @@ useEffect(() => {
                                   <tr className="border-t border-amber-200 text-[10px] bg-orange-50/30">
                                     <td className="py-1 text-orange-600">+ Salary Override (Google Sheets)</td>
                                     <td className={`py-1 text-right whitespace-nowrap tabular-nums ${sfOverrideTotal >= 0 ? 'text-red-500' : 'text-green-600'}`}>{sfOverrideTotal >= 0 ? '+' : ''}{fmt(sfOverrideTotal)}</td>
-                                    <td colSpan={4}></td>
+                                    <td colSpan={6}></td>
                                   </tr>
                                 )}
                                 {adj !== 0 && (
                                   <tr className="border-t border-amber-200 text-[10px] bg-blue-50/30">
                                     <td className="py-1 text-blue-600">+ Manual Adjustment ({adj > 0 ? '+' : ''}{adj}%)</td>
                                     <td className={`py-1 text-right whitespace-nowrap tabular-nums ${(adjustedTotal - budgetTotal) >= 0 ? 'text-red-500' : 'text-green-600'}`}>{(adjustedTotal - budgetTotal) >= 0 ? '+' : ''}{fmt(adjustedTotal - budgetTotal)}</td>
-                                    <td colSpan={4}></td>
+                                    <td colSpan={6}></td>
                                   </tr>
                                 )}
                                 {totalDeptImpact !== 0 && (
                                   <tr className="border-t border-amber-200 text-[10px] bg-amber-50/50">
                                     <td className="py-1 text-amber-700">+ Dept Adjustment</td>
                                     <td className={`py-1 text-right whitespace-nowrap tabular-nums ${totalDeptImpact >= 0 ? 'text-red-500' : 'text-green-600'}`}>{totalDeptImpact >= 0 ? '+' : ''}{fmt(totalDeptImpact)}</td>
-                                    <td colSpan={4}></td>
+                                    <td colSpan={6}></td>
                                   </tr>
                                 )}
                                 {hcNetEUR !== 0 && (
                                   <tr className="border-t border-amber-200 text-[10px] bg-blue-50/40">
                                     <td className="py-1 text-blue-700">+ HC Levers (Hired/Term/Leave)</td>
                                     <td className={`py-1 text-right whitespace-nowrap tabular-nums ${hcNetEUR >= 0 ? 'text-red-500' : 'text-green-600'}`}>{hcNetEUR >= 0 ? '+' : ''}{fmt(hcNetEUR)}</td>
-                                    <td colSpan={4}></td>
+                                    <td colSpan={6}></td>
                                   </tr>
                                 )}
                                 <tr className="border-t-2 border-amber-400 font-bold bg-amber-50">
                                   <td className="py-1.5">Effective Total (matches Budget adjusted)</td>
                                   <td className="py-1.5 text-right text-green-700 whitespace-nowrap tabular-nums">{fmt(adjustedTotal + totalDeptImpact + sfOverrideTotal + (hasHcImpact ? hcNetEUR : 0))}</td>
-                                  <td colSpan={4}></td>
+                                  <td colSpan={6}></td>
                                 </tr>
                                 </>); })()}
                                 </tfoot>

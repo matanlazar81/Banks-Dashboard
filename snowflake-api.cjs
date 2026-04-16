@@ -663,14 +663,17 @@ function createSnowflakeClient(env) {
     }) : `${yr}-01`;
     console.log(`[Snowflake] Fetching monthly HC impact for ${yr} from ${startMonth}...`);
     const rows = await query(`
-      SELECT TO_CHAR(EVENT_MONTH_DATE, 'YYYY-MM') AS MONTH,
-             EVENT_TYPE, EVENT_SUB_TYPE,
+      SELECT TO_CHAR(h.EVENT_MONTH_DATE, 'YYYY-MM') AS MONTH,
+             h.EVENT_TYPE, h.EVENT_SUB_TYPE,
+             COALESCE(d.DEPARTMENT_NAME, h.DEPARTMENT, 'Unassigned') AS DEPARTMENT,
              COUNT(*) AS CNT,
-             ROUND(SUM(EMPLOYER_COST)) AS TOTAL_COST
-      FROM DL_PRODUCTION.HR.FCT_HEADCOUNT_EVENT
-      WHERE EVENT_MONTH_DATE >= TO_DATE('${startMonth}-01')
-        AND EVENT_MONTH_DATE <= '${yr}-12-31'
-      GROUP BY TO_CHAR(EVENT_MONTH_DATE, 'YYYY-MM'), EVENT_TYPE, EVENT_SUB_TYPE
+             ROUND(SUM(h.EMPLOYER_COST)) AS TOTAL_COST
+      FROM DL_PRODUCTION.HR.FCT_HEADCOUNT_EVENT h
+      LEFT JOIN DL_PRODUCTION.FINANCE.DIM_DEPARTMENT d
+        ON h.DEPARTMENT = d.GROUP_NAME AND d.SUBSIDIARY_ID = 3 AND d.SRC_IS_ACTIVE = TRUE
+      WHERE h.EVENT_MONTH_DATE >= TO_DATE('${startMonth}-01')
+        AND h.EVENT_MONTH_DATE <= '${yr}-12-31'
+      GROUP BY TO_CHAR(h.EVENT_MONTH_DATE, 'YYYY-MM'), h.EVENT_TYPE, h.EVENT_SUB_TYPE, COALESCE(d.DEPARTMENT_NAME, h.DEPARTMENT, 'Unassigned')
       ORDER BY MONTH, EVENT_TYPE, EVENT_SUB_TYPE
     `);
     const byMonth = {};
@@ -679,34 +682,41 @@ function createSnowflakeClient(env) {
     for (let m = 1; m <= 12; m++) allMonths.push(`${yr}-${String(m).padStart(2, '0')}`);
     // First pass: aggregate net per month + per-category detail
     const monthNet = {};
-    const monthCategories = {}; // month → [{type, subType, count, cost}]
+    const monthCategories = {}; // month → [{type, subType, count, cost, dept}]
     for (const r of rows) {
       const m = r.MONTH;
       if (!monthNet[m]) monthNet[m] = 0;
       if (!monthCategories[m]) monthCategories[m] = [];
       const signed = r.EVENT_TYPE === 'increase' ? (r.TOTAL_COST || 0) : -(r.TOTAL_COST || 0);
       monthNet[m] += signed;
-      monthCategories[m].push({ type: r.EVENT_TYPE, subType: r.EVENT_SUB_TYPE, count: r.CNT, cost: Math.round(r.TOTAL_COST || 0) });
+      monthCategories[m].push({ type: r.EVENT_TYPE, subType: r.EVENT_SUB_TYPE, count: r.CNT, cost: Math.round(r.TOTAL_COST || 0), department: r.DEPARTMENT || 'Unassigned' });
     }
-    // Second pass: build cumulative running totals (overall + per category)
-    const categoryCumulative = {}; // subType → running ILS total
+    // Second pass: build cumulative running totals (overall + per category + per dept)
+    const categoryCumulative = {}; // subType → { type, cost, count }
+    const deptCumulative = {}; // dept → running ILS total (signed)
     for (const m of allMonths) {
       running += (monthNet[m] || 0);
-      // Update per-category cumulative
+      // Update per-category + per-dept cumulative
       for (const cat of (monthCategories[m] || [])) {
         const key = cat.subType;
         if (!categoryCumulative[key]) categoryCumulative[key] = { type: cat.type, cost: 0, count: 0 };
-        categoryCumulative[key].cost += cat.type === 'increase' ? cat.cost : -cat.cost;
+        const signed = cat.type === 'increase' ? cat.cost : -cat.cost;
+        categoryCumulative[key].cost += signed;
         categoryCumulative[key].count += cat.count;
+        deptCumulative[cat.department] = (deptCumulative[cat.department] || 0) + signed;
       }
       // Deep-copy cumulative state so each month has its own snapshot
       const catSnapshot = Object.entries(categoryCumulative)
         .filter(([, v]) => v.cost !== 0)
         .map(([subType, v]) => ({ subType, type: v.type, count: v.count, runningCost: Math.round(v.cost) }));
+      const deptSnapshot = Object.fromEntries(
+        Object.entries(deptCumulative).filter(([, v]) => v !== 0).map(([dp, v]) => [dp, Math.round(v)])
+      );
       byMonth[m] = {
         net: Math.round(monthNet[m] || 0),
         running: Math.round(running),
         categories: catSnapshot,
+        byDept: deptSnapshot,
       };
     }
     console.log(`[Snowflake] Monthly HC impact: ${Object.keys(monthNet).length} months with events, final running=${Math.round(running)}`);
