@@ -5723,7 +5723,7 @@ useEffect(() => {
                   // HC lever impact for this month (ILS → EUR)
                   const hcImpactILS = monthlyHCImpact[forecastDrilldown.mKey]?.running || 0;
                   const hcImpactEUR = ilsRate > 0 ? Math.round(hcImpactILS / ilsRate) : 0;
-                  const hasHcImpact = useLastActualInDrill && hcImpactEUR !== 0;
+                  const hasHcImpact = hcImpactEUR !== 0;
                   const hasAnyAdjustment = adj !== 0 || hasLeverOverrides || hasSfOverrides || hasDeptAdj2 || hasHcImpact;
                   return (
                     <div className="space-y-4">
@@ -5789,7 +5789,7 @@ useEffect(() => {
                             {hasHcImpact && monthlyHCImpact[forecastDrilldown.mKey]?.categories ? (
                               <>
                                 <tr className="border-b border-blue-200 bg-blue-50/30">
-                                  <td className="py-1 pl-3 text-[10px] text-blue-500 uppercase font-medium" colSpan={2}>HC Levers — cumulative through {forecastDrilldown.month}</td>
+                                  <td className="py-1 pl-3 text-[10px] text-blue-500 uppercase font-medium" colSpan={2}>HC Levers — cumulative through {forecastDrilldown.month}{!useLastActualInDrill ? ' (info only — included in budget)' : ''}</td>
                                 </tr>
                                 {monthlyHCImpact[forecastDrilldown.mKey].categories.map((c: any, ci: number) => {
                                   const catCostILS = c.runningCost || 0;
@@ -5866,7 +5866,7 @@ useEffect(() => {
                                   </td>
                                 </tr>
                               </>
-                            ) : useLastActualInDrill ? (
+                            ) : monthlyHCImpact[forecastDrilldown.mKey] ? (
                               <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600 pl-3 text-gray-400">HC Levers (no events)</td><td className="py-1.5 text-right text-gray-400">-</td></tr>
                             ) : null}
                             {(adj !== 0 || hasSfOverrides || hasDeptAdj2 || hasHcImpact) && (
