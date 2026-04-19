@@ -523,6 +523,28 @@ export default function App() {
   const [expenseExportOpen, setExpenseExportOpen] = useState(false);
   const [yoyRevenue, setYoyRevenue] = useState<{ currentYear: number; priorYear: number; throughMonth: number; currentYearRev?: number; priorYearRev?: number; currentYearPaid?: number; priorYearPaid?: number; currentYearCustomers?: number; priorYearCustomers?: number } | null>(null);
   const [asOfDateRaw, setAsOfDateRaw] = useState(''); // raw text typed in date input
+
+  // ── Back-date → NS as-of balances: when asOfDate is earlier than today, replace bankAccounts
+  //    with the per-account NS snapshot for that exact date so the Bank Balance section and
+  //    derived KR5 "Current Balance" reconcile to NS instead of the cashflow-model projection. ──
+  useEffect(() => {
+    if (!asOfDate) return;
+    const today = new Date().toISOString().slice(0, 10);
+    if (asOfDate >= today) return; // live mode — keep /api/bank-accounts as source
+    const sub = COMPANY_CONFIG[activeCompany]?.subsidiary || 3;
+    fetch(`/api/ns-bank-accounts-asof?date=${asOfDate}&subsidiary=${sub}`, { credentials: 'include' })
+      .then(r => r.ok ? r.json() : null)
+      .then(j => {
+        if (j && Array.isArray(j.data)) {
+          console.info('[BankAccounts] as-of', asOfDate, 'loaded', j.data.length, 'accounts');
+          setBankAccounts(j.data);
+        } else if (j?.error) {
+          console.warn('[BankAccounts] as-of fetch error:', j.error);
+        }
+      })
+      .catch(e => console.warn('[BankAccounts] as-of fetch failed:', e));
+  }, [asOfDate, activeCompany]);
+
   // ── Per-company data cache (avoid re-fetching when switching tabs) ──
   const companyDataCache = useRef<Record<string, any>>({});
   // ── Live current-year cashflow per company (for propagating to next year) ──

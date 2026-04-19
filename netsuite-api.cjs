@@ -532,7 +532,7 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
         FROM transactionaccountingline tal
         JOIN transaction t ON tal.transaction = t.id
         JOIN account a ON tal.account = a.id
-        WHERE a.accttype = 'Bank' AND t.subsidiary = ${subsidiaryId}
+        WHERE a.accttype IN ('Bank', 'CredCard') AND t.subsidiary = ${subsidiaryId}
           AND tal.posting = 'T' AND tal.accountingbook = ${bookId}
           AND t.type NOT IN ('FxReval')
           AND t.trandate < TO_DATE('2026-01-01', 'YYYY-MM-DD')
@@ -545,7 +545,7 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
         FROM transactionaccountingline tal
         JOIN transaction t ON tal.transaction = t.id
         JOIN account a ON tal.account = a.id
-        WHERE a.accttype = 'Bank' AND t.subsidiary = ${subsidiaryId}
+        WHERE a.accttype IN ('Bank', 'CredCard') AND t.subsidiary = ${subsidiaryId}
           AND tal.posting = 'T' AND tal.accountingbook = ${bookId}
           AND t.type NOT IN ('FxReval')
           AND t.trandate >= TO_DATE('2026-01-01', 'YYYY-MM-DD')
@@ -584,7 +584,7 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
         FROM transactionaccountingline tal
         JOIN transaction t ON tal.transaction = t.id
         JOIN account a ON tal.account = a.id
-        WHERE a.accttype = 'Bank' AND t.subsidiary = ${subsidiaryId}
+        WHERE a.accttype IN ('Bank', 'CredCard') AND t.subsidiary = ${subsidiaryId}
           AND tal.posting = 'T' AND tal.accountingbook = 1
           AND t.type = 'FxReval'
           AND t.trandate >= ADD_MONTHS(SYSDATE, -3)
@@ -621,7 +621,7 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
         FROM transactionaccountingline tal
         JOIN transaction t ON tal.transaction = t.id
         JOIN account a ON tal.account = a.id
-        WHERE a.accttype = 'Bank' AND t.subsidiary = ${subsidiaryId}
+        WHERE a.accttype IN ('Bank', 'CredCard') AND t.subsidiary = ${subsidiaryId}
           AND tal.posting = 'T' AND tal.accountingbook = 2
           AND t.type = 'FxReval'
           AND t.trandate >= ADD_MONTHS(SYSDATE, -3)
@@ -875,7 +875,7 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
         FROM transactionaccountingline tal
         JOIN transaction t ON t.id = tal.transaction
         JOIN account a ON a.id = tal.account
-        WHERE a.accttype = 'Bank'
+        WHERE a.accttype IN ('Bank', 'CredCard')
           AND t.subsidiary = ${subsidiaryId}
           AND tal.accountingbook = ${bookId}
           AND tal.posting = 'T'
@@ -928,7 +928,7 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
         FROM transactionaccountingline tal
         JOIN transaction t ON t.id = tal.transaction
         JOIN account a ON a.id = tal.account
-        WHERE a.accttype = 'Bank'
+        WHERE a.accttype IN ('Bank', 'CredCard')
           AND t.subsidiary = ${subsidiaryId}
           AND tal.accountingbook = ${bookId}
           AND tal.posting = 'T'
@@ -1080,7 +1080,7 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
         FROM transactionaccountingline tal
         JOIN transaction t ON tal.transaction = t.id
         JOIN account a ON tal.account = a.id
-        WHERE a.accttype = 'Bank' AND t.subsidiary = ${subsidiaryId}
+        WHERE a.accttype IN ('Bank', 'CredCard') AND t.subsidiary = ${subsidiaryId}
           AND tal.posting = 'T' AND tal.accountingbook = 1
           AND t.type NOT IN ('Transfer', 'FxReval')
           AND t.trandate >= TO_DATE('${prevYear}-01-01', 'YYYY-MM-DD')
@@ -1325,7 +1325,7 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
         FROM transactionaccountingline tal
         JOIN transaction t ON tal.transaction = t.id
         JOIN account a ON tal.account = a.id
-        WHERE a.accttype = 'Bank' AND t.subsidiary = ${subsidiaryId}
+        WHERE a.accttype IN ('Bank', 'CredCard') AND t.subsidiary = ${subsidiaryId}
           AND tal.posting = 'T' AND tal.accountingbook = ${bookId}
           AND t.type NOT IN ('Transfer', 'FxReval')
           AND t.trandate >= TO_DATE('${startDate}', 'YYYY-MM-DD')
@@ -1382,7 +1382,7 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
       JOIN account a ON tal.account = a.id
       LEFT JOIN vendor v ON t.entity = v.id AND t.type IN ('VendPymt', 'VendBill')
       LEFT JOIN entity e2 ON t.entity = e2.id AND t.type NOT IN ('VendPymt', 'VendBill')
-      WHERE a.accttype = 'Bank' AND t.subsidiary = ${subsidiaryId}
+      WHERE a.accttype IN ('Bank', 'CredCard') AND t.subsidiary = ${subsidiaryId}
         AND tal.posting = 'T' AND tal.accountingbook = 1
         AND t.type NOT IN ('Transfer', 'FxReval')
         AND t.type = '${txnType}'
@@ -1415,7 +1415,7 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
           FROM transactionaccountingline tal
           JOIN transaction t ON tal.transaction = t.id
           JOIN account a ON tal.account = a.id
-          WHERE a.accttype = 'Bank' AND tal.posting = 'T' AND tal.accountingbook = 2
+          WHERE a.accttype IN ('Bank', 'CredCard') AND tal.posting = 'T' AND tal.accountingbook = 2
             AND t.id IN (${chunk.join(',')})
           GROUP BY t.id
         `);
@@ -1691,7 +1691,7 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
       FROM transactionaccountingline tal
       JOIN transaction t ON tal.transaction = t.id
       JOIN account a ON tal.account = a.id
-      WHERE a.accttype = 'Bank' AND t.subsidiary = ${subsidiaryId}
+      WHERE a.accttype IN ('Bank', 'CredCard') AND t.subsidiary = ${subsidiaryId}
         AND tal.posting = 'T' AND tal.accountingbook = 1
         AND t.type = 'FxReval'
         AND t.trandate < TO_DATE('${startYear}-01-01', 'YYYY-MM-DD')
@@ -1701,7 +1701,7 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
       FROM transactionaccountingline tal
       JOIN transaction t ON tal.transaction = t.id
       JOIN account a ON tal.account = a.id
-      WHERE a.accttype = 'Bank' AND t.subsidiary = ${subsidiaryId}
+      WHERE a.accttype IN ('Bank', 'CredCard') AND t.subsidiary = ${subsidiaryId}
         AND tal.posting = 'T' AND tal.accountingbook = 2
         AND t.type = 'FxReval'
         AND t.trandate < TO_DATE('${startYear}-01-01', 'YYYY-MM-DD')
@@ -1718,7 +1718,7 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
       FROM transactionaccountingline tal
       JOIN transaction t ON tal.transaction = t.id
       JOIN account a ON tal.account = a.id
-      WHERE a.accttype = 'Bank' AND t.subsidiary = ${subsidiaryId}
+      WHERE a.accttype IN ('Bank', 'CredCard') AND t.subsidiary = ${subsidiaryId}
         AND tal.posting = 'T' AND tal.accountingbook = 1
         AND t.type = 'FxReval'
         AND t.trandate >= TO_DATE('${startYear}-01-01', 'YYYY-MM-DD')
@@ -1737,7 +1737,7 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
       FROM transactionaccountingline tal
       JOIN transaction t ON tal.transaction = t.id
       JOIN account a ON tal.account = a.id
-      WHERE a.accttype = 'Bank' AND t.subsidiary = ${subsidiaryId}
+      WHERE a.accttype IN ('Bank', 'CredCard') AND t.subsidiary = ${subsidiaryId}
         AND tal.posting = 'T' AND tal.accountingbook = 2
         AND t.type = 'FxReval'
         AND t.trandate >= TO_DATE('${startYear}-01-01', 'YYYY-MM-DD')
