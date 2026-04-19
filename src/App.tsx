@@ -79,6 +79,17 @@ type Scenario = {
   company?: string;
 };
 
+type HistoryEntry = {
+  id: number;
+  editedByEmail: string;
+  editedByName: string;
+  editedAt: string;
+  changeType: 'added' | 'removed' | 'changed';
+  fieldPath: string;
+  before: any;
+  after: any;
+};
+
 type BankData = {
   openingBalance: number;
   dailyBalances: { date: string; balance: number; movement: number; adjustedBalance?: number }[];
@@ -772,6 +783,12 @@ useEffect(() => {
   const [_shareOpen, _setShareOpen] = useState<string|null>(null);
   const [_shareMap, _setShareMap] = useState<Record<string,{email:string;displayName:string}[]>>({});
   const [_sharePending, _setSharePending] = useState<Record<string, boolean>>({});
+  const [_historyOpen, _setHistoryOpen] = useState<string|null>(null);
+  const [_historyData, _setHistoryData] = useState<Record<string, HistoryEntry[]>>({});
+  const [_historyLoading, _setHistoryLoading] = useState<Record<string, boolean>>({});
+  const [_activeSharedOwner, _setActiveSharedOwner] = useState<string|null>(null);
+  const _activeSharedOwnerRef = useRef<string|null>(null);
+  useEffect(() => { _activeSharedOwnerRef.current = _activeSharedOwner; }, [_activeSharedOwner]);
   const refetchScenarios = useCallback(() => {
     fetch('/api/scenarios', { credentials: 'include' }).then(r => {
       if (!r.ok) { console.error('[Scenarios] fetch failed:', r.status, r.statusText); return null; }
@@ -807,6 +824,14 @@ useEffect(() => {
     fetch('/api/scenarios/' + sid + '/shares', { credentials: 'include' }).then(r => r.json()).then(d => {
       _setShareMap(prev => ({...prev, [sid]: d.data || []}));
     }).catch(() => {});
+  }, []);
+  const _loadHistory = useCallback((sid: string) => {
+    _setHistoryLoading(prev => ({ ...prev, [sid]: true }));
+    fetch('/api/scenarios/' + sid + '/history?limit=200', { credentials: 'include' })
+      .then(r => r.json())
+      .then(d => { _setHistoryData(prev => ({ ...prev, [sid]: d.data || [] })); })
+      .catch(() => { _setHistoryData(prev => ({ ...prev, [sid]: [] })); })
+      .finally(() => { _setHistoryLoading(prev => ({ ...prev, [sid]: false })); });
   }, []);
   const _ensureSaved = useCallback((sid: string) => {
     const sc = scenarios.find((x: any) => x.id === sid);
@@ -936,18 +961,25 @@ useEffect(() => {
     const newScenario: Scenario = { id, name, createdAt: now, updatedAt: now, data: getCurrentScenarioData() };
     setScenarios(prev => [...prev, newScenario]);
     setActiveScenarioId(id);
+    _setActiveSharedOwner(null);
     setScenarioMenuOpen(false);
     _syncSave(id, name, getCurrentScenarioData());
   }, [getCurrentScenarioData, _syncSave]);
 
   const updateScenario = useCallback((id: string) => {
-    setScenarios(prev => prev.map(s => s.id === id ? { ...s, updatedAt: new Date().toISOString(), data: getCurrentScenarioData() } : s));
-    _syncUpdate(id, { data: getCurrentScenarioData() });
-  }, [getCurrentScenarioData, _syncUpdate]);
+    const currentData = getCurrentScenarioData();
+    const isSharedScenario = _shared.some(s => s.id === id);
+    if (isSharedScenario) {
+      _setShared(prev => prev.map(s => s.id === id ? { ...s, updatedAt: new Date().toISOString(), data: currentData } : s));
+    } else {
+      setScenarios(prev => prev.map(s => s.id === id ? { ...s, updatedAt: new Date().toISOString(), data: currentData } : s));
+    }
+    _syncUpdate(id, { data: currentData });
+  }, [getCurrentScenarioData, _syncUpdate, _shared]);
 
   const loadScenario = useCallback((id: string) => {
     const scenario = scenarios.find(s => s.id === id);
-    if (scenario) { applyScenarioData(scenario.data); setActiveScenarioId(id); setScenarioMenuOpen(false); }
+    if (scenario) { applyScenarioData(scenario.data); setActiveScenarioId(id); _setActiveSharedOwner(null); setScenarioMenuOpen(false); }
   }, [scenarios, applyScenarioData]);
 
   // Auto-save: silently update active scenario whenever adjustments change
@@ -971,8 +1003,12 @@ useEffect(() => {
         || Object.keys(currentData.vendorDetailAdj).length > 0
         || Object.keys(currentData.headcountAdj).length > 0;
       if (!hasAnyAdj) return;
-      if (activeScenarioId) {
-        // Update existing scenario
+      if (activeScenarioId && _activeSharedOwnerRef.current) {
+        // Update shared scenario (owned by someone else)
+        _setShared(prev => prev.map(s => s.id === activeScenarioId ? { ...s, updatedAt: new Date().toISOString(), data: currentData } : s));
+        _syncUpdate(activeScenarioId, { data: currentData });
+      } else if (activeScenarioId) {
+        // Update own scenario
         setScenarios(prev => prev.map(s => s.id === activeScenarioId ? { ...s, updatedAt: new Date().toISOString(), data: currentData } : s));
         _syncUpdate(activeScenarioId, { data: currentData });
       } else {
@@ -990,7 +1026,7 @@ useEffect(() => {
 
   const deleteScenario = useCallback((id: string) => {
     setScenarios(prev => prev.filter(s => s.id !== id));
-    if (activeScenarioId === id) setActiveScenarioId(null);
+    if (activeScenarioId === id) { setActiveScenarioId(null); _setActiveSharedOwner(null); }
     if (compareScenarioId === id) setCompareScenarioId(null);
     _syncDelete(id);
   }, [activeScenarioId, compareScenarioId, _syncDelete]);
@@ -1050,7 +1086,7 @@ useEffect(() => {
   }, []);
 
   const companyScenarios = useMemo(() => scenarios.filter(s => !s.company || s.company === activeCompany), [scenarios, activeCompany]);
-  const activeScenario = scenarios.find(s => s.id === activeScenarioId);
+  const activeScenario = scenarios.find(s => s.id === activeScenarioId) || _shared.find(s => s.id === activeScenarioId);
   const hasAnyAdjustments = Object.values(salaryAdjPctByMonth).some(v => v !== 0) || Object.keys(collPctByMonth).length > 0 || Object.values(salaryDeptAdj).some(m => Object.values(m).some(v => v !== 0)) || Object.values(vendorCatAdj).some(m => Object.values(m).some(v => v !== 0)) || Object.keys(vendorDetailAdj).length > 0 || Object.keys(leverOverrides).length > 0;
 
   // Compare scenario: compute cashflow with comparison data
@@ -4625,6 +4661,11 @@ useEffect(() => {
                                       title="Share"
                                       className={`text-[9px] px-1.5 py-0.5 rounded transition-colors ${_shareOpen === s.id ? 'bg-emerald-100 text-emerald-700' : 'hover:bg-emerald-50 text-gray-400 hover:text-emerald-600'}`}
                                     >👤</button>
+                                    <button
+                                      onClick={e => { e.stopPropagation(); if (_historyOpen === s.id) { _setHistoryOpen(null); } else { _setHistoryOpen(s.id); _loadHistory(s.id); } }}
+                                      title="Change history"
+                                      className={`text-[9px] px-1.5 py-0.5 rounded transition-colors ${_historyOpen === s.id ? 'bg-amber-100 text-amber-700' : 'hover:bg-amber-50 text-gray-400 hover:text-amber-600'}`}
+                                    >📜</button>
                                   </div>
                                 </>
                               )}
@@ -4705,6 +4746,44 @@ useEffect(() => {
                                   )}
                                 </div>
                               )}
+                              {_historyOpen === s.id && (
+                                <div className="px-3 pb-2 pt-1 border-t border-amber-100/50 bg-amber-50/30 rounded-b-lg">
+                                  <p className="text-[9px] font-semibold text-amber-700 uppercase mb-1.5">Change History</p>
+                                  {_historyLoading[s.id] ? (
+                                    <p className="text-[9px] text-gray-400 italic">Loading...</p>
+                                  ) : !_historyData[s.id] || _historyData[s.id].length === 0 ? (
+                                    <p className="text-[9px] text-gray-400 italic">No changes recorded yet</p>
+                                  ) : (
+                                    <div className="space-y-1 max-h-[200px] overflow-y-auto">
+                                      {_historyData[s.id].map(h => (
+                                        <div key={h.id} className="text-[9px] border-b border-amber-100/50 pb-1">
+                                          <div className="flex items-center gap-1 text-amber-800">
+                                            <span className="font-medium">{h.editedByName}</span>
+                                            <span className="text-amber-500">&middot;</span>
+                                            <span className="text-amber-500">{new Date(h.editedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} {new Date(h.editedAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</span>
+                                          </div>
+                                          <div className="flex items-start gap-1 mt-0.5">
+                                            <code className="text-[8px] bg-amber-100/60 px-1 rounded text-amber-700 shrink-0">{h.fieldPath}</code>
+                                            {h.changeType === 'added' && (
+                                              <span className="text-green-600 truncate max-w-[180px]" title={JSON.stringify(h.after)}>+ {typeof h.after === 'object' ? JSON.stringify(h.after) : String(h.after)}</span>
+                                            )}
+                                            {h.changeType === 'removed' && (
+                                              <span className="text-red-500 line-through truncate max-w-[180px]" title={JSON.stringify(h.before)}>{typeof h.before === 'object' ? JSON.stringify(h.before) : String(h.before)}</span>
+                                            )}
+                                            {h.changeType === 'changed' && (
+                                              <span className="truncate max-w-[180px]">
+                                                <span className="text-red-500" title={JSON.stringify(h.before)}>{typeof h.before === 'object' ? JSON.stringify(h.before) : String(h.before)}</span>
+                                                <span className="text-gray-400 mx-0.5">&rarr;</span>
+                                                <span className="text-green-600" title={JSON.stringify(h.after)}>{typeof h.after === 'object' ? JSON.stringify(h.after) : String(h.after)}</span>
+                                              </span>
+                                            )}
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
                             </div>
                             );
                           })}
@@ -4715,35 +4794,87 @@ useEffect(() => {
                         <div className="px-1 py-1 border-t border-gray-100">
                           <p className="text-[10px] text-gray-400 uppercase font-medium px-2 py-1">Shared with me ({_visibleShared.length})</p>
                           {_visibleShared.map(s => (
-                            <div key={s.ownerEmail + '-' + s.id}
-                              className="rounded-lg hover:bg-violet-50/60 px-2 py-1.5 cursor-pointer group flex items-center gap-1"
-                              onClick={() => { applyScenarioData(s.data); setActiveScenarioId(null); setScenarioMenuOpen(false); }}
-                            >
-                              <div className="flex-1 text-left">
-                                <span className="text-xs font-medium text-gray-700">{s.name}</span>
-                                <span className="block text-[9px] text-gray-400">
-                                  by {s.ownerName} &middot; {new Date(s.updatedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
-                                </span>
+                            <div key={s.ownerEmail + '-' + s.id} className={`rounded-lg ${s.id === activeScenarioId ? 'bg-violet-50' : ''}`}>
+                              <div
+                                className="hover:bg-violet-50/60 px-2 py-1.5 cursor-pointer group flex items-center gap-1"
+                                onClick={() => { applyScenarioData(s.data); setActiveScenarioId(s.id); _setActiveSharedOwner(s.ownerEmail || null); setScenarioMenuOpen(false); }}
+                              >
+                                <div className="flex-1 text-left">
+                                  <span className={`text-xs font-medium ${s.id === activeScenarioId ? 'text-violet-700' : 'text-gray-700'}`}>
+                                    {s.id === activeScenarioId && <span className="text-violet-500 mr-1">●</span>}
+                                    {s.name}
+                                  </span>
+                                  <span className="block text-[9px] text-gray-400">
+                                    by {s.ownerName} &middot; {new Date(s.updatedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+                                  </span>
+                                </div>
+                                {s.id === activeScenarioId ? (
+                                  <button
+                                    onClick={e => { e.stopPropagation(); updateScenario(s.id); }}
+                                    title="Save current adjustments"
+                                    className="text-[9px] px-1.5 py-0.5 rounded bg-green-50 hover:bg-green-100 text-green-600 hover:text-green-700 font-medium border border-green-200 opacity-0 group-hover:opacity-100 transition-opacity"
+                                  >Save</button>
+                                ) : null}
+                                <button onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (_historyOpen === s.id) { _setHistoryOpen(null); } else { _setHistoryOpen(s.id); _loadHistory(s.id); }
+                                }} className={`text-[9px] px-1 py-0.5 rounded transition-colors opacity-0 group-hover:opacity-100 ${_historyOpen === s.id ? 'bg-amber-100 text-amber-700 !opacity-100' : 'hover:bg-amber-50 text-gray-400 hover:text-amber-600'}`} title="Change history">📜</button>
+                                <button onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (!confirm(`Remove "${s.name}" from your shared list?`)) return;
+                                  const key = `${s.ownerEmail}||${s.id}`;
+                                  _setDismissedShares(prev => {
+                                    const next = new Set(prev);
+                                    next.add(key);
+                                    try { localStorage.setItem('banks-dismissed-shares', JSON.stringify([...next])); } catch {}
+                                    return next;
+                                  });
+                                  fetch(`/api/scenarios/${s.id}/unsubscribe`, {
+                                    method: 'DELETE', credentials: 'include',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ ownerEmail: s.ownerEmail }),
+                                  }).catch(() => {});
+                                }} className="text-[9px] text-red-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity px-1" title="Remove from my list">✕</button>
+                                <span className="text-[9px] font-medium text-violet-500 opacity-0 group-hover:opacity-100 transition-opacity">Load</span>
                               </div>
-                              <button onClick={(e) => {
-                                e.stopPropagation();
-                                if (!confirm(`Remove "${s.name}" from your shared list?`)) return;
-                                // Dismiss locally (persists in localStorage)
-                                const key = `${s.ownerEmail}||${s.id}`;
-                                _setDismissedShares(prev => {
-                                  const next = new Set(prev);
-                                  next.add(key);
-                                  try { localStorage.setItem('banks-dismissed-shares', JSON.stringify([...next])); } catch {}
-                                  return next;
-                                });
-                                // Also try server-side unsubscribe (fire and forget)
-                                fetch(`/api/scenarios/${s.id}/unsubscribe`, {
-                                  method: 'DELETE', credentials: 'include',
-                                  headers: { 'Content-Type': 'application/json' },
-                                  body: JSON.stringify({ ownerEmail: s.ownerEmail }),
-                                }).catch(() => {});
-                              }} className="text-[9px] text-red-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity px-1" title="Remove from my list">✕</button>
-                              <span className="text-[9px] font-medium text-violet-500 opacity-0 group-hover:opacity-100 transition-opacity">Load</span>
+                              {_historyOpen === s.id && (
+                                <div className="px-3 pb-2 pt-1 border-t border-amber-100/50 bg-amber-50/30 rounded-b-lg">
+                                  <p className="text-[9px] font-semibold text-amber-700 uppercase mb-1.5">Change History</p>
+                                  {_historyLoading[s.id] ? (
+                                    <p className="text-[9px] text-gray-400 italic">Loading...</p>
+                                  ) : !_historyData[s.id] || _historyData[s.id].length === 0 ? (
+                                    <p className="text-[9px] text-gray-400 italic">No changes recorded yet</p>
+                                  ) : (
+                                    <div className="space-y-1 max-h-[200px] overflow-y-auto">
+                                      {_historyData[s.id].map(h => (
+                                        <div key={h.id} className="text-[9px] border-b border-amber-100/50 pb-1">
+                                          <div className="flex items-center gap-1 text-amber-800">
+                                            <span className="font-medium">{h.editedByName}</span>
+                                            <span className="text-amber-500">&middot;</span>
+                                            <span className="text-amber-500">{new Date(h.editedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} {new Date(h.editedAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</span>
+                                          </div>
+                                          <div className="flex items-start gap-1 mt-0.5">
+                                            <code className="text-[8px] bg-amber-100/60 px-1 rounded text-amber-700 shrink-0">{h.fieldPath}</code>
+                                            {h.changeType === 'added' && (
+                                              <span className="text-green-600 truncate max-w-[180px]" title={JSON.stringify(h.after)}>+ {typeof h.after === 'object' ? JSON.stringify(h.after) : String(h.after)}</span>
+                                            )}
+                                            {h.changeType === 'removed' && (
+                                              <span className="text-red-500 line-through truncate max-w-[180px]" title={JSON.stringify(h.before)}>{typeof h.before === 'object' ? JSON.stringify(h.before) : String(h.before)}</span>
+                                            )}
+                                            {h.changeType === 'changed' && (
+                                              <span className="truncate max-w-[180px]">
+                                                <span className="text-red-500" title={JSON.stringify(h.before)}>{typeof h.before === 'object' ? JSON.stringify(h.before) : String(h.before)}</span>
+                                                <span className="text-gray-400 mx-0.5">&rarr;</span>
+                                                <span className="text-green-600" title={JSON.stringify(h.after)}>{typeof h.after === 'object' ? JSON.stringify(h.after) : String(h.after)}</span>
+                                              </span>
+                                            )}
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
                             </div>
                           ))}
                         </div>
@@ -4752,7 +4883,7 @@ useEffect(() => {
                       {activeScenario && (
                         <div className="px-3 py-2 border-t border-gray-100">
                           <button
-                            onClick={() => { setActiveScenarioId(null); setScenarioMenuOpen(false); }}
+                            onClick={() => { setActiveScenarioId(null); _setActiveSharedOwner(null); setScenarioMenuOpen(false); }}
                             className="text-[10px] text-gray-500 hover:text-gray-700"
                           >Detach from scenario (keep current values)</button>
                         </div>
