@@ -896,10 +896,17 @@ useEffect(() => {
           if (isSelf) console.log('[ScenarioNotif] skipping self-edit:', x.scenarioName);
           return !isSelf;
         });
-        // De-dupe by id (same scenario can appear in both data[] and shared[])
-        const byId = new Map<string, typeof filtered[number]>();
-        for (const f of filtered) byId.set(f.id, f);
-        const unique = Array.from(byId.values());
+        // De-dupe by scenarioId — same logical scenario can appear as both own fork and
+        // shared row with separate history timelines (different editedAt per row), so
+        // id-based collapse fails. Keep the most recent edit per scenarioId.
+        const byScenario = new Map<string, typeof filtered[number]>();
+        for (const f of filtered) {
+          const existing = byScenario.get(f.scenarioId);
+          if (!existing || (Date.parse(f.editedAt) || 0) > (Date.parse(existing.editedAt) || 0)) {
+            byScenario.set(f.scenarioId, f);
+          }
+        }
+        const unique = Array.from(byScenario.values());
         console.log('[ScenarioNotif] notifs to show:', unique.length);
         if (unique.length) {
           _setScenarioNotifs(prev => {
