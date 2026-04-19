@@ -831,10 +831,21 @@ useEffect(() => {
         const firstRun = !_scenarioSeededRef.current;
         const since24h = Date.now() - 24 * 60 * 60 * 1000;
         console.log('[ScenarioNotif] poll: viewer=', me || '(none)', 'own=', own.length, 'shared=', shared.length, 'firstRun=', firstRun);
+        // Read fresh dismissed set from localStorage so dismissals from a prior session
+        // (or a concurrent tab) are respected even before React state rehydrates.
+        let dismissedNow: Set<string>;
+        try { dismissedNow = new Set(JSON.parse(localStorage.getItem('banks_dismissed_scenario_notifs') || '[]')); }
+        catch { dismissedNow = new Set(); }
         const bumps: Array<{id:string;name:string;updatedAt:string}> = [];
         for (const s of all) {
           if (!s.updatedAt) continue;
+          const notifId = s.id + ':' + s.updatedAt;
           const prev = seen[s.id];
+          if (dismissedNow.has(notifId)) {
+            // Already dismissed — don't re-surface on refresh/poll
+            seen[s.id] = s.updatedAt;
+            continue;
+          }
           if (firstRun) {
             const ts = Date.parse(s.updatedAt);
             if (!isNaN(ts) && ts >= since24h) {
