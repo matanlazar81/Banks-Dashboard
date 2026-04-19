@@ -993,9 +993,18 @@ useEffect(() => {
 
         if (newlyReady.length) {
           _setScenarioNotifs(prev => {
-            const existing = new Set(prev.map(p => p.id));
-            const add = newlyReady.filter(f => !existing.has(f.id));
-            return add.length ? [...add, ...prev].slice(0, 20) : prev;
+            // Merge newlyReady with prev, then collapse by scenarioId (keep the most recent edit).
+            // This catches cases where a scenario's own-fork row and shared row each produced
+            // a separate flush with different firstEditedAt values (different ids).
+            const combined = [...newlyReady, ...prev];
+            const byScenario = new Map<string, typeof combined[number]>();
+            for (const n of combined) {
+              const existing = byScenario.get(n.scenarioId);
+              if (!existing || (Date.parse(n.editedAt) || 0) > (Date.parse(existing.editedAt) || 0)) {
+                byScenario.set(n.scenarioId, n);
+              }
+            }
+            return Array.from(byScenario.values()).slice(0, 20);
           });
         } else {
           console.log('[ScenarioNotif] pending sessions:', Object.keys(pending).length, '— none idle yet');
