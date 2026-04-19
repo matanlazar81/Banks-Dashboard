@@ -872,13 +872,15 @@ useEffect(() => {
             const batch = entries.filter(e => e.editedAt === latestAt);
             const first = batch[0];
             console.log('[ScenarioNotif] history for', b.name, ': editedByEmail=', first.editedByEmail, 'changes=', batch.length);
+            const stableEditedAt = (first.editedAt as string) || b.updatedAt;
             return {
-              id: b.id + ':' + b.updatedAt,
+              // Stable id: same save always produces same id, regardless of which row (own/shared fork) served the data
+              id: b.id + ':' + stableEditedAt,
               scenarioId: b.id,
               scenarioName: b.name,
               editedByEmail: (first.editedByEmail as string) || '',
               editedByName: (first.editedByName as string) || (first.editedByEmail as string) || 'Someone',
-              editedAt: (first.editedAt as string) || b.updatedAt,
+              editedAt: stableEditedAt,
               changes: batch.map(e => ({
                 changeType: e.changeType || 'changed',
                 fieldPath: e.fieldPath || '',
