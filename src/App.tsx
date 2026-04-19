@@ -812,7 +812,8 @@ useEffect(() => {
   // ── Scenario-edit notifications: poll /api/scenarios every 15s; popup when another user saves an edit ──
   const _lastSeenScenarioRef = useRef<Record<string, string>>({});
   const _scenarioSeededRef = useRef(false);
-  const [_scenarioNotifs, _setScenarioNotifs] = useState<Array<{id:string;scenarioId:string;scenarioName:string;editedByEmail:string;editedByName:string;editedAt:string}>>([]);
+  const [_scenarioNotifs, _setScenarioNotifs] = useState<Array<{id:string;scenarioId:string;scenarioName:string;editedByEmail:string;editedByName:string;editedAt:string;changes:Array<{changeType:string;fieldPath:string;before:any;after:any}>}>>([]);
+  const [_expandedNotifs, _setExpandedNotifs] = useState<Set<string>>(new Set());
   const [_dismissedScenarioNotifs, _setDismissedScenarioNotifs] = useState<Set<string>>(() => {
     try { return new Set(JSON.parse(localStorage.getItem('banks_dismissed_scenario_notifs') || '[]')); } catch { return new Set(); }
   });
@@ -850,19 +851,29 @@ useEffect(() => {
         if (bumps.length === 0) { console.log('[ScenarioNotif] no bumps'); return; }
         const resolved = await Promise.all(bumps.map(async b => {
           try {
-            const hr = await fetch('/api/scenarios/' + b.id + '/history?limit=1', { credentials: 'include' });
+            const hr = await fetch('/api/scenarios/' + b.id + '/history?limit=50', { credentials: 'include' });
             if (!hr.ok) { console.log('[ScenarioNotif] history fetch failed for', b.name, 'status=', hr.status); return null; }
             const hd = await hr.json();
-            const entry = (Array.isArray(hd) ? hd : (hd.data || []))[0];
-            if (!entry) { console.log('[ScenarioNotif] empty history for', b.name, '— raw response:', hd); return null; }
-            console.log('[ScenarioNotif] history entry for', b.name, ':', { editedByEmail: entry.editedByEmail, editedAt: entry.editedAt });
+            const entries: any[] = Array.isArray(hd) ? hd : (hd.data || []);
+            if (!entries.length) { console.log('[ScenarioNotif] empty history for', b.name, '— raw response:', hd); return null; }
+            // All entries from the same save share the same editedAt (inserted in one batch)
+            const latestAt = entries[0].editedAt;
+            const batch = entries.filter(e => e.editedAt === latestAt);
+            const first = batch[0];
+            console.log('[ScenarioNotif] history for', b.name, ': editedByEmail=', first.editedByEmail, 'changes=', batch.length);
             return {
               id: b.id + ':' + b.updatedAt,
               scenarioId: b.id,
               scenarioName: b.name,
-              editedByEmail: (entry.editedByEmail as string) || '',
-              editedByName: (entry.editedByName as string) || (entry.editedByEmail as string) || 'Someone',
-              editedAt: (entry.editedAt as string) || b.updatedAt,
+              editedByEmail: (first.editedByEmail as string) || '',
+              editedByName: (first.editedByName as string) || (first.editedByEmail as string) || 'Someone',
+              editedAt: (first.editedAt as string) || b.updatedAt,
+              changes: batch.map(e => ({
+                changeType: e.changeType || 'changed',
+                fieldPath: e.fieldPath || '',
+                before: e.before,
+                after: e.after,
+              })),
             };
           } catch (e) { console.log('[ScenarioNotif] history fetch error for', b.name, e); return null; }
         }));
@@ -2783,18 +2794,50 @@ useEffect(() => {
                   Dismiss All ✕
                 </button>
               </div>
-              <div className="space-y-1.5">
+              <div className="space-y-1.5 max-h-[60vh] overflow-y-auto">
                 {_visibleScenarioNotifs.slice(0, 8).map(n => {
                   const who = (n.editedByName || n.editedByEmail || 'Someone').split('@')[0];
                   const when = new Date(n.editedAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+                  const fmtVal = (v: any): string => {
+                    if (v === null || v === undefined) return '∅';
+                    if (typeof v === 'number') return v.toLocaleString('en-GB', { maximumFractionDigits: 2 });
+                    if (typeof v === 'string') return v.length > 60 ? v.slice(0, 60) + '…' : v;
+                    try { const s = JSON.stringify(v); return s.length > 60 ? s.slice(0, 60) + '…' : s; } catch { return String(v); }
+                  };
+                  const expanded = _expandedNotifs.has(n.id);
+                  const toggle = () => _setExpandedNotifs(prev => { const nx = new Set(prev); nx.has(n.id) ? nx.delete(n.id) : nx.add(n.id); return nx; });
+                  const count = n.changes?.length || 0;
                   return (
-                    <div key={n.id} className="flex items-center gap-3 bg-violet-500/40 rounded-lg px-3 py-2">
-                      <span className="flex-shrink-0 text-violet-100 font-mono text-xs font-bold bg-violet-700/50 px-2 py-0.5 rounded">SCENARIO</span>
-                      <span className="text-white font-semibold text-sm truncate">{n.scenarioName}</span>
-                      <span className="text-violet-200 text-xs">edited by</span>
-                      <span className="text-white text-sm font-semibold">{who}</span>
-                      <span className="text-violet-200 text-xs whitespace-nowrap ml-auto">{when}</span>
-                      <button onClick={() => _dismissScenarioNotif(n.id)} className="flex-shrink-0 text-violet-300 hover:text-white text-sm">✕</button>
+                    <div key={n.id} className="bg-violet-500/40 rounded-lg px-3 py-2">
+                      <div className="flex items-center gap-3">
+                        <span className="flex-shrink-0 text-violet-100 font-mono text-xs font-bold bg-violet-700/50 px-2 py-0.5 rounded">SCENARIO</span>
+                        <span className="text-white font-semibold text-sm truncate">{n.scenarioName}</span>
+                        <span className="text-violet-200 text-xs">edited by</span>
+                        <span className="text-white text-sm font-semibold">{who}</span>
+                        {count > 0 && (
+                          <button onClick={toggle} className="text-violet-100 hover:text-white text-xs font-medium underline underline-offset-2">
+                            {count} change{count > 1 ? 's' : ''} {expanded ? '▲' : '▼'}
+                          </button>
+                        )}
+                        <span className="text-violet-200 text-xs whitespace-nowrap ml-auto">{when}</span>
+                        <button onClick={() => _dismissScenarioNotif(n.id)} className="flex-shrink-0 text-violet-300 hover:text-white text-sm">✕</button>
+                      </div>
+                      {expanded && count > 0 && (
+                        <div className="mt-2 ml-2 pl-3 border-l-2 border-violet-300/50 space-y-1 font-mono text-xs">
+                          {n.changes.slice(0, 30).map((c, i) => (
+                            <div key={i} className="flex items-start gap-2 text-violet-50">
+                              <span className="text-violet-200 whitespace-nowrap">
+                                {c.changeType === 'added' ? '+' : c.changeType === 'removed' ? '−' : '~'}
+                              </span>
+                              <span className="text-violet-100 font-semibold">{c.fieldPath}:</span>
+                              {c.changeType !== 'added' && <span className="text-red-200 line-through">{fmtVal(c.before)}</span>}
+                              {c.changeType === 'changed' && <span className="text-violet-300">→</span>}
+                              {c.changeType !== 'removed' && <span className="text-emerald-200">{fmtVal(c.after)}</span>}
+                            </div>
+                          ))}
+                          {count > 30 && <div className="text-violet-200 italic">…and {count - 30} more</div>}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
