@@ -808,6 +808,100 @@ useEffect(() => {
     refetchScenarios();
     fetch('/api/bank-dashboard-users', { credentials: 'include' }).then(r => r.json()).then(d => { if (d.data) _setBdUsers(d.data); }).catch(() => {});
   }, [refetchScenarios]);
+
+  // ── Scenario-edit notifications: poll /api/scenarios every 15s; popup when another user saves an edit ──
+  const _lastSeenScenarioRef = useRef<Record<string, string>>({});
+  const _scenarioSeededRef = useRef(false);
+  const [_scenarioNotifs, _setScenarioNotifs] = useState<Array<{id:string;scenarioId:string;scenarioName:string;editedByEmail:string;editedByName:string;editedAt:string}>>([]);
+  const [_dismissedScenarioNotifs, _setDismissedScenarioNotifs] = useState<Set<string>>(() => {
+    try { return new Set(JSON.parse(localStorage.getItem('banks_dismissed_scenario_notifs') || '[]')); } catch { return new Set(); }
+  });
+  useEffect(() => {
+    const poll = async () => {
+      try {
+        const r = await fetch('/api/scenarios', { credentials: 'include' });
+        if (!r.ok) { console.log('[ScenarioNotif] /api/scenarios returned', r.status); return; }
+        const d = await r.json();
+        const me = ((d.viewerEmail as string) || '').toLowerCase();
+        const own = (d.data || []) as any[];
+        const shared = (d.shared || []) as any[];
+        const all: Array<{id:string;name:string;updatedAt?:string}> = [...own, ...shared];
+        const seen = _lastSeenScenarioRef.current;
+        const firstRun = !_scenarioSeededRef.current;
+        const since24h = Date.now() - 24 * 60 * 60 * 1000;
+        console.log('[ScenarioNotif] poll: viewer=', me || '(none)', 'own=', own.length, 'shared=', shared.length, 'firstRun=', firstRun);
+        const bumps: Array<{id:string;name:string;updatedAt:string}> = [];
+        for (const s of all) {
+          if (!s.updatedAt) continue;
+          const prev = seen[s.id];
+          if (firstRun) {
+            const ts = Date.parse(s.updatedAt);
+            if (!isNaN(ts) && ts >= since24h) {
+              bumps.push({ id: s.id, name: s.name, updatedAt: s.updatedAt });
+              console.log('[ScenarioNotif] first-run bump (within 24h):', s.name, 'updatedAt=', s.updatedAt);
+            }
+          } else if (prev && s.updatedAt !== prev) {
+            bumps.push({ id: s.id, name: s.name, updatedAt: s.updatedAt });
+            console.log('[ScenarioNotif] bump detected:', s.name, prev, '→', s.updatedAt);
+          }
+          seen[s.id] = s.updatedAt;
+        }
+        _scenarioSeededRef.current = true;
+        if (bumps.length === 0) { console.log('[ScenarioNotif] no bumps'); return; }
+        const resolved = await Promise.all(bumps.map(async b => {
+          try {
+            const hr = await fetch('/api/scenarios/' + b.id + '/history?limit=1', { credentials: 'include' });
+            if (!hr.ok) { console.log('[ScenarioNotif] history fetch failed for', b.name, 'status=', hr.status); return null; }
+            const hd = await hr.json();
+            const entry = (Array.isArray(hd) ? hd : (hd.data || []))[0];
+            if (!entry) { console.log('[ScenarioNotif] empty history for', b.name, '— raw response:', hd); return null; }
+            console.log('[ScenarioNotif] history entry for', b.name, ':', { editedByEmail: entry.editedByEmail, editedAt: entry.editedAt });
+            return {
+              id: b.id + ':' + b.updatedAt,
+              scenarioId: b.id,
+              scenarioName: b.name,
+              editedByEmail: (entry.editedByEmail as string) || '',
+              editedByName: (entry.editedByName as string) || (entry.editedByEmail as string) || 'Someone',
+              editedAt: (entry.editedAt as string) || b.updatedAt,
+            };
+          } catch (e) { console.log('[ScenarioNotif] history fetch error for', b.name, e); return null; }
+        }));
+        const filtered = resolved.filter((x): x is NonNullable<typeof x> => {
+          if (!x) return false;
+          const isSelf = me && x.editedByEmail.toLowerCase() === me;
+          if (isSelf) console.log('[ScenarioNotif] skipping self-edit:', x.scenarioName);
+          return !isSelf;
+        });
+        console.log('[ScenarioNotif] notifs to show:', filtered.length);
+        if (filtered.length) {
+          _setScenarioNotifs(prev => {
+            const existing = new Set(prev.map(p => p.id));
+            const add = filtered.filter(f => !existing.has(f.id));
+            return add.length ? [...add, ...prev].slice(0, 20) : prev;
+          });
+        }
+      } catch (e) { console.log('[ScenarioNotif] poll error:', e); }
+    };
+    poll();
+    const iv = setInterval(poll, 15000);
+    return () => clearInterval(iv);
+  }, []);
+  const _dismissScenarioNotif = (id: string) => {
+    _setDismissedScenarioNotifs(prev => {
+      const next = new Set(prev); next.add(id);
+      localStorage.setItem('banks_dismissed_scenario_notifs', JSON.stringify([...next]));
+      return next;
+    });
+  };
+  const _dismissAllScenarioNotifs = () => {
+    _setDismissedScenarioNotifs(prev => {
+      const next = new Set([...prev, ..._scenarioNotifs.map(n => n.id)]);
+      localStorage.setItem('banks_dismissed_scenario_notifs', JSON.stringify([...next]));
+      return next;
+    });
+  };
+  const _visibleScenarioNotifs = _scenarioNotifs.filter(n => !_dismissedScenarioNotifs.has(n.id));
+
   const _syncSave = useCallback((id: string, name: string, data: ScenarioData) => {
     if (!_srvRef.current) return;
     fetch('/api/scenarios', { method: 'POST', headers: {'Content-Type':'application/json'}, credentials: 'include', body: JSON.stringify({id, name, data, company: activeCompany}) }).catch(() => {});
@@ -2676,6 +2770,40 @@ useEffect(() => {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {/* ── Scenario-edit Notification Banner ── */}
+      {_visibleScenarioNotifs.length > 0 && (
+        <div className="fixed top-0 left-0 right-0 z-50" style={{ pointerEvents: 'none' }}>
+          <div className="bg-violet-600 shadow-2xl border-b-4 border-violet-700" style={{ pointerEvents: 'auto' }}>
+            <div className="max-w-[1800px] mx-auto px-4 py-3">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-white font-bold text-sm flex items-center gap-2">
+                  <span className="text-lg">🔔</span> {_visibleScenarioNotifs.length} Scenario Edit{_visibleScenarioNotifs.length > 1 ? 's' : ''}
+                </span>
+                <button onClick={_dismissAllScenarioNotifs} className="text-violet-200 hover:text-white text-xs font-medium px-2 py-1 rounded hover:bg-violet-700">
+                  Dismiss All ✕
+                </button>
+              </div>
+              <div className="space-y-1.5">
+                {_visibleScenarioNotifs.slice(0, 8).map(n => {
+                  const who = (n.editedByName || n.editedByEmail || 'Someone').split('@')[0];
+                  const when = new Date(n.editedAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+                  return (
+                    <div key={n.id} className="flex items-center gap-3 bg-violet-500/40 rounded-lg px-3 py-2">
+                      <span className="flex-shrink-0 text-violet-100 font-mono text-xs font-bold bg-violet-700/50 px-2 py-0.5 rounded">SCENARIO</span>
+                      <span className="text-white font-semibold text-sm truncate">{n.scenarioName}</span>
+                      <span className="text-violet-200 text-xs">edited by</span>
+                      <span className="text-white text-sm font-semibold">{who}</span>
+                      <span className="text-violet-200 text-xs whitespace-nowrap ml-auto">{when}</span>
+                      <button onClick={() => _dismissScenarioNotif(n.id)} className="flex-shrink-0 text-violet-300 hover:text-white text-sm">✕</button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="bg-white border-b shadow-sm sticky top-0 z-40">
         <div className="max-w-[1800px] mx-auto px-4 py-5 flex items-center gap-4">
