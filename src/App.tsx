@@ -859,61 +859,146 @@ useEffect(() => {
           seen[s.id] = s.updatedAt;
         }
         _scenarioSeededRef.current = true;
-        if (bumps.length === 0) { console.log('[ScenarioNotif] no bumps'); return; }
-        const resolved = await Promise.all(bumps.map(async b => {
+
+        // Aggregation: merge each save batch into a per-scenario "pending" bucket.
+        // When the editor goes idle for IDLE_MS, flush the pending net-diff as a single popup.
+        const IDLE_MS = 10 * 60 * 1000;
+        const PENDING_KEY = 'banks_pending_scenario_notifs';
+        type PendingEntry = {
+          scenarioId: string; scenarioName: string;
+          editorEmail: string; editorName: string;
+          firstEditedAt: string; lastEditedAt: string;
+          fields: Record<string, { changeType: string; before: any; after: any }>;
+          mergedBatches: string[];
+        };
+        const loadPending = (): Record<string, PendingEntry> => {
+          try { return JSON.parse(localStorage.getItem(PENDING_KEY) || '{}') || {}; } catch { return {}; }
+        };
+        const savePending = (p: Record<string, PendingEntry>) => {
+          try { localStorage.setItem(PENDING_KEY, JSON.stringify(p)); } catch {}
+        };
+        const pending = loadPending();
+
+        // Fetch history for every bumped scenario and merge into pending
+        const resolvedBatches: Array<{
+          scenarioId: string; scenarioName: string; editorEmail: string; editorName: string;
+          editedAt: string; changes: Array<{ changeType: string; fieldPath: string; before: any; after: any }>;
+        }> = [];
+        await Promise.all(bumps.map(async b => {
           try {
             const hr = await fetch('/api/scenarios/' + b.id + '/history?limit=50', { credentials: 'include' });
-            if (!hr.ok) { console.log('[ScenarioNotif] history fetch failed for', b.name, 'status=', hr.status); return null; }
+            if (!hr.ok) { console.log('[ScenarioNotif] history fetch failed for', b.name, 'status=', hr.status); return; }
             const hd = await hr.json();
             const entries: any[] = Array.isArray(hd) ? hd : (hd.data || []);
-            if (!entries.length) { console.log('[ScenarioNotif] empty history for', b.name, '— raw response:', hd); return null; }
-            // All entries from the same save share the same editedAt (inserted in one batch)
+            if (!entries.length) { console.log('[ScenarioNotif] empty history for', b.name, '— raw response:', hd); return; }
             const latestAt = entries[0].editedAt;
             const batch = entries.filter(e => e.editedAt === latestAt);
             const first = batch[0];
-            console.log('[ScenarioNotif] history for', b.name, ': editedByEmail=', first.editedByEmail, 'changes=', batch.length);
-            const stableEditedAt = (first.editedAt as string) || b.updatedAt;
-            return {
-              // Stable id: same save always produces same id, regardless of which row (own/shared fork) served the data
-              id: b.id + ':' + stableEditedAt,
+            console.log('[ScenarioNotif] batch for', b.name, ': editor=', first.editedByEmail, 'changes=', batch.length);
+            resolvedBatches.push({
               scenarioId: b.id,
               scenarioName: b.name,
-              editedByEmail: (first.editedByEmail as string) || '',
-              editedByName: (first.editedByName as string) || (first.editedByEmail as string) || 'Someone',
-              editedAt: stableEditedAt,
+              editorEmail: (first.editedByEmail as string) || '',
+              editorName: (first.editedByName as string) || (first.editedByEmail as string) || 'Someone',
+              editedAt: (first.editedAt as string) || b.updatedAt,
               changes: batch.map(e => ({
                 changeType: e.changeType || 'changed',
                 fieldPath: e.fieldPath || '',
                 before: e.before,
                 after: e.after,
               })),
-            };
-          } catch (e) { console.log('[ScenarioNotif] history fetch error for', b.name, e); return null; }
+            });
+          } catch (e) { console.log('[ScenarioNotif] history fetch error for', b.name, e); }
         }));
-        const filtered = resolved.filter((x): x is NonNullable<typeof x> => {
-          if (!x) return false;
-          const isSelf = me && x.editedByEmail.toLowerCase() === me;
-          if (isSelf) console.log('[ScenarioNotif] skipping self-edit:', x.scenarioName);
-          return !isSelf;
-        });
-        // De-dupe by scenarioId — same logical scenario can appear as both own fork and
-        // shared row with separate history timelines (different editedAt per row), so
-        // id-based collapse fails. Keep the most recent edit per scenarioId.
-        const byScenario = new Map<string, typeof filtered[number]>();
-        for (const f of filtered) {
-          const existing = byScenario.get(f.scenarioId);
-          if (!existing || (Date.parse(f.editedAt) || 0) > (Date.parse(existing.editedAt) || 0)) {
-            byScenario.set(f.scenarioId, f);
+
+        for (const batch of resolvedBatches) {
+          // Skip self-edits entirely
+          if (me && batch.editorEmail.toLowerCase() === me) {
+            console.log('[ScenarioNotif] skipping self-edit batch:', batch.scenarioName);
+            continue;
           }
+          let p = pending[batch.scenarioId];
+          if (p) {
+            // If editor changed OR gap > IDLE_MS, prior pending should have already flushed this poll — start fresh
+            const lastMs = Date.parse(p.lastEditedAt);
+            const batchMs = Date.parse(batch.editedAt);
+            const differentEditor = p.editorEmail.toLowerCase() !== batch.editorEmail.toLowerCase();
+            const bigGap = !isNaN(lastMs) && !isNaN(batchMs) && (batchMs - lastMs) > IDLE_MS;
+            if (differentEditor || bigGap) p = undefined as any;
+          }
+          if (!p) {
+            p = {
+              scenarioId: batch.scenarioId,
+              scenarioName: batch.scenarioName,
+              editorEmail: batch.editorEmail,
+              editorName: batch.editorName,
+              firstEditedAt: batch.editedAt,
+              lastEditedAt: batch.editedAt,
+              fields: {},
+              mergedBatches: [],
+            };
+          }
+          if (p.mergedBatches.includes(batch.editedAt)) { pending[batch.scenarioId] = p; continue; }
+          p.mergedBatches.push(batch.editedAt);
+          if (Date.parse(batch.editedAt) > Date.parse(p.lastEditedAt)) p.lastEditedAt = batch.editedAt;
+          p.scenarioName = batch.scenarioName; // refresh name in case it changed
+          for (const c of batch.changes) {
+            if (!c.fieldPath) continue;
+            const existing = p.fields[c.fieldPath];
+            if (existing) {
+              existing.after = c.after;
+              existing.changeType = existing.changeType === 'added' && c.changeType === 'removed' ? 'removed' : 'changed';
+            } else {
+              p.fields[c.fieldPath] = { changeType: c.changeType, before: c.before, after: c.after };
+            }
+          }
+          // Drop no-op net changes
+          for (const k of Object.keys(p.fields)) {
+            const f = p.fields[k];
+            try { if (JSON.stringify(f.before) === JSON.stringify(f.after)) delete p.fields[k]; } catch {}
+          }
+          pending[batch.scenarioId] = p;
         }
-        const unique = Array.from(byScenario.values());
-        console.log('[ScenarioNotif] notifs to show:', unique.length);
-        if (unique.length) {
+
+        // Flush any pending entries that have gone idle (editor quiet for IDLE_MS)
+        const now = Date.now();
+        const newlyReady: typeof _scenarioNotifs = [];
+        for (const sid of Object.keys(pending)) {
+          const p = pending[sid];
+          const lastMs = Date.parse(p.lastEditedAt);
+          if (isNaN(lastMs)) { delete pending[sid]; continue; }
+          if (now - lastMs < IDLE_MS) continue;
+          const fieldEntries = Object.entries(p.fields);
+          delete pending[sid];
+          if (fieldEntries.length === 0) continue;
+          const id = p.scenarioId + ':' + p.firstEditedAt;
+          if (dismissedNow.has(id)) { console.log('[ScenarioNotif] flush skipped (dismissed):', p.scenarioName); continue; }
+          console.log('[ScenarioNotif] flushing idle session for', p.scenarioName, 'with', fieldEntries.length, 'net changes');
+          newlyReady.push({
+            id,
+            scenarioId: p.scenarioId,
+            scenarioName: p.scenarioName,
+            editedByEmail: p.editorEmail,
+            editedByName: p.editorName,
+            editedAt: p.lastEditedAt,
+            changes: fieldEntries.map(([fp, f]) => ({
+              changeType: f.changeType,
+              fieldPath: fp,
+              before: f.before,
+              after: f.after,
+            })),
+          });
+        }
+        savePending(pending);
+
+        if (newlyReady.length) {
           _setScenarioNotifs(prev => {
             const existing = new Set(prev.map(p => p.id));
-            const add = unique.filter(f => !existing.has(f.id));
+            const add = newlyReady.filter(f => !existing.has(f.id));
             return add.length ? [...add, ...prev].slice(0, 20) : prev;
           });
+        } else {
+          console.log('[ScenarioNotif] pending sessions:', Object.keys(pending).length, '— none idle yet');
         }
       } catch (e) { console.log('[ScenarioNotif] poll error:', e); }
     };
