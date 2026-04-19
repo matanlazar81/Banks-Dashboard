@@ -883,11 +883,15 @@ useEffect(() => {
           if (isSelf) console.log('[ScenarioNotif] skipping self-edit:', x.scenarioName);
           return !isSelf;
         });
-        console.log('[ScenarioNotif] notifs to show:', filtered.length);
-        if (filtered.length) {
+        // De-dupe by id (same scenario can appear in both data[] and shared[])
+        const byId = new Map<string, typeof filtered[number]>();
+        for (const f of filtered) byId.set(f.id, f);
+        const unique = Array.from(byId.values());
+        console.log('[ScenarioNotif] notifs to show:', unique.length);
+        if (unique.length) {
           _setScenarioNotifs(prev => {
             const existing = new Set(prev.map(p => p.id));
-            const add = filtered.filter(f => !existing.has(f.id));
+            const add = unique.filter(f => !existing.has(f.id));
             return add.length ? [...add, ...prev].slice(0, 20) : prev;
           });
         }
@@ -2804,6 +2808,43 @@ useEffect(() => {
                     if (typeof v === 'string') return v.length > 60 ? v.slice(0, 60) + '…' : v;
                     try { const s = JSON.stringify(v); return s.length > 60 ? s.slice(0, 60) + '…' : s; } catch { return String(v); }
                   };
+                  const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+                  const monthLabel = (tok: string): string => {
+                    // "2026-08" → "Aug 2026"
+                    const ym = tok.match(/^(\d{4})-(\d{1,2})$/);
+                    if (ym) { const mi = parseInt(ym[2], 10) - 1; return (MONTHS[mi] || ym[2]) + ' ' + ym[1]; }
+                    // "6" → "Jul" (0-indexed month)
+                    if (/^\d{1,2}$/.test(tok)) { const i = parseInt(tok, 10); if (i >= 0 && i <= 11) return MONTHS[i]; }
+                    return tok;
+                  };
+                  const TOP_LABELS: Record<string, string> = {
+                    collPctByMonth: 'Collection %',
+                    salaryAdjPctByMonth: 'Salary Adj %',
+                    salaryDeptAdj: 'Salary by Dept',
+                    vendorCatAdj: 'Vendor Category',
+                    vendorDetailAdj: 'Vendor Detail',
+                    headcountAdj: 'Headcount Δ',
+                    leverOverrides: 'Lever',
+                    pipelineMinProb: 'Pipeline Min Probability',
+                    '(name)': 'Name',
+                  };
+                  const fmtPath = (p: string): string => {
+                    if (!p) return '';
+                    const parts = p.split('.');
+                    const head = TOP_LABELS[parts[0]] || parts[0];
+                    const rest = parts.slice(1).map(monthLabel);
+                    return [head, ...rest].join(' — ');
+                  };
+                  const fmtDeltaIfPct = (path: string, before: any, after: any): string | null => {
+                    // For % adjustments, show delta too
+                    if (!/collPctByMonth|salaryAdjPctByMonth|vendorCatAdj|salaryDeptAdj|headcountAdj/.test(path)) return null;
+                    const b = typeof before === 'number' ? before : parseFloat(before);
+                    const a = typeof after === 'number' ? after : parseFloat(after);
+                    if (!isFinite(a) || !isFinite(b)) return null;
+                    const delta = a - b;
+                    if (delta === 0) return null;
+                    return (delta > 0 ? '+' : '') + delta.toLocaleString('en-GB', { maximumFractionDigits: 2 });
+                  };
                   const expanded = _expandedNotifs.has(n.id);
                   const toggle = () => _setExpandedNotifs(prev => { const nx = new Set(prev); nx.has(n.id) ? nx.delete(n.id) : nx.add(n.id); return nx; });
                   const count = n.changes?.length || 0;
@@ -2823,18 +2864,22 @@ useEffect(() => {
                         <button onClick={() => _dismissScenarioNotif(n.id)} className="flex-shrink-0 text-violet-300 hover:text-white text-sm">✕</button>
                       </div>
                       {expanded && count > 0 && (
-                        <div className="mt-2 ml-2 pl-3 border-l-2 border-violet-300/50 space-y-1 font-mono text-xs">
-                          {n.changes.slice(0, 30).map((c, i) => (
-                            <div key={i} className="flex items-start gap-2 text-violet-50">
-                              <span className="text-violet-200 whitespace-nowrap">
-                                {c.changeType === 'added' ? '+' : c.changeType === 'removed' ? '−' : '~'}
-                              </span>
-                              <span className="text-violet-100 font-semibold">{c.fieldPath}:</span>
-                              {c.changeType !== 'added' && <span className="text-red-200 line-through">{fmtVal(c.before)}</span>}
-                              {c.changeType === 'changed' && <span className="text-violet-300">→</span>}
-                              {c.changeType !== 'removed' && <span className="text-emerald-200">{fmtVal(c.after)}</span>}
-                            </div>
-                          ))}
+                        <div className="mt-2 ml-2 pl-3 border-l-2 border-violet-300/50 space-y-1 text-xs">
+                          {n.changes.slice(0, 30).map((c, i) => {
+                            const delta = fmtDeltaIfPct(c.fieldPath, c.before, c.after);
+                            return (
+                              <div key={i} className="flex items-start gap-2 text-violet-50 flex-wrap">
+                                <span className="text-violet-200 whitespace-nowrap font-mono">
+                                  {c.changeType === 'added' ? '+' : c.changeType === 'removed' ? '−' : '~'}
+                                </span>
+                                <span className="text-white font-semibold">{fmtPath(c.fieldPath)}:</span>
+                                {c.changeType !== 'added' && <span className="text-red-200 line-through font-mono">{fmtVal(c.before)}</span>}
+                                {c.changeType === 'changed' && <span className="text-violet-300">→</span>}
+                                {c.changeType !== 'removed' && <span className="text-emerald-200 font-mono font-semibold">{fmtVal(c.after)}</span>}
+                                {delta && <span className="text-violet-100 text-[11px] italic">({delta})</span>}
+                              </div>
+                            );
+                          })}
                           {count > 30 && <div className="text-violet-200 italic">…and {count - 30} more</div>}
                         </div>
                       )}
