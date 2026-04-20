@@ -2809,6 +2809,72 @@ useEffect(() => {
       lines.push(`  Current year (${yoyRevenue.currentYear}): €${yoyRevenue.currentYearRev?.toLocaleString()}`);
       lines.push(`  Prior year (${yoyRevenue.priorYear}): €${yoyRevenue.priorYearRev?.toLocaleString()}`);
     }
+
+    // ── Snowflake monthly detail: actuals + budget + projections side-by-side ──
+    const revMonths = new Set<string>([
+      ...Object.keys(sfRevenue.budget || {}),
+      ...Object.keys(sfRevenue.actuals || {}),
+      ...Object.keys(sfRevenuePaid || {}),
+    ]);
+    if (revMonths.size > 0) {
+      lines.push(`\nMONTHLY REVENUE — SNOWFLAKE (actual/paid vs budget vs projection, EUR):`);
+      for (const m of Array.from(revMonths).sort()) {
+        const bud = Math.round(sfRevenue.budget?.[m]?.eur || 0);
+        const act = Math.round(sfRevenue.actuals?.[m]?.eur || 0);
+        const paid = Math.round(sfRevenuePaid?.[m]?.revenue || 0);
+        const paidCollected = Math.round(sfRevenuePaid?.[m]?.paid || 0);
+        const parts: string[] = [];
+        if (bud) parts.push(`budget €${bud.toLocaleString()}`);
+        if (act) parts.push(`actual €${act.toLocaleString()}`);
+        if (paid) parts.push(`revenue(paid-basis) €${paid.toLocaleString()}`);
+        if (paidCollected) parts.push(`collected €${paidCollected.toLocaleString()}`);
+        if (parts.length) lines.push(`  ${m}: ${parts.join(' | ')}`);
+      }
+    }
+
+    const splitMonths = Object.keys(sfActualsSplit || {}).sort();
+    if (splitMonths.length > 0) {
+      lines.push(`\nMONTHLY SALARY + VENDORS ACTUALS — SNOWFLAKE (EUR):`);
+      for (const m of splitMonths) {
+        const s = sfActualsSplit[m];
+        if (!s) continue;
+        lines.push(`  ${m}: salary €${Math.round(s.salary || 0).toLocaleString()} | vendors €${Math.round(s.vendors || 0).toLocaleString()}`);
+      }
+    }
+
+    const salActMonths = Object.keys(salaryActualsByDept || {}).sort();
+    if (salActMonths.length > 0) {
+      lines.push(`\nMONTHLY SALARY ACTUALS BY DEPT — SNOWFLAKE (EUR, recurring accounts only):`);
+      for (const m of salActMonths) {
+        const byDept = salaryActualsByDept[m] || {};
+        const sorted = Object.entries(byDept).sort((a, b) => (b[1]?.eur || 0) - (a[1]?.eur || 0));
+        const nonZero = sorted.filter(([, v]) => (v?.eur || 0) > 0);
+        if (nonZero.length === 0) continue;
+        const total = nonZero.reduce((s, [, v]) => s + (v?.eur || 0), 0);
+        const top = nonZero.slice(0, 8).map(([d, v]) => `${d} €${Math.round(v.eur).toLocaleString()}`).join(', ');
+        lines.push(`  ${m}: total €${Math.round(total).toLocaleString()} — ${top}${nonZero.length > 8 ? ` (+${nonZero.length - 8} more)` : ''}`);
+      }
+    }
+
+    const hcMonths = Object.keys(monthlyHCImpact || {}).sort();
+    if (hcMonths.length > 0) {
+      lines.push(`\nMONTHLY HC EVENT IMPACT — SNOWFLAKE (cumulative salary delta EUR):`);
+      for (const m of hcMonths) {
+        const h = monthlyHCImpact[m];
+        if (!h) continue;
+        lines.push(`  ${m}: net Δ €${Math.round(h.net || 0).toLocaleString()} | running cumulative €${Math.round(h.running || 0).toLocaleString()}`);
+      }
+    }
+
+    // Snowflake budget overrides (explicit GL-level budget changes from FCT_EXPENSE)
+    if (Array.isArray(sfBudget.overrides) && sfBudget.overrides.length > 0) {
+      lines.push(`\nSNOWFLAKE BUDGET OVERRIDES (${sfBudget.overrides.length} rows from FCT_EXPENSE):`);
+      for (const o of sfBudget.overrides.slice(0, 30)) {
+        lines.push(`  ${o.mKey || o.fromMonth}: ${o.category || o.account} ${o.department || ''} — ${o.mode || 'override'} €${Math.round(o.amountEUR || 0).toLocaleString()}${o.comments ? ` (${o.comments})` : ''}`);
+      }
+      if (sfBudget.overrides.length > 30) lines.push(`  …and ${sfBudget.overrides.length - 30} more overrides`);
+    }
+
     // Include active scenario data so AI can adjust existing scenarios
     if (activeScenarioId) {
       const activeS = scenarios.find(s => s.id === activeScenarioId);
@@ -2831,7 +2897,7 @@ useEffect(() => {
       }
     }
     return lines.join('\n');
-  }, [activeCompany, consolidatedCashflow, asOfDate, bankAccounts, displayTotalEUR, displayTotalILS, categorizedAccounts, cashflowForecast, yoyRevenue, salaryDeptBudgets, sfBudget, activeScenarioId, scenarios, hasAnyAdjustments, getCurrentScenarioData]);
+  }, [activeCompany, consolidatedCashflow, asOfDate, bankAccounts, displayTotalEUR, displayTotalILS, categorizedAccounts, cashflowForecast, yoyRevenue, salaryDeptBudgets, sfBudget, sfRevenue, sfRevenuePaid, sfActualsSplit, salaryActualsByDept, monthlyHCImpact, activeScenarioId, scenarios, hasAnyAdjustments, getCurrentScenarioData]);
 
   const sendChatMessage = useCallback(async () => {
     // Read from whichever input has text (header or panel)
