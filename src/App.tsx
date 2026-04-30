@@ -510,7 +510,7 @@ export default function App() {
   const [monthlyReval, setMonthlyReval] = useState<{ byMonth: Record<string, { eur: number; ils: number; hasBothEnds?: boolean }>; preYear: { eur: number; ils: number } }>({ byMonth: {}, preYear: { eur: 0, ils: 0 } });
   const [sfSalaryBudget, setSfSalaryBudget] = useState<Record<string, { eur: number; ils: number }>>({});
   const [sfFinanceBudget, setSfFinanceBudget] = useState<Record<string, { eur: number; ils: number }>>({});
-  const [arrData, setArrData] = useState<{ mrr: number; arr: number; customers: number; avgPerCustomer: number; month: string; snapDate: string; history: { name: string; snapDate: string; mrr: number; arr: number; customers: number; avgPerCustomer: number }[] } | null>(null);
+  const [arrData, setArrData] = useState<{ mrr: number; arr: number; customers: number; avgPerCustomer: number; month: string; snapDate: string; liveMonth?: string; liveDate?: string; history: { name: string; snapDate: string; mrr: number; arr: number; customers: number; avgPerCustomer: number }[] } | null>(null);
   const [sfSalaryOverrides, setSfSalaryOverrides] = useState<{ account: string; fromMonth: string; toMonth: string; department: string; location: string; amountEUR: number; mode: string; comments: string; mKey: string; oldVal: number; newVal: number }[]>([]);
   const [prevMonthEndBalance, setPrevMonthEndBalance] = useState<{ eur: number; ils: number } | null>(null);
   const [churnData, setChurnData] = useState<{ year: number; totalCustomers: number; totalRevenue: number; churnedClients: number; lostRevenue: number; churnPct: number; clientChurnPct: number; monthlyImpact: number; monthsCount: number }[]>([]);
@@ -3879,6 +3879,7 @@ useEffect(() => {
                   <div className="flex items-end gap-3 mb-2">
                     <p className={`text-2xl font-bold ${arrOnTrack ? 'text-emerald-700' : 'text-blue-700'}`}>{currentARR > 0 ? `€${(currentARR / 1e6).toFixed(1)}M` : '—'}</p>
                     <p className="text-xs text-gray-400 mb-1">target: €{(arrTarget / 1e6).toFixed(0)}M ({arrPct}%)</p>
+                    {arrData?.liveMonth && <p className="text-[10px] text-emerald-600 mb-1 font-medium">live {arrData.liveMonth}{arrData.liveDate ? ` · ${arrData.liveDate}` : ''}</p>}
                   </div>
                   {/* Progress bar */}
                   <div className="w-full bg-gray-200 rounded-full h-2 mb-2">
