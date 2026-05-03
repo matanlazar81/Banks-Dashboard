@@ -183,14 +183,18 @@ function banksPlugin(): Plugin {
         try {
           const sub = getSubsidiary(req);
           const ns = getNsClient(sub);
-          // Sum Income-account credits by trandate (matches the NS "Sales by Customer" report).
-          // Captures all transaction types that post to revenue (CustInvc, CashSale, JEs to Income, etc.),
-          // not just CustInvc grouped by close date — the latter understates recently-billed months
-          // because invoices billed late in a month are typically paid (closed) the following month.
+          // Match the NS "Sales by Customer - Cash Basis" report: revenue recognized when paid.
+          // - For paid invoices (status='B'/'X'): use closedate (when payment hit) as recognition date
+          // - For cash sales / JEs / refunds touching Income: use trandate
+          // - Skip open invoices (revenue not yet recognized on cash basis)
           const byMonth: Record<string, number> = {};
           try {
             const revenueRows = await queueNsCall(() => ns.suiteqlAll(`
-              SELECT TO_CHAR(t.trandate, 'YYYY-MM') AS mkey,
+              SELECT TO_CHAR(
+                       CASE WHEN t.type = 'CustInvc' AND t.status IN ('B','X') THEN t.closedate
+                            ELSE t.trandate END,
+                       'YYYY-MM'
+                     ) AS mkey,
                      SUM(COALESCE(tal.credit, 0)) - SUM(COALESCE(tal.debit, 0)) AS net_revenue
               FROM transactionaccountingline tal
               JOIN transaction t ON tal.transaction = t.id
@@ -199,9 +203,14 @@ function banksPlugin(): Plugin {
                 AND a.accttype = 'Income'
                 AND tal.posting = 'T'
                 AND tal.accountingbook = 1
-                AND t.trandate >= TO_DATE('${getYear(req)}-01-01', 'YYYY-MM-DD')
-              GROUP BY TO_CHAR(t.trandate, 'YYYY-MM')
-              ORDER BY TO_CHAR(t.trandate, 'YYYY-MM')
+                AND (t.type <> 'CustInvc' OR t.status IN ('B','X'))
+                AND CASE WHEN t.type = 'CustInvc' AND t.status IN ('B','X') THEN t.closedate
+                         ELSE t.trandate END >= TO_DATE('${getYear(req)}-01-01', 'YYYY-MM-DD')
+              GROUP BY TO_CHAR(
+                       CASE WHEN t.type = 'CustInvc' AND t.status IN ('B','X') THEN t.closedate
+                            ELSE t.trandate END,
+                       'YYYY-MM')
+              ORDER BY mkey
             `));
             for (const r of revenueRows) {
               if (r.mkey && parseFloat(r.net_revenue) > 0) {
