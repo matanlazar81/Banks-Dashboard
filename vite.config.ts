@@ -183,42 +183,44 @@ function banksPlugin(): Plugin {
         try {
           const sub = getSubsidiary(req);
           const ns = getNsClient(sub);
-          const data = await queueNsCall(() => ns.fetchCollectionData());
-          // Group by month
+          // Sum Income-account credits by trandate (matches the NS "Sales by Customer" report).
+          // Captures all transaction types that post to revenue (CustInvc, CashSale, JEs to Income, etc.),
+          // not just CustInvc grouped by close date — the latter understates recently-billed months
+          // because invoices billed late in a month are typically paid (closed) the following month.
           const byMonth: Record<string, number> = {};
-          for (const r of data) {
-            if (r.dateClosed) {
-              const parts = r.dateClosed.split('/');
-              if (parts.length === 3) {
-                const m = `${parts[2]}-${parts[1].padStart(2, '0')}`;
-                byMonth[m] = (byMonth[m] || 0) + (r.amountEUR || 0);
+          try {
+            const revenueRows = await queueNsCall(() => ns.suiteqlAll(`
+              SELECT TO_CHAR(t.trandate, 'YYYY-MM') AS mkey,
+                     SUM(COALESCE(tal.credit, 0)) - SUM(COALESCE(tal.debit, 0)) AS net_revenue
+              FROM transactionaccountingline tal
+              JOIN transaction t ON tal.transaction = t.id
+              JOIN account a ON tal.account = a.id
+              WHERE t.subsidiary = ${sub}
+                AND a.accttype = 'Income'
+                AND tal.posting = 'T'
+                AND tal.accountingbook = 1
+                AND t.trandate >= TO_DATE('${getYear(req)}-01-01', 'YYYY-MM-DD')
+              GROUP BY TO_CHAR(t.trandate, 'YYYY-MM')
+              ORDER BY TO_CHAR(t.trandate, 'YYYY-MM')
+            `));
+            for (const r of revenueRows) {
+              if (r.mkey && parseFloat(r.net_revenue) > 0) {
+                byMonth[r.mkey] = Math.round(parseFloat(r.net_revenue));
               }
             }
-          }
-          // For non-invoice subsidiaries (e.g. Statscore with JEs only), if no invoice collections found,
-          // fall back to Income account credits (net revenue recognized) from transactionaccountingline
-          if (Object.keys(byMonth).length === 0) {
-            try {
-              const revenueRows = await queueNsCall(() => ns.suiteqlAll(`
-                SELECT TO_CHAR(t.trandate, 'YYYY-MM') AS mkey,
-                       SUM(COALESCE(tal.credit, 0)) - SUM(COALESCE(tal.debit, 0)) AS net_revenue
-                FROM transactionaccountingline tal
-                JOIN transaction t ON tal.transaction = t.id
-                JOIN account a ON tal.account = a.id
-                WHERE t.subsidiary = ${sub}
-                  AND a.accttype = 'Income'
-                  AND tal.posting = 'T'
-                  AND tal.accountingbook = 1
-                  AND t.trandate >= TO_DATE('${getYear(req)}-01-01', 'YYYY-MM-DD')
-                GROUP BY TO_CHAR(t.trandate, 'YYYY-MM')
-                ORDER BY TO_CHAR(t.trandate, 'YYYY-MM')
-              `));
-              for (const r of revenueRows) {
-                if (r.mkey && parseFloat(r.net_revenue) > 0) {
-                  byMonth[r.mkey] = Math.round(parseFloat(r.net_revenue));
+          } catch (e2: any) {
+            console.error('[NS API] Income-credits query failed, falling back to invoice close-date:', e2.message);
+            // Fallback: original CustInvc-by-closedate logic
+            const data = await queueNsCall(() => ns.fetchCollectionData());
+            for (const r of data) {
+              if (r.dateClosed) {
+                const parts = r.dateClosed.split('/');
+                if (parts.length === 3) {
+                  const m = `${parts[2]}-${parts[1].padStart(2, '0')}`;
+                  byMonth[m] = (byMonth[m] || 0) + (r.amountEUR || 0);
                 }
               }
-            } catch (e2: any) { console.error('[NS API] Revenue fallback failed:', e2.message); }
+            }
           }
           const resp2 = { data: byMonth, timestamp: new Date().toISOString() };
           setCache(ck2, resp2);
