@@ -175,7 +175,10 @@ function banksPlugin(): Plugin {
 
       // ── GET /api/banks-collection-data — actual paid invoices (for current month actuals) ──
       server.middlewares.use('/api/banks-collection-data', async (req: any, res: any) => {
-        const ck2 = `collection-data:${getSubsidiary(req)}`; const cv2 = getCached(ck2);
+        const url = new URL(req.url || '', `http://${req.headers.host}`);
+        const forceRefresh = url.searchParams.get('refresh') === 'true';
+        const ck2 = `collection-data:${getSubsidiary(req)}`;
+        const cv2 = forceRefresh ? null : getCached(ck2);
         if (cv2) { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(cv2)); return; }
         try {
           const sub = getSubsidiary(req);
