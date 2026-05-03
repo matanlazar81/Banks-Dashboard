@@ -204,7 +204,6 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
       WHERE t.type = 'CustInvc'
         AND t.subsidiary = ${subsidiaryId}
         AND t.trandate >= TO_DATE('2026-01-01', 'YYYY-MM-DD')
-        AND t.entity NOT IN (3819, 11063)
       ORDER BY t.trandate
     `);
 
