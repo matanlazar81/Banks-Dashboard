@@ -173,7 +173,6 @@ function ReconTable({ sfRevenueTotal, totalInflows, totalCollectionAdj, totalCar
                       {m.isPast ? <span className="ml-1.5 text-[9px] bg-green-100 text-green-700 px-1 py-0.5 rounded-full">ACTUAL</span>
                         : m.isCurrent ? <span className="ml-1.5 text-[9px] bg-amber-100 text-amber-700 px-1 py-0.5 rounded-full">CURRENT</span>
                         : <span className="ml-1.5 text-[9px] bg-violet-100 text-violet-700 px-1 py-0.5 rounded-full">PROJECTED</span>}
-                      {m.isPast && isMonthSettling(m.mKey) && <span className="ml-1 text-[9px] bg-amber-50 text-amber-600 border border-amber-200 px-1 py-0.5 rounded-full" title={SETTLING_TIP}>SETTLING</span>}
                       {key === 'carry' && priorMonth && val !== 0 && <span className="text-[9px] text-gray-400 ml-1">(from {priorMonth.month} unpaid)</span>}
                     </td>
                     <td className={`py-1 text-right font-medium ${color}`}>{val >= 0 && key !== 'revenue' ? '+' : ''}{fmtFn(val)}</td>
@@ -334,8 +333,7 @@ function ReconTable({ sfRevenueTotal, totalInflows, totalCollectionAdj, totalCar
                             {m.isPast ? <span className="ml-1.5 text-[9px] bg-green-100 text-green-700 px-1 py-0.5 rounded-full">ACTUAL</span>
                               : m.isCurrent ? <span className="ml-1.5 text-[9px] bg-amber-100 text-amber-700 px-1 py-0.5 rounded-full">CURRENT</span>
                               : <span className="ml-1.5 text-[9px] bg-violet-100 text-violet-700 px-1 py-0.5 rounded-full">PROJECTED</span>}
-                            {m.isPast && isMonthSettling(m.mKey) && <span className="ml-1 text-[9px] bg-amber-50 text-amber-600 border border-amber-200 px-1 py-0.5 rounded-full" title={SETTLING_TIP}>SETTLING</span>}
-                          </td>
+                                </td>
                           <td className="py-1 pr-2 text-right text-blue-600">{fmtFn(m.revenue)}</td>
                           <td className="py-1 pr-2 text-right text-green-600">{fmtFn(m.collected)}</td>
                           <td className={`py-1 text-right font-medium ${m.collAdj >= 0 ? 'text-green-600' : 'text-red-500'}`}>{m.collAdj >= 0 ? '+' : ''}{fmtFn(m.collAdj)}</td>
@@ -4480,7 +4478,6 @@ useEffect(() => {
                           ? <span className="ml-2 text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-medium">CURRENT</span>
                           : <span className="ml-2 text-[10px] bg-violet-100 text-violet-700 px-1.5 py-0.5 rounded-full font-medium">PROJECTED</span>
                         }
-                        {r.isPast && isMonthSettling(r.mKey, asOfDate) && <span className="ml-1 text-[10px] bg-amber-50 text-amber-600 border border-amber-200 px-1.5 py-0.5 rounded-full font-medium" title={SETTLING_TIP}>SETTLING</span>}
                       </td>
                       <td className={`py-2 pr-1 text-right font-medium ${r.openingBalance >= 0 ? 'text-gray-700' : 'text-red-600'}`}>
                         {fmt(r.openingBalance)}
@@ -5528,7 +5525,6 @@ useEffect(() => {
                           ? <span className="ml-2 text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-medium">CURRENT</span>
                           : <span className="ml-2 text-[10px] bg-violet-100 text-violet-700 px-1.5 py-0.5 rounded-full font-medium">PROJECTED</span>
                         }
-                        {r.isPast && isMonthSettling(r.mKey, asOfDate) && <span className="ml-1 text-[10px] bg-amber-50 text-amber-600 border border-amber-200 px-1.5 py-0.5 rounded-full font-medium" title={SETTLING_TIP}>SETTLING</span>}
                       </td>
                       <td className={`py-2.5 px-0.5 text-right font-medium ${r.openingBalance >= 0 ? 'text-gray-700' : 'text-red-600'} ${(r.isCurrent || r.isPast) ? 'cursor-pointer hover:underline' : ''}`}
                           onClick={() => {
