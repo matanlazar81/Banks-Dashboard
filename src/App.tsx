@@ -105,6 +105,17 @@ type ARForecastItem = { customer: string; amountEUR: number; dueDate: string };
 type SalaryMonth = { month: string; amountEUR: number; amountILS: number };
 type VendorHistoryRecord = { vendor: string; paidDate: string; amountEUR: number; daysToPay: number };
 
+// Most recent past month, viewed within the first ~10 days of the new month — NS AR application
+// (dateClosed) typically lags a few business days, so very recent past months can understate inflows.
+const isMonthSettling = (mKey: string, asOfDate?: string): boolean => {
+  if (!mKey) return false;
+  const now = asOfDate ? new Date(asOfDate + 'T12:00:00') : new Date();
+  const [y, m] = mKey.split('-').map(Number);
+  if (!y || !m) return false;
+  const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  return y === prev.getFullYear() && m === prev.getMonth() + 1 && now.getDate() <= 10;
+};
+const SETTLING_TIP = 'Still settling: NetSuite AR application typically lags a few business days, so this month’s inflows may grow as late payments are posted.';
 const fmt = (n: number) => new Intl.NumberFormat('en-IE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n);
 const fmtFull = (n: number) => new Intl.NumberFormat('en-IE', { style: 'currency', currency: 'EUR', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(n);
 const fmtILS = (n: number) => new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 }).format(n);
@@ -162,6 +173,7 @@ function ReconTable({ sfRevenueTotal, totalInflows, totalCollectionAdj, totalCar
                       {m.isPast ? <span className="ml-1.5 text-[9px] bg-green-100 text-green-700 px-1 py-0.5 rounded-full">ACTUAL</span>
                         : m.isCurrent ? <span className="ml-1.5 text-[9px] bg-amber-100 text-amber-700 px-1 py-0.5 rounded-full">CURRENT</span>
                         : <span className="ml-1.5 text-[9px] bg-violet-100 text-violet-700 px-1 py-0.5 rounded-full">PROJECTED</span>}
+                      {m.isPast && isMonthSettling(m.mKey) && <span className="ml-1 text-[9px] bg-amber-50 text-amber-600 border border-amber-200 px-1 py-0.5 rounded-full" title={SETTLING_TIP}>SETTLING</span>}
                       {key === 'carry' && priorMonth && val !== 0 && <span className="text-[9px] text-gray-400 ml-1">(from {priorMonth.month} unpaid)</span>}
                     </td>
                     <td className={`py-1 text-right font-medium ${color}`}>{val >= 0 && key !== 'revenue' ? '+' : ''}{fmtFn(val)}</td>
@@ -322,6 +334,7 @@ function ReconTable({ sfRevenueTotal, totalInflows, totalCollectionAdj, totalCar
                             {m.isPast ? <span className="ml-1.5 text-[9px] bg-green-100 text-green-700 px-1 py-0.5 rounded-full">ACTUAL</span>
                               : m.isCurrent ? <span className="ml-1.5 text-[9px] bg-amber-100 text-amber-700 px-1 py-0.5 rounded-full">CURRENT</span>
                               : <span className="ml-1.5 text-[9px] bg-violet-100 text-violet-700 px-1 py-0.5 rounded-full">PROJECTED</span>}
+                            {m.isPast && isMonthSettling(m.mKey) && <span className="ml-1 text-[9px] bg-amber-50 text-amber-600 border border-amber-200 px-1 py-0.5 rounded-full" title={SETTLING_TIP}>SETTLING</span>}
                           </td>
                           <td className="py-1 pr-2 text-right text-blue-600">{fmtFn(m.revenue)}</td>
                           <td className="py-1 pr-2 text-right text-green-600">{fmtFn(m.collected)}</td>
@@ -4467,6 +4480,7 @@ useEffect(() => {
                           ? <span className="ml-2 text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-medium">CURRENT</span>
                           : <span className="ml-2 text-[10px] bg-violet-100 text-violet-700 px-1.5 py-0.5 rounded-full font-medium">PROJECTED</span>
                         }
+                        {r.isPast && isMonthSettling(r.mKey, asOfDate) && <span className="ml-1 text-[10px] bg-amber-50 text-amber-600 border border-amber-200 px-1.5 py-0.5 rounded-full font-medium" title={SETTLING_TIP}>SETTLING</span>}
                       </td>
                       <td className={`py-2 pr-1 text-right font-medium ${r.openingBalance >= 0 ? 'text-gray-700' : 'text-red-600'}`}>
                         {fmt(r.openingBalance)}
@@ -5514,6 +5528,7 @@ useEffect(() => {
                           ? <span className="ml-2 text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-medium">CURRENT</span>
                           : <span className="ml-2 text-[10px] bg-violet-100 text-violet-700 px-1.5 py-0.5 rounded-full font-medium">PROJECTED</span>
                         }
+                        {r.isPast && isMonthSettling(r.mKey, asOfDate) && <span className="ml-1 text-[10px] bg-amber-50 text-amber-600 border border-amber-200 px-1.5 py-0.5 rounded-full font-medium" title={SETTLING_TIP}>SETTLING</span>}
                       </td>
                       <td className={`py-2.5 px-0.5 text-right font-medium ${r.openingBalance >= 0 ? 'text-gray-700' : 'text-red-600'} ${(r.isCurrent || r.isPast) ? 'cursor-pointer hover:underline' : ''}`}
                           onClick={() => {
