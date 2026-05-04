@@ -2034,9 +2034,11 @@ useEffect(() => {
       let collectionsRemaining = 0;
       let collectionsForecast = revPaid?.revenue || sfRevenue.budget?.[mKey]?.eur || nsBudget.byMonth[mKey]?.revenue || 0;
       let collectionsRevenue = revPaid?.revenue || nsBudget.byMonth[mKey]?.revenue || 0;
-      let collectionsUnpaidCarry = prevMonthUnpaid; // real unpaid from past months only
-      const prevD = new Date(d.getFullYear(), d.getMonth() - 1, 1);
-      const collectionsUnpaidCarryMonth = prevMonthUnpaid > 0 ? `${prevD.getFullYear()}-${String(prevD.getMonth() + 1).padStart(2, '0')}` : '';
+      // Carry is obsolete now that NS inflows use cash-basis on closedate — late payments
+      // from prior months naturally land in the month they're paid (and counted there),
+      // so adding them again here would double-count.
+      let collectionsUnpaidCarry = 0;
+      const collectionsUnpaidCarryMonth = '';
       const collectionsPipeline = (!isPastMonth && !isCurMonth) ? (pipelineByMonth[mKey] || 0) : 0;
       const customers = revPaid?.customers || 0;
       if (isPastMonth && actualColl > 0) {
