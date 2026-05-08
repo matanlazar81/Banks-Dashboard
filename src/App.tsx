@@ -6265,12 +6265,17 @@ useEffect(() => {
                   const hc = d.headcount;
                   const adj = forecastDrilldown.adjPct || 0;
                   const multiplier = 1 + (adj / 100);
-                  const useLastActualInDrill = salaryProjectionMode === 'lastActual' && lastActualSalaryMonth && salaryActualsByDept[lastActualSalaryMonth] && forecastDrilldown.mKey > lastActualSalaryMonth;
+                  // In lastActual mode: use this month's own actuals snapshot if available,
+                  // otherwise project forward using the most-recent-actual snapshot.
+                  const drillBasisMonth = salaryProjectionMode === 'lastActual' && lastActualSalaryMonth
+                    ? (salaryActualsByDept[forecastDrilldown.mKey] ? forecastDrilldown.mKey : lastActualSalaryMonth)
+                    : null;
+                  const useLastActualInDrill = !!(drillBasisMonth && salaryActualsByDept[drillBasisMonth]);
                   const budgetTotal = useLastActualInDrill
-                    ? Object.values(salaryActualsByDept[lastActualSalaryMonth]).reduce((s, v) => s + (v as { eur: number }).eur, 0)
+                    ? Object.values(salaryActualsByDept[drillBasisMonth!]).reduce((s, v) => s + (v as { eur: number }).eur, 0)
                     : d.budget.reduce((s: number, r: any) => s + (r.amountEUR || 0), 0);
                   const budgetTotalILS = useLastActualInDrill
-                    ? Object.values(salaryActualsByDept[lastActualSalaryMonth]).reduce((s, v) => s + (v as { eur: number; ils: number }).ils, 0)
+                    ? Object.values(salaryActualsByDept[drillBasisMonth!]).reduce((s, v) => s + (v as { eur: number; ils: number }).ils, 0)
                     : d.budget.reduce((s: number, r: any) => s + (r.amountILS || 0), 0);
                   const adjustedTotal = Math.round(budgetTotal * multiplier);
                   const adjustedTotalILS = Math.round(budgetTotalILS * multiplier);
@@ -6301,7 +6306,7 @@ useEffect(() => {
                   const deptAdjDeltaByDept: Record<string, number> = {};
                   const deptBudgetTotals: Record<string, number> = {};
                   if (useLastActualInDrill) {
-                    for (const [dept, v] of Object.entries(salaryActualsByDept[lastActualSalaryMonth])) { deptBudgetTotals[dept] = (v as { eur: number }).eur; }
+                    for (const [dept, v] of Object.entries(salaryActualsByDept[drillBasisMonth!])) { deptBudgetTotals[dept] = (v as { eur: number }).eur; }
                   } else {
                     for (const row of d.budget) { deptBudgetTotals[row.department] = (deptBudgetTotals[row.department] || 0) + (row.amountEUR || 0); }
                   }
@@ -6943,7 +6948,7 @@ useEffect(() => {
                       })()}
                       {hasBudget && (
                         <div>
-                          <p className="text-xs text-gray-400 mb-2">{forecastDrilldown.data?.__nsMode ? 'Budget Breakdown (NetSuite budgetsmachine)' : useLastActualInDrill ? `Budget Breakdown (Last Actual ${lastActualSalaryMonth} — recurring payroll accounts only)${hasAnyAdjustment ? ` — showing original → adjusted` : ''}` : `Budget Breakdown (Snowflake FCT_BUDGET — levers, new hires, etc.)${hasAnyAdjustment ? ` — showing original → adjusted` : ''}${adj !== 0 ? ` (${adj > 0 ? '+' : ''}${adj}%)` : ''}${hasLeverOverrides ? ' + lever overrides' : ''}`}</p>
+                          <p className="text-xs text-gray-400 mb-2">{forecastDrilldown.data?.__nsMode ? 'Budget Breakdown (NetSuite budgetsmachine)' : useLastActualInDrill ? `Budget Breakdown (Last Actual ${drillBasisMonth} — recurring payroll accounts only)${hasAnyAdjustment ? ` — showing original → adjusted` : ''}` : `Budget Breakdown (Snowflake FCT_BUDGET — levers, new hires, etc.)${hasAnyAdjustment ? ` — showing original → adjusted` : ''}${adj !== 0 ? ` (${adj > 0 ? '+' : ''}${adj}%)` : ''}${hasLeverOverrides ? ' + lever overrides' : ''}`}</p>
                           <table className="w-full text-xs">
                             <thead><tr className="text-left text-gray-400 uppercase border-b">
                               <th className="pb-1 pr-2">Department</th><th className="pb-1 pr-2">Account #</th><th className="pb-1 pr-2">Name</th>
