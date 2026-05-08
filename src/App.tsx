@@ -1897,7 +1897,7 @@ useEffect(() => {
       }
       // Dept adjustment delta — uses last-actual dept amounts when in lastActual mode
       let deptAdjDelta = 0;
-      const useLastActual = salaryProjectionMode === 'lastActual' && lastActualSalaryMonth && salaryActualsByDept[lastActualSalaryMonth];
+      const useLastActual = salaryProjectionMode === 'lastActual' && lastActualSalaryMonth && salaryActualsByDept[lastActualSalaryMonth] && mKey > lastActualSalaryMonth;
       const deptBasis = useLastActual ? salaryActualsByDept[lastActualSalaryMonth] : null;
       if (Object.keys(effectiveDeptAdj).length > 0) {
         const deptSource = deptBasis
@@ -2174,7 +2174,7 @@ useEffect(() => {
       const cAllAdjM = Object.keys(cd.salaryDeptAdj || {}).filter(k => k <= mKey).sort();
       for (const ak of cAllAdjM) { for (const [dep, p] of Object.entries(cd.salaryDeptAdj[ak])) { if (p !== 0) cEffDept[dep] = p; else delete cEffDept[dep]; } }
       let cDeptDelta = 0;
-      const cUseLastActual = salaryProjectionMode === 'lastActual' && lastActualSalaryMonth && salaryActualsByDept[lastActualSalaryMonth];
+      const cUseLastActual = salaryProjectionMode === 'lastActual' && lastActualSalaryMonth && salaryActualsByDept[lastActualSalaryMonth] && mKey > lastActualSalaryMonth;
       const cDeptBasis = cUseLastActual ? Object.fromEntries(Object.entries(salaryActualsByDept[lastActualSalaryMonth]).map(([d, v]) => [d, (v as { eur: number }).eur])) : salaryDeptBudgets[mKey];
       if (Object.keys(cEffDept).length > 0 && cDeptBasis) {
         for (const [dep, p] of Object.entries(cEffDept)) { cDeptDelta += Math.round((cDeptBasis[dep] || 0) * (p / 100)); }
@@ -6265,7 +6265,7 @@ useEffect(() => {
                   const hc = d.headcount;
                   const adj = forecastDrilldown.adjPct || 0;
                   const multiplier = 1 + (adj / 100);
-                  const useLastActualInDrill = salaryProjectionMode === 'lastActual' && lastActualSalaryMonth && salaryActualsByDept[lastActualSalaryMonth];
+                  const useLastActualInDrill = salaryProjectionMode === 'lastActual' && lastActualSalaryMonth && salaryActualsByDept[lastActualSalaryMonth] && forecastDrilldown.mKey > lastActualSalaryMonth;
                   const budgetTotal = useLastActualInDrill
                     ? Object.values(salaryActualsByDept[lastActualSalaryMonth]).reduce((s, v) => s + (v as { eur: number }).eur, 0)
                     : d.budget.reduce((s: number, r: any) => s + (r.amountEUR || 0), 0);
