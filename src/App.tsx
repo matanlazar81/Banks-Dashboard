@@ -6497,7 +6497,7 @@ useEffect(() => {
                         <p className="text-xs text-gray-400 mb-2 uppercase">Summary{hasAnyAdjustment ? ' — adjustments applied' : ''}{salaryProjectionMode === 'lastActual' ? ' — using last actual' : ''}</p>
                         <table className="w-full text-xs">
                           <tbody>
-                            <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600">Budget (original)</td><td className="py-1.5 text-right"><span className="font-bold text-violet-700">{fmt(budgetTotal)}</span><span className="text-[10px] text-gray-400 ml-1">{fmtILS(toILS(budgetTotal))}</span></td></tr>
+                            <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600">{useLastActualInDrill ? `Last Actual (${drillBasisMonth})` : 'Budget (original)'}</td><td className="py-1.5 text-right"><span className="font-bold text-violet-700">{fmt(budgetTotal)}</span><span className="text-[10px] text-gray-400 ml-1">{fmtILS(toILS(budgetTotal))}</span></td></tr>
                             {hasSfOverrides ? (
                               <>
                                 {monthOverrides.map((ov, oi) => (
