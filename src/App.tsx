@@ -6497,7 +6497,7 @@ useEffect(() => {
                         <p className="text-xs text-gray-400 mb-2 uppercase">Summary{hasAnyAdjustment ? ' — adjustments applied' : ''}{salaryProjectionMode === 'lastActual' ? ' — using last actual' : ''}</p>
                         <table className="w-full text-xs">
                           <tbody>
-                            <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600">Budget (original)</td><td className="py-1.5 text-right"><span className="font-bold text-violet-700">{fmt(budgetTotal)}</span><br/><span className="text-[10px] text-gray-400">{fmtILS(toILS(budgetTotal))}</span></td></tr>
+                            <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600">Budget (original)</td><td className="py-1.5 text-right"><span className="font-bold text-violet-700">{fmt(budgetTotal)}</span><span className="text-[10px] text-gray-400 ml-1">{fmtILS(toILS(budgetTotal))}</span></td></tr>
                             {hasSfOverrides ? (
                               <>
                                 {monthOverrides.map((ov, oi) => (
@@ -6514,17 +6514,17 @@ useEffect(() => {
                                     </td>
                                     <td className={`py-2 text-right ${ov.mode === 'Override' ? 'text-orange-700' : (ov.amountEUR >= 0 ? 'text-red-600' : 'text-green-700')}`}>
                                       <span className="font-bold text-sm">{ov.mode === 'Override' ? fmt(ov.newVal - ov.oldVal) : `${ov.amountEUR >= 0 ? '+' : ''}${fmt(ov.amountEUR)}`}</span>
-                                      <br/><span className="text-[10px] opacity-60">{fmtILS(toILS(ov.mode === 'Override' ? ov.newVal - ov.oldVal : ov.amountEUR))}</span>
+                                      <span className="text-[10px] opacity-60 ml-1">{fmtILS(toILS(ov.mode === 'Override' ? ov.newVal - ov.oldVal : ov.amountEUR))}</span>
                                     </td>
                                   </tr>
                                 ))}
                               </>
                             ) : (
-                              <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600 pl-3 text-gray-400">{forecastDrilldown.data?.__nsMode ? 'NS Override' : 'Salary Override (Google Sheets)'}</td><td className="py-1.5 text-right text-gray-400"><span>{fmt(0)}</span><br/><span className="text-[10px] opacity-60">{fmtILS(0)}</span></td></tr>
+                              <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600 pl-3 text-gray-400">{forecastDrilldown.data?.__nsMode ? 'NS Override' : 'Salary Override (Google Sheets)'}</td><td className="py-1.5 text-right text-gray-400"><span>{fmt(0)}</span><span className="text-[10px] opacity-60 ml-1">{fmtILS(0)}</span></td></tr>
                             )}
                             <tr className="border-b border-gray-200">
                               <td className="py-1.5 text-gray-600 pl-3">{adj !== 0 ? <span className="text-blue-700">Manual adjustment ({adj > 0 ? '+' : ''}{adj}%)</span> : <span className="text-gray-400">Manual adjustment (0%)</span>}</td>
-                              <td className={`py-1.5 text-right ${adj !== 0 ? (adjustedTotal - budgetTotal >= 0 ? 'text-red-600' : 'text-green-700') : 'text-gray-400'}`}>{adj !== 0 ? <><span className="font-bold">{adjustedTotal - budgetTotal >= 0 ? '+' : ''}{fmt(adjustedTotal - budgetTotal)}</span><br/><span className="text-[10px] opacity-60">{fmtILS(toILS(adjustedTotal - budgetTotal))}</span></> : <><span>{fmt(0)}</span><br/><span className="text-[10px] opacity-60">{fmtILS(0)}</span></>}</td>
+                              <td className={`py-1.5 text-right ${adj !== 0 ? (adjustedTotal - budgetTotal >= 0 ? 'text-red-600' : 'text-green-700') : 'text-gray-400'}`}>{adj !== 0 ? <><span className="font-bold">{adjustedTotal - budgetTotal >= 0 ? '+' : ''}{fmt(adjustedTotal - budgetTotal)}</span><span className="text-[10px] opacity-60 ml-1">{fmtILS(toILS(adjustedTotal - budgetTotal))}</span></> : <><span>{fmt(0)}</span><span className="text-[10px] opacity-60 ml-1">{fmtILS(0)}</span></>}</td>
                             </tr>
                             {/* Manual ILS salary override */}
                             <tr className="border-b border-gray-200">
@@ -6566,10 +6566,10 @@ useEffect(() => {
                                   <span className="text-amber-700 font-medium">Department adjustments</span>
                                   <span className="text-[10px] text-amber-500 ml-1">({budgetTotal > 0 ? (totalDeptAdjDelta > 0 ? '+' : '') + (totalDeptAdjDelta / budgetTotal * 100).toFixed(1) + '% of total' : ''})</span>
                                 </td>
-                                <td className={`py-1.5 text-right ${totalDeptAdjDelta >= 0 ? 'text-red-600' : 'text-green-700'}`}><span className="font-bold">{totalDeptAdjDelta >= 0 ? '+' : ''}{fmt(totalDeptAdjDelta)}</span><br/><span className="text-[10px] opacity-60">{fmtILS(toILS(totalDeptAdjDelta))}</span></td>
+                                <td className={`py-1.5 text-right ${totalDeptAdjDelta >= 0 ? 'text-red-600' : 'text-green-700'}`}><span className="font-bold">{totalDeptAdjDelta >= 0 ? '+' : ''}{fmt(totalDeptAdjDelta)}</span><span className="text-[10px] opacity-60 ml-1">{fmtILS(toILS(totalDeptAdjDelta))}</span></td>
                               </tr>
                             ) : (
-                              <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600 pl-3 text-gray-400">Department adjustments</td><td className="py-1.5 text-right text-gray-400"><span>{fmt(0)}</span><br/><span className="text-[10px] opacity-60">{fmtILS(0)}</span></td></tr>
+                              <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600 pl-3 text-gray-400">Department adjustments</td><td className="py-1.5 text-right text-gray-400"><span>{fmt(0)}</span><span className="text-[10px] opacity-60 ml-1">{fmtILS(0)}</span></td></tr>
                             )}
                             {hasHcImpact && monthlyHCImpact[forecastDrilldown.mKey]?.categories?.length > 0 ? (
                               <>
@@ -6681,7 +6681,7 @@ useEffect(() => {
                                 </tr>
                               </>
                             ) : monthlyHCImpact[forecastDrilldown.mKey] ? (
-                              <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600 pl-3 text-gray-400">HC Levers (no events)</td><td className="py-1.5 text-right text-gray-400"><span>{fmt(0)}</span><br/><span className="text-[10px] opacity-60">{fmtILS(0)}</span></td></tr>
+                              <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600 pl-3 text-gray-400">HC Levers (no events)</td><td className="py-1.5 text-right text-gray-400"><span>{fmt(0)}</span><span className="text-[10px] opacity-60 ml-1">{fmtILS(0)}</span></td></tr>
                             ) : null}
                             {(adj !== 0 || hasSfOverrides || hasDeptAdj2 || hasHcImpact || salaryManualILS[forecastDrilldown.mKey] !== undefined) && (() => {
                               const manualILS = salaryManualILS[forecastDrilldown.mKey];
@@ -6690,11 +6690,11 @@ useEffect(() => {
                               const finalEUR = adjustedTotal + totalDeptAdjDelta + sfOverrideTotal + (hasHcImpact ? hcImpactEUR : 0) + manualDeltaEUR;
                               const finalILS = toILS(finalEUR);
                               return (
-                                <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600 font-semibold">Budget (adjusted)</td><td className="py-1.5 text-right"><span className="font-bold text-green-700">{fmt(finalEUR)}</span><br/><span className="text-[10px] text-gray-400">{fmtILS(finalILS)}</span></td></tr>
+                                <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600 font-semibold">Budget (adjusted)</td><td className="py-1.5 text-right"><span className="font-bold text-green-700">{fmt(finalEUR)}</span><span className="text-[10px] text-gray-400 ml-1">{fmtILS(finalILS)}</span></td></tr>
                               );
                             })()}
-                            {hasActuals && <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600">Actual ({forecastDrilldown.data?.__nsMode ? 'NetSuite' : 'Snowflake'})</td><td className="py-1.5 text-right"><span className="font-bold text-amber-700">{fmt(actualTotal)}</span><br/><span className="text-[10px] text-gray-400">{fmtILS(toILS(actualTotal))}</span></td></tr>}
-                            {hasActuals && (() => { const variance = (hasAnyAdjustment ? adjustedTotal + totalDeptAdjDelta + sfOverrideTotal : budgetTotal) - actualTotal; return <tr><td className="py-1.5 text-gray-600">Variance (Budget − Actual)</td><td className={`py-1.5 text-right ${variance >= 0 ? 'text-green-700' : 'text-red-600'}`}><span className="font-bold">{variance >= 0 ? '+' : ''}{fmt(variance)}</span><br/><span className="text-[10px] opacity-60">{fmtILS(toILS(variance))}</span></td></tr>; })()}
+                            {hasActuals && <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600">Actual ({forecastDrilldown.data?.__nsMode ? 'NetSuite' : 'Snowflake'})</td><td className="py-1.5 text-right"><span className="font-bold text-amber-700">{fmt(actualTotal)}</span><span className="text-[10px] text-gray-400 ml-1">{fmtILS(toILS(actualTotal))}</span></td></tr>}
+                            {hasActuals && (() => { const variance = (hasAnyAdjustment ? adjustedTotal + totalDeptAdjDelta + sfOverrideTotal : budgetTotal) - actualTotal; return <tr><td className="py-1.5 text-gray-600">Variance (Budget − Actual)</td><td className={`py-1.5 text-right ${variance >= 0 ? 'text-green-700' : 'text-red-600'}`}><span className="font-bold">{variance >= 0 ? '+' : ''}{fmt(variance)}</span><span className="text-[10px] opacity-60 ml-1">{fmtILS(toILS(variance))}</span></td></tr>; })()}
                           </tbody>
                         </table>
                       </div>
