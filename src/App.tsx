@@ -6520,11 +6520,11 @@ useEffect(() => {
                                 ))}
                               </>
                             ) : (
-                              <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600 pl-3 text-gray-400">{forecastDrilldown.data?.__nsMode ? 'NS Override' : 'Salary Override (Google Sheets)'}</td><td className="py-1.5 text-right text-gray-400">-</td></tr>
+                              <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600 pl-3 text-gray-400">{forecastDrilldown.data?.__nsMode ? 'NS Override' : 'Salary Override (Google Sheets)'}</td><td className="py-1.5 text-right text-gray-400"><span>{fmt(0)}</span><br/><span className="text-[10px] opacity-60">{fmtILS(0)}</span></td></tr>
                             )}
                             <tr className="border-b border-gray-200">
                               <td className="py-1.5 text-gray-600 pl-3">{adj !== 0 ? <span className="text-blue-700">Manual adjustment ({adj > 0 ? '+' : ''}{adj}%)</span> : <span className="text-gray-400">Manual adjustment (0%)</span>}</td>
-                              <td className={`py-1.5 text-right ${adj !== 0 ? (adjustedTotal - budgetTotal >= 0 ? 'text-red-600' : 'text-green-700') : 'text-gray-400'}`}>{adj !== 0 ? <><span className="font-bold">{adjustedTotal - budgetTotal >= 0 ? '+' : ''}{fmt(adjustedTotal - budgetTotal)}</span><br/><span className="text-[10px] opacity-60">{fmtILS(toILS(adjustedTotal - budgetTotal))}</span></> : '-'}</td>
+                              <td className={`py-1.5 text-right ${adj !== 0 ? (adjustedTotal - budgetTotal >= 0 ? 'text-red-600' : 'text-green-700') : 'text-gray-400'}`}>{adj !== 0 ? <><span className="font-bold">{adjustedTotal - budgetTotal >= 0 ? '+' : ''}{fmt(adjustedTotal - budgetTotal)}</span><br/><span className="text-[10px] opacity-60">{fmtILS(toILS(adjustedTotal - budgetTotal))}</span></> : <><span>{fmt(0)}</span><br/><span className="text-[10px] opacity-60">{fmtILS(0)}</span></>}</td>
                             </tr>
                             {/* Manual ILS salary override */}
                             <tr className="border-b border-gray-200">
@@ -6569,7 +6569,7 @@ useEffect(() => {
                                 <td className={`py-1.5 text-right ${totalDeptAdjDelta >= 0 ? 'text-red-600' : 'text-green-700'}`}><span className="font-bold">{totalDeptAdjDelta >= 0 ? '+' : ''}{fmt(totalDeptAdjDelta)}</span><br/><span className="text-[10px] opacity-60">{fmtILS(toILS(totalDeptAdjDelta))}</span></td>
                               </tr>
                             ) : (
-                              <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600 pl-3 text-gray-400">Department adjustments</td><td className="py-1.5 text-right text-gray-400">-</td></tr>
+                              <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600 pl-3 text-gray-400">Department adjustments</td><td className="py-1.5 text-right text-gray-400"><span>{fmt(0)}</span><br/><span className="text-[10px] opacity-60">{fmtILS(0)}</span></td></tr>
                             )}
                             {hasHcImpact && monthlyHCImpact[forecastDrilldown.mKey]?.categories?.length > 0 ? (
                               <>
@@ -6681,7 +6681,7 @@ useEffect(() => {
                                 </tr>
                               </>
                             ) : monthlyHCImpact[forecastDrilldown.mKey] ? (
-                              <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600 pl-3 text-gray-400">HC Levers (no events)</td><td className="py-1.5 text-right text-gray-400">-</td></tr>
+                              <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600 pl-3 text-gray-400">HC Levers (no events)</td><td className="py-1.5 text-right text-gray-400"><span>{fmt(0)}</span><br/><span className="text-[10px] opacity-60">{fmtILS(0)}</span></td></tr>
                             ) : null}
                             {(adj !== 0 || hasSfOverrides || hasDeptAdj2 || hasHcImpact || salaryManualILS[forecastDrilldown.mKey] !== undefined) && (() => {
                               const manualILS = salaryManualILS[forecastDrilldown.mKey];
