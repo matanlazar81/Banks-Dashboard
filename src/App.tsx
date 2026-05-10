@@ -6510,6 +6510,7 @@ useEffect(() => {
                                         {ov.comments && <span className="text-[10px] text-orange-500 italic">— {ov.comments}</span>}
                                         <span className="text-[9px] bg-orange-200 text-orange-700 px-1.5 py-0.5 rounded font-medium">{ov.mode}</span>
                                         <span className="text-[9px] text-orange-400">via Google Sheets</span>
+                                        {!useLastActualInDrill && <span className="text-[9px] text-orange-400 italic">(info only — included in budget)</span>}
                                       </div>
                                     </td>
                                     <td className={`py-2 text-right ${ov.mode === 'Override' ? 'text-orange-700' : (ov.amountEUR >= 0 ? 'text-red-600' : 'text-green-700')}`}>
@@ -6687,7 +6688,12 @@ useEffect(() => {
                               const manualILS = salaryManualILS[forecastDrilldown.mKey];
                               const hasManual = manualILS !== undefined;
                               const manualDeltaEUR = hasManual && ilsRate > 0 ? Math.round(manualILS / ilsRate) : 0;
-                              const finalEUR = adjustedTotal + totalDeptAdjDelta + sfOverrideTotal + (hasHcImpact ? hcImpactEUR : 0) + manualDeltaEUR;
+                              // In Budget mode, sfSalaryBudget already includes the SF override (applied server-side)
+                              // and HC events (info only — included in budget base). So those should NOT be added
+                              // again here, otherwise the modal drifts from the main grid's salary value.
+                              // In Last Actual mode the base is raw actuals, so both must be added.
+                              const finalEUR = adjustedTotal + totalDeptAdjDelta + manualDeltaEUR
+                                + (useLastActualInDrill ? sfOverrideTotal + (hasHcImpact ? hcImpactEUR : 0) : 0);
                               const finalILS = toILS(finalEUR);
                               return (
                                 <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600 font-semibold">Budget (adjusted)</td><td className="py-1.5 text-right"><span className="font-bold text-green-700">{fmt(finalEUR)}</span><span className="text-[10px] text-gray-400 ml-1">{fmtILS(finalILS)}</span></td></tr>
