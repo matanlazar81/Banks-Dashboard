@@ -1925,21 +1925,20 @@ useEffect(() => {
       } else if (useLastActual && !isPastMonth) {
         // "Last Actual" mode: project last actual month's recurring salary per dept
         // (applies to current month too if no actual data yet)
-        let lastActualTotal = Object.values(salaryActualsByDept[lastActualSalaryMonth]).reduce((s, v) => s + (v as { eur: number }).eur, 0);
-        // Apply GSheets salary overrides for this month (same as budget mode applies server-side)
+        const lastActualBase = Object.values(salaryActualsByDept[lastActualSalaryMonth]).reduce((s, v) => s + (v as { eur: number }).eur, 0);
+        // GSheets salary overrides — applied as fixed delta (manual % does NOT scale them)
         const monthOvrs = sfSalaryOverrides.filter(o => o.mKey === mKey);
         let overrideDelta = 0;
         for (const ov of monthOvrs) {
           if (ov.mode === 'Override') overrideDelta += (ov.newVal - ov.oldVal);
           else overrideDelta += ov.amountEUR;
         }
-        lastActualTotal += overrideDelta;
-        // Add headcount event impact (ILS → EUR) — cumulative running total for this month
+        // Headcount event impact — applied as fixed delta (manual % does NOT scale it)
         const hcImpactILS = monthlyHCImpact[mKey]?.running || 0;
         const hcImpactEUR = eurIlsRatio > 0 ? Math.round(hcImpactILS / eurIlsRatio) : 0;
-        lastActualTotal += hcImpactEUR;
-        salaryBase = Math.round(lastActualTotal);
-        salary = Math.round(lastActualTotal * monthMultiplier) + deptAdjDelta;
+        salaryBase = Math.round(lastActualBase + overrideDelta + hcImpactEUR);
+        // Manual % applies only to the base; override + HC + dept-adj layer on top
+        salary = Math.round(lastActualBase * monthMultiplier) + deptAdjDelta + overrideDelta + hcImpactEUR;
       } else if (sfSalaryBudget[mKey]?.eur > 0) {
         salaryBase = Math.round(sfSalaryBudget[mKey].eur);
         salary = Math.round(sfSalaryBudget[mKey].eur * monthMultiplier) + deptAdjDelta;
@@ -2184,12 +2183,14 @@ useEffect(() => {
       if ((isPast || isCur) && sfActualsSplit[mKey]?.salary > 0) { salary = sfActualsSplit[mKey].salary; }
       else if ((isPast || isCur) && cActSal && cActSal.amountEUR > 0) { salary = cActSal.amountEUR; }
       else if (cUseLastActual && !(isPast || isCur)) {
-        let cLastTotal = Object.values(salaryActualsByDept[lastActualSalaryMonth]).reduce((s, v) => s + (v as { eur: number }).eur, 0);
+        const cLastBase = Object.values(salaryActualsByDept[lastActualSalaryMonth]).reduce((s, v) => s + (v as { eur: number }).eur, 0);
         const cMonthOvrs = sfSalaryOverrides.filter(o => o.mKey === mKey);
-        for (const ov of cMonthOvrs) { cLastTotal += ov.mode === 'Override' ? (ov.newVal - ov.oldVal) : ov.amountEUR; }
+        let cOvr = 0;
+        for (const ov of cMonthOvrs) { cOvr += ov.mode === 'Override' ? (ov.newVal - ov.oldVal) : ov.amountEUR; }
         const cHcImpILS = monthlyHCImpact[mKey]?.running || 0;
-        cLastTotal += eurIlsRatio > 0 ? Math.round(cHcImpILS / eurIlsRatio) : 0;
-        salary = Math.round(cLastTotal * cMult) + cDeptDelta;
+        const cHcEUR = eurIlsRatio > 0 ? Math.round(cHcImpILS / eurIlsRatio) : 0;
+        // Manual % applies only to base; override + HC + dept-adj layer on top
+        salary = Math.round(cLastBase * cMult) + cDeptDelta + cOvr + cHcEUR;
       }
       else if (sfSalaryBudget[mKey]?.eur > 0) { salary = Math.round(sfSalaryBudget[mKey].eur * cMult) + cDeptDelta; }
       else if (nsBudget.byMonth[mKey]?.salary > 0) { salary = Math.round(nsBudget.byMonth[mKey].salary * cMult); }
@@ -6690,12 +6691,10 @@ useEffect(() => {
                               const manualDeltaEUR = hasManual && ilsRate > 0 ? Math.round(manualILS / ilsRate) : 0;
                               // Budget mode: sfSalaryBudget already includes SF override (server-side) and HC
                               // events (per the 'info only — included in budget' banner), so don't add them again.
-                              // Last Actual mode: base is raw actuals, so override + HC are added; AND the manual
-                              // adjustment % must apply to (base + override + HC) to match the main grid formula
-                              // at App.tsx:1925-1942 — otherwise the modal drifts by (override+HC) × (multiplier−1).
-                              const finalEUR = useLastActualInDrill
-                                ? Math.round((budgetTotal + sfOverrideTotal + (hasHcImpact ? hcImpactEUR : 0)) * multiplier) + totalDeptAdjDelta + manualDeltaEUR
-                                : adjustedTotal + totalDeptAdjDelta + manualDeltaEUR;
+                              // Last Actual mode: manual % applies only to the base; override + HC layer on top
+                              // as fixed deltas. Matches main grid formula at App.tsx:1925-1942.
+                              const finalEUR = adjustedTotal + totalDeptAdjDelta + manualDeltaEUR
+                                + (useLastActualInDrill ? sfOverrideTotal + (hasHcImpact ? hcImpactEUR : 0) : 0);
                               const finalILS = toILS(finalEUR);
                               return (
                                 <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600 font-semibold">Budget (adjusted)</td><td className="py-1.5 text-right"><span className="font-bold text-green-700">{fmt(finalEUR)}</span><span className="text-[10px] text-gray-400 ml-1">{fmtILS(finalILS)}</span></td></tr>
