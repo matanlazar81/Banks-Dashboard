@@ -6688,12 +6688,14 @@ useEffect(() => {
                               const manualILS = salaryManualILS[forecastDrilldown.mKey];
                               const hasManual = manualILS !== undefined;
                               const manualDeltaEUR = hasManual && ilsRate > 0 ? Math.round(manualILS / ilsRate) : 0;
-                              // In Budget mode, sfSalaryBudget already includes the SF override (applied server-side)
-                              // and HC events (info only — included in budget base). So those should NOT be added
-                              // again here, otherwise the modal drifts from the main grid's salary value.
-                              // In Last Actual mode the base is raw actuals, so both must be added.
-                              const finalEUR = adjustedTotal + totalDeptAdjDelta + manualDeltaEUR
-                                + (useLastActualInDrill ? sfOverrideTotal + (hasHcImpact ? hcImpactEUR : 0) : 0);
+                              // Budget mode: sfSalaryBudget already includes SF override (server-side) and HC
+                              // events (per the 'info only — included in budget' banner), so don't add them again.
+                              // Last Actual mode: base is raw actuals, so override + HC are added; AND the manual
+                              // adjustment % must apply to (base + override + HC) to match the main grid formula
+                              // at App.tsx:1925-1942 — otherwise the modal drifts by (override+HC) × (multiplier−1).
+                              const finalEUR = useLastActualInDrill
+                                ? Math.round((budgetTotal + sfOverrideTotal + (hasHcImpact ? hcImpactEUR : 0)) * multiplier) + totalDeptAdjDelta + manualDeltaEUR
+                                : adjustedTotal + totalDeptAdjDelta + manualDeltaEUR;
                               const finalILS = toILS(finalEUR);
                               return (
                                 <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600 font-semibold">Budget (adjusted)</td><td className="py-1.5 text-right"><span className="font-bold text-green-700">{fmt(finalEUR)}</span><span className="text-[10px] text-gray-400 ml-1">{fmtILS(finalILS)}</span></td></tr>
