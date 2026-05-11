@@ -8104,7 +8104,7 @@ useEffect(() => {
                           <p className="text-xs text-gray-400 mb-2 uppercase">Budget vs Historical{hasVendorOverrides ? ' — overrides applied' : ''}</p>
                           <table className="w-full text-xs">
                             <tbody>
-                              <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600">Snowflake Budget (original)</td><td className="py-1.5 text-right font-bold text-violet-700">{fmt(meta.budgetTotal - overrideTotal)}</td></tr>
+                              <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600">Snowflake Budget (original)<SourceInfo source="DL_PRODUCTION.FINANCE.FCT_BUDGET" column="SUM(AMOUNT_EUR_CC), SUM(AMOUNT_ILS_CC)" detail="non-payroll expense accounts, subsidiary_id=3, GROUP BY parent GL category" /></td><td className="py-1.5 text-right font-bold text-violet-700">{fmt(meta.budgetTotal - overrideTotal)}</td></tr>
                               {hasVendorOverrides && vendorOverrides.map((ov, oi) => (
                                 <tr key={oi} className="border-b border-orange-200 bg-orange-50">
                                   <td className="py-2 pl-3">
@@ -8126,12 +8126,12 @@ useEffect(() => {
                                 <tr className="border-b border-gray-200 cursor-pointer hover:bg-blue-50" onClick={() => {
                                   setForecastDrilldown(prev => prev ? { ...prev, data: { ...prev.data, __showHistDetail: !prev.data.__showHistDetail } } : null);
                                 }}>
-                                  <td className="py-1.5 text-blue-600 underline">Historical Avg (12m trailing) <span className="text-[10px] text-gray-400">click to expand</span></td>
+                                  <td className="py-1.5 text-blue-600 underline">Historical Avg (12m trailing) <span className="text-[10px] text-gray-400">click to expand</span><SourceInfo source="DL_PRODUCTION.FINANCE.FCT_EXPENSE" column="AVG(SUM(AMOUNT_EUR)) over last 12 months" detail="non-payroll, source='netsuite', subsidiary_id=3" /></td>
                                   <td className="py-1.5 text-right font-bold text-blue-700">{fmt(meta.histAvg)}</td>
                                 </tr>
                               )}
-                              {meta.actual > 0 && <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600">Snowflake Actual (this month)</td><td className="py-1.5 text-right font-bold text-amber-700">{fmt(meta.actual)}</td></tr>}
-                              <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600">Used in Forecast</td><td className="py-1.5 text-right font-bold text-green-700">{fmt(meta.used)}</td></tr>
+                              {meta.actual > 0 && <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600">Snowflake Actual (this month)<SourceInfo source="DL_PRODUCTION.FINANCE.FCT_EXPENSE" column="SUM(AMOUNT_EUR), SUM(AMOUNT_ILS)" detail="non-payroll, source='netsuite', subsidiary_id=3, current month" /></td><td className="py-1.5 text-right font-bold text-amber-700">{fmt(meta.actual)}</td></tr>}
+                              <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600">Used in Forecast<SourceInfo source="computed client-side" column="MAX(Budget, HistoricalAvg) × (1 + adj%) + overrides" detail="forecast formula combining FCT_BUDGET base, 12m historical baseline, and adjustments" /></td><td className="py-1.5 text-right font-bold text-green-700">{fmt(meta.used)}</td></tr>
                               {meta.histAvg > 0 && <tr><td className="py-1.5 text-gray-600">Budget − Historical Gap</td><td className={`py-1.5 text-right font-bold ${gap >= 0 ? 'text-red-600' : 'text-green-700'}`}>{gap >= 0 ? '+' : ''}{fmt(gap)}</td></tr>}
                             </tbody>
                           </table>
@@ -8324,6 +8324,10 @@ useEffect(() => {
                       }, 0);
                       return (<><p className="text-xs text-gray-500 mb-2">
                       {forecastDrilldown.type === 'vendors' ? (_isFutureCat ? 'Snowflake Budget Breakdown — click category for details' : 'Snowflake Actuals Breakdown — click category for details') : 'Budget Breakdown'}
+                      {forecastDrilldown.type === 'vendors' && (_isFutureCat
+                        ? <SourceInfo source="DL_PRODUCTION.FINANCE.FCT_BUDGET" column="SUM(AMOUNT_EUR_CC), SUM(AMOUNT_ILS_CC)" detail="non-payroll budget, grouped by PARENT_GL_ACCOUNT_NAME (category)" />
+                        : <SourceInfo source="DL_PRODUCTION.FINANCE.FCT_EXPENSE" column="SUM(AMOUNT_EUR), SUM(AMOUNT_ILS)" detail="non-payroll actuals, source='netsuite', grouped by PARENT_GL_ACCOUNT_NAME" />
+                      )}
                     </p>
                     <table className="w-full text-xs">
                       <thead><tr className="text-left text-gray-400 uppercase border-b">
