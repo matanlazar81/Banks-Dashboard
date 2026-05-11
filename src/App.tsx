@@ -120,6 +120,39 @@ const fmt = (n: number) => new Intl.NumberFormat('en-IE', { style: 'currency', c
 const fmtFull = (n: number) => new Intl.NumberFormat('en-IE', { style: 'currency', currency: 'EUR', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(n);
 const fmtILS = (n: number) => new Intl.NumberFormat('he-IL', { style: 'currency', currency: 'ILS', maximumFractionDigits: 0 }).format(n);
 
+// ── Data source indicator ──
+// Renders a small ⓘ badge with a click-to-toggle tooltip showing where a figure
+// comes from (Snowflake table, NetSuite, or other). Use sparingly — only on
+// headline cells so the UI doesn't become noisy.
+function SourceInfo({ source, detail, system = 'Snowflake' }: {
+  source: string;
+  detail?: string;
+  system?: 'Snowflake' | 'NetSuite' | 'Google Sheets';
+}) {
+  const [open, setOpen] = useState(false);
+  const ringColor = system === 'Snowflake' ? 'text-sky-500 hover:text-sky-700 ring-sky-200' : system === 'NetSuite' ? 'text-purple-500 hover:text-purple-700 ring-purple-200' : 'text-orange-500 hover:text-orange-700 ring-orange-200';
+  const tag = system === 'Snowflake' ? 'SF' : system === 'NetSuite' ? 'NS' : 'GS';
+  return (
+    <span className="relative inline-block ml-1 align-middle">
+      <button
+        type="button"
+        onClick={e => { e.stopPropagation(); setOpen(o => !o); }}
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={() => setOpen(false)}
+        className={`inline-flex items-center justify-center w-3.5 h-3.5 rounded-full border ${ringColor} text-[8px] font-bold leading-none cursor-help`}
+        aria-label="Data source"
+      >i</button>
+      {open && (
+        <span className="absolute z-50 left-1/2 -translate-x-1/2 mt-1 bg-gray-900 text-white text-[10px] font-normal rounded shadow-lg px-2 py-1.5 whitespace-nowrap pointer-events-none">
+          <span className="block font-semibold text-[9px] uppercase tracking-wide opacity-70">Source · {tag}</span>
+          <span className="block font-mono">{source}</span>
+          {detail && <span className="block text-gray-300 mt-0.5">{detail}</span>}
+        </span>
+      )}
+    </span>
+  );
+}
+
 function ReconTable({ sfRevenueTotal, totalInflows, totalCollectionAdj, totalCarry, totalPipeline, winRate, reconMonths, fmt: fmtFn, nsAccountId, hasSF = true }: {
   sfRevenueTotal: number; totalInflows: number; totalCollectionAdj: number; totalCarry: number; totalPipeline: number; winRate: number; hasSF?: boolean;
   reconMonths: { month: string; mKey: string; isPast: boolean; isCurrent: boolean; revenue: number; collected: number; inflows: number; collAdj: number; carry: number; pipeline: number; paid: number; unpaid: number; actualColl: number; collPct: number; collPctAdj: number; remaining: number }[];
@@ -6498,7 +6531,7 @@ useEffect(() => {
                         <p className="text-xs text-gray-400 mb-2 uppercase">Summary{hasAnyAdjustment ? ' — adjustments applied' : ''}{salaryProjectionMode === 'lastActual' ? ' — using last actual' : ''}</p>
                         <table className="w-full text-xs">
                           <tbody>
-                            <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600">{useLastActualInDrill ? `Last Actual (${drillBasisMonth})` : 'Budget (original)'}</td><td className="py-1.5 text-right"><span className="font-bold text-violet-700">{fmt(budgetTotal)}</span><span className="text-[10px] text-gray-400 ml-1">{fmtILS(toILS(budgetTotal))}</span></td></tr>
+                            <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600">{useLastActualInDrill ? `Last Actual (${drillBasisMonth})` : 'Budget (original)'}{useLastActualInDrill ? <SourceInfo source="DL_PRODUCTION.FINANCE.FCT_EXPENSE" detail="filtered IS_PAYROLL=TRUE, excl. one-time accts (760038, 760023, 760020, 760017, 760029, 760014, 760015, 760008)" /> : <SourceInfo source="DL_PRODUCTION.FINANCE.FCT_BUDGET" detail="recurring payroll line items" />}</td><td className="py-1.5 text-right"><span className="font-bold text-violet-700">{fmt(budgetTotal)}</span><span className="text-[10px] text-gray-400 ml-1">{fmtILS(toILS(budgetTotal))}</span></td></tr>
                             {hasSfOverrides ? (
                               <>
                                 {monthOverrides.map((ov, oi) => (
@@ -6506,7 +6539,7 @@ useEffect(() => {
                                     <td className="py-2 pl-3">
                                       <div className="flex items-center gap-2">
                                         <span className="inline-block w-2 h-2 rounded-full bg-orange-500"></span>
-                                        <span className="text-orange-800 font-medium">Salary Override</span>
+                                        <span className="text-orange-800 font-medium">Salary Override<SourceInfo source="OVERIDE_TEMP (Google Sheets)" detail="manual overrides applied server-side to FCT_BUDGET" system="Google Sheets" /></span>
                                         <span className="text-orange-600">{ov.department || ov.account}</span>
                                         {ov.comments && <span className="text-[10px] text-orange-500 italic">— {ov.comments}</span>}
                                         <span className="text-[9px] bg-orange-200 text-orange-700 px-1.5 py-0.5 rounded font-medium">{ov.mode}</span>
@@ -6576,7 +6609,7 @@ useEffect(() => {
                             {hasHcImpact && monthlyHCImpact[forecastDrilldown.mKey]?.categories?.length > 0 ? (
                               <>
                                 <tr className="border-b border-blue-200 bg-blue-50/30">
-                                  <td className="py-1 pl-3 text-[10px] text-blue-500 uppercase font-medium" colSpan={2}>HC Levers — cumulative through {forecastDrilldown.month}{!useLastActualInDrill ? ' (info only — included in budget)' : ''}</td>
+                                  <td className="py-1 pl-3 text-[10px] text-blue-500 uppercase font-medium" colSpan={2}>HC Levers — cumulative through {forecastDrilldown.month}{!useLastActualInDrill ? ' (info only — included in budget)' : ''}<SourceInfo source="DL_PRODUCTION.HR.FCT_HEADCOUNT_EVENT" detail="EVENT_TYPE × EVENT_SUB_TYPE; EMPLOYER_COST as ILS" /></td>
                                 </tr>
                                 {monthlyHCImpact[forecastDrilldown.mKey].categories.filter((c: any) => c.runningCost !== 0).map((c: any, ci: number) => {
                                   const catCostILS = c.runningCost || 0;
@@ -6700,7 +6733,7 @@ useEffect(() => {
                                 <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600 font-semibold">Budget (adjusted)</td><td className="py-1.5 text-right"><span className="font-bold text-green-700">{fmt(finalEUR)}</span><span className="text-[10px] text-gray-400 ml-1">{fmtILS(finalILS)}</span></td></tr>
                               );
                             })()}
-                            {hasActuals && <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600">Actual ({forecastDrilldown.data?.__nsMode ? 'NetSuite' : 'Snowflake'})</td><td className="py-1.5 text-right"><span className="font-bold text-amber-700">{fmt(actualTotal)}</span><span className="text-[10px] text-gray-400 ml-1">{fmtILS(toILS(actualTotal))}</span></td></tr>}
+                            {hasActuals && <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600">Actual ({forecastDrilldown.data?.__nsMode ? 'NetSuite' : 'Snowflake'}){forecastDrilldown.data?.__nsMode ? <SourceInfo source="NetSuite GL — 76xxxx Payroll accounts" detail="posted transactions by trandate" system="NetSuite" /> : <SourceInfo source="DL_PRODUCTION.FINANCE.FCT_EXPENSE" detail="filtered IS_PAYROLL=TRUE, source='netsuite'" />}</td><td className="py-1.5 text-right"><span className="font-bold text-amber-700">{fmt(actualTotal)}</span><span className="text-[10px] text-gray-400 ml-1">{fmtILS(toILS(actualTotal))}</span></td></tr>}
                             {hasActuals && (() => { const variance = (hasAnyAdjustment ? adjustedTotal + totalDeptAdjDelta + sfOverrideTotal : budgetTotal) - actualTotal; return <tr><td className="py-1.5 text-gray-600">Variance (Budget − Actual)</td><td className={`py-1.5 text-right ${variance >= 0 ? 'text-green-700' : 'text-red-600'}`}><span className="font-bold">{variance >= 0 ? '+' : ''}{fmt(variance)}</span><span className="text-[10px] opacity-60 ml-1">{fmtILS(toILS(variance))}</span></td></tr>; })()}
                           </tbody>
                         </table>
