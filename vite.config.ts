@@ -1362,8 +1362,20 @@ function banksPlugin(): Plugin {
       const scenariosPath = path.resolve(__dirname, 'data', 'scenarios.json');
       const fs = require('fs');
 
-      const loadScenarios = (): { id: string; name: string; createdAt: string; updatedAt: string; data: any; ownerEmail: string; company?: string }[] => {
-        try { return JSON.parse(fs.readFileSync(scenariosPath, 'utf-8')); } catch { return []; }
+      const DEFAULT_VIEWER = 'admin@cloudpay.net';
+      const getViewer = (req: any): string => {
+        const h = req && req.headers && (req.headers['x-user-email'] || req.headers['X-User-Email']);
+        const v = Array.isArray(h) ? h[0] : h;
+        return (v && String(v).trim().toLowerCase()) || DEFAULT_VIEWER;
+      };
+      const normShares = (s: any): string[] => Array.isArray(s?.shares)
+        ? s.shares.map((e: any) => String(e || '').trim().toLowerCase()).filter(Boolean)
+        : [];
+      const loadScenarios = (): { id: string; name: string; createdAt: string; updatedAt: string; data: any; ownerEmail: string; company?: string; shares?: string[] }[] => {
+        try {
+          const arr = JSON.parse(fs.readFileSync(scenariosPath, 'utf-8'));
+          return Array.isArray(arr) ? arr.map((s: any) => ({ ...s, shares: normShares(s) })) : [];
+        } catch { return []; }
       };
       const saveScenarios = (scenarios: any[]) => {
         const dir = path.dirname(scenariosPath);
@@ -1824,14 +1836,20 @@ function banksPlugin(): Plugin {
         res.setHeader('Content-Type', 'application/json');
 
         try {
-          // GET /api/scenarios — list all
+          const viewer = getViewer(req);
+
+          // GET /api/scenarios — list scenarios owned by viewer + scenarios shared with viewer
           if (req.method === 'GET' && pathParts.length === 0) {
             const scenarios = loadScenarios();
-            res.end(JSON.stringify({ data: scenarios, shared: [], viewerEmail: 'admin@cloudpay.net' }));
+            const data = scenarios.filter((s: any) => (s.ownerEmail || '').toLowerCase() === viewer);
+            const shared = scenarios
+              .filter((s: any) => (s.ownerEmail || '').toLowerCase() !== viewer && normShares(s).includes(viewer))
+              .map((s: any) => ({ ...s, shares: undefined }));
+            res.end(JSON.stringify({ data, shared, viewerEmail: viewer }));
             return;
           }
 
-          // POST /api/scenarios — create/save
+          // POST /api/scenarios — create/save (owner = viewer)
           if (req.method === 'POST' && pathParts.length === 0) {
             let body = '';
             for await (const chunk of req) body += chunk;
@@ -1840,16 +1858,23 @@ function banksPlugin(): Plugin {
             const now = new Date().toISOString();
             const existing = scenarios.findIndex((s: any) => s.id === id);
             if (existing >= 0) {
+              const owner = (scenarios[existing].ownerEmail || '').toLowerCase();
+              const allowed = owner === viewer || normShares(scenarios[existing]).includes(viewer);
+              if (!allowed) {
+                res.statusCode = 403;
+                res.end(JSON.stringify({ error: 'Not authorized to edit this scenario' }));
+                return;
+              }
               scenarios[existing] = { ...scenarios[existing], name: name || scenarios[existing].name, data: data || scenarios[existing].data, updatedAt: now, ...(company ? { company } : {}) };
             } else {
-              scenarios.push({ id, name, createdAt: now, updatedAt: now, data, ownerEmail: 'admin@cloudpay.net', company: company || 'lsports' });
+              scenarios.push({ id, name, createdAt: now, updatedAt: now, data, ownerEmail: viewer, company: company || 'lsports', shares: [] });
             }
             saveScenarios(scenarios);
             res.end(JSON.stringify({ ok: true }));
             return;
           }
 
-          // PUT /api/scenarios/:id — update
+          // PUT /api/scenarios/:id — update (owner or recipient)
           if (req.method === 'PUT' && pathParts.length === 1) {
             let body = '';
             for await (const chunk of req) body += chunk;
@@ -1857,6 +1882,13 @@ function banksPlugin(): Plugin {
             const scenarios = loadScenarios();
             const idx = scenarios.findIndex((s: any) => s.id === pathParts[0]);
             if (idx >= 0) {
+              const owner = (scenarios[idx].ownerEmail || '').toLowerCase();
+              const allowed = owner === viewer || normShares(scenarios[idx]).includes(viewer);
+              if (!allowed) {
+                res.statusCode = 403;
+                res.end(JSON.stringify({ error: 'Not authorized to edit this scenario' }));
+                return;
+              }
               if (updates.name !== undefined) scenarios[idx].name = updates.name;
               if (updates.data !== undefined) scenarios[idx].data = updates.data;
               scenarios[idx].updatedAt = new Date().toISOString();
@@ -1869,31 +1901,78 @@ function banksPlugin(): Plugin {
             return;
           }
 
-          // DELETE /api/scenarios/:id — delete
+          // DELETE /api/scenarios/:id — delete (owner only)
           if (req.method === 'DELETE' && pathParts.length === 1) {
             const scenarios = loadScenarios();
+            const target = scenarios.find((s: any) => s.id === pathParts[0]);
+            if (target && (target.ownerEmail || '').toLowerCase() !== viewer) {
+              res.statusCode = 403;
+              res.end(JSON.stringify({ error: 'Only the owner can delete' }));
+              return;
+            }
             const filtered = scenarios.filter((s: any) => s.id !== pathParts[0]);
             saveScenarios(filtered);
             res.end(JSON.stringify({ ok: true }));
             return;
           }
 
-          // GET /api/scenarios/:id/shares — stub
+          // GET /api/scenarios/:id/shares — list recipients
           if (req.method === 'GET' && pathParts.length === 2 && pathParts[1] === 'shares') {
-            res.end(JSON.stringify({ data: [] }));
+            const scenarios = loadScenarios();
+            const target = scenarios.find((s: any) => s.id === pathParts[0]);
+            const list = target ? normShares(target).map(email => ({ email })) : [];
+            res.end(JSON.stringify({ data: list }));
             return;
           }
 
-          // POST /api/scenarios/:id/share — stub
+          // POST /api/scenarios/:id/share — add a recipient (owner only)
           if (req.method === 'POST' && pathParts.length === 2 && pathParts[1] === 'share') {
             let body = '';
             for await (const chunk of req) body += chunk;
+            const { email } = JSON.parse(body || '{}');
+            const recipient = String(email || '').trim().toLowerCase();
+            if (!recipient || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) {
+              res.statusCode = 400;
+              res.end(JSON.stringify({ error: 'Invalid email' }));
+              return;
+            }
+            const scenarios = loadScenarios();
+            const idx = scenarios.findIndex((s: any) => s.id === pathParts[0]);
+            if (idx < 0) {
+              res.statusCode = 404;
+              res.end(JSON.stringify({ error: 'Scenario not found' }));
+              return;
+            }
+            if ((scenarios[idx].ownerEmail || '').toLowerCase() !== viewer) {
+              res.statusCode = 403;
+              res.end(JSON.stringify({ error: 'Only the owner can share' }));
+              return;
+            }
+            const cur = normShares(scenarios[idx]);
+            if (!cur.includes(recipient)) cur.push(recipient);
+            scenarios[idx].shares = cur;
+            saveScenarios(scenarios);
             res.end(JSON.stringify({ ok: true }));
             return;
           }
 
-          // DELETE /api/scenarios/:id/share/:email — stub
+          // DELETE /api/scenarios/:id/share/:email — remove a recipient (owner only)
           if (req.method === 'DELETE' && pathParts.length === 3 && pathParts[1] === 'share') {
+            const recipient = decodeURIComponent(pathParts[2] || '').trim().toLowerCase();
+            const scenarios = loadScenarios();
+            const idx = scenarios.findIndex((s: any) => s.id === pathParts[0]);
+            if (idx < 0) {
+              res.statusCode = 404;
+              res.end(JSON.stringify({ error: 'Scenario not found' }));
+              return;
+            }
+            if ((scenarios[idx].ownerEmail || '').toLowerCase() !== viewer) {
+              res.statusCode = 403;
+              res.end(JSON.stringify({ error: 'Only the owner can unshare' }));
+              return;
+            }
+            scenarios[idx].shares = normShares(scenarios[idx]).filter(e => e !== recipient);
+            saveScenarios(scenarios);
             res.end(JSON.stringify({ ok: true }));
             return;
           }

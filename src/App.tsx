@@ -836,9 +836,20 @@ export default function App() {
   const [hoveredScenarioId, setHoveredScenarioId] = useState<string | null>(null);
   const [expandedScenarioId, setExpandedScenarioId] = useState<string | null>(null);
   const scenarioMenuRef = useRef<HTMLDivElement>(null);
-  const [_viewerEmail, _setViewerEmail] = useState<string|null>(null);
+  const [_viewerEmail, _setViewerEmail] = useState<string|null>(() => {
+    try { return localStorage.getItem('banks-viewer-email'); } catch { return null; }
+  });
+  const _viewerEmailRef = useRef<string|null>(_viewerEmail);
+  useEffect(() => { _viewerEmailRef.current = _viewerEmail; }, [_viewerEmail]);
+  const _scenarioHeaders = useCallback((extra?: Record<string,string>) => {
+    const h: Record<string,string> = { ...(extra || {}) };
+    const v = _viewerEmailRef.current;
+    if (v) h['x-user-email'] = v;
+    return h;
+  }, []);
 useEffect(() => {
   if (!_viewerEmail) return;
+  try { localStorage.setItem('banks-viewer-email', _viewerEmail); } catch {}
   try { localStorage.setItem('banks-scenarios:' + _viewerEmail.toLowerCase(), JSON.stringify(scenarios)); } catch {}
 }, [scenarios, _viewerEmail]);
   const _srvRef = useRef(false);
@@ -858,7 +869,7 @@ useEffect(() => {
   const _activeSharedOwnerRef = useRef<string|null>(null);
   useEffect(() => { _activeSharedOwnerRef.current = _activeSharedOwner; }, [_activeSharedOwner]);
   const refetchScenarios = useCallback(() => {
-    fetch('/api/scenarios', { credentials: 'include' }).then(r => {
+    fetch('/api/scenarios', { credentials: 'include', headers: _scenarioHeaders() }).then(r => {
       if (!r.ok) { console.error('[Scenarios] fetch failed:', r.status, r.statusText); return null; }
       return r.json();
     }).then(d => {
@@ -871,7 +882,7 @@ useEffect(() => {
       setScenarios(d.data);
       console.info('[Scenarios] loaded', d.data.length, 'own +', (d.shared || []).length, 'shared for', ve || '(no viewerEmail)');
     }).catch(e => { console.error('[Scenarios] network error:', e); });
-  }, []);
+  }, [_scenarioHeaders]);
   useEffect(() => {
     refetchScenarios();
     fetch('/api/bank-dashboard-users', { credentials: 'include' }).then(r => r.json()).then(d => { if (d.data) _setBdUsers(d.data); }).catch(() => {});
@@ -888,7 +899,7 @@ useEffect(() => {
   useEffect(() => {
     const poll = async () => {
       try {
-        const r = await fetch('/api/scenarios', { credentials: 'include' });
+        const r = await fetch('/api/scenarios', { credentials: 'include', headers: _scenarioHeaders() });
         if (!r.ok) { console.log('[ScenarioNotif] /api/scenarios returned', r.status); return; }
         const d = await r.json();
         const me = ((d.viewerEmail as string) || '').toLowerCase();
@@ -1101,43 +1112,43 @@ useEffect(() => {
 
   const _syncSave = useCallback((id: string, name: string, data: ScenarioData) => {
     if (!_srvRef.current) return;
-    fetch('/api/scenarios', { method: 'POST', headers: {'Content-Type':'application/json'}, credentials: 'include', body: JSON.stringify({id, name, data, company: activeCompany}) }).catch(() => {});
-  }, [activeCompany]);
+    fetch('/api/scenarios', { method: 'POST', headers: _scenarioHeaders({'Content-Type':'application/json'}), credentials: 'include', body: JSON.stringify({id, name, data, company: activeCompany}) }).catch(() => {});
+  }, [activeCompany, _scenarioHeaders]);
   const _syncUpdate = useCallback((id: string, updates: {name?: string; data?: ScenarioData}) => {
     if (!_srvRef.current) return;
-    fetch('/api/scenarios/' + id, { method: 'PUT', headers: {'Content-Type':'application/json'}, credentials: 'include', body: JSON.stringify(updates) }).catch(() => {});
-  }, []);
+    fetch('/api/scenarios/' + id, { method: 'PUT', headers: _scenarioHeaders({'Content-Type':'application/json'}), credentials: 'include', body: JSON.stringify(updates) }).catch(() => {});
+  }, [_scenarioHeaders]);
   const _syncDelete = useCallback((id: string) => {
     if (!_srvRef.current) return;
-    fetch('/api/scenarios/' + id, { method: 'DELETE', credentials: 'include' }).catch(() => {});
-  }, []);
+    fetch('/api/scenarios/' + id, { method: 'DELETE', credentials: 'include', headers: _scenarioHeaders() }).catch(() => {});
+  }, [_scenarioHeaders]);
   const _loadShares = useCallback((sid: string) => {
-    fetch('/api/scenarios/' + sid + '/shares', { credentials: 'include' }).then(r => r.json()).then(d => {
+    fetch('/api/scenarios/' + sid + '/shares', { credentials: 'include', headers: _scenarioHeaders() }).then(r => r.json()).then(d => {
       _setShareMap(prev => ({...prev, [sid]: d.data || []}));
     }).catch(() => {});
-  }, []);
+  }, [_scenarioHeaders]);
   const _loadHistory = useCallback((sid: string) => {
     _setHistoryLoading(prev => ({ ...prev, [sid]: true }));
-    fetch('/api/scenarios/' + sid + '/history?limit=200', { credentials: 'include' })
+    fetch('/api/scenarios/' + sid + '/history?limit=200', { credentials: 'include', headers: _scenarioHeaders() })
       .then(r => r.json())
       .then(d => { _setHistoryData(prev => ({ ...prev, [sid]: d.data || [] })); })
       .catch(() => { _setHistoryData(prev => ({ ...prev, [sid]: [] })); })
       .finally(() => { _setHistoryLoading(prev => ({ ...prev, [sid]: false })); });
-  }, []);
+  }, [_scenarioHeaders]);
   const _ensureSaved = useCallback((sid: string) => {
     const sc = scenarios.find((x: any) => x.id === sid);
     if (!sc) return Promise.reject(new Error('Scenario not found'));
-    return fetch('/api/scenarios', { method: 'POST', headers: {'Content-Type':'application/json'}, credentials: 'include', body: JSON.stringify({id: sc.id, name: sc.name, data: sc.data}) }).then(r => {
+    return fetch('/api/scenarios', { method: 'POST', headers: _scenarioHeaders({'Content-Type':'application/json'}), credentials: 'include', body: JSON.stringify({id: sc.id, name: sc.name, data: sc.data}) }).then(r => {
       if (!r.ok) return Promise.reject(new Error('Failed to save scenario'));
     });
-  }, [scenarios]);
+  }, [scenarios, _scenarioHeaders]);
   const _toggleShare = useCallback((sid: string, email: string, isCurrentlyShared: boolean) => {
     const pendingKey = sid + '::' + email.toLowerCase();
     if (_sharePending[pendingKey]) return;
     const method = isCurrentlyShared ? 'DELETE' : 'POST';
     const url = isCurrentlyShared ? '/api/scenarios/' + sid + '/share/' + encodeURIComponent(email) : '/api/scenarios/' + sid + '/share';
-    const opts: any = { method, credentials: 'include' };
-    if (!isCurrentlyShared) { opts.headers = {'Content-Type':'application/json'}; opts.body = JSON.stringify({ email }); }
+    const opts: any = { method, credentials: 'include', headers: _scenarioHeaders() };
+    if (!isCurrentlyShared) { opts.headers = _scenarioHeaders({'Content-Type':'application/json'}); opts.body = JSON.stringify({ email }); }
     const ready = isCurrentlyShared ? Promise.resolve() : _ensureSaved(sid);
     _setSharePending(prev => ({ ...prev, [pendingKey]: true }));
     ready.then(() => fetch(url, opts)).then(res => {
@@ -1160,7 +1171,7 @@ useEffect(() => {
         return next;
       });
     });
-  }, [_loadShares, _ensureSaved, refetchScenarios, _sharePending]);
+  }, [_loadShares, _ensureSaved, refetchScenarios, _sharePending, _scenarioHeaders]);
   useEffect(() => { try { if (activeScenarioId) localStorage.setItem('banks-active-scenario', activeScenarioId); else localStorage.removeItem('banks-active-scenario'); } catch {} }, [activeScenarioId]);
 
   // Auto-sync active scenario to consolidated pickers when switching tabs
@@ -5020,6 +5031,22 @@ useEffect(() => {
                   </button>
                   {scenarioMenuOpen && (
                     <div className="absolute right-0 top-full mt-1 bg-white border border-gray-200 rounded-xl shadow-xl z-50 min-w-[380px] max-h-[500px] overflow-y-auto">
+                      {/* Viewer identity — who am I when sharing scenarios */}
+                      <div className="px-3 py-2 border-b border-gray-100">
+                        <p className="text-[10px] text-gray-400 uppercase font-medium mb-1.5">Signed in as</p>
+                        <input
+                          type="email"
+                          defaultValue={_viewerEmail || ''}
+                          placeholder="you@cloudpay.net"
+                          onBlur={e => {
+                            const v = e.target.value.trim().toLowerCase();
+                            if (v && v !== (_viewerEmail || '').toLowerCase()) { _setViewerEmail(v); setTimeout(refetchScenarios, 0); }
+                          }}
+                          onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                          className="w-full text-xs border border-gray-200 rounded-md px-2 py-1 focus:outline-none focus:ring-1 focus:ring-violet-300 focus:border-violet-300"
+                        />
+                        <p className="text-[9px] text-gray-400 mt-1">Used to receive scenarios shared with you.</p>
+                      </div>
                       {/* Save current state as new scenario */}
                       <div className="px-3 py-2 border-b border-gray-100">
                         <p className="text-[10px] text-gray-400 uppercase font-medium mb-1.5">Save current adjustments</p>
@@ -5299,7 +5326,7 @@ useEffect(() => {
                                   });
                                   fetch(`/api/scenarios/${s.id}/unsubscribe`, {
                                     method: 'DELETE', credentials: 'include',
-                                    headers: { 'Content-Type': 'application/json' },
+                                    headers: _scenarioHeaders({ 'Content-Type': 'application/json' }),
                                     body: JSON.stringify({ ownerEmail: s.ownerEmail }),
                                   }).catch(() => {});
                                 }} className="text-[9px] text-red-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity px-1" title="Remove from my list">✕</button>
