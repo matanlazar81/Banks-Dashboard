@@ -299,7 +299,8 @@ function banksPlugin(): Plugin {
           const accountId = url.searchParams.get('accountId');
           const month = url.searchParams.get('month');
           if (!ns || !accountId || !month) { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ data: [] })); return; }
-          const result = await queueNsCall(() => ns.fetchVendorBillsByAccount(accountId, month));
+          const paidOnly = url.searchParams.get('paidOnly') === '1';
+          const result = await queueNsCall(() => ns.fetchVendorBillsByAccount(accountId, month, { paidOnly }));
           res.setHeader('Content-Type', 'application/json');
           res.end(JSON.stringify({ data: result.bills || [], nsAcctId: result.nsAcctId || null, queryError: result.queryError || null }));
         } catch (e: any) {

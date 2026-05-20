@@ -7142,7 +7142,7 @@ useEffect(() => {
                                       } else {
                                         setForecastDrilldown(prev => prev ? { ...prev, data: { ...prev.data, __expandedBillRow: budgetBillKey, __rowBills: null } } : null);
                                         if (r.account) {
-                                          fetch(`/api/ns-vendor-bills?accountId=${r.account}&month=${forecastDrilldown.mKey}`).then(res => res.json()).then(j => {
+                                          fetch(`/api/ns-vendor-bills?accountId=${r.account}&month=${forecastDrilldown.mKey}&paidOnly=1`).then(res => res.json()).then(j => {
                                             setForecastDrilldown(prev => prev ? { ...prev, data: { ...prev.data, __rowBills: j.data || [], __rowNsAcctId: j.nsAcctId } } : null);
                                           });
                                         }
@@ -7595,7 +7595,7 @@ useEffect(() => {
                                       } else {
                                         setForecastDrilldown(prev => prev ? { ...prev, data: { ...prev.data, __expandedBillRow: billKey, __rowBills: null } } : null);
                                         if (r.account) {
-                                          fetch(`/api/ns-vendor-bills?accountId=${r.account}&month=${forecastDrilldown.mKey}`).then(res => res.json()).then(j => {
+                                          fetch(`/api/ns-vendor-bills?accountId=${r.account}&month=${forecastDrilldown.mKey}&paidOnly=1`).then(res => res.json()).then(j => {
                                             setForecastDrilldown(prev => prev ? { ...prev, data: { ...prev.data, __rowBills: j.data || [], __rowNsAcctId: j.nsAcctId } } : null);
                                           });
                                         }
@@ -7924,7 +7924,7 @@ useEffect(() => {
                                 setForecastDrilldown(prev => prev ? { ...prev, ...({ __expandedCatBill: catBillKey, __catBills: null } as any) } : null);
                                 const acctNum = r.account || r.accountId;
                                 if (acctNum) {
-                                  fetch(`/api/ns-vendor-bills?accountId=${acctNum}&month=${forecastDrilldown.mKey}`).then(res => res.json()).then(j => {
+                                  fetch(`/api/ns-vendor-bills?accountId=${acctNum}&month=${forecastDrilldown.mKey}&paidOnly=1`).then(res => res.json()).then(j => {
                                     setForecastDrilldown(prev => prev ? { ...prev, ...({ __catBills: j.data || [], __catNsAcctId: j.nsAcctId } as any) } : null);
                                   });
                                 }
@@ -8343,7 +8343,7 @@ useEffect(() => {
                                                                   } else {
                                                                     setForecastDrilldown(prev => prev ? { ...prev, data: { ...prev.data, __expandedAcct: acctKey, __acctBills: null } } : null);
                                                                     if ((item.account || item.accountId) && histMonth) {
-                                                                      fetch(`/api/ns-vendor-bills?accountId=${item.account || item.accountId}&month=${histMonth}`).then(r => r.json()).then(j => {
+                                                                      fetch(`/api/ns-vendor-bills?accountId=${item.account || item.accountId}&month=${histMonth}&paidOnly=1`).then(r => r.json()).then(j => {
                                                                         setForecastDrilldown(prev => prev ? { ...prev, data: { ...prev.data, __acctBills: j.data || [], __acctNsAcctId: j.nsAcctId } } : null);
                                                                       });
                                                                     }
