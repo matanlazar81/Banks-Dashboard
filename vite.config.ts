@@ -274,6 +274,28 @@ function banksPlugin(): Plugin {
         }
       });
 
+      // ── GET /api/ns-bank-classified-yearly — bank-side delta per month, classified into Salary/Vendors/Collections/Reval/Other
+      server.middlewares.use('/api/ns-bank-classified-yearly', async (req, res) => {
+        try {
+          const url = new URL(req.url || '', `http://${req.headers.host}`);
+          const sub = parseInt(url.searchParams.get('subsidiary') || '3') || 3;
+          const year = parseInt(url.searchParams.get('year') || '') || new Date().getFullYear();
+          const ns = getNsClient(sub);
+          if (!ns || !ns.fetchBankClassifiedYearly) {
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ byMonth: {}, error: 'endpoint not available' }));
+            return;
+          }
+          const data = await queueNsCall(() => ns.fetchBankClassifiedYearly(year));
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify(data));
+        } catch (e: any) {
+          console.error('[NS API] Bank classified yearly failed:', e.message);
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ byMonth: {}, error: e.message }));
+        }
+      });
+
       // ── GET /api/ns-paid-vendors-yearly — NS paid vendor bills for a year, grouped by month + GL account
       server.middlewares.use('/api/ns-paid-vendors-yearly', async (req, res) => {
         try {

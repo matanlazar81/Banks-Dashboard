@@ -654,6 +654,11 @@ export default function App() {
   const [sfRevenue, setSfRevenue] = useState<{ budget: Record<string, { eur: number }>; actuals: Record<string, { eur: number }>; targets: Record<string, number> }>({ budget: {}, actuals: {}, targets: {} });
   const [sfActualsSplit, setSfActualsSplit] = useState<Record<string, { salary: number; salaryILS: number; vendors: number; vendorsILS: number }>>({});
   const [nsPaidVendors, setNsPaidVendors] = useState<{ byMonth: Record<string, number>; grid: Record<string, Record<string, number>>; accounts: { number: string; name: string; total: number }[] }>({ byMonth: {}, grid: {}, accounts: [] });
+  // Bank-side classification: every NS bank/CC line decomposed into Salary/Vendors/Collections/Reval/Other per month.
+  // Sum of buckets per month = actual bank delta. No plug. Used to override past-month grid columns.
+  type BankBucket = { eur: number; ils: number };
+  type BankClassifiedMonth = { vendors: BankBucket; collections: BankBucket; salary: BankBucket; reval: BankBucket; other: BankBucket; total: BankBucket; details: { label: string; bucket: string; eur: number; ils: number }[] };
+  const [nsBankClassified, setNsBankClassified] = useState<{ byMonth: Record<string, BankClassifiedMonth> }>({ byMonth: {} });
   const [sfRevenuePaid, setSfRevenuePaid] = useState<Record<string, { revenue: number; paid: number; unpaid: number; customers: number }>>({});
   const [sfPipeline, setSfPipeline] = useState<{ name: string; stage: string; amount: number; probability: number; weighted: number; currency: string; closeDate: string; type: string; feedType: string; owner: string }[]>([]);
   const [pipelineMinProb, setPipelineMinProb] = useState(100); // min probability filter for pipeline
@@ -1751,6 +1756,11 @@ useEffect(() => {
                 }
               })
               .catch(() => {});
+            // NS bank-classified yearly: drives past-month Salary/Vendors/Collections/Reval/Other columns from bank-side truth.
+            fetch(`/api/ns-bank-classified-yearly?subsidiary=${cfg.subsidiary}&year=${coYear}`, { credentials: 'include' })
+              .then(r => r.ok ? r.json() : null)
+              .then(j => { if (j?.byMonth) setNsBankClassified({ byMonth: j.byMonth }); })
+              .catch(() => {});
             if (snap.sfRevenuePaid) setSfRevenuePaid(snap.sfRevenuePaid);
             else setSfRevenuePaid({});
             if (snap.sfPipeline) setSfPipeline(snap.sfPipeline);
@@ -1788,7 +1798,7 @@ useEffect(() => {
         `/api/vendor-bills${subQ}`, `/api/ar-forecast${subQ}`, `/api/salary-data${subQ}`,
         `/api/vendor-history${subQ}`, `/api/expense-categories${subQ}`,
         `/api/banks-collection-data${subQ}`, `/api/monthly-reval${subQ}`,
-        `/api/ns-paid-vendors-yearly${subQ}`,
+        `/api/ns-paid-vendors-yearly${subQ}`, `/api/ns-bank-classified-yearly${subQ}`,
       ];
       const sfUrls = hasSF ? [
         '/api/sf-budget', '/api/sf-revenue', '/api/sf-actuals-split', '/api/sf-salary-budget',
@@ -1797,7 +1807,9 @@ useEffect(() => {
       ] : !hasSF ? [`/api/ns-budget${subQ}`] : [];
 
       const allResults = await Promise.all([...nsUrls, ...sfUrls].map(u => safe(u)));
-      const [cfgR, bankR, acctR, billsR, arR, salR, vhR, expR, collR, revalR, paidVR, ...sfResults] = allResults;
+      const [cfgR, bankR, acctR, billsR, arR, salR, vhR, expR, collR, revalR, paidVR, bankClR, ...sfResults] = allResults;
+      if (bankClR?.byMonth) setNsBankClassified({ byMonth: bankClR.byMonth });
+      else setNsBankClassified({ byMonth: {} });
 
       // Apply NS results
       if (cfgR?.accountId) setNsAccountId(cfgR.accountId);
@@ -2124,7 +2136,7 @@ useEffect(() => {
     // Jan 1 opening = bank balance (excl reval) + cumulative pre-year reval
     let runningBalance = (book?.openingBalance || 0) + (monthlyReval.preYear?.eur || 0);
     let runningBalanceILS = (bookLocal?.openingBalance || 0) + (monthlyReval.preYear?.ils || 0);
-    const rows: { month: string; mKey: string; openingBalance: number; openingBalanceILS: number; salary: number; salaryILS: number; vendors: number; vendorsILS: number; totalOutflow: number; totalOutflowILS: number; collections: number; collectionsILS: number; collectionsActual: number; collectionsRemaining: number; collectionsForecast: number; collectionsRevenue: number; collectionsUnpaidCarry: number; collectionsUnpaidCarryMonth: string; collectionsPipeline: number; customers: number; pipelineWeighted: number; pipelineWeightedILS: number; pipelineTotal: number; pipelineCount: number; pipelineOpps: typeof lowConfPipeline; pipelineHistWinRate: number; pipelineDelayMonths: number; net: number; netILS: number; revalImpact: number; revalImpactILS: number; revalHasBothEnds: boolean; closingBalance: number; closingBalanceILS: number; isCurrent: boolean; isPast: boolean }[] = [];
+    const rows: { month: string; mKey: string; openingBalance: number; openingBalanceILS: number; salary: number; salaryILS: number; vendors: number; vendorsILS: number; other: number; otherILS: number; otherDetails: { label: string; bucket: string; eur: number; ils: number }[]; totalOutflow: number; totalOutflowILS: number; collections: number; collectionsILS: number; collectionsActual: number; collectionsRemaining: number; collectionsForecast: number; collectionsRevenue: number; collectionsUnpaidCarry: number; collectionsUnpaidCarryMonth: string; collectionsPipeline: number; customers: number; pipelineWeighted: number; pipelineWeightedILS: number; pipelineTotal: number; pipelineCount: number; pipelineOpps: typeof lowConfPipeline; pipelineHistWinRate: number; pipelineDelayMonths: number; net: number; netILS: number; revalImpact: number; revalImpactILS: number; revalHasBothEnds: boolean; closingBalance: number; closingBalanceILS: number; isCurrent: boolean; isPast: boolean }[] = [];
     let prevMonthSalary = 0;
     let prevMonthUnpaid = 0; // unpaid from previous month rolls forward
 
@@ -2142,6 +2154,9 @@ useEffect(() => {
         runningBalanceILS = prevMonthEndBalance.ils;
       }
       const openingBalance = runningBalance;
+      // Bank-classified data for this month (past months only). Overrides salary/vendors/collections/reval
+      // with bank-side truth so closing balance equals NS bank delta by construction.
+      const bcm: BankClassifiedMonth | null = isPastMonth ? (nsBankClassified.byMonth?.[mKey] || null) : null;
 
       const monthAdj = salaryAdjPctByMonth[i] || 0;
       const monthMultiplier = 1 + (monthAdj / 100);
@@ -2348,7 +2363,22 @@ useEffect(() => {
         collections = Math.round(collections * prorateFactor);
       }
 
-      let totalOutflow = salary + vendors;
+      // Bank-classified override (past months only): every NS bank line goes into exactly one
+      // bucket (Salary / Vendors / Collections / Reval / Other), so closing balance equals the
+      // actual NS month-end bank delta. 'other' surfaces what doesn't fit the first four
+      // (manual checks, tax journals, transfers, fees, interest, refunds).
+      let other = 0;
+      let otherILS = 0;
+      if (bcm) {
+        salary = Math.max(0, -bcm.salary.eur);
+        vendors = Math.max(0, -bcm.vendors.eur);
+        collections = bcm.collections.eur;
+        other = -bcm.other.eur; // positive = outflow, negative = inflow
+        otherILS = -bcm.other.ils;
+        vendorsBase = vendors;
+        salaryBase = salary;
+      }
+      let totalOutflow = salary + vendors + Math.max(0, other);
       // Churn deduction: for future months, use current year's monthly impact from churn analysis (or manual override)
       let churnDeduction = 0;
       if (!isPastMonth && !isCurMonth) {
@@ -2360,20 +2390,20 @@ useEffect(() => {
         }
       }
       const churnDeductionILS = Math.round(churnDeduction * eurIlsRatio);
-      let net = collections + pipelineWeighted - totalOutflow - churnDeduction;
-      const salaryILS = Math.round(salary * eurIlsRatio);
-      let vendorsILS = Math.round(vendors * eurIlsRatio);
-      const collectionsILS = Math.round(collections * eurIlsRatio);
-      let totalOutflowILS = salaryILS + vendorsILS;
-      let netILS = collectionsILS + pipelineWeightedILS - totalOutflowILS - churnDeductionILS;
+      let net = collections - salary - vendors - other + pipelineWeighted - churnDeduction;
+      const salaryILS = bcm ? Math.max(0, -bcm.salary.ils) : Math.round(salary * eurIlsRatio);
+      let vendorsILS = bcm ? Math.max(0, -bcm.vendors.ils) : Math.round(vendors * eurIlsRatio);
+      const collectionsILS = bcm ? bcm.collections.ils : Math.round(collections * eurIlsRatio);
+      let totalOutflowILS = salaryILS + vendorsILS + Math.max(0, otherILS);
+      let netILS = collectionsILS - salaryILS - vendorsILS - otherILS + pipelineWeightedILS - churnDeductionILS;
       runningBalance += net;
       runningBalanceILS += netILS;
 
-      // Revaluation impact from NS FxReval transactions
-      const revalHasBothEnds = monthlyReval.byMonth?.[mKey]?.hasBothEnds || false;
-      // Only apply reval when we have both beginning & end of month rates (complete month)
-      let revalImpact = revalHasBothEnds ? (monthlyReval.byMonth?.[mKey]?.eur || 0) : 0;
-      let revalImpactILS = revalHasBothEnds ? (monthlyReval.byMonth?.[mKey]?.ils || 0) : 0;
+      // Revaluation impact: past months use bank-classified FxReval (matches NS bank delta exactly);
+      // current/future months use the GL-derived monthly reval + currency defense budget.
+      const revalHasBothEnds = bcm ? true : (monthlyReval.byMonth?.[mKey]?.hasBothEnds || false);
+      let revalImpact = bcm ? bcm.reval.eur : (revalHasBothEnds ? (monthlyReval.byMonth?.[mKey]?.eur || 0) : 0);
+      let revalImpactILS = bcm ? bcm.reval.ils : (revalHasBothEnds ? (monthlyReval.byMonth?.[mKey]?.ils || 0) : 0);
       // For current + future months: add currency defense from Finance budget (acct 800029 = Unrealized Gain/Loss)
       // Source: NetSuite budgetsmachine (account 800029), fallback to 'Other (800)' category
       // Past months use actual reval; current & future use budget × percentage (default 50%)
@@ -2402,10 +2432,10 @@ useEffect(() => {
       // No bank-pin: divergence from NS month-end is visible rather than absorbed into Vendors.
 
       const openingBalanceILS = runningBalanceILS - netILS - revalImpactILS;
-      rows.push({ month: label, mKey, openingBalance, openingBalanceILS, salary, salaryBase, salaryILS, vendors, vendorsBase, vendorsILS, totalOutflow, totalOutflowILS, collections, collectionsILS, collectionsActual, collectionsRemaining, collectionsForecast, collectionsRevenue, collectionsUnpaidCarry, collectionsUnpaidCarryMonth, collectionsPipeline, customers, pipelineWeighted, pipelineWeightedILS, pipelineTotal, pipelineCount, pipelineOpps, pipelineHistWinRate, pipelineDelayMonths, churnDeduction, churnDeductionILS, net, netILS, revalImpact, revalImpactILS, revalHasBothEnds, closingBalance: runningBalance, closingBalanceILS: runningBalanceILS, isCurrent: isCurMonth, isPast: isPastMonth });
+      rows.push({ month: label, mKey, openingBalance, openingBalanceILS, salary, salaryBase, salaryILS, vendors, vendorsBase, vendorsILS, other, otherILS, otherDetails: bcm?.details || [], totalOutflow, totalOutflowILS, collections, collectionsILS, collectionsActual, collectionsRemaining, collectionsForecast, collectionsRevenue, collectionsUnpaidCarry, collectionsUnpaidCarryMonth, collectionsPipeline, customers, pipelineWeighted, pipelineWeightedILS, pipelineTotal, pipelineCount, pipelineOpps, pipelineHistWinRate, pipelineDelayMonths, churnDeduction, churnDeductionILS, net, netILS, revalImpact, revalImpactILS, revalHasBothEnds, closingBalance: runningBalance, closingBalanceILS: runningBalanceILS, isCurrent: isCurMonth, isPast: isPastMonth });
     }
     return rows;
-  }, [vendorBills, arForecast, salaryData, vendorHistory, expenseCategories, book, bookLocal, actualCollections, sfBudget, sfRevenue, sfActualsSplit, nsPaidVendors, salaryAdjPctByMonth, collPctByMonth, monthlyReval, sfSalaryBudget, sfRevenuePaid, sfPipeline, pipelineMinProb, sfConversion, salaryDeptAdj, salaryDeptBudgets, vendorCatAdj, vendorDetailAdj, prevMonthEndBalance, monthEndBalances, churnMonthlyAvg, churnData, churnOverride, asOfDate, nsBudget, activeYear, sfFinanceBudget, currencyDefensePct, currencyDefensePctByMonth, pipelineAdjPctByMonth, salaryProjectionMode, salaryActualsByDept, lastActualSalaryMonth, monthlyHCImpact, salaryManualILS]);
+  }, [vendorBills, arForecast, salaryData, vendorHistory, expenseCategories, book, bookLocal, actualCollections, sfBudget, sfRevenue, sfActualsSplit, nsPaidVendors, nsBankClassified, salaryAdjPctByMonth, collPctByMonth, monthlyReval, sfSalaryBudget, sfRevenuePaid, sfPipeline, pipelineMinProb, sfConversion, salaryDeptAdj, salaryDeptBudgets, vendorCatAdj, vendorDetailAdj, prevMonthEndBalance, monthEndBalances, churnMonthlyAvg, churnData, churnOverride, asOfDate, nsBudget, activeYear, sfFinanceBudget, currencyDefensePct, currencyDefensePctByMonth, pipelineAdjPctByMonth, salaryProjectionMode, salaryActualsByDept, lastActualSalaryMonth, monthlyHCImpact, salaryManualILS]);
 
   // ── Capture current-year cashflow for propagation to next year ──
   useEffect(() => {
@@ -2776,7 +2806,7 @@ useEffect(() => {
 
   const [showBankBreakdown, setShowBankBreakdown] = useState(false);
   const [bankBreakdownAsOf, setBankBreakdownAsOf] = useState<{ date: string; label: string; accounts: BankAccount[] | 'loading' } | null>(null);
-  const [forecastDrilldown, setForecastDrilldown] = useState<{ type: 'vendors' | 'salary' | 'inflows' | 'pipeline'; month: string; mKey: string; data: any; categoryData?: Record<string, number>; categoryName?: string; adjPct?: number } | null>(null);
+  const [forecastDrilldown, setForecastDrilldown] = useState<{ type: 'vendors' | 'salary' | 'inflows' | 'pipeline' | 'churn' | 'other'; month: string; mKey: string; data: any; categoryData?: Record<string, number>; categoryName?: string; adjPct?: number } | null>(null);
   const [wonOppsDrilldown, setWonOppsDrilldown] = useState<{ year: number; type: 'new' | 'upgrades'; data: any[] | 'loading' } | null>(null);
   const totalPrimaryBalance = bankAccounts.reduce((s, a) => s + a.primaryBalance, 0);
   const totalLocalBalance = bankAccounts.reduce((s, a) => s + a.localBalance, 0);
@@ -4743,6 +4773,7 @@ useEffect(() => {
                     <th className="pb-2 px-0.5 text-right text-green-600 whitespace-nowrap">Collections</th>
                     <th className="pb-2 px-0.5 text-right text-amber-600 whitespace-nowrap">Salary</th>
                     <th className="pb-2 px-0.5 text-right text-violet-600 whitespace-nowrap">Vendors</th>
+                    <th className="pb-2 px-0.5 text-right text-slate-500 whitespace-nowrap">Other<div className="text-[8px] font-normal normal-case text-gray-400">tax / IC / fees</div></th>
                     <th className="pb-2 px-0.5 text-right text-red-600 whitespace-nowrap">Total Outflow</th>
                     <th className="pb-2 px-0.5 text-right text-orange-500 whitespace-nowrap">I/C Elim.<div className="text-[8px] font-normal normal-case text-gray-400">Revenue | Expense</div></th>
                     <th className="pb-2 px-0.5 text-right text-amber-500 whitespace-nowrap">Reval</th>
@@ -5791,6 +5822,7 @@ useEffect(() => {
                     <th className="pb-2 px-0.5 text-right text-emerald-700 whitespace-nowrap">Total Inflows</th>
                     <th className="pb-2 px-0.5 text-right text-amber-600 whitespace-nowrap">Salary</th>
                     <th className="pb-2 px-0.5 text-right text-violet-600 whitespace-nowrap">Vendors</th>
+                    <th className="pb-2 px-0.5 text-right text-slate-500 whitespace-nowrap">Other<div className="text-[8px] font-normal normal-case text-gray-400">tax / IC / fees</div></th>
                     <th className="pb-2 px-0.5 text-right text-red-600 whitespace-nowrap">Total Outflow</th>
                     <th className="pb-2 px-0.5 text-right whitespace-nowrap">Net</th>
                     <th className="pb-2 px-0.5 text-right text-amber-500 whitespace-nowrap">Reval</th>
@@ -6116,6 +6148,13 @@ useEffect(() => {
                           return <div className={`text-[9px] font-semibold ${delta < 0 ? 'text-green-600' : 'text-red-500'}`}>{fmt(Math.abs(delta))} ({effPct > 0 ? '+' : ''}{effPct}%)</div>;
                         })()}
                         {r.vendors > 0 && r.vendors === r.vendorsBase && <span className="text-[10px] text-violet-400 ml-1">→</span>}
+                      </td>
+                      <td className={`py-2.5 px-0.5 text-right ${r.other === 0 ? 'text-gray-300' : r.other > 0 ? 'text-slate-600 font-medium cursor-pointer hover:bg-slate-50' : 'text-emerald-600 font-medium cursor-pointer hover:bg-emerald-50'}`}
+                          onClick={() => {
+                            if (r.other === 0) return;
+                            setForecastDrilldown({ type: 'other', month: r.month, mKey: r.mKey, data: r.otherDetails || [] });
+                          }}>
+                        {r.other === 0 ? '-' : (r.other > 0 ? `-${fmtC(r.other, r.otherILS)}` : `+${fmtC(-r.other, -r.otherILS)}`)}
                       </td>
                       <td className="py-2.5 px-0.5 text-right text-red-600 font-bold">-{fmtC(r.totalOutflow, r.totalOutflowILS)}</td>
                       <td className={`py-2.5 px-0.5 text-right font-bold ${r.net >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtC(r.net, r.netILS)}</td>
@@ -6498,7 +6537,7 @@ useEffect(() => {
                     <ChevronRight className="w-5 h-5 rotate-180" />
                   </button>
                   <h3 className="font-semibold text-gray-800">
-                    {forecastDrilldown.type === 'churn' ? 'Churn Deduction Calculation' : forecastDrilldown.type === 'vendors' ? 'Vendor Expenses' : forecastDrilldown.type === 'pipeline' ? 'Pipeline Opportunities' : forecastDrilldown.type === 'inflows' ? (forecastDrilldown.data?.__carryClients ? 'Unpaid Revenue Carry' : 'Revenue Forecast') : 'Salary'} — {forecastDrilldown.month}{forecastDrilldown.type === 'salary' && forecastDrilldown.adjPct ? ` (${forecastDrilldown.adjPct > 0 ? '+' : ''}${forecastDrilldown.adjPct}%)` : ''}
+                    {forecastDrilldown.type === 'churn' ? 'Churn Deduction Calculation' : forecastDrilldown.type === 'vendors' ? 'Vendor Expenses' : forecastDrilldown.type === 'pipeline' ? 'Pipeline Opportunities' : forecastDrilldown.type === 'inflows' ? (forecastDrilldown.data?.__carryClients ? 'Unpaid Revenue Carry' : 'Revenue Forecast') : forecastDrilldown.type === 'other' ? 'Other Bank Cash — Itemized' : 'Salary'} — {forecastDrilldown.month}{forecastDrilldown.type === 'salary' && forecastDrilldown.adjPct ? ` (${forecastDrilldown.adjPct > 0 ? '+' : ''}${forecastDrilldown.adjPct}%)` : ''}
                   </h3>
                 </div>
               </div>
@@ -6506,6 +6545,66 @@ useEffect(() => {
                 {forecastDrilldown.data === 'loading' && (
                   <div className="flex items-center gap-2 py-8 justify-center text-gray-400"><Loader2 className="w-5 h-5 animate-spin" /> Loading from Snowflake...</div>
                 )}
+                {/* ── Other bank cash itemized (bank-side classification residual) ── */}
+                {forecastDrilldown.type === 'other' && Array.isArray(forecastDrilldown.data) && (() => {
+                  const items = forecastDrilldown.data as { label: string; bucket: string; eur: number; ils: number }[];
+                  const onlyOther = items.filter(it => it.bucket === 'other');
+                  const total = onlyOther.reduce((s, it) => s + it.eur, 0);
+                  return (
+                    <div className="space-y-3">
+                      <p className="text-xs text-gray-500">Bank-side transactions not classified as Salary, Vendors, Collections, or Reval. Sourced from NetSuite <code>transactionaccountingline</code> on Bank/CC accounts, classified by tx type and (for Journals) by dominant contra account.</p>
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="text-left text-gray-400 uppercase border-b">
+                            <th className="pb-2 pr-2">Item</th>
+                            <th className="pb-2 px-2 text-right">EUR</th>
+                            <th className="pb-2 px-2 text-right">ILS</th>
+                            <th className="pb-2 pl-2 text-right">Direction</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {onlyOther.sort((a, b) => Math.abs(b.eur) - Math.abs(a.eur)).map(it => (
+                            <tr key={it.label} className="border-b border-gray-50">
+                              <td className="py-1.5 pr-2 text-gray-700">{it.label}</td>
+                              <td className="py-1.5 px-2 text-right font-medium text-slate-700">{it.eur === 0 ? '—' : '€' + it.eur.toLocaleString()}</td>
+                              <td className="py-1.5 px-2 text-right text-gray-500">{it.ils === 0 ? '—' : '₪' + it.ils.toLocaleString()}</td>
+                              <td className={`py-1.5 pl-2 text-right text-[10px] uppercase ${it.eur < 0 ? 'text-red-600' : 'text-emerald-600'}`}>{it.eur < 0 ? 'Outflow' : it.eur > 0 ? 'Inflow' : '—'}</td>
+                            </tr>
+                          ))}
+                          <tr className="border-t-2 border-gray-300 font-bold">
+                            <td className="py-2 pr-2 text-gray-900">Total (Other)</td>
+                            <td className="py-2 px-2 text-right text-slate-800">€{total.toLocaleString()}</td>
+                            <td className="py-2 px-2 text-right"></td>
+                            <td className="py-2 pl-2 text-right text-[10px] uppercase text-gray-500">{total < 0 ? 'Net outflow' : total > 0 ? 'Net inflow' : '—'}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                      {items.some(it => it.bucket !== 'other') && (
+                        <details className="mt-4">
+                          <summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-700">Show full classification (all buckets)</summary>
+                          <table className="w-full text-xs mt-2">
+                            <thead>
+                              <tr className="text-left text-gray-400 uppercase border-b">
+                                <th className="pb-2 pr-2">Item</th>
+                                <th className="pb-2 px-2">Bucket</th>
+                                <th className="pb-2 px-2 text-right">EUR</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {items.map(it => (
+                                <tr key={it.label + it.bucket} className="border-b border-gray-50">
+                                  <td className="py-1.5 pr-2 text-gray-700">{it.label}</td>
+                                  <td className="py-1.5 px-2 text-gray-500 capitalize">{it.bucket}</td>
+                                  <td className="py-1.5 px-2 text-right text-gray-700">{it.eur === 0 ? '—' : '€' + it.eur.toLocaleString()}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </details>
+                      )}
+                    </div>
+                  );
+                })()}
                 {/* ── Churn calculation breakdown ── */}
                 {forecastDrilldown.type === 'churn' && forecastDrilldown.data && forecastDrilldown.data !== 'loading' && forecastDrilldown.data.__churnCalc && (() => {
                   const cd = forecastDrilldown.data as { monthlyAvg: number; deduction: number; yearlyData: any[]; drilldown?: any[]; drilldownYear?: number };

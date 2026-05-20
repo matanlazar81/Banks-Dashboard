@@ -2060,7 +2060,173 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
     return { accounts, months, grid };
   }
 
-  return { suiteql, suiteqlAll, fetchAgingData, fetchCollectionData, buildCollectionJson, fetchClientAnomalies, fetchAllSOsByBillingPeriod, fetchRevenueData, fetchMRRData, fetchBankBalance, fetchVendorBills, fetchVendorPaymentHistory, fetchBankAccountList, fetchBankAccountListAsOf, fetchSalaryData, fetchCashflowHistory, fetchExpenseCategoryData, fetchPaymentsByCategory, fetchCashflowBreakdown, fetchCashflowTransactions, fetchExpenseTransactions, fetchSalaryBreakdown, fetchInvoiceBasedProjection, fetchMonthlyRevaluation, fetchVendorBillsByAccount, fetchNSBudget, fetchCurrencyDefenseBudget, fetchPaidVendorsYearly };
+  // Every bank/CC-touching line in the year, grouped by month + NS tx type, on both books.
+  // Decomposes bank delta into Salary / Vendors / Collections / Reval / Other. Sum of buckets
+  // per month equals the actual bank delta by construction — no plug.
+  //
+  // Journal entries are re-classified by their dominant non-bank contra-account:
+  //  - Payroll accts (76xxxx, 200000, 180012/13/69) → salary
+  //  - FX accts (800028-800031)                     → reval
+  //  - 21xxxx AP                                    → vendors
+  //  - 120xxx AR                                    → collections
+  //  - other 180xxx (tax, withholding)              → tax (in 'other' bucket, surfaced in detail)
+  //  - else                                         → other
+  async function fetchBankClassifiedYearly(year) {
+    const y = parseInt(year);
+    if (!y || y < 2000 || y > 2100) return { byMonth: {} };
+    const startDate = `${y}-01-01`, endDate = `${y}-12-31`;
+
+    // Q1: bank-side delta per (month, tx_type, tx_id) on a given book
+    async function queryBankPerTx(bookId) {
+      return (await suiteqlAll(`
+        SELECT TO_CHAR(t.trandate, 'YYYY-MM') AS month,
+               t.type AS tx_type,
+               t.id AS tx_id,
+               ROUND(SUM(COALESCE(tal.debit, 0)) - SUM(COALESCE(tal.credit, 0))) AS delta
+        FROM transactionaccountingline tal
+        JOIN transaction t ON t.id = tal.transaction
+        JOIN account a ON a.id = tal.account
+        WHERE a.accttype IN ('Bank', 'CredCard')
+          AND t.subsidiary = ${subsidiaryId}
+          AND tal.posting = 'T' AND tal.accountingbook = ${bookId}
+          AND t.trandate >= TO_DATE('${startDate}', 'YYYY-MM-DD')
+          AND t.trandate <= TO_DATE('${endDate}', 'YYYY-MM-DD')
+        GROUP BY TO_CHAR(t.trandate, 'YYYY-MM'), t.type, t.id
+      `)) || [];
+    }
+
+    // Q2: contra-account info per Journal tx (multiple rows per tx — one per contra acct)
+    async function queryJournalContras(bookId) {
+      return (await suiteqlAll(`
+        SELECT t.id AS tx_id,
+               a.acctnumber AS acct,
+               a.acctname AS acct_name,
+               ROUND(SUM(COALESCE(tal.debit, 0)) - SUM(COALESCE(tal.credit, 0))) AS delta
+        FROM transactionaccountingline tal
+        JOIN transaction t ON t.id = tal.transaction
+        JOIN account a ON a.id = tal.account
+        WHERE a.accttype NOT IN ('Bank', 'CredCard')
+          AND t.type = 'Journal' AND t.subsidiary = ${subsidiaryId}
+          AND tal.posting = 'T' AND tal.accountingbook = ${bookId}
+          AND t.trandate >= TO_DATE('${startDate}', 'YYYY-MM-DD')
+          AND t.trandate <= TO_DATE('${endDate}', 'YYYY-MM-DD')
+          AND EXISTS (
+            SELECT 1 FROM transactionaccountingline tal2
+            JOIN account a2 ON a2.id = tal2.account
+            WHERE tal2.transaction = t.id AND a2.accttype IN ('Bank', 'CredCard')
+              AND tal2.posting = 'T' AND tal2.accountingbook = ${bookId}
+          )
+        GROUP BY t.id, a.acctnumber, a.acctname
+      `)) || [];
+    }
+
+    const [eurBank, ilsBank, eurContra, ilsContra] = await Promise.all([
+      queryBankPerTx(1), queryBankPerTx(2),
+      queryJournalContras(1), queryJournalContras(2),
+    ]);
+
+    // Build per-tx dominant contra (by abs delta on EUR book; fall back to ILS if EUR missing).
+    const contraByTx = {};
+    function addContra(rows) {
+      for (const r of rows) {
+        const tx = r.tx_id;
+        const acct = String(r.acct || '');
+        const name = r.acct_name || '';
+        const d = Math.abs(parseFloat(r.delta) || 0);
+        if (!contraByTx[tx]) contraByTx[tx] = [];
+        contraByTx[tx].push({ acct, name, absDelta: d });
+      }
+    }
+    addContra(eurContra);
+    addContra(ilsContra);
+    const dominantContraByTx = {};
+    for (const tx in contraByTx) {
+      const list = contraByTx[tx];
+      list.sort((a, b) => b.absDelta - a.absDelta);
+      dominantContraByTx[tx] = list[0];
+    }
+
+    function classifyJournalContra(acct) {
+      if (!acct) return { bucket: 'other', label: 'Unknown' };
+      // Payroll & payroll-tied liabilities
+      if (acct.startsWith('76')) return { bucket: 'salary', label: 'Payroll P&L' };
+      if (acct === '200000') return { bucket: 'salary', label: 'AP — Employees' };
+      if (acct === '200001') return { bucket: 'salary', label: 'Employee reimbursements' };
+      if (['180012', '180013', '180069'].includes(acct)) return { bucket: 'salary', label: 'Payroll tax/pension' };
+      // FX gain/loss
+      if (['800028', '800029', '800030', '800031'].includes(acct)) return { bucket: 'reval', label: 'FX gain/loss' };
+      // General AP / AR
+      if (acct === '210000') return { bucket: 'vendors', label: 'AP — Vendors' };
+      if (acct.startsWith('12')) return { bucket: 'collections', label: 'AR' };
+      // Tax accounts (non-payroll): income tax, VAT, withholding
+      if (acct.startsWith('180') || acct === '180004') return { bucket: 'other', label: 'Tax / Withholding' };
+      // Bank fees & interest
+      if (['800001', '800005', '800008'].includes(acct)) return { bucket: 'other', label: 'Bank fees' };
+      if (['800009', '800010', '800019'].includes(acct)) return { bucket: 'collections', label: 'Interest income' };
+      return { bucket: 'other', label: 'Other' };
+    }
+
+    function classifyTxType(txType) {
+      switch (txType) {
+        case 'VendPymt': case 'BillPmt': return { bucket: 'vendors', label: 'Vendor payment' };
+        case 'CustPymt': case 'CashSale': case 'Deposit': return { bucket: 'collections', label: 'Customer payment' };
+        case 'CustRfnd': return { bucket: 'collections', label: 'Customer refund' };
+        case 'Paycheck': case 'PayrollLiabilityCheck': return { bucket: 'salary', label: 'Paycheck' };
+        case 'FxReval': return { bucket: 'reval', label: 'FX revaluation' };
+        case 'Transfer': case 'TrnfrOrd': case 'InvTrnfr': return { bucket: 'other', label: 'Transfer (internal)' };
+        case 'Check': return { bucket: 'other', label: 'Check (manual)' };
+        default: return { bucket: 'other', label: txType || 'Unknown' };
+      }
+    }
+
+    const byMonth = {};
+    function ensure(m) {
+      if (!byMonth[m]) byMonth[m] = {
+        vendors: { eur: 0, ils: 0 },
+        collections: { eur: 0, ils: 0 },
+        salary: { eur: 0, ils: 0 },
+        reval: { eur: 0, ils: 0 },
+        other: { eur: 0, ils: 0 },
+        total: { eur: 0, ils: 0 },
+        details: {}, // label -> { label, bucket, eur, ils }
+      };
+      return byMonth[m];
+    }
+
+    function attribute(rows, currKey) {
+      for (const r of rows) {
+        const m = r.month;
+        if (!m) continue;
+        const amt = Math.round(parseFloat(r.delta) || 0);
+        const cell = ensure(m);
+        let bucket, label;
+        if (r.tx_type === 'Journal') {
+          const dom = dominantContraByTx[r.tx_id];
+          const cls = classifyJournalContra(dom?.acct || '');
+          bucket = cls.bucket;
+          label = `Journal — ${cls.label}${dom ? ` (${dom.acct})` : ''}`;
+        } else {
+          const cls = classifyTxType(r.tx_type);
+          bucket = cls.bucket;
+          label = cls.label;
+        }
+        cell[bucket][currKey] += amt;
+        cell.total[currKey] += amt;
+        if (!cell.details[label]) cell.details[label] = { label, bucket, eur: 0, ils: 0 };
+        cell.details[label][currKey] += amt;
+      }
+    }
+    attribute(eurBank, 'eur');
+    attribute(ilsBank, 'ils');
+
+    for (const m in byMonth) {
+      byMonth[m].details = Object.values(byMonth[m].details).sort((a, b) => Math.abs(b.eur) - Math.abs(a.eur));
+    }
+
+    return { byMonth };
+  }
+
+  return { suiteql, suiteqlAll, fetchAgingData, fetchCollectionData, buildCollectionJson, fetchClientAnomalies, fetchAllSOsByBillingPeriod, fetchRevenueData, fetchMRRData, fetchBankBalance, fetchVendorBills, fetchVendorPaymentHistory, fetchBankAccountList, fetchBankAccountListAsOf, fetchSalaryData, fetchCashflowHistory, fetchExpenseCategoryData, fetchPaymentsByCategory, fetchCashflowBreakdown, fetchCashflowTransactions, fetchExpenseTransactions, fetchSalaryBreakdown, fetchInvoiceBasedProjection, fetchMonthlyRevaluation, fetchVendorBillsByAccount, fetchNSBudget, fetchCurrencyDefenseBudget, fetchPaidVendorsYearly, fetchBankClassifiedYearly };
 }
 
 
