@@ -1770,14 +1770,14 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
   }
 
   // ── Fetch vendor bills for a specific account and month ──
-  async function fetchVendorBillsByAccount(accountIdOrNumber, month) {
+  async function fetchVendorBillsByAccount(accountIdOrNumber, month, opts = {}) {
+    const paidOnly = !!opts.paidOnly;
     const [y, m] = month.split('-');
     const startDate = `${y}-${m}-01`;
     const lastDay = new Date(parseInt(y), parseInt(m), 0).getDate();
     const endDate = `${y}-${m}-${String(lastDay).padStart(2, '0')}`;
     const safeAcct = String(accountIdOrNumber).replace(/'/g, "''");
-    console.log(`[NS API] Fetching transactions for account ${accountIdOrNumber}, ${startDate} to ${endDate}...`);
-    // Resolve account number to NS internal ID for register links
+    console.log(`[NS API] Fetching transactions for account ${accountIdOrNumber}, ${startDate} to ${endDate}${paidOnly ? ' [paid-only]' : ''}...`);
     let nsAcctId = null;
     try {
       const lookupResult = await suiteql(`SELECT a.id, a.acctnumber FROM account a WHERE a.acctnumber = '${safeAcct}' FETCH FIRST 1 ROWS ONLY`);
@@ -1787,33 +1787,100 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
     } catch (lookupErr) {
       console.log(`[NS API] Account lookup failed: ${lookupErr.message}`);
     }
-    let rows;
-    try {
-      rows = await suiteqlAll(`SELECT t.id AS bill_id, t.tranid AS bill_number, t.trandate, BUILTIN.DF(t.entity) AS vendor_name, t.memo, tal.amount AS amount, t.currency, t.status, t.type AS tran_type FROM transactionaccountingline tal JOIN transaction t ON tal.transaction = t.id JOIN account a ON tal.account = a.id WHERE a.acctnumber = '${safeAcct}' AND t.subsidiary = ${subsidiaryId} AND tal.accountingbook = 1 AND t.trandate >= TO_DATE('${startDate}', 'YYYY-MM-DD') AND t.trandate <= TO_DATE('${endDate}', 'YYYY-MM-DD') ORDER BY t.trandate, t.id`);
-    } catch (queryErr) {
-      console.log(`[NS API] Transaction query failed: ${queryErr.message}`);
-      rows = [];
-      // Return early with error info for debugging
-      return { bills: [], nsAcctId, queryError: queryErr.message };
+    const typeMap = { VendBill: 'vendbill', VendCred: 'vendcred', Journal: 'journal', ExpRept: 'exprept', VendPymt: 'vendpymt', Check: 'check', CustPymt: 'custpymt', CashSale: 'cashsale', InvTrnfr: 'invtrnfr', CardChrg: 'cardchrg', CustCred: 'custcred', CustInvc: 'custinvc', ItemRcpt: 'itemrcpt' };
+    if (!paidOnly) {
+      let rows;
+      try {
+        rows = await suiteqlAll(`SELECT t.id AS bill_id, t.tranid AS bill_number, t.trandate, BUILTIN.DF(t.entity) AS vendor_name, t.memo, tal.amount AS amount, t.currency, t.status, t.type AS tran_type FROM transactionaccountingline tal JOIN transaction t ON tal.transaction = t.id JOIN account a ON tal.account = a.id WHERE a.acctnumber = '${safeAcct}' AND t.subsidiary = ${subsidiaryId} AND tal.accountingbook = 1 AND t.trandate >= TO_DATE('${startDate}', 'YYYY-MM-DD') AND t.trandate <= TO_DATE('${endDate}', 'YYYY-MM-DD') ORDER BY t.trandate, t.id`);
+      } catch (queryErr) {
+        console.log(`[NS API] Transaction query failed: ${queryErr.message}`);
+        return { bills: [], nsAcctId, queryError: queryErr.message };
+      }
+      const bills = rows.map(r => ({
+        billId: r.bill_id, billNumber: r.bill_number, date: r.trandate,
+        vendor: (r.vendor_name || '').trim(), memo: r.memo,
+        amount: Math.round((r.amount || 0) * 100) / 100,
+        currency: r.currency, status: r.status, tranType: r.tran_type,
+        nsUrlType: typeMap[r.tran_type] || (r.tran_type ? r.tran_type.toLowerCase() : 'transaction'),
+      }));
+      return { bills, nsAcctId };
     }
-    console.log(`[NS API] Found ${rows.length} transaction lines for account ${accountIdOrNumber}`);
-    const bills = rows.map(r => {
-      const typeMap = { VendBill: 'vendbill', VendCred: 'vendcred', Journal: 'journal', ExpRept: 'exprept', VendPymt: 'vendpymt', Check: 'check', CustPymt: 'custpymt', CashSale: 'cashsale', InvTrnfr: 'invtrnfr', CardChrg: 'cardchrg', CustCred: 'custcred', CustInvc: 'custinvc', ItemRcpt: 'itemrcpt' };
-      const urlType = typeMap[r.tran_type] || (r.tran_type ? r.tran_type.toLowerCase() : 'transaction');
-      return {
+
+    // Paid-only mode: pivot on payment date via previousTransactionLineLink.
+    // (a) VendBill rows paid in the period — display payment date as DATE.
+    // (b) Direct cash transactions (Journal, Check, CardChrg, ExpRept) hitting the expense account
+    //     in the period — these don't go through a separate VendPymt, so trandate IS the cash date.
+    let billRows = [];
+    let directRows = [];
+    try {
+      billRows = await suiteqlAll(`
+        SELECT vb.id AS bill_id, vb.tranid AS bill_number,
+               vb.trandate AS bill_date, vp.trandate AS paid_date,
+               vp.tranid AS payment_number, vp.id AS payment_id, vp.type AS pmt_type,
+               BUILTIN.DF(vb.entity) AS vendor_name, vb.memo,
+               SUM(COALESCE(tal.debit, 0)) - SUM(COALESCE(tal.credit, 0)) AS amount,
+               vb.currency, vb.status, vb.type AS tran_type
+        FROM previousTransactionLineLink ptll
+        JOIN transaction vp ON ptll.nextdoc = vp.id
+        JOIN transaction vb ON ptll.previousdoc = vb.id
+        JOIN transactionaccountingline tal ON tal.transaction = vb.id
+          AND tal.posting = 'T' AND tal.accountingbook = 1
+        JOIN account a ON tal.account = a.id
+        WHERE ptll.nexttype IN ('VendPymt', 'Check') AND ptll.previoustype = 'VendBill'
+          AND ptll.linktype = 'Payment'
+          AND a.acctnumber = '${safeAcct}'
+          AND vp.subsidiary = ${subsidiaryId}
+          AND vp.trandate >= TO_DATE('${startDate}', 'YYYY-MM-DD')
+          AND vp.trandate <= TO_DATE('${endDate}', 'YYYY-MM-DD')
+        GROUP BY vb.id, vb.tranid, vb.trandate, vp.trandate, vp.tranid, vp.id, vp.type, vb.entity, vb.memo, vb.currency, vb.status, vb.type
+      `);
+    } catch (e) {
+      console.log(`[NS API] Paid-bill query failed: ${e.message}`);
+      return { bills: [], nsAcctId, queryError: e.message };
+    }
+    try {
+      directRows = await suiteqlAll(`
+        SELECT t.id AS bill_id, t.tranid AS bill_number,
+               t.trandate AS bill_date, t.trandate AS paid_date,
+               NULL AS payment_number, NULL AS payment_id, t.type AS pmt_type,
+               BUILTIN.DF(t.entity) AS vendor_name, t.memo,
+               SUM(COALESCE(tal.debit, 0)) - SUM(COALESCE(tal.credit, 0)) AS amount,
+               t.currency, t.status, t.type AS tran_type
+        FROM transactionaccountingline tal
+        JOIN transaction t ON tal.transaction = t.id
+        JOIN account a ON tal.account = a.id
+        WHERE a.acctnumber = '${safeAcct}'
+          AND t.subsidiary = ${subsidiaryId}
+          AND tal.accountingbook = 1
+          AND tal.posting = 'T'
+          AND t.type IN ('Journal', 'Check', 'CardChrg', 'ExpRept')
+          AND t.trandate >= TO_DATE('${startDate}', 'YYYY-MM-DD')
+          AND t.trandate <= TO_DATE('${endDate}', 'YYYY-MM-DD')
+        GROUP BY t.id, t.tranid, t.trandate, t.type, t.entity, t.memo, t.currency, t.status
+      `);
+    } catch (e) {
+      console.log(`[NS API] Direct-cash query failed: ${e.message}`);
+    }
+    const combined = [...billRows, ...directRows]
+      .map(r => ({
         billId: r.bill_id,
         billNumber: r.bill_number,
-        date: r.trandate,
+        date: r.paid_date,         // pivot DATE column on paid date
+        billDate: r.bill_date,
+        paymentNumber: r.payment_number || null,
+        paymentId: r.payment_id || null,
+        paymentType: r.pmt_type || null,
         vendor: (r.vendor_name || '').trim(),
         memo: r.memo,
-        amount: Math.round((r.amount || 0) * 100) / 100,
+        amount: Math.round((parseFloat(r.amount) || 0) * 100) / 100,
         currency: r.currency,
         status: r.status,
         tranType: r.tran_type,
-        nsUrlType: urlType,
-      };
-    });
-    return { bills, nsAcctId };
+        nsUrlType: typeMap[r.tran_type] || (r.tran_type ? r.tran_type.toLowerCase() : 'transaction'),
+      }))
+      .sort((x, y) => (x.date || '').localeCompare(y.date || '') || (x.billId - y.billId));
+    console.log(`[NS API] Paid-only: ${billRows.length} paid-bill lines + ${directRows.length} direct cash lines`);
+    return { bills: combined, nsAcctId };
   }
 
   // ── NS Budget data (for subsidiaries without Snowflake) ──
