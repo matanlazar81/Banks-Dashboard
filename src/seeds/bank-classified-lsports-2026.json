@@ -2,13 +2,13 @@
   "subsidiary": 3,
   "company": "lsports",
   "year": 2026,
-  "generatedAt": "2026-05-20T23:50:00Z",
-  "scope": "Bank only (accttype='Bank'), no CredCard \u2014 matches the May-opening anchor.",
+  "generatedAt": "2026-05-20T23:35:00Z",
+  "note": "Bank-side classification of NS bank/CC transactions for LSports 2026, EUR (book 1) + ILS (book 2). Journal rows carry contra account number + NS internal account ID so they can link to the NS account register.",
   "byMonth": {
     "2026-01": {
       "vendors": {
-        "eur": -1458417,
-        "ils": -5368576
+        "eur": -1938436,
+        "ils": -7140079
       },
       "collections": {
         "eur": 5000572,
@@ -27,8 +27,8 @@
         "ils": 183995
       },
       "total": {
-        "eur": 1616173,
-        "ils": 5383719
+        "eur": 1136154,
+        "ils": 3612216
       },
       "details": [
         {
@@ -48,6 +48,13 @@
           "acctId": 713
         },
         {
+          "label": "Vendor payment",
+          "bucket": "vendors",
+          "eur": -1951600,
+          "ils": -7188394,
+          "txType": "VendPymt"
+        },
+        {
           "label": "Journal \u2014 Tax / Withholding (180071)",
           "bucket": "other",
           "eur": 1489636,
@@ -55,13 +62,6 @@
           "txType": "Journal",
           "acctNumber": "180071",
           "acctId": 877
-        },
-        {
-          "label": "Vendor payment",
-          "bucket": "vendors",
-          "eur": -1457967,
-          "ils": -5366891,
-          "txType": "VendPymt"
         },
         {
           "label": "Journal \u2014 AP-Employees (200000)",
@@ -204,6 +204,15 @@
           "acctId": 717
         },
         {
+          "label": "Journal \u2014 AP-Vendors (210000)",
+          "bucket": "vendors",
+          "eur": 13164,
+          "ils": 48315,
+          "txType": "Journal",
+          "acctNumber": "210000",
+          "acctId": 111
+        },
+        {
           "label": "Journal \u2014 AR (120003)",
           "bucket": "collections",
           "eur": -5500,
@@ -249,15 +258,6 @@
           "acctId": 509
         },
         {
-          "label": "Journal \u2014 AP-Vendors (210000)",
-          "bucket": "vendors",
-          "eur": -450,
-          "ils": -1685,
-          "txType": "Journal",
-          "acctNumber": "210000",
-          "acctId": 111
-        },
-        {
           "label": "Journal \u2014 Tax / Withholding (180019)",
           "bucket": "other",
           "eur": -215,
@@ -286,8 +286,8 @@
     },
     "2026-02": {
       "vendors": {
-        "eur": -2958617,
-        "ils": -10849461
+        "eur": -3336280,
+        "ils": -12238112
       },
       "collections": {
         "eur": 4325131,
@@ -306,8 +306,8 @@
         "ils": 755110
       },
       "total": {
-        "eur": -1177966,
-        "ils": -4037723
+        "eur": -1555629,
+        "ils": -5426374
       },
       "details": [
         {
@@ -320,8 +320,8 @@
         {
           "label": "Vendor payment",
           "bucket": "vendors",
-          "eur": -2972103,
-          "ils": -10898682,
+          "eur": -3349766,
+          "ils": -12287333,
           "txType": "VendPymt"
         },
         {
@@ -486,8 +486,8 @@
     },
     "2026-03": {
       "vendors": {
-        "eur": -2322789,
-        "ils": -8367855
+        "eur": -2612748,
+        "ils": -9413576
       },
       "collections": {
         "eur": 4195758,
@@ -498,7 +498,7 @@
         "ils": -8893809
       },
       "reval": {
-        "eur": 177002,
+        "eur": 177117,
         "ils": 554121
       },
       "other": {
@@ -506,8 +506,8 @@
         "ils": 261489
       },
       "total": {
-        "eur": -299784,
-        "ils": -1308906
+        "eur": -589628,
+        "ils": -2354627
       },
       "details": [
         {
@@ -520,8 +520,8 @@
         {
           "label": "Vendor payment",
           "bucket": "vendors",
-          "eur": -2331033,
-          "ils": -8397636,
+          "eur": -2620992,
+          "ils": -9443357,
           "txType": "VendPymt"
         },
         {
@@ -563,7 +563,7 @@
         {
           "label": "FX revaluation (FxReval)",
           "bucket": "reval",
-          "eur": 178065,
+          "eur": 178180,
           "ils": 557933,
           "txType": "FxReval"
         },
@@ -693,8 +693,8 @@
     },
     "2026-04": {
       "vendors": {
-        "eur": -1568526,
-        "ils": -5597289
+        "eur": -1666655,
+        "ils": -5947080
       },
       "collections": {
         "eur": 5078235,
@@ -713,8 +713,8 @@
         "ils": 154643
       },
       "total": {
-        "eur": 1521196,
-        "ils": 4652602
+        "eur": 1423067,
+        "ils": 4302811
       },
       "details": [
         {
@@ -727,8 +727,8 @@
         {
           "label": "Vendor payment",
           "bucket": "vendors",
-          "eur": -1569182,
-          "ils": -5599624,
+          "eur": -1667311,
+          "ils": -5949415,
           "txType": "VendPymt"
         },
         {
@@ -897,13 +897,31 @@
           "eur": 0,
           "ils": 0,
           "txType": "Transfer"
+        },
+        {
+          "label": "Journal \u2014 Bank fees / other (800001)",
+          "bucket": "other",
+          "eur": 0,
+          "ils": 0,
+          "txType": "Journal",
+          "acctNumber": "800001",
+          "acctId": 491
+        },
+        {
+          "label": "Journal \u2014 FX gain/loss (800030)",
+          "bucket": "reval",
+          "eur": 0,
+          "ils": 0,
+          "txType": "Journal",
+          "acctNumber": "800030",
+          "acctId": 819
         }
       ]
     },
     "2026-05": {
       "vendors": {
-        "eur": -2273884,
-        "ils": -7786994
+        "eur": -2494903,
+        "ils": -8546154
       },
       "collections": {
         "eur": 3586009,
@@ -922,8 +940,8 @@
         "ils": 320191
       },
       "total": {
-        "eur": -3045282,
-        "ils": -9536279
+        "eur": -3266301,
+        "ils": -10295439
       },
       "details": [
         {
@@ -936,8 +954,8 @@
         {
           "label": "Vendor payment",
           "bucket": "vendors",
-          "eur": -2273884,
-          "ils": -7786994,
+          "eur": -2494903,
+          "ils": -8546154,
           "txType": "VendPymt"
         },
         {
@@ -1077,6 +1095,15 @@
           "eur": 0,
           "ils": 0,
           "txType": "Transfer"
+        },
+        {
+          "label": "Journal \u2014 Bank fees / other (800001)",
+          "bucket": "other",
+          "eur": 0,
+          "ils": 0,
+          "txType": "Journal",
+          "acctNumber": "800001",
+          "acctId": 491
         }
       ]
     }
