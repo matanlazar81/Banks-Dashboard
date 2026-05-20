@@ -1738,6 +1738,19 @@ useEffect(() => {
             else setSfRevenue({});
             if (snap.sfActualsSplit) setSfActualsSplit(snap.sfActualsSplit);
             else setSfActualsSplit({});
+            // NS paid vendors yearly: not in snapshot, fetch in background to drive cash-basis Vendors column + modal.
+            fetch(`/api/ns-paid-vendors-yearly?subsidiary=${cfg.subsidiary}&year=${coYear}`, { credentials: 'include' })
+              .then(r => r.ok ? r.json() : null)
+              .then(j => {
+                if (j?.months) {
+                  const byMonth: Record<string, number> = {};
+                  for (const m of j.months as string[]) {
+                    byMonth[m] = (j.accounts as { number: string }[]).reduce((s, a) => s + (j.grid?.[a.number]?.[m] || 0), 0);
+                  }
+                  setNsPaidVendors({ byMonth, grid: j.grid || {}, accounts: j.accounts || [] });
+                }
+              })
+              .catch(() => {});
             if (snap.sfRevenuePaid) setSfRevenuePaid(snap.sfRevenuePaid);
             else setSfRevenuePaid({});
             if (snap.sfPipeline) setSfPipeline(snap.sfPipeline);
@@ -6055,12 +6068,40 @@ useEffect(() => {
                             const vendorMeta = { budgetTotal, histAvg, histMonths, actual: sfActualsSplit[r.mKey]?.vendors || nsVendAct, used: r.vendors };
                             if (r.isPast || r.isCurrent) {
                               // Past & current months: NS paid bills cash basis, grouped by GL account.
-                              const byAccount: Record<string, number> = {};
-                              for (const a of nsPaidVendors.accounts) {
-                                const v = nsPaidVendors.grid[a.number]?.[r.mKey] || 0;
-                                if (v !== 0) byAccount[`${a.number} ${a.name}`] = v;
+                              const buildByAccount = (accounts: typeof nsPaidVendors.accounts, grid: typeof nsPaidVendors.grid) => {
+                                const out: Record<string, number> = {};
+                                for (const a of accounts) {
+                                  const v = grid[a.number]?.[r.mKey] || 0;
+                                  if (v !== 0) out[`${a.number} ${a.name}`] = v;
+                                }
+                                return out;
+                              };
+                              const byAccountCached = buildByAccount(nsPaidVendors.accounts, nsPaidVendors.grid);
+                              if (Object.keys(byAccountCached).length > 0) {
+                                setForecastDrilldown({ type: 'vendors', month: r.month, mKey: r.mKey, data: { ...byAccountCached, __vendorMeta: vendorMeta } });
+                              } else {
+                                // Cache empty — fetch on demand for just this year.
+                                setForecastDrilldown({ type: 'vendors', month: r.month, mKey: r.mKey, data: 'loading' });
+                                const yr = r.mKey.slice(0, 4);
+                                fetch(`/api/ns-paid-vendors-yearly?subsidiary=${companyConfig.subsidiary}&year=${yr}`, { credentials: 'include' })
+                                  .then(res => res.ok ? res.json() : null)
+                                  .then(j => {
+                                    if (j?.months) {
+                                      const byMonth: Record<string, number> = {};
+                                      for (const m of j.months as string[]) {
+                                        byMonth[m] = (j.accounts as { number: string }[]).reduce((s, a) => s + (j.grid?.[a.number]?.[m] || 0), 0);
+                                      }
+                                      setNsPaidVendors({ byMonth, grid: j.grid || {}, accounts: j.accounts || [] });
+                                      const byAccount = buildByAccount(j.accounts || [], j.grid || {});
+                                      setForecastDrilldown(prev => prev ? { ...prev, data: { ...byAccount, __vendorMeta: vendorMeta } } : null);
+                                    } else {
+                                      setForecastDrilldown(prev => prev ? { ...prev, data: { __vendorMeta: vendorMeta } } : null);
+                                    }
+                                  })
+                                  .catch(() => {
+                                    setForecastDrilldown(prev => prev ? { ...prev, data: { __vendorMeta: vendorMeta } } : null);
+                                  });
                               }
-                              setForecastDrilldown({ type: 'vendors', month: r.month, mKey: r.mKey, data: { ...byAccount, __vendorMeta: vendorMeta } });
                             } else {
                               setForecastDrilldown({ type: 'vendors', month: r.month, mKey: r.mKey, data: {
                                 ...(sfBudget.byMonth?.[r.mKey] || nsBudget.byMonth[r.mKey]?.categories || expenseCategories.byMonth?.[r.mKey] || {}),
