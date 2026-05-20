@@ -1913,6 +1913,18 @@ useEffect(() => {
       // Anchor current month to actual previous month-end bank balance (includes FxReval)
       // Only in live mode — in historical (asOfDate) mode, let running balance flow from opening
       if (isCurMonth && prevMonthEndBalance && !asOfDate) {
+        // Reconcile the gap into the previous month's reval column so closing == anchor
+        if (mi > 0 && rows.length > 0) {
+          const prev = rows[rows.length - 1];
+          const deltaEUR = prevMonthEndBalance.eur - prev.closingBalance;
+          const deltaILS = prevMonthEndBalance.ils - prev.closingBalanceILS;
+          if (deltaEUR !== 0 || deltaILS !== 0) {
+            prev.revalImpact += deltaEUR;
+            prev.revalImpactILS += deltaILS;
+            prev.closingBalance = prevMonthEndBalance.eur;
+            prev.closingBalanceILS = prevMonthEndBalance.ils;
+          }
+        }
         runningBalance = prevMonthEndBalance.eur;
         runningBalanceILS = prevMonthEndBalance.ils;
       }
