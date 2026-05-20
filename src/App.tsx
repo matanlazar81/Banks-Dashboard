@@ -559,6 +559,7 @@ export default function App() {
   const [arrData, setArrData] = useState<{ mrr: number; arr: number; customers: number; avgPerCustomer: number; month: string; snapDate: string; liveMonth?: string; liveDate?: string; history: { name: string; snapDate: string; mrr: number; arr: number; customers: number; avgPerCustomer: number }[] } | null>(null);
   const [sfSalaryOverrides, setSfSalaryOverrides] = useState<{ account: string; fromMonth: string; toMonth: string; department: string; location: string; amountEUR: number; mode: string; comments: string; mKey: string; oldVal: number; newVal: number }[]>([]);
   const [prevMonthEndBalance, setPrevMonthEndBalance] = useState<{ eur: number; ils: number } | null>(null);
+  const [monthEndBalances, setMonthEndBalances] = useState<Record<string, { eur: number; ils: number }>>({});
   const [churnData, setChurnData] = useState<{ year: number; totalCustomers: number; totalRevenue: number; churnedClients: number; lostRevenue: number; churnPct: number; clientChurnPct: number; monthlyImpact: number; monthsCount: number }[]>([]);
   const [churnMonthlyAvg, setChurnMonthlyAvg] = useState(0); // 6-month rolling avg
   const [churnDrilldown, setChurnDrilldown] = useState<{ year: number; data: any[] | 'loading' } | null>(null);
@@ -1811,6 +1812,46 @@ useEffect(() => {
     }
   }, [activeCompany]);
 
+  // Fetch actual NS month-end bank balances for every completed past month in the active year.
+  // Used to reconcile each past month's closing balance to actuals via the vendors column,
+  // so April closing == May opening (and likewise for every prior month-end).
+  useEffect(() => {
+    const sub = COMPANY_CONFIG[activeCompany]?.subsidiary;
+    if (!sub) { setMonthEndBalances({}); return; }
+    const ref = asOfDate ? new Date(asOfDate + 'T12:00:00') : new Date();
+    const refYear = ref.getFullYear();
+    const refMonth = ref.getMonth(); // 0-indexed
+    const lastMonth = activeYear < refYear ? 11 : activeYear === refYear ? refMonth - 1 : -1;
+    if (lastMonth < 0) { setMonthEndBalances({}); return; }
+    const ccKeywords = ['AMEX', 'MasterCard', 'Isracard', 'Visa'];
+    let cancelled = false;
+    const fetches: Promise<{ mKey: string; eur: number; ils: number } | null>[] = [];
+    for (let mi = 0; mi <= lastMonth; mi++) {
+      const eom = new Date(activeYear, mi + 1, 0);
+      const mKey = `${activeYear}-${String(mi + 1).padStart(2, '0')}`;
+      const dStr = `${eom.getFullYear()}-${String(eom.getMonth() + 1).padStart(2, '0')}-${String(eom.getDate()).padStart(2, '0')}`;
+      fetches.push(
+        fetch(`/api/ns-bank-accounts-asof?date=${dStr}&subsidiary=${sub}`, { credentials: 'include' })
+          .then(r => r.ok ? r.json() : null)
+          .then(j => {
+            if (!j?.data?.length) return null;
+            const bankOnly = (j.data as BankAccount[]).filter((a: BankAccount) => !ccKeywords.some(k => a.name.includes(k)));
+            const eur = bankOnly.reduce((s, a) => s + a.primaryBalance, 0);
+            const ils = bankOnly.reduce((s, a) => s + a.localBalance, 0);
+            return { mKey, eur, ils };
+          })
+          .catch(() => null)
+      );
+    }
+    Promise.all(fetches).then(results => {
+      if (cancelled) return;
+      const map: Record<string, { eur: number; ils: number }> = {};
+      for (const r of results) if (r) map[r.mKey] = { eur: r.eur, ils: r.ils };
+      setMonthEndBalances(map);
+    });
+    return () => { cancelled = true; };
+  }, [activeCompany, activeYear, asOfDate]);
+
   // Re-fetch prevMonthEndBalance anchor when as-of date changes
   useEffect(() => {
     // Always re-fetch YoY revenue (even when clearing date back to live)
@@ -1913,18 +1954,6 @@ useEffect(() => {
       // Anchor current month to actual previous month-end bank balance (includes FxReval)
       // Only in live mode — in historical (asOfDate) mode, let running balance flow from opening
       if (isCurMonth && prevMonthEndBalance && !asOfDate) {
-        // Reconcile the gap into the previous month's reval column so closing == anchor
-        if (mi > 0 && rows.length > 0) {
-          const prev = rows[rows.length - 1];
-          const deltaEUR = prevMonthEndBalance.eur - prev.closingBalance;
-          const deltaILS = prevMonthEndBalance.ils - prev.closingBalanceILS;
-          if (deltaEUR !== 0 || deltaILS !== 0) {
-            prev.revalImpact += deltaEUR;
-            prev.revalImpactILS += deltaILS;
-            prev.closingBalance = prevMonthEndBalance.eur;
-            prev.closingBalanceILS = prevMonthEndBalance.ils;
-          }
-        }
         runningBalance = prevMonthEndBalance.eur;
         runningBalanceILS = prevMonthEndBalance.ils;
       }
@@ -2131,7 +2160,7 @@ useEffect(() => {
         collections = Math.round(collections * prorateFactor);
       }
 
-      const totalOutflow = salary + vendors;
+      let totalOutflow = salary + vendors;
       // Churn deduction: for future months, use current year's monthly impact from churn analysis (or manual override)
       let churnDeduction = 0;
       if (!isPastMonth && !isCurMonth) {
@@ -2143,12 +2172,12 @@ useEffect(() => {
         }
       }
       const churnDeductionILS = Math.round(churnDeduction * eurIlsRatio);
-      const net = collections + pipelineWeighted - totalOutflow - churnDeduction;
+      let net = collections + pipelineWeighted - totalOutflow - churnDeduction;
       const salaryILS = Math.round(salary * eurIlsRatio);
-      const vendorsILS = Math.round(vendors * eurIlsRatio);
+      let vendorsILS = Math.round(vendors * eurIlsRatio);
       const collectionsILS = Math.round(collections * eurIlsRatio);
-      const totalOutflowILS = salaryILS + vendorsILS;
-      const netILS = collectionsILS + pipelineWeightedILS - totalOutflowILS - churnDeductionILS;
+      let totalOutflowILS = salaryILS + vendorsILS;
+      let netILS = collectionsILS + pipelineWeightedILS - totalOutflowILS - churnDeductionILS;
       runningBalance += net;
       runningBalanceILS += netILS;
 
@@ -2181,11 +2210,31 @@ useEffect(() => {
       runningBalance += revalImpact;
       runningBalanceILS += revalImpactILS;
 
+      // Reconcile past-month closing to actual NS month-end bank balance via the vendors column.
+      // This makes April closing == May opening (and likewise for every prior month-end).
+      if (isPastMonth && monthEndBalances[mKey] && !asOfDate) {
+        const target = monthEndBalances[mKey];
+        const deltaEUR = runningBalance - target.eur;
+        const deltaILS = runningBalanceILS - target.ils;
+        if (deltaEUR !== 0) {
+          vendors += deltaEUR;
+          totalOutflow += deltaEUR;
+          net -= deltaEUR;
+          runningBalance = target.eur;
+        }
+        if (deltaILS !== 0) {
+          vendorsILS += deltaILS;
+          totalOutflowILS += deltaILS;
+          netILS -= deltaILS;
+          runningBalanceILS = target.ils;
+        }
+      }
+
       const openingBalanceILS = runningBalanceILS - netILS - revalImpactILS;
       rows.push({ month: label, mKey, openingBalance, openingBalanceILS, salary, salaryBase, salaryILS, vendors, vendorsBase, vendorsILS, totalOutflow, totalOutflowILS, collections, collectionsILS, collectionsActual, collectionsRemaining, collectionsForecast, collectionsRevenue, collectionsUnpaidCarry, collectionsUnpaidCarryMonth, collectionsPipeline, customers, pipelineWeighted, pipelineWeightedILS, pipelineTotal, pipelineCount, pipelineOpps, pipelineHistWinRate, pipelineDelayMonths, churnDeduction, churnDeductionILS, net, netILS, revalImpact, revalImpactILS, revalHasBothEnds, closingBalance: runningBalance, closingBalanceILS: runningBalanceILS, isCurrent: isCurMonth, isPast: isPastMonth });
     }
     return rows;
-  }, [vendorBills, arForecast, salaryData, vendorHistory, expenseCategories, book, bookLocal, actualCollections, sfBudget, sfRevenue, sfActualsSplit, salaryAdjPctByMonth, collPctByMonth, monthlyReval, sfSalaryBudget, sfRevenuePaid, sfPipeline, pipelineMinProb, sfConversion, salaryDeptAdj, salaryDeptBudgets, vendorCatAdj, vendorDetailAdj, prevMonthEndBalance, churnMonthlyAvg, churnData, churnOverride, asOfDate, nsBudget, activeYear, sfFinanceBudget, currencyDefensePct, currencyDefensePctByMonth, pipelineAdjPctByMonth, salaryProjectionMode, salaryActualsByDept, lastActualSalaryMonth, monthlyHCImpact, salaryManualILS]);
+  }, [vendorBills, arForecast, salaryData, vendorHistory, expenseCategories, book, bookLocal, actualCollections, sfBudget, sfRevenue, sfActualsSplit, salaryAdjPctByMonth, collPctByMonth, monthlyReval, sfSalaryBudget, sfRevenuePaid, sfPipeline, pipelineMinProb, sfConversion, salaryDeptAdj, salaryDeptBudgets, vendorCatAdj, vendorDetailAdj, prevMonthEndBalance, monthEndBalances, churnMonthlyAvg, churnData, churnOverride, asOfDate, nsBudget, activeYear, sfFinanceBudget, currencyDefensePct, currencyDefensePctByMonth, pipelineAdjPctByMonth, salaryProjectionMode, salaryActualsByDept, lastActualSalaryMonth, monthlyHCImpact, salaryManualILS]);
 
   // ── Capture current-year cashflow for propagation to next year ──
   useEffect(() => {
