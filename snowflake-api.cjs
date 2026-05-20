@@ -300,24 +300,6 @@ function createSnowflakeClient(env) {
   }
 
   // ── Vendor breakdown by category for a specific month (from FCT_EXPENSE) ──
-  // Map GL_ACCOUNT_NUMBER -> PARENT_GL_ACCOUNT_NAME (the modal's category column).
-  // Cached in-memory because DIM_GL_ACCOUNT changes rarely.
-  let _accountCategoryCache = null;
-  async function fetchAccountCategoryMap() {
-    if (_accountCategoryCache) return _accountCategoryCache;
-    const rows = await query(`
-      SELECT GL_ACCOUNT_NUMBER, PARENT_GL_ACCOUNT_NAME, GL_ACCOUNT_NAME
-      FROM DL_PRODUCTION.FINANCE.DIM_GL_ACCOUNT
-      WHERE GL_ACCOUNT_TYPE = 'Expense'
-    `);
-    const map = {};
-    for (const r of rows) {
-      if (r.GL_ACCOUNT_NUMBER) map[r.GL_ACCOUNT_NUMBER] = { category: r.PARENT_GL_ACCOUNT_NAME || 'Other', name: r.GL_ACCOUNT_NAME };
-    }
-    _accountCategoryCache = map;
-    return map;
-  }
-
   async function fetchVendorBreakdown(month) {
     console.log(`[Snowflake] Fetching vendor breakdown for ${month}...`);
     const startDate = `${month}-01`;
@@ -1374,7 +1356,6 @@ function createSnowflakeClient(env) {
     fetchRevenueProjection,
     fetchMonthlyActualsSplit,
     fetchVendorBreakdown,
-    fetchAccountCategoryMap,
     fetchSalaryBreakdown: fetchSalaryBreakdown,
     fetchBudgetCategoryDetail,
     fetchBudgetOverrides,

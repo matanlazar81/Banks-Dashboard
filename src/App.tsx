@@ -1855,51 +1855,6 @@ useEffect(() => {
     return () => { cancelled = true; };
   }, [activeCompany, activeYear, asOfDate]);
 
-  // Fetch paid-only vendor totals per past month for the active company.
-  // Source of truth for "cash that actually left the bank as vendor payments" in each month.
-  useEffect(() => {
-    const sub = COMPANY_CONFIG[activeCompany]?.subsidiary;
-    if (!sub) { setNsVendorPaid({}); return; }
-    const ref = asOfDate ? new Date(asOfDate + 'T12:00:00') : new Date();
-    const refYear = ref.getFullYear();
-    const refMonth = ref.getMonth();
-    const lastMonth = activeYear < refYear ? 11 : activeYear === refYear ? refMonth - 1 : -1;
-    if (lastMonth < 0) { setNsVendorPaid({}); return; }
-    let cancelled = false;
-    const fetches: Promise<{ mKey: string; total: number; byCategory: Record<string, number> } | null>[] = [];
-    for (let mi = 0; mi <= lastMonth; mi++) {
-      const mKey = `${activeYear}-${String(mi + 1).padStart(2, '0')}`;
-      fetches.push(
-        fetch(`/api/ns-vendor-breakdown-paid?month=${mKey}&subsidiary=${sub}`, { credentials: 'include' })
-          .then(r => {
-            if (!r.ok) { console.warn(`[ns-vendor-breakdown-paid] ${mKey}: HTTP ${r.status}`); return null; }
-            const ct = r.headers.get('content-type') || '';
-            if (!ct.includes('application/json')) { console.warn(`[ns-vendor-breakdown-paid] ${mKey}: non-JSON response`); return null; }
-            return r.json();
-          })
-          .then(j => {
-            if (!j?.data || !Array.isArray(j.data)) return null;
-            const byCategory: Record<string, number> = {};
-            let total = 0;
-            for (const row of j.data) {
-              const cat = row.category || 'Other';
-              byCategory[cat] = (byCategory[cat] || 0) + (row.amountEUR || 0);
-              total += row.amountEUR || 0;
-            }
-            return { mKey, total, byCategory };
-          })
-          .catch(e => { console.warn(`[ns-vendor-breakdown-paid] ${mKey} failed:`, e); return null; })
-      );
-    }
-    Promise.all(fetches).then(results => {
-      if (cancelled) return;
-      const map: Record<string, { total: number; byCategory: Record<string, number> }> = {};
-      for (const r of results) if (r) map[r.mKey] = { total: r.total, byCategory: r.byCategory };
-      setNsVendorPaid(map);
-    });
-    return () => { cancelled = true; };
-  }, [activeCompany, activeYear, asOfDate]);
-
   // For the consolidated view: fetch each subsidiary's NS month-end bank balances
   // so the consolidated past-month closings can pin to (LS-NS + ST-NS).
   useEffect(() => {
@@ -2145,11 +2100,7 @@ useEffect(() => {
       // Current month: use budget, not partial actuals (bills post throughout the month)
       let vendors: number;
       const nsVendorActual = isPastMonth ? vendorHistory.filter(v => v.paidDate.startsWith(mKey)).reduce((s, v) => s + v.amountEUR, 0) : 0;
-      const nsVendorPaidTotal = isPastMonth ? (nsVendorPaid[mKey]?.total || 0) : 0;
-      if (isPastMonth && nsVendorPaidTotal > 0) {
-        // Paid-bills + direct-cash from NS — true cash-out for the month.
-        vendors = nsVendorPaidTotal;
-      } else if (isPastMonth && sfActualsSplit[mKey]?.vendors > 0) {
+      if (isPastMonth && sfActualsSplit[mKey]?.vendors > 0) {
         vendors = sfActualsSplit[mKey].vendors;
       } else if (isPastMonth && nsVendorActual > 0) {
         // NS actual vendor payments (used for non-SF subsidiaries like Statscore)
@@ -2339,7 +2290,7 @@ useEffect(() => {
       rows.push({ month: label, mKey, openingBalance, openingBalanceILS, salary, salaryBase, salaryILS, vendors, vendorsBase, vendorsILS, totalOutflow, totalOutflowILS, collections, collectionsILS, collectionsActual, collectionsRemaining, collectionsForecast, collectionsRevenue, collectionsUnpaidCarry, collectionsUnpaidCarryMonth, collectionsPipeline, customers, pipelineWeighted, pipelineWeightedILS, pipelineTotal, pipelineCount, pipelineOpps, pipelineHistWinRate, pipelineDelayMonths, churnDeduction, churnDeductionILS, net, netILS, revalImpact, revalImpactILS, revalHasBothEnds, closingBalance: runningBalance, closingBalanceILS: runningBalanceILS, isCurrent: isCurMonth, isPast: isPastMonth });
     }
     return rows;
-  }, [vendorBills, arForecast, salaryData, vendorHistory, expenseCategories, book, bookLocal, actualCollections, sfBudget, sfRevenue, sfActualsSplit, salaryAdjPctByMonth, collPctByMonth, monthlyReval, sfSalaryBudget, sfRevenuePaid, sfPipeline, pipelineMinProb, sfConversion, salaryDeptAdj, salaryDeptBudgets, vendorCatAdj, vendorDetailAdj, prevMonthEndBalance, monthEndBalances, nsVendorPaid, churnMonthlyAvg, churnData, churnOverride, asOfDate, nsBudget, activeYear, sfFinanceBudget, currencyDefensePct, currencyDefensePctByMonth, pipelineAdjPctByMonth, salaryProjectionMode, salaryActualsByDept, lastActualSalaryMonth, monthlyHCImpact, salaryManualILS]);
+  }, [vendorBills, arForecast, salaryData, vendorHistory, expenseCategories, book, bookLocal, actualCollections, sfBudget, sfRevenue, sfActualsSplit, salaryAdjPctByMonth, collPctByMonth, monthlyReval, sfSalaryBudget, sfRevenuePaid, sfPipeline, pipelineMinProb, sfConversion, salaryDeptAdj, salaryDeptBudgets, vendorCatAdj, vendorDetailAdj, prevMonthEndBalance, monthEndBalances, churnMonthlyAvg, churnData, churnOverride, asOfDate, nsBudget, activeYear, sfFinanceBudget, currencyDefensePct, currencyDefensePctByMonth, pipelineAdjPctByMonth, salaryProjectionMode, salaryActualsByDept, lastActualSalaryMonth, monthlyHCImpact, salaryManualILS]);
 
   // ── Capture current-year cashflow for propagation to next year ──
   useEffect(() => {
@@ -2711,9 +2662,6 @@ useEffect(() => {
   const [showBankBreakdown, setShowBankBreakdown] = useState(false);
   const [bankBreakdownAsOf, setBankBreakdownAsOf] = useState<{ date: string; label: string; accounts: BankAccount[] | 'loading' } | null>(null);
   const [forecastDrilldown, setForecastDrilldown] = useState<{ type: 'vendors' | 'salary' | 'inflows' | 'pipeline'; month: string; mKey: string; data: any; categoryData?: Record<string, number>; categoryName?: string; adjPct?: number } | null>(null);
-  // Per-month paid-only vendor breakdown (NS bills paid in the month + direct cash),
-  // keyed by mKey. Used as the cash-out source for past-month grid vendors.
-  const [nsVendorPaid, setNsVendorPaid] = useState<Record<string, { total: number; byCategory: Record<string, number> }>>({});
   // NS reconciliation breakdown (per-month NS bank tx grouped by tx type), fetched on demand from the vendor modal.
   const [nsReconBreakdown, setNsReconBreakdown] = useState<Record<string, { byType: { txType: string; eur: number; ils: number }[]; total: { eur: number; ils: number }; loading?: boolean; error?: string }>>({});
   const [wonOppsDrilldown, setWonOppsDrilldown] = useState<{ year: number; type: 'new' | 'upgrades'; data: any[] | 'loading' } | null>(null);
@@ -6006,13 +5954,9 @@ useEffect(() => {
                             const nsVendAct = nsVendorByMonth[r.mKey] || 0;
                             const vendorMeta = { budgetTotal, histAvg, histMonths, actual: sfActualsSplit[r.mKey]?.vendors || nsVendAct, used: r.vendors };
                             if (r.isPast || r.isCurrent) {
-                              // Past months: paid-only breakdown (NS bills paid in month + direct cash).
-                              // Current month: stick with Snowflake accruals (no full month of payments yet).
+                              // Past & current months: show actuals from FCT_EXPENSE, not budget
                               setForecastDrilldown({ type: 'vendors', month: r.month, mKey: r.mKey, data: { __vendorMeta: vendorMeta } });
-                              const endpoint = r.isPast
-                                ? `/api/ns-vendor-breakdown-paid?month=${r.mKey}&subsidiary=${companyConfig.subsidiary}`
-                                : `/api/sf-vendor-breakdown?month=${r.mKey}`;
-                              fetch(endpoint)
+                              fetch(`/api/sf-vendor-breakdown?month=${r.mKey}`)
                                 .then(res => res.json())
                                 .then(j => {
                                   const byCategory: Record<string, number> = {};
