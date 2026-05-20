@@ -1924,12 +1924,10 @@ useEffect(() => {
         if (convR?.data) setSfConversion(convR.data);
         if (churnR?.data) setChurnData(churnR.data);
         if (churnR?.recentMonthlyAvg) setChurnMonthlyAvg(churnR.recentMonthlyAvg);
-        // Fetch quarterly MRR churn (DIM_OPPORTUNITY) in the background — sets sfChurnQuarterly
-        // for the churn projection display. Doesn't block the rest of the dashboard.
-        fetch('/api/sf-churn-quarterly', { credentials: 'include' })
-          .then(r => r.ok ? r.json() : null)
-          .then(j => { if (Array.isArray(j?.data)) setSfChurnQuarterly(j.data); })
-          .catch(() => {});
+        // Quarterly MRR churn (DIM_OPPORTUNITY) is piggy-backed on the same /api/sf-churn-analysis
+        // response (parent finance-it server only routes the endpoints it knows about, so we extend
+        // an existing route rather than add a new one).
+        if (Array.isArray(churnR?.quarterly)) setSfChurnQuarterly(churnR.quarterly);
         if (yoyR?.currentYear) setYoyRevenue(yoyR);
         if (finBudR?.data) setSfFinanceBudget(finBudR.data);
         if (arrR?.data) setArrData(arrR.data);

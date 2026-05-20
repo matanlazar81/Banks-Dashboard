@@ -608,17 +608,23 @@ function banksPlugin(): Plugin {
         }
       });
 
-      // ── GET /api/sf-churn-analysis — yearly churn rate and lost revenue ──
+      // ── GET /api/sf-churn-analysis — yearly churn rate, lost revenue, and quarterly MRR churn.
+      // Quarterly data is piggy-backed on this endpoint (instead of a separate /api/sf-churn-quarterly
+      // route) because the parent finance-it server only routes the endpoints it knows about, and
+      // extending an existing routed endpoint is the cheapest way to get new SF data through.
       server.middlewares.use('/api/sf-churn-analysis', async (req, res) => {
         try {
           const sf = getSfClient();
-          if (!sf) { res.end(JSON.stringify({ data: [] })); return; }
-          const result = await sf.fetchChurnAnalysis();
+          if (!sf) { res.end(JSON.stringify({ data: [], quarterly: [] })); return; }
+          const [result, quarterly] = await Promise.all([
+            sf.fetchChurnAnalysis(),
+            sf.fetchQuarterlyChurnMRR ? sf.fetchQuarterlyChurnMRR().catch((e: any) => { console.error('[SF] Quarterly churn (inline) failed:', e.message); return []; }) : Promise.resolve([]),
+          ]);
           res.setHeader('Content-Type', 'application/json');
-          res.end(JSON.stringify({ data: result.yearly, recentMonthlyAvg: result.recentMonthlyAvg }));
+          res.end(JSON.stringify({ data: result.yearly, recentMonthlyAvg: result.recentMonthlyAvg, quarterly }));
         } catch (e: any) {
           console.error('[SF] Churn analysis fetch failed:', e.message);
-          res.end(JSON.stringify({ data: [], error: e.message }));
+          res.end(JSON.stringify({ data: [], quarterly: [], error: e.message }));
         }
       });
 
