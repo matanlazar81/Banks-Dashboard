@@ -2261,7 +2261,7 @@ useEffect(() => {
       } else {
         vendors = isCurMonth ? openBillsTotal : 0;
       }
-      const vendorsBase = vendors; // base vendors BEFORE scenario adjustments
+      let vendorsBase = vendors; // base vendors BEFORE scenario adjustments (reassigned by bank-classified override for past months)
 
       // Apply per-category vendor adjustments from scenario (includes auto-set HR categories from salary dept adj)
       if (!isPastMonth && Object.keys(vendorCatAdj).length > 0) {
