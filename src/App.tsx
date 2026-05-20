@@ -6607,14 +6607,29 @@ useEffect(() => {
                           </tr>
                         </thead>
                         <tbody>
-                          {onlyOther.sort((a, b) => Math.abs(b.eur) - Math.abs(a.eur)).map(it => (
-                            <tr key={it.label} className="border-b border-gray-50">
-                              <td className="py-1.5 pr-2 text-gray-700">{it.label}</td>
-                              <td className="py-1.5 px-2 text-right font-medium text-slate-700">{it.eur === 0 ? '—' : '€' + it.eur.toLocaleString()}</td>
-                              <td className="py-1.5 px-2 text-right text-gray-500">{it.ils === 0 ? '—' : '₪' + it.ils.toLocaleString()}</td>
-                              <td className={`py-1.5 pl-2 text-right text-[10px] uppercase ${it.eur < 0 ? 'text-red-600' : 'text-emerald-600'}`}>{it.eur < 0 ? 'Outflow' : it.eur > 0 ? 'Inflow' : '—'}</td>
-                            </tr>
-                          ))}
+                          {onlyOther.sort((a, b) => Math.abs(b.eur) - Math.abs(a.eur)).map(it => {
+                            const acctId = (it as any).acctId;
+                            const acctNumber = (it as any).acctNumber;
+                            const [y, m] = forecastDrilldown.mKey.split('-');
+                            const endD = new Date(parseInt(y), parseInt(m), 0).getDate();
+                            const nsRegisterUrl = acctId && nsAccountId
+                              ? `https://${nsAccountId}.app.netsuite.com/app/reporting/reportrunner.nl?acctid=${acctId}&reporttype=REGISTER&subsidiary=${companyConfig.subsidiary}&combinebalance=T&startdate=${m}/1/${y}&enddate=${m}/${endD}/${y}`
+                              : null;
+                            return (
+                              <tr key={it.label} className="border-b border-gray-50 hover:bg-gray-50">
+                                <td className="py-1.5 pr-2 text-gray-700">
+                                  {nsRegisterUrl ? (
+                                    <a href={nsRegisterUrl} target="_blank" rel="noreferrer" className="text-violet-600 hover:text-violet-800 hover:underline" title={`View ${acctNumber} register in NetSuite for ${forecastDrilldown.month}`}>
+                                      {it.label} <span className="text-[10px] text-violet-400">↗</span>
+                                    </a>
+                                  ) : it.label}
+                                </td>
+                                <td className="py-1.5 px-2 text-right font-medium text-slate-700">{it.eur === 0 ? '—' : '€' + it.eur.toLocaleString()}</td>
+                                <td className="py-1.5 px-2 text-right text-gray-500">{it.ils === 0 ? '—' : '₪' + it.ils.toLocaleString()}</td>
+                                <td className={`py-1.5 pl-2 text-right text-[10px] uppercase ${it.eur < 0 ? 'text-red-600' : 'text-emerald-600'}`}>{it.eur < 0 ? 'Outflow' : it.eur > 0 ? 'Inflow' : '—'}</td>
+                              </tr>
+                            );
+                          })}
                           <tr className="border-t-2 border-gray-300 font-bold">
                             <td className="py-2 pr-2 text-gray-900">Total (Other)</td>
                             <td className="py-2 px-2 text-right text-slate-800">€{total.toLocaleString()}</td>

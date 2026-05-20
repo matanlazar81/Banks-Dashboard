@@ -2,161 +2,1109 @@
   "subsidiary": 3,
   "company": "lsports",
   "year": 2026,
-  "generatedAt": "2026-05-20T19:50:00Z",
-  "note": "Bank-side classification of every NS bank/CC transactionaccountingline for LSports 2026. Buckets sum to actual NS bank delta per month. Journals re-classified by dominant non-bank contra account. Refresh by running scripts/generate-bank-classified.cjs (manual).",
+  "generatedAt": "2026-05-20T23:35:00Z",
+  "note": "Bank-side classification of NS bank/CC transactions for LSports 2026, EUR (book 1) + ILS (book 2). Journal rows carry contra account number + NS internal account ID so they can link to the NS account register.",
   "byMonth": {
     "2026-01": {
-      "salary": { "eur": -2427745, "ils": 0 },
-      "vendors": { "eur": -1938436, "ils": 0 },
-      "collections": { "eur": 5000572, "ils": 0 },
-      "reval": { "eur": 453625, "ils": 0 },
-      "other": { "eur": 48138, "ils": 0 },
-      "total": { "eur": 1136154, "ils": 0 },
+      "vendors": {
+        "eur": -1938436,
+        "ils": -7140079
+      },
+      "collections": {
+        "eur": 5000572,
+        "ils": 18461220
+      },
+      "salary": {
+        "eur": -2427745,
+        "ils": -9069911
+      },
+      "reval": {
+        "eur": 453625,
+        "ils": 1176991
+      },
+      "other": {
+        "eur": 48138,
+        "ils": 183995
+      },
+      "total": {
+        "eur": 1136154,
+        "ils": 3612216
+      },
       "details": [
-        { "label": "Customer payment", "bucket": "collections", "eur": 5243104, "ils": 0 },
-        { "label": "Vendor payment", "bucket": "vendors", "eur": -1951600, "ils": 0 },
-        { "label": "FX revaluation (FxReval)", "bucket": "reval", "eur": 320245, "ils": 0 },
-        { "label": "Customer refund", "bucket": "collections", "eur": -170716, "ils": 0 },
-        { "label": "Journal — AP-Employees (200000)", "bucket": "salary", "eur": -1189223, "ils": 0 },
-        { "label": "Journal — Withholding tax Payroll (180013)", "bucket": "salary", "eur": -475080, "ils": 0 },
-        { "label": "Journal — Mivtach Simon pension (180069)", "bucket": "salary", "eur": -464895, "ils": 0 },
-        { "label": "Journal — Social Insurance (180012)", "bucket": "salary", "eur": -328467, "ils": 0 },
-        { "label": "Journal — Military reserve refund (760023)", "bucket": "salary", "eur": 33205, "ils": 0 },
-        { "label": "Journal — Employee reimbursements (200001)", "bucket": "salary", "eur": -3285, "ils": 0 },
-        { "label": "Journal — Income tax advances 2024 (180052)", "bucket": "other", "eur": -2010705, "ils": 0 },
-        { "label": "Journal — Provision for tax (180071)", "bucket": "other", "eur": 1489636, "ils": 0 },
-        { "label": "Journal — Income tax return/payments (180067)", "bucket": "other", "eur": 598018, "ils": 0 },
-        { "label": "Journal — Income tax advances 2025 (180057)", "bucket": "other", "eur": -122439, "ils": 0 },
-        { "label": "Journal — VAT Debt (180004)", "bucket": "other", "eur": 105923, "ils": 0 },
-        { "label": "Journal — Insurance coverage income (710013)", "bucket": "other", "eur": 23317, "ils": 0 },
-        { "label": "Journal — Bank fees (800005)", "bucket": "other", "eur": -16201, "ils": 0 },
-        { "label": "Journal — Odfot 2024 (180056)", "bucket": "other", "eur": -14256, "ils": 0 },
-        { "label": "Journal — Withholding Tax old (180006)", "bucket": "other", "eur": -4936, "ils": 0 },
-        { "label": "Journal — Withholding Tax Customers (180019)", "bucket": "other", "eur": -215, "ils": 0 },
-        { "label": "Journal — Cancellations (800001)", "bucket": "other", "eur": -4, "ils": 0 },
-        { "label": "Journal — Realized FX gain/loss (800030)", "bucket": "reval", "eur": 129123, "ils": 0 },
-        { "label": "Journal — FX rate differences (800008)", "bucket": "reval", "eur": 4257, "ils": 0 },
-        { "label": "Journal — Interest income institutions (800010)", "bucket": "collections", "eur": -35054, "ils": 0 },
-        { "label": "Journal — Interest income banks (800009)", "bucket": "collections", "eur": -32913, "ils": 0 },
-        { "label": "Journal — Interest income banks EUR (800019)", "bucket": "collections", "eur": 1651, "ils": 0 },
-        { "label": "Journal — AR (120003)", "bucket": "collections", "eur": -5500, "ils": 0 },
-        { "label": "Journal — AP-Vendors (210000)", "bucket": "vendors", "eur": 13164, "ils": 0 }
+        {
+          "label": "Customer payment",
+          "bucket": "collections",
+          "eur": 5243104,
+          "ils": 19360538,
+          "txType": "CustPymt"
+        },
+        {
+          "label": "Journal \u2014 Tax / Withholding (180052)",
+          "bucket": "other",
+          "eur": -2010705,
+          "ils": -7531190,
+          "txType": "Journal",
+          "acctNumber": "180052",
+          "acctId": 713
+        },
+        {
+          "label": "Vendor payment",
+          "bucket": "vendors",
+          "eur": -1951600,
+          "ils": -7188394,
+          "txType": "VendPymt"
+        },
+        {
+          "label": "Journal \u2014 Tax / Withholding (180071)",
+          "bucket": "other",
+          "eur": 1489636,
+          "ils": 5579433,
+          "txType": "Journal",
+          "acctNumber": "180071",
+          "acctId": 877
+        },
+        {
+          "label": "Journal \u2014 AP-Employees (200000)",
+          "bucket": "salary",
+          "eur": -1189223,
+          "ils": -4454237,
+          "txType": "Journal",
+          "acctNumber": "200000",
+          "acctId": 330
+        },
+        {
+          "label": "Journal \u2014 Tax / Withholding (180067)",
+          "bucket": "other",
+          "eur": 598018,
+          "ils": 2239878,
+          "txType": "Journal",
+          "acctNumber": "180067",
+          "acctId": 470
+        },
+        {
+          "label": "Journal \u2014 Payroll tax/pension (180013)",
+          "bucket": "salary",
+          "eur": -475080,
+          "ils": -1779413,
+          "txType": "Journal",
+          "acctNumber": "180013",
+          "acctId": 897
+        },
+        {
+          "label": "Journal \u2014 Payroll tax/pension (180069)",
+          "bucket": "salary",
+          "eur": -464895,
+          "ils": -1741321,
+          "txType": "Journal",
+          "acctNumber": "180069",
+          "acctId": 824
+        },
+        {
+          "label": "Journal \u2014 Payroll tax/pension (180012)",
+          "bucket": "salary",
+          "eur": -328467,
+          "ils": -1205332,
+          "txType": "Journal",
+          "acctNumber": "180012",
+          "acctId": 898
+        },
+        {
+          "label": "FX revaluation (FxReval)",
+          "bucket": "reval",
+          "eur": 320245,
+          "ils": 680946,
+          "txType": "FxReval"
+        },
+        {
+          "label": "Customer refund",
+          "bucket": "collections",
+          "eur": -170716,
+          "ils": -630282,
+          "txType": "CustRfnd"
+        },
+        {
+          "label": "Journal \u2014 FX gain/loss (800030)",
+          "bucket": "reval",
+          "eur": 129123,
+          "ils": 480309,
+          "txType": "Journal",
+          "acctNumber": "800030",
+          "acctId": 819
+        },
+        {
+          "label": "Journal \u2014 Tax / Withholding (180057)",
+          "bucket": "other",
+          "eur": -122439,
+          "ils": -449583,
+          "txType": "Journal",
+          "acctNumber": "180057",
+          "acctId": 918
+        },
+        {
+          "label": "Journal \u2014 Tax / Withholding (180004)",
+          "bucket": "other",
+          "eur": 105923,
+          "ils": 392329,
+          "txType": "Journal",
+          "acctNumber": "180004",
+          "acctId": 926
+        },
+        {
+          "label": "Journal \u2014 Interest income (800010)",
+          "bucket": "collections",
+          "eur": -35054,
+          "ils": -131294,
+          "txType": "Journal",
+          "acctNumber": "800010",
+          "acctId": 500
+        },
+        {
+          "label": "Journal \u2014 Payroll P&L (760023)",
+          "bucket": "salary",
+          "eur": 33205,
+          "ils": 122592,
+          "txType": "Journal",
+          "acctNumber": "760023",
+          "acctId": 453
+        },
+        {
+          "label": "Journal \u2014 Interest income (800009)",
+          "bucket": "collections",
+          "eur": -32913,
+          "ils": -123303,
+          "txType": "Journal",
+          "acctNumber": "800009",
+          "acctId": 499
+        },
+        {
+          "label": "Journal \u2014 Other (710013)",
+          "bucket": "other",
+          "eur": 23317,
+          "ils": 85700,
+          "txType": "Journal",
+          "acctNumber": "710013",
+          "acctId": 1091
+        },
+        {
+          "label": "Journal \u2014 Bank fees / other (800005)",
+          "bucket": "other",
+          "eur": -16201,
+          "ils": -59882,
+          "txType": "Journal",
+          "acctNumber": "800005",
+          "acctId": 495
+        },
+        {
+          "label": "Journal \u2014 Tax / Withholding (180056)",
+          "bucket": "other",
+          "eur": -14256,
+          "ils": -53397,
+          "txType": "Journal",
+          "acctNumber": "180056",
+          "acctId": 717
+        },
+        {
+          "label": "Journal \u2014 AP-Vendors (210000)",
+          "bucket": "vendors",
+          "eur": 13164,
+          "ils": 48315,
+          "txType": "Journal",
+          "acctNumber": "210000",
+          "acctId": 111
+        },
+        {
+          "label": "Journal \u2014 AR (120003)",
+          "bucket": "collections",
+          "eur": -5500,
+          "ils": -20600,
+          "txType": "Journal",
+          "acctNumber": "120003",
+          "acctId": 119
+        },
+        {
+          "label": "Journal \u2014 Tax / Withholding (180006)",
+          "bucket": "other",
+          "eur": -4936,
+          "ils": -18488,
+          "txType": "Journal",
+          "acctNumber": "180006",
+          "acctId": 881
+        },
+        {
+          "label": "Journal \u2014 FX gain/loss (800008)",
+          "bucket": "reval",
+          "eur": 4257,
+          "ils": 15736,
+          "txType": "Journal",
+          "acctNumber": "800008",
+          "acctId": 498
+        },
+        {
+          "label": "Journal \u2014 Employee reimbursements (200001)",
+          "bucket": "salary",
+          "eur": -3285,
+          "ils": -12200,
+          "txType": "Journal",
+          "acctNumber": "200001",
+          "acctId": 825
+        },
+        {
+          "label": "Journal \u2014 Interest income (800019)",
+          "bucket": "collections",
+          "eur": 1651,
+          "ils": 6161,
+          "txType": "Journal",
+          "acctNumber": "800019",
+          "acctId": 509
+        },
+        {
+          "label": "Journal \u2014 Tax / Withholding (180019)",
+          "bucket": "other",
+          "eur": -215,
+          "ils": -789,
+          "txType": "Journal",
+          "acctNumber": "180019",
+          "acctId": 909
+        },
+        {
+          "label": "Journal \u2014 Bank fees / other (800001)",
+          "bucket": "other",
+          "eur": -4,
+          "ils": -16,
+          "txType": "Journal",
+          "acctNumber": "800001",
+          "acctId": 491
+        },
+        {
+          "label": "Transfer (internal)",
+          "bucket": "other",
+          "eur": 0,
+          "ils": 0,
+          "txType": "Transfer"
+        }
       ]
     },
     "2026-02": {
-      "salary": { "eur": -2835420, "ils": 0 },
-      "vendors": { "eur": -3336280, "ils": 0 },
-      "collections": { "eur": 4325131, "ils": 0 },
-      "reval": { "eur": 85785, "ils": 0 },
-      "other": { "eur": 205155, "ils": 0 },
-      "total": { "eur": -1555629, "ils": 0 },
+      "vendors": {
+        "eur": -3336280,
+        "ils": -12238112
+      },
+      "collections": {
+        "eur": 4325131,
+        "ils": 15873873
+      },
+      "salary": {
+        "eur": -2835420,
+        "ils": -10458340
+      },
+      "reval": {
+        "eur": 85785,
+        "ils": 641095
+      },
+      "other": {
+        "eur": 205155,
+        "ils": 755110
+      },
+      "total": {
+        "eur": -1555629,
+        "ils": -5426374
+      },
       "details": [
-        { "label": "Customer payment", "bucket": "collections", "eur": 4321708, "ils": 0 },
-        { "label": "Vendor payment", "bucket": "vendors", "eur": -3349766, "ils": 0 },
-        { "label": "FX revaluation (FxReval)", "bucket": "reval", "eur": 86426, "ils": 0 },
-        { "label": "Journal — AP-Employees (200000)", "bucket": "salary", "eur": -1352226, "ils": 0 },
-        { "label": "Journal — Withholding tax Payroll (180013)", "bucket": "salary", "eur": -615880, "ils": 0 },
-        { "label": "Journal — Mivtach Simon pension (180069)", "bucket": "salary", "eur": -506316, "ils": 0 },
-        { "label": "Journal — Social Insurance (180012)", "bucket": "salary", "eur": -392744, "ils": 0 },
-        { "label": "Journal — Military reserve refund (760023)", "bucket": "salary", "eur": 34603, "ils": 0 },
-        { "label": "Journal — Employee reimbursements (200001)", "bucket": "salary", "eur": -2857, "ils": 0 },
-        { "label": "Journal — VAT Debt (180004)", "bucket": "other", "eur": 271238, "ils": 0 },
-        { "label": "Journal — Income tax advances 2026 (180059)", "bucket": "other", "eur": -50260, "ils": 0 },
-        { "label": "Journal — Bank fees (800005)", "bucket": "other", "eur": -14589, "ils": 0 },
-        { "label": "Journal — Withholding Clearing IL (180018)", "bucket": "other", "eur": -1223, "ils": 0 },
-        { "label": "Journal — Employee meals (780022)", "bucket": "other", "eur": -15, "ils": 0 },
-        { "label": "Journal — Municipality fee (710007)", "bucket": "other", "eur": -1, "ils": 0 },
-        { "label": "Journal — Cancellations (800001)", "bucket": "other", "eur": 5, "ils": 0 },
-        { "label": "Journal — FX rate differences (800008)", "bucket": "reval", "eur": -641, "ils": 0 },
-        { "label": "Journal — Interest income banks (800009)", "bucket": "collections", "eur": 3423, "ils": 0 },
-        { "label": "Journal — AP-Vendors (210000)", "bucket": "vendors", "eur": 13486, "ils": 0 }
+        {
+          "label": "Customer payment",
+          "bucket": "collections",
+          "eur": 4321708,
+          "ils": 15861287,
+          "txType": "CustPymt"
+        },
+        {
+          "label": "Vendor payment",
+          "bucket": "vendors",
+          "eur": -3349766,
+          "ils": -12287333,
+          "txType": "VendPymt"
+        },
+        {
+          "label": "Journal \u2014 AP-Employees (200000)",
+          "bucket": "salary",
+          "eur": -1352226,
+          "ils": -4994449,
+          "txType": "Journal",
+          "acctNumber": "200000",
+          "acctId": 330
+        },
+        {
+          "label": "Journal \u2014 Payroll tax/pension (180013)",
+          "bucket": "salary",
+          "eur": -615880,
+          "ils": -2274317,
+          "txType": "Journal",
+          "acctNumber": "180013",
+          "acctId": 897
+        },
+        {
+          "label": "Journal \u2014 Payroll tax/pension (180069)",
+          "bucket": "salary",
+          "eur": -506316,
+          "ils": -1870076,
+          "txType": "Journal",
+          "acctNumber": "180069",
+          "acctId": 824
+        },
+        {
+          "label": "Journal \u2014 Payroll tax/pension (180012)",
+          "bucket": "salary",
+          "eur": -392744,
+          "ils": -1435984,
+          "txType": "Journal",
+          "acctNumber": "180012",
+          "acctId": 898
+        },
+        {
+          "label": "Journal \u2014 Tax / Withholding (180004)",
+          "bucket": "other",
+          "eur": 271238,
+          "ils": 997637,
+          "txType": "Journal",
+          "acctNumber": "180004",
+          "acctId": 926
+        },
+        {
+          "label": "FX revaluation (FxReval)",
+          "bucket": "reval",
+          "eur": 86426,
+          "ils": 643448,
+          "txType": "FxReval"
+        },
+        {
+          "label": "Journal \u2014 Tax / Withholding (180059)",
+          "bucket": "other",
+          "eur": -50260,
+          "ils": -184490,
+          "txType": "Journal",
+          "acctNumber": "180059",
+          "acctId": 1108
+        },
+        {
+          "label": "Journal \u2014 Payroll P&L (760023)",
+          "bucket": "salary",
+          "eur": 34603,
+          "ils": 126986,
+          "txType": "Journal",
+          "acctNumber": "760023",
+          "acctId": 453
+        },
+        {
+          "label": "Journal \u2014 Bank fees / other (800005)",
+          "bucket": "other",
+          "eur": -14589,
+          "ils": -53536,
+          "txType": "Journal",
+          "acctNumber": "800005",
+          "acctId": 495
+        },
+        {
+          "label": "Journal \u2014 AP-Vendors (210000)",
+          "bucket": "vendors",
+          "eur": 13486,
+          "ils": 49221,
+          "txType": "Journal",
+          "acctNumber": "210000",
+          "acctId": 111
+        },
+        {
+          "label": "Journal \u2014 Interest income (800009)",
+          "bucket": "collections",
+          "eur": 3423,
+          "ils": 12586,
+          "txType": "Journal",
+          "acctNumber": "800009",
+          "acctId": 499
+        },
+        {
+          "label": "Journal \u2014 Employee reimbursements (200001)",
+          "bucket": "salary",
+          "eur": -2857,
+          "ils": -10500,
+          "txType": "Journal",
+          "acctNumber": "200001",
+          "acctId": 825
+        },
+        {
+          "label": "Journal \u2014 Tax / Withholding (180018)",
+          "bucket": "other",
+          "eur": -1223,
+          "ils": -4461,
+          "txType": "Journal",
+          "acctNumber": "180018",
+          "acctId": 228
+        },
+        {
+          "label": "Journal \u2014 FX gain/loss (800008)",
+          "bucket": "reval",
+          "eur": -641,
+          "ils": -2353,
+          "txType": "Journal",
+          "acctNumber": "800008",
+          "acctId": 498
+        },
+        {
+          "label": "Journal \u2014 Other (780022)",
+          "bucket": "other",
+          "eur": -15,
+          "ils": -56,
+          "txType": "Journal",
+          "acctNumber": "780022",
+          "acctId": 444
+        },
+        {
+          "label": "Journal \u2014 Bank fees / other (800001)",
+          "bucket": "other",
+          "eur": 5,
+          "ils": 20,
+          "txType": "Journal",
+          "acctNumber": "800001",
+          "acctId": 491
+        },
+        {
+          "label": "Journal \u2014 Other (710007)",
+          "bucket": "other",
+          "eur": -1,
+          "ils": -4,
+          "txType": "Journal",
+          "acctNumber": "710007",
+          "acctId": 411
+        },
+        {
+          "label": "Transfer (internal)",
+          "bucket": "other",
+          "eur": 0,
+          "ils": 0,
+          "txType": "Transfer"
+        }
       ]
     },
     "2026-03": {
-      "salary": { "eur": -2421658, "ils": 0 },
-      "vendors": { "eur": -2612748, "ils": 0 },
-      "collections": { "eur": 4195758, "ils": 0 },
-      "reval": { "eur": 177117, "ils": 0 },
-      "other": { "eur": 71903, "ils": 0 },
-      "total": { "eur": -589628, "ils": 0 },
+      "vendors": {
+        "eur": -2612748,
+        "ils": -9413576
+      },
+      "collections": {
+        "eur": 4195758,
+        "ils": 15137148
+      },
+      "salary": {
+        "eur": -2421658,
+        "ils": -8893809
+      },
+      "reval": {
+        "eur": 177117,
+        "ils": 554121
+      },
+      "other": {
+        "eur": 71903,
+        "ils": 261489
+      },
+      "total": {
+        "eur": -589628,
+        "ils": -2354627
+      },
       "details": [
-        { "label": "Customer payment", "bucket": "collections", "eur": 4193430, "ils": 0 },
-        { "label": "Vendor payment", "bucket": "vendors", "eur": -2620992, "ils": 0 },
-        { "label": "FX revaluation (FxReval)", "bucket": "reval", "eur": 178180, "ils": 0 },
-        { "label": "Customer refund", "bucket": "collections", "eur": -730, "ils": 0 },
-        { "label": "Journal — AP-Employees (200000)", "bucket": "salary", "eur": -1156157, "ils": 0 },
-        { "label": "Journal — Mivtach Simon pension (180069)", "bucket": "salary", "eur": -503285, "ils": 0 },
-        { "label": "Journal — Withholding tax Payroll (180013)", "bucket": "salary", "eur": -463133, "ils": 0 },
-        { "label": "Journal — Social Insurance (180012)", "bucket": "salary", "eur": -327844, "ils": 0 },
-        { "label": "Journal — Military reserve refund (760023)", "bucket": "salary", "eur": 31297, "ils": 0 },
-        { "label": "Journal — Employee reimbursements (200001)", "bucket": "salary", "eur": -2536, "ils": 0 },
-        { "label": "Journal — VAT Debt (180004)", "bucket": "other", "eur": 127697, "ils": 0 },
-        { "label": "Journal — Income tax advances 2026 (180059)", "bucket": "other", "eur": -45680, "ils": 0 },
-        { "label": "Journal — Bank fees (800005)", "bucket": "other", "eur": -11534, "ils": 0 },
-        { "label": "Journal — Advances Paid (190012)", "bucket": "other", "eur": 1421, "ils": 0 },
-        { "label": "Journal — Cancellations (800001)", "bucket": "other", "eur": -9, "ils": 0 },
-        { "label": "Journal — Refreshments (710002)", "bucket": "other", "eur": 8, "ils": 0 },
-        { "label": "Journal — FX rate differences (800008)", "bucket": "reval", "eur": -1063, "ils": 0 },
-        { "label": "Journal — Interest income banks EUR (800019)", "bucket": "collections", "eur": 2707, "ils": 0 },
-        { "label": "Journal — Interest income banks (800009)", "bucket": "collections", "eur": 351, "ils": 0 },
-        { "label": "Journal — AP-Vendors (210000)", "bucket": "vendors", "eur": 8244, "ils": 0 }
+        {
+          "label": "Customer payment",
+          "bucket": "collections",
+          "eur": 4193430,
+          "ils": 15128751,
+          "txType": "CustPymt"
+        },
+        {
+          "label": "Vendor payment",
+          "bucket": "vendors",
+          "eur": -2620992,
+          "ils": -9443357,
+          "txType": "VendPymt"
+        },
+        {
+          "label": "Journal \u2014 AP-Employees (200000)",
+          "bucket": "salary",
+          "eur": -1156157,
+          "ils": -4263938,
+          "txType": "Journal",
+          "acctNumber": "200000",
+          "acctId": 330
+        },
+        {
+          "label": "Journal \u2014 Payroll tax/pension (180069)",
+          "bucket": "salary",
+          "eur": -503285,
+          "ils": -1856063,
+          "txType": "Journal",
+          "acctNumber": "180069",
+          "acctId": 824
+        },
+        {
+          "label": "Journal \u2014 Payroll tax/pension (180013)",
+          "bucket": "salary",
+          "eur": -463133,
+          "ils": -1668526,
+          "txType": "Journal",
+          "acctNumber": "180013",
+          "acctId": 897
+        },
+        {
+          "label": "Journal \u2014 Payroll tax/pension (180012)",
+          "bucket": "salary",
+          "eur": -327844,
+          "ils": -1209001,
+          "txType": "Journal",
+          "acctNumber": "180012",
+          "acctId": 898
+        },
+        {
+          "label": "FX revaluation (FxReval)",
+          "bucket": "reval",
+          "eur": 178180,
+          "ils": 557933,
+          "txType": "FxReval"
+        },
+        {
+          "label": "Journal \u2014 Tax / Withholding (180004)",
+          "bucket": "other",
+          "eur": 127697,
+          "ils": 462505,
+          "txType": "Journal",
+          "acctNumber": "180004",
+          "acctId": 926
+        },
+        {
+          "label": "Journal \u2014 Tax / Withholding (180059)",
+          "bucket": "other",
+          "eur": -45680,
+          "ils": -164570,
+          "txType": "Journal",
+          "acctNumber": "180059",
+          "acctId": 1108
+        },
+        {
+          "label": "Journal \u2014 Payroll P&L (760023)",
+          "bucket": "salary",
+          "eur": 31297,
+          "ils": 112815,
+          "txType": "Journal",
+          "acctNumber": "760023",
+          "acctId": 453
+        },
+        {
+          "label": "Journal \u2014 Bank fees / other (800005)",
+          "bucket": "other",
+          "eur": -11534,
+          "ils": -41669,
+          "txType": "Journal",
+          "acctNumber": "800005",
+          "acctId": 495
+        },
+        {
+          "label": "Journal \u2014 AP-Vendors (210000)",
+          "bucket": "vendors",
+          "eur": 8244,
+          "ils": 29781,
+          "txType": "Journal",
+          "acctNumber": "210000",
+          "acctId": 111
+        },
+        {
+          "label": "Journal \u2014 Interest income (800019)",
+          "bucket": "collections",
+          "eur": 2707,
+          "ils": 9758,
+          "txType": "Journal",
+          "acctNumber": "800019",
+          "acctId": 509
+        },
+        {
+          "label": "Journal \u2014 Employee reimbursements (200001)",
+          "bucket": "salary",
+          "eur": -2536,
+          "ils": -9096,
+          "txType": "Journal",
+          "acctNumber": "200001",
+          "acctId": 825
+        },
+        {
+          "label": "Journal \u2014 Other (190012)",
+          "bucket": "other",
+          "eur": 1421,
+          "ils": 5226,
+          "txType": "Journal",
+          "acctNumber": "190012",
+          "acctId": 118
+        },
+        {
+          "label": "Journal \u2014 FX gain/loss (800008)",
+          "bucket": "reval",
+          "eur": -1063,
+          "ils": -3812,
+          "txType": "Journal",
+          "acctNumber": "800008",
+          "acctId": 498
+        },
+        {
+          "label": "Customer refund",
+          "bucket": "collections",
+          "eur": -730,
+          "ils": -2623,
+          "txType": "CustRfnd"
+        },
+        {
+          "label": "Journal \u2014 Interest income (800009)",
+          "bucket": "collections",
+          "eur": 351,
+          "ils": 1262,
+          "txType": "Journal",
+          "acctNumber": "800009",
+          "acctId": 499
+        },
+        {
+          "label": "Journal \u2014 Bank fees / other (800001)",
+          "bucket": "other",
+          "eur": -9,
+          "ils": -33,
+          "txType": "Journal",
+          "acctNumber": "800001",
+          "acctId": 491
+        },
+        {
+          "label": "Journal \u2014 Other (710002)",
+          "bucket": "other",
+          "eur": 8,
+          "ils": 30,
+          "txType": "Journal",
+          "acctNumber": "710002",
+          "acctId": 406
+        },
+        {
+          "label": "Transfer (internal)",
+          "bucket": "other",
+          "eur": 0,
+          "ils": 0,
+          "txType": "Transfer"
+        }
       ]
     },
     "2026-04": {
-      "salary": { "eur": -2295395, "ils": 0 },
-      "vendors": { "eur": -1666655, "ils": 0 },
-      "collections": { "eur": 5078235, "ils": 0 },
-      "reval": { "eur": 260320, "ils": 0 },
-      "other": { "eur": 46562, "ils": 0 },
-      "total": { "eur": 1423067, "ils": 0 },
+      "vendors": {
+        "eur": -1666655,
+        "ils": -5947080
+      },
+      "collections": {
+        "eur": 5078235,
+        "ils": 18102959
+      },
+      "salary": {
+        "eur": -2295395,
+        "ils": -8299552
+      },
+      "reval": {
+        "eur": 260320,
+        "ils": 291841
+      },
+      "other": {
+        "eur": 46562,
+        "ils": 154643
+      },
+      "total": {
+        "eur": 1423067,
+        "ils": 4302811
+      },
       "details": [
-        { "label": "Customer payment", "bucket": "collections", "eur": 5075345, "ils": 0 },
-        { "label": "Vendor payment", "bucket": "vendors", "eur": -1667311, "ils": 0 },
-        { "label": "FX revaluation (FxReval)", "bucket": "reval", "eur": 260362, "ils": 0 },
-        { "label": "Journal — AP-Employees (200000)", "bucket": "salary", "eur": -1156066, "ils": 0 },
-        { "label": "Journal — Mivtach Simon pension (180069)", "bucket": "salary", "eur": -517756, "ils": 0 },
-        { "label": "Journal — Withholding tax Payroll (180013)", "bucket": "salary", "eur": -456171, "ils": 0 },
-        { "label": "Journal — Social Insurance (180012)", "bucket": "salary", "eur": -343786, "ils": 0 },
-        { "label": "Journal — Military reserve refund (760023)", "bucket": "salary", "eur": 181080, "ils": 0 },
-        { "label": "Journal — Employee reimbursements (200001)", "bucket": "salary", "eur": -2696, "ils": 0 },
-        { "label": "Journal — VAT Debt (180004)", "bucket": "other", "eur": 104354, "ils": 0 },
-        { "label": "Journal — Income tax advances 2026 (180059)", "bucket": "other", "eur": -41812, "ils": 0 },
-        { "label": "Journal — Bank fees (800005)", "bucket": "other", "eur": -12089, "ils": 0 },
-        { "label": "Journal — PAYPAL fees (800012)", "bucket": "other", "eur": -3779, "ils": 0 },
-        { "label": "Journal — Withholding Tax Customers (180019)", "bucket": "other", "eur": -120, "ils": 0 },
-        { "label": "Journal — Refreshments (710002)", "bucket": "other", "eur": 20, "ils": 0 },
-        { "label": "Journal — Municipality fee (710007)", "bucket": "other", "eur": -6, "ils": 0 },
-        { "label": "Journal — Car allowance (780020)", "bucket": "other", "eur": -6, "ils": 0 },
-        { "label": "Journal — FX rate differences (800008)", "bucket": "reval", "eur": -42, "ils": 0 },
-        { "label": "Journal — Interest income banks (800009)", "bucket": "collections", "eur": 2890, "ils": 0 },
-        { "label": "Journal — AP-Vendors (210000)", "bucket": "vendors", "eur": 656, "ils": 0 }
+        {
+          "label": "Customer payment",
+          "bucket": "collections",
+          "eur": 5075345,
+          "ils": 18092463,
+          "txType": "CustPymt"
+        },
+        {
+          "label": "Vendor payment",
+          "bucket": "vendors",
+          "eur": -1667311,
+          "ils": -5949415,
+          "txType": "VendPymt"
+        },
+        {
+          "label": "Journal \u2014 AP-Employees (200000)",
+          "bucket": "salary",
+          "eur": -1156066,
+          "ils": -4194557,
+          "txType": "Journal",
+          "acctNumber": "200000",
+          "acctId": 330
+        },
+        {
+          "label": "Journal \u2014 Payroll tax/pension (180069)",
+          "bucket": "salary",
+          "eur": -517756,
+          "ils": -1878585,
+          "txType": "Journal",
+          "acctNumber": "180069",
+          "acctId": 824
+        },
+        {
+          "label": "Journal \u2014 Payroll tax/pension (180013)",
+          "bucket": "salary",
+          "eur": -456171,
+          "ils": -1631905,
+          "txType": "Journal",
+          "acctNumber": "180013",
+          "acctId": 897
+        },
+        {
+          "label": "Journal \u2014 Payroll tax/pension (180012)",
+          "bucket": "salary",
+          "eur": -343786,
+          "ils": -1219317,
+          "txType": "Journal",
+          "acctNumber": "180012",
+          "acctId": 898
+        },
+        {
+          "label": "FX revaluation (FxReval)",
+          "bucket": "reval",
+          "eur": 260362,
+          "ils": 291990,
+          "txType": "FxReval"
+        },
+        {
+          "label": "Journal \u2014 Payroll P&L (760023)",
+          "bucket": "salary",
+          "eur": 181080,
+          "ils": 634312,
+          "txType": "Journal",
+          "acctNumber": "760023",
+          "acctId": 453
+        },
+        {
+          "label": "Journal \u2014 Tax / Withholding (180004)",
+          "bucket": "other",
+          "eur": 104354,
+          "ils": 360792,
+          "txType": "Journal",
+          "acctNumber": "180004",
+          "acctId": 926
+        },
+        {
+          "label": "Journal \u2014 Tax / Withholding (180059)",
+          "bucket": "other",
+          "eur": -41812,
+          "ils": -149578,
+          "txType": "Journal",
+          "acctNumber": "180059",
+          "acctId": 1108
+        },
+        {
+          "label": "Journal \u2014 Bank fees / other (800005)",
+          "bucket": "other",
+          "eur": -12089,
+          "ils": -42994,
+          "txType": "Journal",
+          "acctNumber": "800005",
+          "acctId": 495
+        },
+        {
+          "label": "Journal \u2014 Bank fees / other (800012)",
+          "bucket": "other",
+          "eur": -3779,
+          "ils": -13173,
+          "txType": "Journal",
+          "acctNumber": "800012",
+          "acctId": 502
+        },
+        {
+          "label": "Journal \u2014 Interest income (800009)",
+          "bucket": "collections",
+          "eur": 2890,
+          "ils": 10496,
+          "txType": "Journal",
+          "acctNumber": "800009",
+          "acctId": 499
+        },
+        {
+          "label": "Journal \u2014 Employee reimbursements (200001)",
+          "bucket": "salary",
+          "eur": -2696,
+          "ils": -9500,
+          "txType": "Journal",
+          "acctNumber": "200001",
+          "acctId": 825
+        },
+        {
+          "label": "Journal \u2014 AP-Vendors (210000)",
+          "bucket": "vendors",
+          "eur": 656,
+          "ils": 2335,
+          "txType": "Journal",
+          "acctNumber": "210000",
+          "acctId": 111
+        },
+        {
+          "label": "Journal \u2014 Tax / Withholding (180019)",
+          "bucket": "other",
+          "eur": -120,
+          "ils": -428,
+          "txType": "Journal",
+          "acctNumber": "180019",
+          "acctId": 909
+        },
+        {
+          "label": "Journal \u2014 FX gain/loss (800008)",
+          "bucket": "reval",
+          "eur": -42,
+          "ils": -149,
+          "txType": "Journal",
+          "acctNumber": "800008",
+          "acctId": 498
+        },
+        {
+          "label": "Journal \u2014 Other (710002)",
+          "bucket": "other",
+          "eur": 20,
+          "ils": 69,
+          "txType": "Journal",
+          "acctNumber": "710002",
+          "acctId": 406
+        },
+        {
+          "label": "Journal \u2014 Other (710007)",
+          "bucket": "other",
+          "eur": -6,
+          "ils": -23,
+          "txType": "Journal",
+          "acctNumber": "710007",
+          "acctId": 411
+        },
+        {
+          "label": "Journal \u2014 Other (780020)",
+          "bucket": "other",
+          "eur": -6,
+          "ils": -22,
+          "txType": "Journal",
+          "acctNumber": "780020",
+          "acctId": 871
+        },
+        {
+          "label": "Transfer (internal)",
+          "bucket": "other",
+          "eur": 0,
+          "ils": 0,
+          "txType": "Transfer"
+        },
+        {
+          "label": "Journal \u2014 Bank fees / other (800001)",
+          "bucket": "other",
+          "eur": 0,
+          "ils": 0,
+          "txType": "Journal",
+          "acctNumber": "800001",
+          "acctId": 491
+        },
+        {
+          "label": "Journal \u2014 FX gain/loss (800030)",
+          "bucket": "reval",
+          "eur": 0,
+          "ils": 0,
+          "txType": "Journal",
+          "acctNumber": "800030",
+          "acctId": 819
+        }
       ]
     },
     "2026-05": {
-      "salary": { "eur": -2222182, "ils": 0 },
-      "vendors": { "eur": -2494903, "ils": 0 },
-      "collections": { "eur": 3586009, "ils": 0 },
-      "reval": { "eur": -2230632, "ils": 0 },
-      "other": { "eur": 95407, "ils": 0 },
-      "total": { "eur": -3266301, "ils": 0 },
+      "vendors": {
+        "eur": -2494903,
+        "ils": -8546154
+      },
+      "collections": {
+        "eur": 3586009,
+        "ils": 12259707
+      },
+      "salary": {
+        "eur": -2222182,
+        "ils": -7629083
+      },
+      "reval": {
+        "eur": -2230632,
+        "ils": -6700100
+      },
+      "other": {
+        "eur": 95407,
+        "ils": 320191
+      },
+      "total": {
+        "eur": -3266301,
+        "ils": -10295439
+      },
       "details": [
-        { "label": "Customer payment", "bucket": "collections", "eur": 3588323, "ils": 0 },
-        { "label": "Vendor payment", "bucket": "vendors", "eur": -2494903, "ils": 0 },
-        { "label": "FX revaluation (FxReval)", "bucket": "reval", "eur": -2229391, "ils": 0 },
-        { "label": "Customer refund", "bucket": "collections", "eur": -5052, "ils": 0 },
-        { "label": "Journal — AP-Employees (200000)", "bucket": "salary", "eur": -1322119, "ils": 0 },
-        { "label": "Journal — Mivtach Simon pension (180069)", "bucket": "salary", "eur": -548098, "ils": 0 },
-        { "label": "Journal — Withholding tax Payroll (180013)", "bucket": "salary", "eur": -371824, "ils": 0 },
-        { "label": "Journal — Military reserve refund (760023)", "bucket": "salary", "eur": 347807, "ils": 0 },
-        { "label": "Journal — Social Insurance (180012)", "bucket": "salary", "eur": -327948, "ils": 0 },
-        { "label": "Journal — VAT Debt (180004)", "bucket": "other", "eur": 153106, "ils": 0 },
-        { "label": "Journal — Income tax advances 2026 (180059)", "bucket": "other", "eur": -51369, "ils": 0 },
-        { "label": "Journal — Bank fees (800005)", "bucket": "other", "eur": -5907, "ils": 0 },
-        { "label": "Journal — PAYPAL fees (800012)", "bucket": "other", "eur": -396, "ils": 0 },
-        { "label": "Journal — Employee meals (780022)", "bucket": "other", "eur": -36, "ils": 0 },
-        { "label": "Journal — Refreshments (710002)", "bucket": "other", "eur": 9, "ils": 0 },
-        { "label": "Journal — FX rate differences (800008)", "bucket": "reval", "eur": -1241, "ils": 0 },
-        { "label": "Journal — Interest income banks (800009)", "bucket": "collections", "eur": 2738, "ils": 0 }
+        {
+          "label": "Customer payment",
+          "bucket": "collections",
+          "eur": 3588323,
+          "ils": 12267347,
+          "txType": "CustPymt"
+        },
+        {
+          "label": "Vendor payment",
+          "bucket": "vendors",
+          "eur": -2494903,
+          "ils": -8546154,
+          "txType": "VendPymt"
+        },
+        {
+          "label": "FX revaluation (FxReval)",
+          "bucket": "reval",
+          "eur": -2229391,
+          "ils": -6695856,
+          "txType": "FxReval"
+        },
+        {
+          "label": "Journal \u2014 AP-Employees (200000)",
+          "bucket": "salary",
+          "eur": -1322119,
+          "ils": -4571090,
+          "txType": "Journal",
+          "acctNumber": "200000",
+          "acctId": 330
+        },
+        {
+          "label": "Journal \u2014 Payroll tax/pension (180069)",
+          "bucket": "salary",
+          "eur": -548098,
+          "ils": -1863589,
+          "txType": "Journal",
+          "acctNumber": "180069",
+          "acctId": 824
+        },
+        {
+          "label": "Journal \u2014 Payroll tax/pension (180013)",
+          "bucket": "salary",
+          "eur": -371824,
+          "ils": -1272454,
+          "txType": "Journal",
+          "acctNumber": "180013",
+          "acctId": 897
+        },
+        {
+          "label": "Journal \u2014 Payroll P&L (760023)",
+          "bucket": "salary",
+          "eur": 347807,
+          "ils": 1190549,
+          "txType": "Journal",
+          "acctNumber": "760023",
+          "acctId": 453
+        },
+        {
+          "label": "Journal \u2014 Payroll tax/pension (180012)",
+          "bucket": "salary",
+          "eur": -327948,
+          "ils": -1112499,
+          "txType": "Journal",
+          "acctNumber": "180012",
+          "acctId": 898
+        },
+        {
+          "label": "Journal \u2014 Tax / Withholding (180004)",
+          "bucket": "other",
+          "eur": 153106,
+          "ils": 517697,
+          "txType": "Journal",
+          "acctNumber": "180004",
+          "acctId": 926
+        },
+        {
+          "label": "Journal \u2014 Tax / Withholding (180059)",
+          "bucket": "other",
+          "eur": -51369,
+          "ils": -175795,
+          "txType": "Journal",
+          "acctNumber": "180059",
+          "acctId": 1108
+        },
+        {
+          "label": "Journal \u2014 Bank fees / other (800005)",
+          "bucket": "other",
+          "eur": -5907,
+          "ils": -20264,
+          "txType": "Journal",
+          "acctNumber": "800005",
+          "acctId": 495
+        },
+        {
+          "label": "Customer refund",
+          "bucket": "collections",
+          "eur": -5052,
+          "ils": -17117,
+          "txType": "CustRfnd"
+        },
+        {
+          "label": "Journal \u2014 Interest income (800009)",
+          "bucket": "collections",
+          "eur": 2738,
+          "ils": 9477,
+          "txType": "Journal",
+          "acctNumber": "800009",
+          "acctId": 499
+        },
+        {
+          "label": "Journal \u2014 FX gain/loss (800008)",
+          "bucket": "reval",
+          "eur": -1241,
+          "ils": -4244,
+          "txType": "Journal",
+          "acctNumber": "800008",
+          "acctId": 498
+        },
+        {
+          "label": "Journal \u2014 Bank fees / other (800012)",
+          "bucket": "other",
+          "eur": -396,
+          "ils": -1354,
+          "txType": "Journal",
+          "acctNumber": "800012",
+          "acctId": 502
+        },
+        {
+          "label": "Journal \u2014 Other (780022)",
+          "bucket": "other",
+          "eur": -36,
+          "ils": -123,
+          "txType": "Journal",
+          "acctNumber": "780022",
+          "acctId": 444
+        },
+        {
+          "label": "Journal \u2014 Other (710002)",
+          "bucket": "other",
+          "eur": 9,
+          "ils": 30,
+          "txType": "Journal",
+          "acctNumber": "710002",
+          "acctId": 406
+        },
+        {
+          "label": "Transfer (internal)",
+          "bucket": "other",
+          "eur": 0,
+          "ils": 0,
+          "txType": "Transfer"
+        },
+        {
+          "label": "Journal \u2014 Bank fees / other (800001)",
+          "bucket": "other",
+          "eur": 0,
+          "ils": 0,
+          "txType": "Journal",
+          "acctNumber": "800001",
+          "acctId": 491
+        }
       ]
     }
   }
