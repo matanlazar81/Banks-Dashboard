@@ -2431,14 +2431,15 @@ useEffect(() => {
       runningBalance += net;
       runningBalanceILS += netILS;
 
-      // Revaluation impact: past months use bank-classified FxReval (matches NS bank delta exactly);
-      // current/future months use the GL-derived monthly reval + currency defense budget.
-      const revalHasBothEnds = bcm ? true : (monthlyReval.byMonth?.[mKey]?.hasBothEnds || false);
-      let revalImpact = bcm ? bcm.reval.eur : (revalHasBothEnds ? (monthlyReval.byMonth?.[mKey]?.eur || 0) : 0);
-      let revalImpactILS = bcm ? bcm.reval.ils : (revalHasBothEnds ? (monthlyReval.byMonth?.[mKey]?.ils || 0) : 0);
-      // For current + future months: add currency defense from Finance budget (acct 800029 = Unrealized Gain/Loss)
-      // Source: NetSuite budgetsmachine (account 800029), fallback to 'Other (800)' category
-      // Past months use actual reval; current & future use budget × percentage (default 50%)
+      // Revaluation impact:
+      //  - Past months: bank-classified FxReval (preferred) or NS GL-derived monthly reval when complete.
+      //  - Current / future months: forecast only (currency defense budget × pct). Partial-month NS reval
+      //    is ignored because the month isn't closed -- using opening-balance-only reval would project
+      //    a misleading large gain/loss onto the row.
+      const revalHasBothEnds = bcm ? true : (isPastMonth ? (monthlyReval.byMonth?.[mKey]?.hasBothEnds || false) : false);
+      let revalImpact = bcm ? bcm.reval.eur : (isPastMonth && revalHasBothEnds ? (monthlyReval.byMonth?.[mKey]?.eur || 0) : 0);
+      let revalImpactILS = bcm ? bcm.reval.ils : (isPastMonth && revalHasBothEnds ? (monthlyReval.byMonth?.[mKey]?.ils || 0) : 0);
+      // Current + future: currency defense budget × pct
       if (!isPastMonth) {
         const monthPct = currencyDefensePctByMonth[i] ?? currencyDefensePct; // per-month override or global default
         if (monthPct > 0) {
