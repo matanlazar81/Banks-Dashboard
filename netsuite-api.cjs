@@ -2085,7 +2085,48 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
     };
   }
 
-  return { suiteql, suiteqlAll, fetchAgingData, fetchCollectionData, buildCollectionJson, fetchClientAnomalies, fetchAllSOsByBillingPeriod, fetchRevenueData, fetchMRRData, fetchBankBalance, fetchVendorBills, fetchVendorPaymentHistory, fetchBankAccountList, fetchBankAccountListAsOf, fetchSalaryData, fetchCashflowHistory, fetchExpenseCategoryData, fetchPaymentsByCategory, fetchCashflowBreakdown, fetchCashflowTransactions, fetchExpenseTransactions, fetchSalaryBreakdown, fetchInvoiceBasedProjection, fetchMonthlyRevaluation, fetchVendorBillsByAccount, fetchNSBudget, fetchCurrencyDefenseBudget, fetchBankTxByMonth };
+  // Vendor bills that became paid (status='B') in the given year, grouped by month + expense GL account.
+  // Cash basis: pivot on closedate (when bill was paid in full).
+  async function fetchPaidVendorsYearly(year) {
+    const y = parseInt(year);
+    if (!y || y < 2000 || y > 2100) return { accounts: [], months: [], grid: {} };
+    const rows = await suiteqlAll(`
+      SELECT TO_CHAR(t.closedate, 'YYYY-MM') AS mkey,
+             a.acctnumber, a.acctname,
+             ROUND(SUM(COALESCE(tal.debit,0) - COALESCE(tal.credit,0))) AS amount_eur
+      FROM transaction t
+      JOIN transactionaccountingline tal ON tal.transaction = t.id
+      JOIN account a ON tal.account = a.id
+      WHERE t.type = 'VendBill'
+        AND t.status = 'B'
+        AND t.subsidiary = ${subsidiaryId}
+        AND t.closedate BETWEEN TO_DATE('${y}-01-01','YYYY-MM-DD') AND TO_DATE('${y}-12-31','YYYY-MM-DD')
+        AND tal.posting = 'T' AND tal.accountingbook = 1
+        AND a.accttype IN ('Expense','OthExpense','COGS')
+      GROUP BY TO_CHAR(t.closedate, 'YYYY-MM'), a.acctnumber, a.acctname
+      HAVING SUM(COALESCE(tal.debit,0) - COALESCE(tal.credit,0)) <> 0
+      ORDER BY mkey, amount_eur DESC
+    `);
+    const grid = {}; // grid[acctnumber][mkey] = amount
+    const accountMap = {}; // acctnumber -> { number, name, total }
+    const monthSet = new Set();
+    for (const r of rows) {
+      const acct = r.acctnumber || '';
+      const mkey = r.mkey || '';
+      const amt = Math.round(parseFloat(r.amount_eur) || 0);
+      if (!acct || !mkey) continue;
+      monthSet.add(mkey);
+      if (!grid[acct]) grid[acct] = {};
+      grid[acct][mkey] = (grid[acct][mkey] || 0) + amt;
+      if (!accountMap[acct]) accountMap[acct] = { number: acct, name: r.acctname || '', total: 0 };
+      accountMap[acct].total += amt;
+    }
+    const months = Array.from(monthSet).sort();
+    const accounts = Object.values(accountMap).sort((a, b) => b.total - a.total);
+    return { accounts, months, grid };
+  }
+
+  return { suiteql, suiteqlAll, fetchAgingData, fetchCollectionData, buildCollectionJson, fetchClientAnomalies, fetchAllSOsByBillingPeriod, fetchRevenueData, fetchMRRData, fetchBankBalance, fetchVendorBills, fetchVendorPaymentHistory, fetchBankAccountList, fetchBankAccountListAsOf, fetchSalaryData, fetchCashflowHistory, fetchExpenseCategoryData, fetchPaymentsByCategory, fetchCashflowBreakdown, fetchCashflowTransactions, fetchExpenseTransactions, fetchSalaryBreakdown, fetchInvoiceBasedProjection, fetchMonthlyRevaluation, fetchVendorBillsByAccount, fetchNSBudget, fetchCurrencyDefenseBudget, fetchBankTxByMonth, fetchPaidVendorsYearly };
 }
 
 

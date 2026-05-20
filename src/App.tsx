@@ -502,6 +502,95 @@ const COMPANY_CONFIG: Record<string, { name: string; subsidiary: number; hasSF: 
   statscore: { name: 'Statscore', subsidiary: 6, hasSF: false, hasDepts: false },
 };
 
+function PaidVendorsByMonth({ subsidiary, year }: { subsidiary: number; year: number }) {
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [data, setData] = useState<{ accounts: { number: string; name: string; total: number }[]; months: string[]; grid: Record<string, Record<string, number>> } | null>(null);
+
+  useEffect(() => {
+    if (!open || data || loading) return;
+    setLoading(true);
+    setError(null);
+    fetch(`/api/ns-paid-vendors-yearly?subsidiary=${subsidiary}&year=${year}`, { credentials: 'include' })
+      .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
+      .then(j => {
+        if (j.error) setError(j.error);
+        setData({ accounts: j.accounts || [], months: j.months || [], grid: j.grid || {} });
+      })
+      .catch(e => setError(e.message || 'fetch failed'))
+      .finally(() => setLoading(false));
+  }, [open, subsidiary, year, data, loading]);
+
+  const fmt = (n: number) => n === 0 ? '—' : '€' + Math.round(n).toLocaleString();
+  const monthLabel = (mkey: string) => {
+    const [, mm] = mkey.split('-');
+    return ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][parseInt(mm) - 1] || mkey;
+  };
+
+  const grandTotal = data ? data.accounts.reduce((s, a) => s + a.total, 0) : 0;
+  const monthTotals = data ? data.months.map(m => ({
+    m,
+    total: data.accounts.reduce((s, a) => s + (data.grid[a.number]?.[m] || 0), 0),
+  })) : [];
+
+  return (
+    <div className="bg-white rounded-xl shadow-sm border border-gray-100 mb-6 overflow-hidden">
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="w-full px-5 py-3 flex items-center justify-between hover:bg-gray-50 text-left"
+      >
+        <div>
+          <div className="text-sm font-semibold text-gray-800">{open ? '▼' : '▶'} Paid Vendors by Month — NS Cash Basis ({year})</div>
+          <div className="text-xs text-gray-500 mt-0.5">Vendor bills closed in subsidiary {subsidiary}, grouped by expense GL account. Pivot: payment date.</div>
+        </div>
+        {data && <div className="text-sm text-gray-600">Total: <span className="font-semibold text-gray-800">{fmt(grandTotal)}</span></div>}
+      </button>
+      {open && (
+        <div className="border-t border-gray-100 p-4 overflow-x-auto">
+          {loading && <div className="text-sm text-gray-500 py-4 text-center">Loading from NetSuite…</div>}
+          {error && !loading && <div className="text-sm text-red-600 py-4">Failed to load: {error}</div>}
+          {!loading && !error && data && data.accounts.length === 0 && <div className="text-sm text-gray-500 py-4 text-center">No paid vendor bills found for {year}.</div>}
+          {!loading && !error && data && data.accounts.length > 0 && (
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-gray-200 text-gray-500 uppercase">
+                  <th className="text-left py-2 pr-3 font-medium sticky left-0 bg-white">Account</th>
+                  {data.months.map(m => (
+                    <th key={m} className="text-right py-2 px-2 font-medium">{monthLabel(m)}</th>
+                  ))}
+                  <th className="text-right py-2 pl-2 font-medium border-l border-gray-200">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.accounts.map(a => (
+                  <tr key={a.number} className="border-b border-gray-50 hover:bg-violet-50/40">
+                    <td className="py-1.5 pr-3 sticky left-0 bg-white">
+                      <span className="text-gray-400 font-mono">{a.number}</span> <span className="text-gray-700">{a.name}</span>
+                    </td>
+                    {data.months.map(m => {
+                      const v = data.grid[a.number]?.[m] ?? 0;
+                      return <td key={m} className={`text-right py-1.5 px-2 ${v === 0 ? 'text-gray-300' : 'text-violet-700'}`}>{fmt(v)}</td>;
+                    })}
+                    <td className="text-right py-1.5 pl-2 font-semibold text-gray-800 border-l border-gray-100">{fmt(a.total)}</td>
+                  </tr>
+                ))}
+                <tr className="border-t-2 border-gray-300 font-bold text-gray-900">
+                  <td className="py-2 pr-3 sticky left-0 bg-white">Total</td>
+                  {monthTotals.map(({ m, total }) => (
+                    <td key={m} className="text-right py-2 px-2">{fmt(total)}</td>
+                  ))}
+                  <td className="text-right py-2 pl-2 border-l border-gray-200">{fmt(grandTotal)}</td>
+                </tr>
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
   const [activeCompany, setActiveCompany] = useState<CompanyView>(() => {
     try { return (localStorage.getItem('banks-active-company') as CompanyView) || 'lsports'; } catch { return 'lsports'; }
@@ -10042,6 +10131,10 @@ useEffect(() => {
             </div>
           )}
         </div>
+
+        {activeCompany === 'lsports' && (
+          <PaidVendorsByMonth subsidiary={3} year={activeYears.lsports || currentYear} />
+        )}
 
         <div className="text-center text-xs text-gray-400 py-4">
           Banks Dashboard | Subsidiary {companyConfig.subsidiary} | Data from NetSuite SuiteQL{companyConfig.hasSF ? ' + Snowflake' : ''}
