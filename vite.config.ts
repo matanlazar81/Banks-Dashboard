@@ -274,6 +274,34 @@ function banksPlugin(): Plugin {
         }
       });
 
+      // ── GET /api/ns-vendor-breakdown-paid — paid-only vendor breakdown by category for a month
+      server.middlewares.use('/api/ns-vendor-breakdown-paid', async (req, res) => {
+        try {
+          const url = new URL(req.url || '', `http://${req.headers.host}`);
+          const ns = getNsClient(parseInt(url.searchParams.get('subsidiary') || '3') || 3);
+          const sf = getSfClient();
+          const month = url.searchParams.get('month');
+          if (!ns || !month) { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ data: [] })); return; }
+          const [paid, catMap] = await Promise.all([
+            queueNsCall(() => ns.fetchVendorBreakdownPaid(month)),
+            sf ? sf.fetchAccountCategoryMap().catch(() => ({})) : Promise.resolve({}),
+          ]);
+          const data = (paid.byAccount || []).map((a: any) => ({
+            account: a.acctNumber,
+            name: a.acctName,
+            category: (catMap[a.acctNumber]?.category) || `Other (${(a.acctNumber || '').slice(0, 3)})`,
+            amountEUR: a.amountEUR,
+            amountILS: 0,
+          }));
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ data }));
+        } catch (e: any) {
+          console.error('[NS API] Paid vendor breakdown failed:', e.message);
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ data: [], error: e.message }));
+        }
+      });
+
       // ── GET /api/ns-bank-tx-summary — NS bank-touching transactions for a month, grouped by tx type & account
       server.middlewares.use('/api/ns-bank-tx-summary', async (req, res) => {
         try {

@@ -2019,6 +2019,82 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
     return result;
   }
 
+  // Paid (cash-out) breakdown by expense account for a month.
+  // Combines (a) VendBill amounts attributed to payments made in the month via
+  // previousTransactionLineLink, and (b) direct cash transactions hitting expense
+  // accounts in the month (Journal/Check/CardChrg/ExpRept).
+  // Excludes payroll (76xxx), defense (800xx), and 780502.
+  async function fetchVendorBreakdownPaid(yearMonth) {
+    const [y, m] = yearMonth.split('-');
+    if (!y || !m) return { byAccount: [] };
+    const startDate = `${y}-${String(m).padStart(2, '0')}-01`;
+    const lastDay = new Date(parseInt(y), parseInt(m), 0).getDate();
+    const endDate = `${y}-${String(m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+
+    let paidBillRows = [];
+    let directRows = [];
+    try {
+      paidBillRows = await suiteqlAll(`
+        SELECT a.acctnumber, a.acctname,
+               ROUND(SUM(bill_expense)) AS amount_eur
+        FROM (
+          SELECT vb.id AS bill_id, a.id AS acct_id,
+                 SUM(COALESCE(tal.debit, 0)) - SUM(COALESCE(tal.credit, 0)) AS bill_expense
+          FROM previousTransactionLineLink ptll
+          JOIN transaction vp ON ptll.nextdoc = vp.id
+          JOIN transaction vb ON ptll.previousdoc = vb.id
+          JOIN transactionaccountingline tal ON tal.transaction = vb.id
+            AND tal.posting = 'T' AND tal.accountingbook = 1
+          JOIN account a ON tal.account = a.id
+            AND a.accttype IN ('Expense', 'OthExpense', 'COGS')
+            AND a.acctnumber NOT LIKE '76%'
+            AND a.acctnumber NOT LIKE '800%'
+            AND a.acctnumber NOT IN ('780502')
+          WHERE ptll.nexttype IN ('VendPymt', 'Check') AND ptll.previoustype = 'VendBill'
+            AND ptll.linktype = 'Payment'
+            AND vp.subsidiary = ${subsidiaryId}
+            AND vp.trandate >= TO_DATE('${startDate}', 'YYYY-MM-DD')
+            AND vp.trandate <= TO_DATE('${endDate}', 'YYYY-MM-DD')
+          GROUP BY vb.id, a.id
+        ) sub
+        JOIN account a ON a.id = sub.acct_id
+        GROUP BY a.acctnumber, a.acctname
+      `);
+    } catch (e) {
+      console.log(`[NS API] fetchVendorBreakdownPaid (bills) failed: ${e.message}`);
+    }
+    try {
+      directRows = await suiteqlAll(`
+        SELECT a.acctnumber, a.acctname,
+               ROUND(SUM(COALESCE(tal.debit, 0)) - SUM(COALESCE(tal.credit, 0))) AS amount_eur
+        FROM transactionaccountingline tal
+        JOIN transaction t ON tal.transaction = t.id
+        JOIN account a ON tal.account = a.id
+        WHERE a.accttype IN ('Expense', 'OthExpense', 'COGS')
+          AND a.acctnumber NOT LIKE '76%'
+          AND a.acctnumber NOT LIKE '800%'
+          AND a.acctnumber NOT IN ('780502')
+          AND t.subsidiary = ${subsidiaryId}
+          AND tal.accountingbook = 1
+          AND tal.posting = 'T'
+          AND t.type IN ('Journal', 'Check', 'CardChrg', 'ExpRept')
+          AND t.trandate >= TO_DATE('${startDate}', 'YYYY-MM-DD')
+          AND t.trandate <= TO_DATE('${endDate}', 'YYYY-MM-DD')
+        GROUP BY a.acctnumber, a.acctname
+      `);
+    } catch (e) {
+      console.log(`[NS API] fetchVendorBreakdownPaid (direct) failed: ${e.message}`);
+    }
+
+    const byAcctMap = {};
+    for (const r of [...paidBillRows, ...directRows]) {
+      const key = r.acctnumber;
+      if (!byAcctMap[key]) byAcctMap[key] = { acctNumber: r.acctnumber, acctName: (r.acctname || '').replace(/&amp;/g, '&'), amountEUR: 0 };
+      byAcctMap[key].amountEUR += Math.round(parseFloat(r.amount_eur) || 0);
+    }
+    return { byAccount: Object.values(byAcctMap).filter(r => Math.abs(r.amountEUR) > 10) };
+  }
+
   // Bank-touching transactions for a month, grouped by transaction type.
   // Used to attribute the gap between Snowflake FCT_EXPENSE vendors and the
   // actual NS bank delta (Closing - Opening) for the month.
@@ -2085,7 +2161,7 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
     };
   }
 
-  return { suiteql, suiteqlAll, fetchAgingData, fetchCollectionData, buildCollectionJson, fetchClientAnomalies, fetchAllSOsByBillingPeriod, fetchRevenueData, fetchMRRData, fetchBankBalance, fetchVendorBills, fetchVendorPaymentHistory, fetchBankAccountList, fetchBankAccountListAsOf, fetchSalaryData, fetchCashflowHistory, fetchExpenseCategoryData, fetchPaymentsByCategory, fetchCashflowBreakdown, fetchCashflowTransactions, fetchExpenseTransactions, fetchSalaryBreakdown, fetchInvoiceBasedProjection, fetchMonthlyRevaluation, fetchVendorBillsByAccount, fetchNSBudget, fetchCurrencyDefenseBudget, fetchBankTxByMonth };
+  return { suiteql, suiteqlAll, fetchAgingData, fetchCollectionData, buildCollectionJson, fetchClientAnomalies, fetchAllSOsByBillingPeriod, fetchRevenueData, fetchMRRData, fetchBankBalance, fetchVendorBills, fetchVendorPaymentHistory, fetchBankAccountList, fetchBankAccountListAsOf, fetchSalaryData, fetchCashflowHistory, fetchExpenseCategoryData, fetchPaymentsByCategory, fetchCashflowBreakdown, fetchCashflowTransactions, fetchExpenseTransactions, fetchSalaryBreakdown, fetchInvoiceBasedProjection, fetchMonthlyRevaluation, fetchVendorBillsByAccount, fetchNSBudget, fetchCurrencyDefenseBudget, fetchBankTxByMonth, fetchVendorBreakdownPaid };
 }
 
 
