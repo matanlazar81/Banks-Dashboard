@@ -560,6 +560,8 @@ export default function App() {
   const [sfSalaryOverrides, setSfSalaryOverrides] = useState<{ account: string; fromMonth: string; toMonth: string; department: string; location: string; amountEUR: number; mode: string; comments: string; mKey: string; oldVal: number; newVal: number }[]>([]);
   const [prevMonthEndBalance, setPrevMonthEndBalance] = useState<{ eur: number; ils: number } | null>(null);
   const [monthEndBalances, setMonthEndBalances] = useState<Record<string, { eur: number; ils: number }>>({});
+  // Per-subsidiary NS month-end bank balances for the consolidated view: { lsports: {mKey: {eur,ils}}, statscore: {...} }
+  const [consolidatedMonthEnd, setConsolidatedMonthEnd] = useState<Record<string, Record<string, { eur: number; ils: number }>>>({});
   const [churnData, setChurnData] = useState<{ year: number; totalCustomers: number; totalRevenue: number; churnedClients: number; lostRevenue: number; churnPct: number; clientChurnPct: number; monthlyImpact: number; monthsCount: number }[]>([]);
   const [churnMonthlyAvg, setChurnMonthlyAvg] = useState(0); // 6-month rolling avg
   const [churnDrilldown, setChurnDrilldown] = useState<{ year: number; data: any[] | 'loading' } | null>(null);
@@ -1836,6 +1838,7 @@ useEffect(() => {
           .then(j => {
             if (!j?.data?.length) return null;
             const bankOnly = (j.data as BankAccount[]).filter((a: BankAccount) => !ccKeywords.some(k => a.name.includes(k)));
+            if (bankOnly.length === 0) return null;
             const eur = bankOnly.reduce((s, a) => s + a.primaryBalance, 0);
             const ils = bankOnly.reduce((s, a) => s + a.localBalance, 0);
             return { mKey, eur, ils };
@@ -1851,6 +1854,59 @@ useEffect(() => {
     });
     return () => { cancelled = true; };
   }, [activeCompany, activeYear, asOfDate]);
+
+  // For the consolidated view: fetch each subsidiary's NS month-end bank balances
+  // so the consolidated past-month closings can pin to (LS-NS + ST-NS).
+  useEffect(() => {
+    if (activeCompany !== 'consolidated') { setConsolidatedMonthEnd({}); return; }
+    const ref = asOfDate ? new Date(asOfDate + 'T12:00:00') : new Date();
+    const refYear = ref.getFullYear();
+    const refMonth = ref.getMonth();
+    const ccKeywords = ['AMEX', 'MasterCard', 'Isracard', 'Visa'];
+    let cancelled = false;
+    const entries = Object.entries(COMPANY_CONFIG) as Array<[string, { subsidiary: number }]>;
+    const subYearMap: Record<string, number> = {
+      lsports: activeYears.lsports || currentYear,
+      statscore: activeYears.statscore || currentYear,
+    };
+    const all: Promise<{ sub: string; map: Record<string, { eur: number; ils: number }> }>[] = [];
+    for (const [subKey, cfg] of entries) {
+      const yr = subYearMap[subKey] || currentYear;
+      const lastMonth = yr < refYear ? 11 : yr === refYear ? refMonth - 1 : -1;
+      if (lastMonth < 0) { all.push(Promise.resolve({ sub: subKey, map: {} })); continue; }
+      const ps: Promise<{ mKey: string; eur: number; ils: number } | null>[] = [];
+      for (let mi = 0; mi <= lastMonth; mi++) {
+        const eom = new Date(yr, mi + 1, 0);
+        const mKey = `${yr}-${String(mi + 1).padStart(2, '0')}`;
+        const dStr = `${eom.getFullYear()}-${String(eom.getMonth() + 1).padStart(2, '0')}-${String(eom.getDate()).padStart(2, '0')}`;
+        ps.push(
+          fetch(`/api/ns-bank-accounts-asof?date=${dStr}&subsidiary=${cfg.subsidiary}`, { credentials: 'include' })
+            .then(r => r.ok ? r.json() : null)
+            .then(j => {
+              if (!j?.data?.length) return null;
+              const bankOnly = (j.data as BankAccount[]).filter((a: BankAccount) => !ccKeywords.some(k => a.name.includes(k)));
+              if (bankOnly.length === 0) return null;
+              const eur = bankOnly.reduce((s, a) => s + a.primaryBalance, 0);
+              const ils = bankOnly.reduce((s, a) => s + a.localBalance, 0);
+              return { mKey, eur, ils };
+            })
+            .catch(() => null)
+        );
+      }
+      all.push(Promise.all(ps).then(results => {
+        const map: Record<string, { eur: number; ils: number }> = {};
+        for (const r of results) if (r) map[r.mKey] = { eur: r.eur, ils: r.ils };
+        return { sub: subKey, map };
+      }));
+    }
+    Promise.all(all).then(parts => {
+      if (cancelled) return;
+      const out: Record<string, Record<string, { eur: number; ils: number }>> = {};
+      for (const p of parts) out[p.sub] = p.map;
+      setConsolidatedMonthEnd(out);
+    });
+    return () => { cancelled = true; };
+  }, [activeCompany, activeYears.lsports, activeYears.statscore, asOfDate, currentYear]);
 
   // Re-fetch prevMonthEndBalance anchor when as-of date changes
   useEffect(() => {
@@ -2456,13 +2512,26 @@ useEffect(() => {
         else { collections = 0; }
         if (isPast && revPaid && revPaid.paid > 0 && revPaid.revenue > 0 && revPaid.paid / revPaid.revenue > 0.5) { prevUnpaid = revPaid.unpaid || 0; } else { prevUnpaid = 0; }
 
-        const totalOutflow = salary + vendors;
-        const net = collections - totalOutflow;
+        let totalOutflow = salary + vendors;
+        let net = collections - totalOutflow;
         runBal += net;
 
         const revalHasBoth = mReval.byMonth?.[mKey]?.hasBothEnds || false;
         const revalImpact = revalHasBoth ? (mReval.byMonth?.[mKey]?.eur || 0) : 0;
         runBal += revalImpact;
+
+        // Pin past-month closing to actual NS month-end bank balance for this subsidiary;
+        // absorb the delta into vendors so opening + net + reval = closing remains consistent.
+        const nsEnd = isPast ? consolidatedMonthEnd[sub]?.[mKey] : undefined;
+        if (nsEnd && !asOfDate) {
+          const delta = runBal - nsEnd.eur;
+          if (delta !== 0) {
+            vendors += delta;
+            totalOutflow += delta;
+            net -= delta;
+            runBal = nsEnd.eur;
+          }
+        }
 
         rows.push({ mKey, salary, vendors, collections, totalOutflow, net, revalImpact, closingBalance: runBal, openingBalance, isPast, isCurrent: isCur });
       }
@@ -2528,7 +2597,7 @@ useEffect(() => {
     }
 
     return merged;
-  }, [consolidatedData, scenarios, consLsScenarioId, consStScenarioId, activeYears]);
+  }, [consolidatedData, scenarios, consLsScenarioId, consStScenarioId, activeYears, consolidatedMonthEnd, asOfDate]);
 
   const [showReval, setShowReval] = useState(true);
 
