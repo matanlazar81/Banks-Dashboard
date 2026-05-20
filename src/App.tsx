@@ -11,6 +11,7 @@ import {
 import * as XLSX from 'xlsx-js-style';
 import html2canvas from 'html2canvas';
 import bankClassifiedSeedLsports2026 from './seeds/bank-classified-lsports-2026.json';
+import paidVendorsSeedLsports2026 from './seeds/paid-vendors-lsports-2026.json';
 
 // ── Simple Markdown → HTML renderer ──
 function mdToHtml(md: string): string {
@@ -654,7 +655,16 @@ export default function App() {
   const [sfBudget, setSfBudget] = useState<{ byMonth?: Record<string, Record<string, number>>; totalByMonth: Record<string, { eur: number; ils: number }>; overrides?: { account: string; fromMonth: string; toMonth: string; department: string; location: string; amountEUR: number; mode: string; comments: string; mKey: string; category: string; oldVal: number; newVal: number }[] }>({ totalByMonth: {} });
   const [sfRevenue, setSfRevenue] = useState<{ budget: Record<string, { eur: number }>; actuals: Record<string, { eur: number }>; targets: Record<string, number> }>({ budget: {}, actuals: {}, targets: {} });
   const [sfActualsSplit, setSfActualsSplit] = useState<Record<string, { salary: number; salaryILS: number; vendors: number; vendorsILS: number }>>({});
-  const [nsPaidVendors, setNsPaidVendors] = useState<{ byMonth: Record<string, number>; grid: Record<string, Record<string, number>>; accounts: { number: string; name: string; total: number }[] }>({ byMonth: {}, grid: {}, accounts: [] });
+  const [nsPaidVendors, setNsPaidVendors] = useState<{ byMonth: Record<string, number>; grid: Record<string, Record<string, number>>; accounts: { number: string; name: string; total: number }[] }>(() => {
+    try {
+      const seed = paidVendorsSeedLsports2026 as { months: string[]; accounts: { number: string }[]; grid: Record<string, Record<string, number>> };
+      const byMonth: Record<string, number> = {};
+      for (const m of seed.months) {
+        byMonth[m] = seed.accounts.reduce((s, a) => s + (seed.grid?.[a.number]?.[m] || 0), 0);
+      }
+      return { byMonth, grid: seed.grid || {}, accounts: (seed.accounts as { number: string; name: string; total: number }[]) || [] };
+    } catch { return { byMonth: {}, grid: {}, accounts: [] }; }
+  });
   // Bank-side classification: every NS bank/CC line decomposed into Salary/Vendors/Collections/Reval/Other per month.
   // Sum of buckets per month = actual bank delta. No plug. Used to override past-month grid columns.
   // Static bootstrap from src/seeds/bank-classified-lsports-2026.json gives instant load; live fetch
@@ -1833,12 +1843,17 @@ useEffect(() => {
       if (bankR?.dailyBalances) setBankData(bankR);
       if (acctR?.data) setBankAccounts(acctR.data);
       if (billsR?.data) setVendorBills(billsR.data);
-      if (paidVR?.months) {
+      if (paidVR?.months && (paidVR.accounts as any[])?.length > 0) {
         const byMonth: Record<string, number> = {};
         for (const m of paidVR.months as string[]) {
           byMonth[m] = (paidVR.accounts as { number: string }[]).reduce((s, a) => s + (paidVR.grid?.[a.number]?.[m] || 0), 0);
         }
         setNsPaidVendors({ byMonth, grid: paidVR.grid || {}, accounts: paidVR.accounts || [] });
+      } else if (co === 'lsports' && (activeYears[co] || currentYear) === 2026) {
+        const seed = paidVendorsSeedLsports2026 as { months: string[]; accounts: { number: string; name: string; total: number }[]; grid: Record<string, Record<string, number>> };
+        const byMonth: Record<string, number> = {};
+        for (const m of seed.months) byMonth[m] = seed.accounts.reduce((s, a) => s + (seed.grid?.[a.number]?.[m] || 0), 0);
+        setNsPaidVendors({ byMonth, grid: seed.grid, accounts: seed.accounts });
       } else {
         setNsPaidVendors({ byMonth: {}, grid: {}, accounts: [] });
       }
