@@ -1680,65 +1680,65 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
   // Returns the net reval impact per month (EUR book 1, ILS book 2)
   // Plus the cumulative reval before Jan 1 of the current year (for opening balance adjustment)
   async function fetchMonthlyRevaluation() {
-    console.log('[NS API] Fetching monthly FX revaluation data...');
+    console.log('[NS API] Fetching monthly FX revaluation data (accounts 800028-800031 only)...');
     const now = new Date();
     const startYear = now.getFullYear();
 
+    // Reval pulled from P&L accounts 800028 / 800029 / 800030 / 800031.
+    // These are FX gain/loss accounts; their natural sign on tal.amount is opposite
+    // to the bank balance impact, so we negate to express the impact on closing balance.
+    const REVAL_ACCTS = `'800028','800029','800030','800031'`;
+
     // Cumulative reval before Jan 1 of current year (to adjust opening balance)
     const preYearEur = await suiteql(`
-      SELECT SUM(tal.amount) AS reval_total
+      SELECT -SUM(tal.amount) AS reval_total
       FROM transactionaccountingline tal
       JOIN transaction t ON tal.transaction = t.id
       JOIN account a ON tal.account = a.id
-      WHERE a.accttype IN ('Bank', 'CredCard') AND t.subsidiary = ${subsidiaryId}
+      WHERE a.acctnumber IN (${REVAL_ACCTS}) AND t.subsidiary = ${subsidiaryId}
         AND tal.posting = 'T' AND tal.accountingbook = 1
-        AND t.type = 'FxReval'
         AND t.trandate < TO_DATE('${startYear}-01-01', 'YYYY-MM-DD')
     `);
     const preYearIls = await suiteql(`
-      SELECT SUM(tal.amount) AS reval_total
+      SELECT -SUM(tal.amount) AS reval_total
       FROM transactionaccountingline tal
       JOIN transaction t ON tal.transaction = t.id
       JOIN account a ON tal.account = a.id
-      WHERE a.accttype IN ('Bank', 'CredCard') AND t.subsidiary = ${subsidiaryId}
+      WHERE a.acctnumber IN (${REVAL_ACCTS}) AND t.subsidiary = ${subsidiaryId}
         AND tal.posting = 'T' AND tal.accountingbook = 2
-        AND t.type = 'FxReval'
         AND t.trandate < TO_DATE('${startYear}-01-01', 'YYYY-MM-DD')
     `);
 
-    // Monthly reval for current year — EUR (accounting book 1)
-    // Also fetch min/max trandate per month to detect if we have both beginning & end revals
+    // Monthly reval — EUR (book 1)
     const eurRows = await suiteqlAll(`
       SELECT TO_CHAR(t.trandate, 'YYYY-MM') AS month,
-             SUM(tal.amount) AS reval_net,
+             -SUM(tal.amount) AS reval_net,
              MIN(t.trandate) AS first_date,
              MAX(t.trandate) AS last_date,
              COUNT(DISTINCT t.trandate) AS date_count
       FROM transactionaccountingline tal
       JOIN transaction t ON tal.transaction = t.id
       JOIN account a ON tal.account = a.id
-      WHERE a.accttype IN ('Bank', 'CredCard') AND t.subsidiary = ${subsidiaryId}
+      WHERE a.acctnumber IN (${REVAL_ACCTS}) AND t.subsidiary = ${subsidiaryId}
         AND tal.posting = 'T' AND tal.accountingbook = 1
-        AND t.type = 'FxReval'
         AND t.trandate >= TO_DATE('${startYear}-01-01', 'YYYY-MM-DD')
         AND t.trandate <= SYSDATE
       GROUP BY TO_CHAR(t.trandate, 'YYYY-MM')
       ORDER BY month
     `);
 
-    // Monthly reval for current year — ILS (accounting book 2)
+    // Monthly reval — ILS (book 2)
     const ilsRows = await suiteqlAll(`
       SELECT TO_CHAR(t.trandate, 'YYYY-MM') AS month,
-             SUM(tal.amount) AS reval_net,
+             -SUM(tal.amount) AS reval_net,
              MIN(t.trandate) AS first_date,
              MAX(t.trandate) AS last_date,
              COUNT(DISTINCT t.trandate) AS date_count
       FROM transactionaccountingline tal
       JOIN transaction t ON tal.transaction = t.id
       JOIN account a ON tal.account = a.id
-      WHERE a.accttype IN ('Bank', 'CredCard') AND t.subsidiary = ${subsidiaryId}
+      WHERE a.acctnumber IN (${REVAL_ACCTS}) AND t.subsidiary = ${subsidiaryId}
         AND tal.posting = 'T' AND tal.accountingbook = 2
-        AND t.type = 'FxReval'
         AND t.trandate >= TO_DATE('${startYear}-01-01', 'YYYY-MM-DD')
         AND t.trandate <= SYSDATE
       GROUP BY TO_CHAR(t.trandate, 'YYYY-MM')
