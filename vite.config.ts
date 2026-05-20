@@ -2102,5 +2102,10 @@ export default defineConfig({
   define: { '__GIT_HASH__': JSON.stringify(gitHash) },
   resolve: { alias: { 'xlsx': 'xlsx-js-style' } },
   build: { chunkSizeWarningLimit: 2000 },
-  server: { port: 5176 },
+  server: {
+    port: 5176,
+    host: true,
+    allowedHosts: true,
+    cors: true,
+  },
 })
