@@ -653,6 +653,7 @@ export default function App() {
   const [sfBudget, setSfBudget] = useState<{ byMonth?: Record<string, Record<string, number>>; totalByMonth: Record<string, { eur: number; ils: number }>; overrides?: { account: string; fromMonth: string; toMonth: string; department: string; location: string; amountEUR: number; mode: string; comments: string; mKey: string; category: string; oldVal: number; newVal: number }[] }>({ totalByMonth: {} });
   const [sfRevenue, setSfRevenue] = useState<{ budget: Record<string, { eur: number }>; actuals: Record<string, { eur: number }>; targets: Record<string, number> }>({ budget: {}, actuals: {}, targets: {} });
   const [sfActualsSplit, setSfActualsSplit] = useState<Record<string, { salary: number; salaryILS: number; vendors: number; vendorsILS: number }>>({});
+  const [nsPaidVendors, setNsPaidVendors] = useState<{ byMonth: Record<string, number>; grid: Record<string, Record<string, number>>; accounts: { number: string; name: string; total: number }[] }>({ byMonth: {}, grid: {}, accounts: [] });
   const [sfRevenuePaid, setSfRevenuePaid] = useState<Record<string, { revenue: number; paid: number; unpaid: number; customers: number }>>({});
   const [sfPipeline, setSfPipeline] = useState<{ name: string; stage: string; amount: number; probability: number; weighted: number; currency: string; closeDate: string; type: string; feedType: string; owner: string }[]>([]);
   const [pipelineMinProb, setPipelineMinProb] = useState(100); // min probability filter for pipeline
@@ -1774,6 +1775,7 @@ useEffect(() => {
         `/api/vendor-bills${subQ}`, `/api/ar-forecast${subQ}`, `/api/salary-data${subQ}`,
         `/api/vendor-history${subQ}`, `/api/expense-categories${subQ}`,
         `/api/banks-collection-data${subQ}`, `/api/monthly-reval${subQ}`,
+        `/api/ns-paid-vendors-yearly${subQ}`,
       ];
       const sfUrls = hasSF ? [
         '/api/sf-budget', '/api/sf-revenue', '/api/sf-actuals-split', '/api/sf-salary-budget',
@@ -1782,13 +1784,22 @@ useEffect(() => {
       ] : !hasSF ? [`/api/ns-budget${subQ}`] : [];
 
       const allResults = await Promise.all([...nsUrls, ...sfUrls].map(u => safe(u)));
-      const [cfgR, bankR, acctR, billsR, arR, salR, vhR, expR, collR, revalR, ...sfResults] = allResults;
+      const [cfgR, bankR, acctR, billsR, arR, salR, vhR, expR, collR, revalR, paidVR, ...sfResults] = allResults;
 
       // Apply NS results
       if (cfgR?.accountId) setNsAccountId(cfgR.accountId);
       if (bankR?.dailyBalances) setBankData(bankR);
       if (acctR?.data) setBankAccounts(acctR.data);
       if (billsR?.data) setVendorBills(billsR.data);
+      if (paidVR?.months) {
+        const byMonth: Record<string, number> = {};
+        for (const m of paidVR.months as string[]) {
+          byMonth[m] = (paidVR.accounts as { number: string }[]).reduce((s, a) => s + (paidVR.grid?.[a.number]?.[m] || 0), 0);
+        }
+        setNsPaidVendors({ byMonth, grid: paidVR.grid || {}, accounts: paidVR.accounts || [] });
+      } else {
+        setNsPaidVendors({ byMonth: {}, grid: {}, accounts: [] });
+      }
       if (arR?.data) setARForecast(arR.data);
       if (salR?.data) setSalaryData(salR.data);
       if (vhR?.data) setVendorHistory(vhR.data);
@@ -2200,11 +2211,15 @@ useEffect(() => {
       }
       prevMonthSalary = salary;
 
-      // ── VENDORS: SF actuals (past only) → NS vendor actuals (past) → SF budget → NS budget → NS fallback ──
-      // Current month: use budget, not partial actuals (bills post throughout the month)
+      // ── VENDORS: NS paid bills cash basis (past) → SF actuals → NS vendor actuals → SF/NS budget (future) ──
+      // Past months: sum of vendor bills paid in the month (NS cash basis, pivots on bill close date).
+      // Current month: use budget, not partial actuals (bills post throughout the month).
       let vendors: number;
+      const nsPaidByMonth = isPastMonth ? (nsPaidVendors.byMonth[mKey] || 0) : 0;
       const nsVendorActual = isPastMonth ? vendorHistory.filter(v => v.paidDate.startsWith(mKey)).reduce((s, v) => s + v.amountEUR, 0) : 0;
-      if (isPastMonth && sfActualsSplit[mKey]?.vendors > 0) {
+      if (isPastMonth && nsPaidByMonth > 0) {
+        vendors = nsPaidByMonth;
+      } else if (isPastMonth && sfActualsSplit[mKey]?.vendors > 0) {
         vendors = sfActualsSplit[mKey].vendors;
       } else if (isPastMonth && nsVendorActual > 0) {
         // NS actual vendor payments (used for non-SF subsidiaries like Statscore)
@@ -2370,31 +2385,14 @@ useEffect(() => {
       runningBalance += revalImpact;
       runningBalanceILS += revalImpactILS;
 
-      // Reconcile past-month closing to actual NS month-end bank balance via the vendors column.
-      // This makes April closing == May opening (and likewise for every prior month-end).
-      if (isPastMonth && monthEndBalances[mKey] && !asOfDate) {
-        const target = monthEndBalances[mKey];
-        const deltaEUR = runningBalance - target.eur;
-        const deltaILS = runningBalanceILS - target.ils;
-        if (deltaEUR !== 0) {
-          vendors += deltaEUR;
-          totalOutflow += deltaEUR;
-          net -= deltaEUR;
-          runningBalance = target.eur;
-        }
-        if (deltaILS !== 0) {
-          vendorsILS += deltaILS;
-          totalOutflowILS += deltaILS;
-          netILS -= deltaILS;
-          runningBalanceILS = target.ils;
-        }
-      }
+      // Past-month closing is computed from line items (cash-basis vendors + salary + collections + reval).
+      // No bank-pin: divergence from NS month-end is visible rather than absorbed into Vendors.
 
       const openingBalanceILS = runningBalanceILS - netILS - revalImpactILS;
       rows.push({ month: label, mKey, openingBalance, openingBalanceILS, salary, salaryBase, salaryILS, vendors, vendorsBase, vendorsILS, totalOutflow, totalOutflowILS, collections, collectionsILS, collectionsActual, collectionsRemaining, collectionsForecast, collectionsRevenue, collectionsUnpaidCarry, collectionsUnpaidCarryMonth, collectionsPipeline, customers, pipelineWeighted, pipelineWeightedILS, pipelineTotal, pipelineCount, pipelineOpps, pipelineHistWinRate, pipelineDelayMonths, churnDeduction, churnDeductionILS, net, netILS, revalImpact, revalImpactILS, revalHasBothEnds, closingBalance: runningBalance, closingBalanceILS: runningBalanceILS, isCurrent: isCurMonth, isPast: isPastMonth });
     }
     return rows;
-  }, [vendorBills, arForecast, salaryData, vendorHistory, expenseCategories, book, bookLocal, actualCollections, sfBudget, sfRevenue, sfActualsSplit, salaryAdjPctByMonth, collPctByMonth, monthlyReval, sfSalaryBudget, sfRevenuePaid, sfPipeline, pipelineMinProb, sfConversion, salaryDeptAdj, salaryDeptBudgets, vendorCatAdj, vendorDetailAdj, prevMonthEndBalance, monthEndBalances, churnMonthlyAvg, churnData, churnOverride, asOfDate, nsBudget, activeYear, sfFinanceBudget, currencyDefensePct, currencyDefensePctByMonth, pipelineAdjPctByMonth, salaryProjectionMode, salaryActualsByDept, lastActualSalaryMonth, monthlyHCImpact, salaryManualILS]);
+  }, [vendorBills, arForecast, salaryData, vendorHistory, expenseCategories, book, bookLocal, actualCollections, sfBudget, sfRevenue, sfActualsSplit, nsPaidVendors, salaryAdjPctByMonth, collPctByMonth, monthlyReval, sfSalaryBudget, sfRevenuePaid, sfPipeline, pipelineMinProb, sfConversion, salaryDeptAdj, salaryDeptBudgets, vendorCatAdj, vendorDetailAdj, prevMonthEndBalance, monthEndBalances, churnMonthlyAvg, churnData, churnOverride, asOfDate, nsBudget, activeYear, sfFinanceBudget, currencyDefensePct, currencyDefensePctByMonth, pipelineAdjPctByMonth, salaryProjectionMode, salaryActualsByDept, lastActualSalaryMonth, monthlyHCImpact, salaryManualILS]);
 
   // ── Capture current-year cashflow for propagation to next year ──
   useEffect(() => {
@@ -6056,17 +6054,13 @@ useEffect(() => {
                             const nsVendAct = nsVendorByMonth[r.mKey] || 0;
                             const vendorMeta = { budgetTotal, histAvg, histMonths, actual: sfActualsSplit[r.mKey]?.vendors || nsVendAct, used: r.vendors };
                             if (r.isPast || r.isCurrent) {
-                              // Past & current months: show actuals from FCT_EXPENSE, not budget
-                              setForecastDrilldown({ type: 'vendors', month: r.month, mKey: r.mKey, data: { __vendorMeta: vendorMeta } });
-                              fetch(`/api/sf-vendor-breakdown?month=${r.mKey}`)
-                                .then(res => res.json())
-                                .then(j => {
-                                  const byCategory: Record<string, number> = {};
-                                  for (const row of (j.data || [])) {
-                                    byCategory[row.category] = (byCategory[row.category] || 0) + (row.amountEUR || 0);
-                                  }
-                                  setForecastDrilldown(prev => prev ? { ...prev, data: { ...byCategory, __vendorMeta: prev.data.__vendorMeta } } : null);
-                                });
+                              // Past & current months: NS paid bills cash basis, grouped by GL account.
+                              const byAccount: Record<string, number> = {};
+                              for (const a of nsPaidVendors.accounts) {
+                                const v = nsPaidVendors.grid[a.number]?.[r.mKey] || 0;
+                                if (v !== 0) byAccount[`${a.number} ${a.name}`] = v;
+                              }
+                              setForecastDrilldown({ type: 'vendors', month: r.month, mKey: r.mKey, data: { ...byAccount, __vendorMeta: vendorMeta } });
                             } else {
                               setForecastDrilldown({ type: 'vendors', month: r.month, mKey: r.mKey, data: {
                                 ...(sfBudget.byMonth?.[r.mKey] || nsBudget.byMonth[r.mKey]?.categories || expenseCategories.byMonth?.[r.mKey] || {}),
@@ -8557,10 +8551,10 @@ useEffect(() => {
                         return s + Math.round((typeof amt === 'number' ? amt : 0) * (adj / 100));
                       }, 0);
                       return (<><p className="text-xs text-gray-500 mb-2">
-                      {forecastDrilldown.type === 'vendors' ? (_isFutureCat ? 'Snowflake Budget Breakdown — click category for details' : 'Snowflake Actuals Breakdown — click category for details') : 'Budget Breakdown'}
+                      {forecastDrilldown.type === 'vendors' ? (_isFutureCat ? 'Snowflake Budget Breakdown — click category for details' : 'NS Paid Bills Breakdown (cash basis) — click row for details') : 'Budget Breakdown'}
                       {forecastDrilldown.type === 'vendors' && (_isFutureCat
                         ? <SourceInfo source="DL_PRODUCTION.FINANCE.FCT_BUDGET" column="SUM(AMOUNT_EUR_CC), SUM(AMOUNT_ILS_CC)" detail="non-payroll budget, grouped by PARENT_GL_ACCOUNT_NAME (category)" />
-                        : <SourceInfo source="DL_PRODUCTION.FINANCE.FCT_EXPENSE" column="SUM(AMOUNT_EUR), SUM(AMOUNT_ILS)" detail="non-payroll actuals, source='netsuite', grouped by PARENT_GL_ACCOUNT_NAME" />
+                        : <SourceInfo source="NetSuite — transaction + transactionaccountingline" column="SUM(debit - credit) per expense GL account" detail="VendBill where status='B' (paid), pivot on closedate" system="NetSuite" />
                       )}
                     </p>
                     <table className="w-full text-xs">
@@ -8576,26 +8570,16 @@ useEffect(() => {
                           const vcInherited = vcAdj?.inherited || false;
                           const vcImpact = Math.round((typeof amt === 'number' ? amt : 0) * (vcPct / 100));
                           return (
-                          <tr key={cat} className={`border-b border-gray-50 cursor-pointer hover:bg-violet-50 ${vcInherited && vcPct !== 0 ? 'bg-teal-50/50' : ''}`}
+                          <tr key={cat} className={`border-b border-gray-50 ${_isFutureCat ? 'cursor-pointer hover:bg-violet-50' : ''} ${vcInherited && vcPct !== 0 ? 'bg-teal-50/50' : ''}`}
                               onClick={() => {
+                                if (!_isFutureCat) return; // past months: NS cash-basis rows are already account-level
                                 const savedCategories = forecastDrilldown.data as Record<string, number>;
                                 setForecastDrilldown(prev => prev ? { ...prev, data: 'loading', categoryData: savedCategories, categoryName: cat } : null);
-                                if (forecastDrilldown.mKey > _curMKey3) {
-                                  // Future months: show budget detail
-                                  fetch(`/api/sf-budget-detail?month=${forecastDrilldown.mKey}&category=${encodeURIComponent(cat)}`)
-                                    .then(r => r.json())
-                                    .then(r => setForecastDrilldown(prev => prev ? { ...prev, data: r.data || [] } : null));
-                                } else {
-                                  // Past & current months: show actuals from FCT_EXPENSE
-                                  fetch(`/api/sf-vendor-breakdown?month=${forecastDrilldown.mKey}`)
-                                    .then(r => r.json())
-                                    .then(r => {
-                                      const filtered = (r.data || []).filter((d: any) => d.category === cat);
-                                      setForecastDrilldown(prev => prev ? { ...prev, data: filtered.length > 0 ? filtered : r.data || [] } : null);
-                                    });
-                                }
+                                fetch(`/api/sf-budget-detail?month=${forecastDrilldown.mKey}&category=${encodeURIComponent(cat)}`)
+                                  .then(r => r.json())
+                                  .then(r => setForecastDrilldown(prev => prev ? { ...prev, data: r.data || [] } : null));
                               }}>
-                            <td className="py-1.5 pr-2 text-violet-600 hover:text-violet-800 underline cursor-pointer">{cat}{(sfBudget.overrides || []).some(o => o.mKey === forecastDrilldown.mKey && o.category === cat) && <span className="ml-1 inline-block w-2 h-2 rounded-full bg-orange-500" title="Has Google Sheets override"></span>}</td>
+                            <td className={`py-1.5 pr-2 ${_isFutureCat ? 'text-violet-600 hover:text-violet-800 underline cursor-pointer' : 'text-gray-700'}`}>{cat}{(sfBudget.overrides || []).some(o => o.mKey === forecastDrilldown.mKey && o.category === cat) && <span className="ml-1 inline-block w-2 h-2 rounded-full bg-orange-500" title="Has Google Sheets override"></span>}</td>
                             <td className="py-1.5 pr-2 text-right font-medium text-violet-700">{fmt(amt)}</td>
                             <td className="py-1.5 pr-2 text-right text-gray-400">{_catTotal > 0 ? (Math.abs(typeof amt === 'number' ? amt : 0) / _catTotal * 100).toFixed(1) + '%' : '—'}</td>
                             {_isFutureCat && <td className="py-1.5 pr-2" onClick={e => e.stopPropagation()}>
