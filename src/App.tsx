@@ -688,6 +688,10 @@ export default function App() {
   const [arrData, setArrData] = useState<{ mrr: number; arr: number; customers: number; avgPerCustomer: number; month: string; snapDate: string; liveMonth?: string; liveDate?: string; history: { name: string; snapDate: string; mrr: number; arr: number; customers: number; avgPerCustomer: number }[] } | null>(null);
   const [sfSalaryOverrides, setSfSalaryOverrides] = useState<{ account: string; fromMonth: string; toMonth: string; department: string; location: string; amountEUR: number; mode: string; comments: string; mKey: string; oldVal: number; newVal: number }[]>([]);
   const [prevMonthEndBalance, setPrevMonthEndBalance] = useState<{ eur: number; ils: number } | null>(null);
+  // NS Bank+CC balance as of activeYear-1 Dec 31 — used as the Jan opening so the running
+  // balance trajectory starts from NS truth rather than book.openingBalance + preYear reval
+  // (which was ~110k EUR short for LSports 2026). When unset, falls back to the legacy formula.
+  const [yearStartBalance, setYearStartBalance] = useState<{ eur: number; ils: number } | null>(null);
   const [monthEndBalances, setMonthEndBalances] = useState<Record<string, { eur: number; ils: number }>>({});
   // Per-subsidiary NS month-end bank balances for the consolidated view: { lsports: {mKey: {eur,ils}}, statscore: {...} }
   const [consolidatedMonthEnd, setConsolidatedMonthEnd] = useState<Record<string, Record<string, { eur: number; ils: number }>>>({});
@@ -1880,6 +1884,22 @@ useEffect(() => {
             setPrevMonthEndBalance({ eur, ils });
           }
         }).catch(() => {});
+        // Year-start anchor: NS Bank+CC balance as of (activeYear - 1) Dec 31. Used as Jan opening
+        // so trajectory starts from NS truth and past-month closings line up with NS month-ends.
+        try {
+          const ys = (activeYears[co] || currentYear) - 1;
+          const ysDateStr = `${ys}-12-31`;
+          fetch(`/api/ns-bank-accounts-asof?date=${ysDateStr}&subsidiary=${cfg.subsidiary}`).then(r => r.json()).then(j => {
+            if (j.data && j.data.length > 0) {
+              const accounts = j.data as BankAccount[];
+              const eur = accounts.reduce((s: number, a: BankAccount) => s + a.primaryBalance, 0);
+              const ils = accounts.reduce((s: number, a: BankAccount) => s + a.localBalance, 0);
+              setYearStartBalance({ eur, ils });
+            } else {
+              setYearStartBalance(null);
+            }
+          }).catch(() => setYearStartBalance(null));
+        } catch { setYearStartBalance(null); }
       } catch {}
 
       // Apply SF or NS budget results
@@ -2166,9 +2186,10 @@ useEffect(() => {
     // EUR→ILS ratio from bank balances
     const eurIlsRatio = adjustedCurrent > 0 ? adjustedCurrentLocal / adjustedCurrent : 3.7;
 
-    // Jan 1 opening = bank balance (excl reval) + cumulative pre-year reval
-    let runningBalance = (book?.openingBalance || 0) + (monthlyReval.preYear?.eur || 0);
-    let runningBalanceILS = (bookLocal?.openingBalance || 0) + (monthlyReval.preYear?.ils || 0);
+    // Jan 1 opening: prefer NS Bank+CC actual at year-start (yearStartBalance). Falls back to
+    // book.openingBalance + cumulative pre-year reval if the NS as-of query hasn't returned yet.
+    let runningBalance = yearStartBalance?.eur ?? ((book?.openingBalance || 0) + (monthlyReval.preYear?.eur || 0));
+    let runningBalanceILS = yearStartBalance?.ils ?? ((bookLocal?.openingBalance || 0) + (monthlyReval.preYear?.ils || 0));
     const rows: { month: string; mKey: string; openingBalance: number; openingBalanceILS: number; salary: number; salaryILS: number; vendors: number; vendorsILS: number; other: number; otherILS: number; otherDetails: { label: string; bucket: string; eur: number; ils: number }[]; totalOutflow: number; totalOutflowILS: number; collections: number; collectionsILS: number; collectionsActual: number; collectionsRemaining: number; collectionsForecast: number; collectionsRevenue: number; collectionsUnpaidCarry: number; collectionsUnpaidCarryMonth: string; collectionsPipeline: number; customers: number; pipelineWeighted: number; pipelineWeightedILS: number; pipelineTotal: number; pipelineCount: number; pipelineOpps: typeof lowConfPipeline; pipelineHistWinRate: number; pipelineDelayMonths: number; net: number; netILS: number; revalImpact: number; revalImpactILS: number; revalHasBothEnds: boolean; closingBalance: number; closingBalanceILS: number; isCurrent: boolean; isPast: boolean }[] = [];
     let prevMonthSalary = 0;
     let prevMonthUnpaid = 0; // unpaid from previous month rolls forward
@@ -2410,12 +2431,14 @@ useEffect(() => {
       let otherILS = 0;
       if (bcm) {
         salary = Math.max(0, -bcm.salary.eur);
-        vendors = Math.max(0, -bcm.vendors.eur);
-        // collections stays as-is from the NS collection-data source so the grid matches the
-        // Revenue Forecast modal. Shift the bank-side vs NS-collection delta into 'other' so
-        // closing balance still reconciles to NS month-end bank delta.
+        // vendors stays as-is from the existing SF Actuals source (FCT_EXPENSE accrual) so the
+        // grid matches the Vendor Expenses modal's 'Snowflake Actual (this month)' line.
+        // Past-month closing is accrual-based and will not perfectly equal NS month-end bank
+        // balance -- the gap reflects timing differences between expense recognition and cash out.
+        // collections stays as-is from the NS collection-data source so it matches the Revenue
+        // Forecast modal. Shift only the collections bank-vs-NS gap into 'other'.
         other = -bcm.other.eur - (collections - bcm.collections.eur);
-        otherILS = -bcm.other.ils; // ILS delta absorbed below after collectionsILS is known
+        otherILS = -bcm.other.ils;
         vendorsBase = vendors;
         salaryBase = salary;
       }
@@ -2433,7 +2456,7 @@ useEffect(() => {
       const churnDeductionILS = Math.round(churnDeduction * eurIlsRatio);
       let net = collections - salary - vendors - other + pipelineWeighted - churnDeduction;
       const salaryILS = bcm ? Math.max(0, -bcm.salary.ils) : Math.round(salary * eurIlsRatio);
-      let vendorsILS = bcm ? Math.max(0, -bcm.vendors.ils) : Math.round(vendors * eurIlsRatio);
+      let vendorsILS = Math.round(vendors * eurIlsRatio); // vendors uses SF Actuals × ratio (matches modal)
       const collectionsILS = Math.round(collections * eurIlsRatio); // always derive from displayed collections × ratio
       if (bcm) otherILS = -bcm.other.ils - (collectionsILS - bcm.collections.ils);
       let totalOutflowILS = salaryILS + vendorsILS + Math.max(0, otherILS);
@@ -2478,7 +2501,7 @@ useEffect(() => {
       rows.push({ month: label, mKey, openingBalance, openingBalanceILS, salary, salaryBase, salaryILS, vendors, vendorsBase, vendorsILS, other, otherILS, otherDetails: bcm?.details || [], totalOutflow, totalOutflowILS, collections, collectionsILS, collectionsActual, collectionsRemaining, collectionsForecast, collectionsRevenue, collectionsUnpaidCarry, collectionsUnpaidCarryMonth, collectionsPipeline, customers, pipelineWeighted, pipelineWeightedILS, pipelineTotal, pipelineCount, pipelineOpps, pipelineHistWinRate, pipelineDelayMonths, churnDeduction, churnDeductionILS, net, netILS, revalImpact, revalImpactILS, revalHasBothEnds, closingBalance: runningBalance, closingBalanceILS: runningBalanceILS, isCurrent: isCurMonth, isPast: isPastMonth });
     }
     return rows;
-  }, [vendorBills, arForecast, salaryData, vendorHistory, expenseCategories, book, bookLocal, actualCollections, sfBudget, sfRevenue, sfActualsSplit, nsPaidVendors, nsBankClassified, salaryAdjPctByMonth, collPctByMonth, monthlyReval, sfSalaryBudget, sfRevenuePaid, sfPipeline, pipelineMinProb, sfConversion, salaryDeptAdj, salaryDeptBudgets, vendorCatAdj, vendorDetailAdj, prevMonthEndBalance, monthEndBalances, churnMonthlyAvg, churnData, churnOverride, asOfDate, nsBudget, activeYear, sfFinanceBudget, currencyDefensePct, currencyDefensePctByMonth, pipelineAdjPctByMonth, salaryProjectionMode, salaryActualsByDept, lastActualSalaryMonth, monthlyHCImpact, salaryManualILS]);
+  }, [vendorBills, arForecast, salaryData, vendorHistory, expenseCategories, book, bookLocal, actualCollections, sfBudget, sfRevenue, sfActualsSplit, nsPaidVendors, nsBankClassified, salaryAdjPctByMonth, collPctByMonth, monthlyReval, sfSalaryBudget, sfRevenuePaid, sfPipeline, pipelineMinProb, sfConversion, salaryDeptAdj, salaryDeptBudgets, vendorCatAdj, vendorDetailAdj, prevMonthEndBalance, yearStartBalance, monthEndBalances, churnMonthlyAvg, churnData, churnOverride, asOfDate, nsBudget, activeYear, sfFinanceBudget, currencyDefensePct, currencyDefensePctByMonth, pipelineAdjPctByMonth, salaryProjectionMode, salaryActualsByDept, lastActualSalaryMonth, monthlyHCImpact, salaryManualILS]);
 
   // ── Capture current-year cashflow for propagation to next year ──
   useEffect(() => {
@@ -6142,41 +6165,18 @@ useEffect(() => {
                             const nsVendAct = nsVendorByMonth[r.mKey] || 0;
                             const vendorMeta = { budgetTotal, histAvg, histMonths, actual: sfActualsSplit[r.mKey]?.vendors || nsVendAct, used: r.vendors };
                             if (r.isPast || r.isCurrent) {
-                              // Past & current months: NS paid bills cash basis, grouped by GL account.
-                              const buildByAccount = (accounts: typeof nsPaidVendors.accounts, grid: typeof nsPaidVendors.grid) => {
-                                const out: Record<string, number> = {};
-                                for (const a of accounts) {
-                                  const v = grid[a.number]?.[r.mKey] || 0;
-                                  if (v !== 0) out[`${a.number} ${a.name}`] = v;
-                                }
-                                return out;
-                              };
-                              const byAccountCached = buildByAccount(nsPaidVendors.accounts, nsPaidVendors.grid);
-                              if (Object.keys(byAccountCached).length > 0) {
-                                setForecastDrilldown({ type: 'vendors', month: r.month, mKey: r.mKey, data: { ...byAccountCached, __vendorMeta: vendorMeta } });
-                              } else {
-                                // Cache empty — fetch on demand for just this year.
-                                setForecastDrilldown({ type: 'vendors', month: r.month, mKey: r.mKey, data: 'loading' });
-                                const yr = r.mKey.slice(0, 4);
-                                fetch(`/api/ns-paid-vendors-yearly?subsidiary=${companyConfig.subsidiary}&year=${yr}`, { credentials: 'include' })
-                                  .then(res => res.ok ? res.json() : null)
-                                  .then(j => {
-                                    if (j?.months) {
-                                      const byMonth: Record<string, number> = {};
-                                      for (const m of j.months as string[]) {
-                                        byMonth[m] = (j.accounts as { number: string }[]).reduce((s, a) => s + (j.grid?.[a.number]?.[m] || 0), 0);
-                                      }
-                                      setNsPaidVendors({ byMonth, grid: j.grid || {}, accounts: j.accounts || [] });
-                                      const byAccount = buildByAccount(j.accounts || [], j.grid || {});
-                                      setForecastDrilldown(prev => prev ? { ...prev, data: { ...byAccount, __vendorMeta: vendorMeta } } : null);
-                                    } else {
-                                      setForecastDrilldown(prev => prev ? { ...prev, data: { __vendorMeta: vendorMeta } } : null);
-                                    }
-                                  })
-                                  .catch(() => {
-                                    setForecastDrilldown(prev => prev ? { ...prev, data: { __vendorMeta: vendorMeta } } : null);
-                                  });
-                              }
+                              // Past & current months: use SF Actuals (FCT_EXPENSE accrual) so the
+                              // breakdown total matches the 'Snowflake Actual (this month)' line.
+                              setForecastDrilldown({ type: 'vendors', month: r.month, mKey: r.mKey, data: { __vendorMeta: vendorMeta } });
+                              fetch(`/api/sf-vendor-breakdown?month=${r.mKey}`)
+                                .then(res => res.json())
+                                .then(j => {
+                                  const byCategory: Record<string, number> = {};
+                                  for (const row of (j.data || [])) {
+                                    byCategory[row.category] = (byCategory[row.category] || 0) + (row.amountEUR || 0);
+                                  }
+                                  setForecastDrilldown(prev => prev ? { ...prev, data: { ...byCategory, __vendorMeta: prev.data.__vendorMeta } } : null);
+                                });
                             } else {
                               setForecastDrilldown({ type: 'vendors', month: r.month, mKey: r.mKey, data: {
                                 ...(sfBudget.byMonth?.[r.mKey] || nsBudget.byMonth[r.mKey]?.categories || expenseCategories.byMonth?.[r.mKey] || {}),
@@ -8760,10 +8760,10 @@ useEffect(() => {
                         return s + Math.round((typeof amt === 'number' ? amt : 0) * (adj / 100));
                       }, 0);
                       return (<><p className="text-xs text-gray-500 mb-2">
-                      {forecastDrilldown.type === 'vendors' ? (_isFutureCat ? 'Snowflake Budget Breakdown — click category for details' : 'NS Paid Bills Breakdown (cash basis) — click row for details') : 'Budget Breakdown'}
+                      {forecastDrilldown.type === 'vendors' ? (_isFutureCat ? 'Snowflake Budget Breakdown — click category for details' : 'Snowflake Actuals Breakdown — click category for details') : 'Budget Breakdown'}
                       {forecastDrilldown.type === 'vendors' && (_isFutureCat
                         ? <SourceInfo source="DL_PRODUCTION.FINANCE.FCT_BUDGET" column="SUM(AMOUNT_EUR_CC), SUM(AMOUNT_ILS_CC)" detail="non-payroll budget, grouped by PARENT_GL_ACCOUNT_NAME (category)" />
-                        : <SourceInfo source="NetSuite — transaction + transactionaccountingline" column="SUM(debit - credit) per expense GL account" detail="VendBill where status='B' (paid), pivot on closedate" system="NetSuite" />
+                        : <SourceInfo source="DL_PRODUCTION.FINANCE.FCT_EXPENSE" column="SUM(AMOUNT_EUR), SUM(AMOUNT_ILS)" detail="non-payroll actuals, source='netsuite', grouped by PARENT_GL_ACCOUNT_NAME" />
                       )}
                     </p>
                     <table className="w-full text-xs">
@@ -8778,34 +8778,27 @@ useEffect(() => {
                           const vcPct = vcAdj?.pct || 0;
                           const vcInherited = vcAdj?.inherited || false;
                           const vcImpact = Math.round((typeof amt === 'number' ? amt : 0) * (vcPct / 100));
-                          // Past-month: 'cat' is shaped "640001 Servers and cloud services" — pull the account number for the bills drilldown.
-                          const _pastAcctNum = !_isFutureCat ? (String(cat).match(/^(\d+)/)?.[1] || '') : '';
-                          const _isPaidAcctExpanded = !_isFutureCat && (forecastDrilldown as any).__expandedPaidAcct === cat;
                           return (
-                          <Fragment key={cat}>
-                          <tr className={`border-b border-gray-50 cursor-pointer hover:bg-violet-50 ${vcInherited && vcPct !== 0 ? 'bg-teal-50/50' : ''}`}
+                          <tr key={cat} className={`border-b border-gray-50 cursor-pointer hover:bg-violet-50 ${vcInherited && vcPct !== 0 ? 'bg-teal-50/50' : ''}`}
                               onClick={() => {
+                                const savedCategories = forecastDrilldown.data as Record<string, number>;
+                                setForecastDrilldown(prev => prev ? { ...prev, data: 'loading', categoryData: savedCategories, categoryName: cat } : null);
                                 if (_isFutureCat) {
-                                  const savedCategories = forecastDrilldown.data as Record<string, number>;
-                                  setForecastDrilldown(prev => prev ? { ...prev, data: 'loading', categoryData: savedCategories, categoryName: cat } : null);
+                                  // Future months: budget detail per category
                                   fetch(`/api/sf-budget-detail?month=${forecastDrilldown.mKey}&category=${encodeURIComponent(cat)}`)
                                     .then(r => r.json())
                                     .then(r => setForecastDrilldown(prev => prev ? { ...prev, data: r.data || [] } : null));
-                                  return;
-                                }
-                                // Past month: toggle bill list for this NS account.
-                                if (_isPaidAcctExpanded) {
-                                  setForecastDrilldown(prev => prev ? { ...prev, ...({ __expandedPaidAcct: null, __paidAcctBills: null, __paidAcctNsAcctId: null } as any) } : null);
                                 } else {
-                                  setForecastDrilldown(prev => prev ? { ...prev, ...({ __expandedPaidAcct: cat, __paidAcctBills: null, __paidAcctNsAcctId: null } as any) } : null);
-                                  if (_pastAcctNum) {
-                                    fetch(`/api/ns-vendor-bills?accountId=${_pastAcctNum}&month=${forecastDrilldown.mKey}&paidOnly=1`)
-                                      .then(res => res.json())
-                                      .then(j => setForecastDrilldown(prev => prev ? { ...prev, ...({ __paidAcctBills: j.data || [], __paidAcctNsAcctId: j.nsAcctId } as any) } : null));
-                                  }
+                                  // Past & current months: SF actuals filtered to the chosen category
+                                  fetch(`/api/sf-vendor-breakdown?month=${forecastDrilldown.mKey}`)
+                                    .then(r => r.json())
+                                    .then(r => {
+                                      const filtered = (r.data || []).filter((d: any) => d.category === cat);
+                                      setForecastDrilldown(prev => prev ? { ...prev, data: filtered.length > 0 ? filtered : (r.data || []) } : null);
+                                    });
                                 }
                               }}>
-                            <td className={`py-1.5 pr-2 ${_isFutureCat ? 'text-violet-600 hover:text-violet-800 underline cursor-pointer' : 'text-gray-700'}`}>{!_isFutureCat && <span className="text-gray-400 mr-1">{_isPaidAcctExpanded ? '▼' : '▶'}</span>}{cat}{(sfBudget.overrides || []).some(o => o.mKey === forecastDrilldown.mKey && o.category === cat) && <span className="ml-1 inline-block w-2 h-2 rounded-full bg-orange-500" title="Has Google Sheets override"></span>}</td>
+                            <td className="py-1.5 pr-2 text-violet-600 hover:text-violet-800 underline">{cat}{(sfBudget.overrides || []).some(o => o.mKey === forecastDrilldown.mKey && o.category === cat) && <span className="ml-1 inline-block w-2 h-2 rounded-full bg-orange-500" title="Has Google Sheets override"></span>}</td>
                             <td className="py-1.5 pr-2 text-right font-medium text-violet-700">{fmt(amt)}</td>
                             <td className="py-1.5 pr-2 text-right text-gray-400">{_catTotal > 0 ? (Math.abs(typeof amt === 'number' ? amt : 0) / _catTotal * 100).toFixed(1) + '%' : '—'}</td>
                             {_isFutureCat && <td className="py-1.5 pr-2" onClick={e => e.stopPropagation()}>
@@ -8857,48 +8850,6 @@ useEffect(() => {
                               {vcPct === 0 ? '—' : `${vcImpact >= 0 ? '+' : ''}${fmt(vcImpact)}`}
                             </td>}
                           </tr>
-                          {!_isFutureCat && _isPaidAcctExpanded && (
-                            <tr><td colSpan={3} className="p-0">
-                              <div className="bg-violet-50 p-2 mb-1 rounded">
-                                {!(forecastDrilldown as any).__paidAcctBills && <p className="text-xs text-gray-400 italic">Loading bills from NetSuite…</p>}
-                                {(forecastDrilldown as any).__paidAcctNsAcctId && nsAccountId && (() => {
-                                  const [y, m] = forecastDrilldown.mKey.split('-');
-                                  const endD = new Date(parseInt(y), parseInt(m), 0).getDate();
-                                  return <p className="text-xs mb-1"><a href={`https://${nsAccountId}.app.netsuite.com/app/reporting/reportrunner.nl?acctid=${(forecastDrilldown as any).__paidAcctNsAcctId}&reporttype=REGISTER&subsidiary=${companyConfig.subsidiary}&combinebalance=T&startdate=${m}/1/${y}&enddate=${m}/${endD}/${y}`} target="_blank" rel="noreferrer" className="text-violet-600 hover:text-violet-800 underline font-medium" onClick={(e) => e.stopPropagation()}>📋 View full register in NetSuite</a></p>;
-                                })()}
-                                {(forecastDrilldown as any).__paidAcctBills && (forecastDrilldown as any).__paidAcctBills.length === 0 && <p className="text-xs text-gray-400 italic">No paid bills posted to this account this month.</p>}
-                                {(forecastDrilldown as any).__paidAcctBills && (forecastDrilldown as any).__paidAcctBills.length > 0 && (
-                                  <table className="w-full text-xs">
-                                    <thead><tr className="text-left text-gray-400 uppercase">
-                                      <th className="pb-1 pr-2">Date</th>
-                                      <th className="pb-1 pr-2">Bill #</th>
-                                      <th className="pb-1 pr-2">Vendor</th>
-                                      <th className="pb-1 pr-2">Memo</th>
-                                      <th className="pb-1 pr-2 text-right">Amount</th>
-                                      <th className="pb-1 w-12"></th>
-                                    </tr></thead>
-                                    <tbody>
-                                      {(forecastDrilldown as any).__paidAcctBills.map((bill: any, bi: number) => {
-                                        const billUrl = nsAccountId && bill.billId ? `https://${nsAccountId}.app.netsuite.com/app/accounting/transactions/${bill.nsUrlType || 'vendbill'}.nl?id=${bill.billId}` : null;
-                                        const billDate = bill.date ? (() => { const p = String(bill.date).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); if (p) { const d = new Date(+p[3], +p[2] - 1, +p[1]); return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' }); } const d2 = new Date(bill.date); return isNaN(d2.getTime()) ? String(bill.date).substring(0, 10) : d2.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' }); })() : '-';
-                                        return (
-                                          <tr key={bi} className="border-b border-violet-100 hover:bg-violet-100/40">
-                                            <td className="py-1 pr-2 text-gray-500 whitespace-nowrap">{billDate}</td>
-                                            <td className="py-1 pr-2 font-medium text-violet-700">{billUrl ? <a href={billUrl} target="_blank" rel="noreferrer" className="hover:underline" onClick={(e) => e.stopPropagation()}>{bill.billNumber || bill.billId}</a> : (bill.billNumber || '-')}{bill.tranType && bill.tranType !== 'VendBill' && <span className="ml-1 text-[9px] text-gray-400 font-normal">{bill.tranType}</span>}</td>
-                                            <td className="py-1 pr-2 text-gray-700 truncate max-w-[180px]" title={bill.vendor || ''}>{bill.vendor || '-'}</td>
-                                            <td className="py-1 pr-2 text-gray-500 truncate max-w-[160px]" title={bill.memo || ''}>{bill.memo || '-'}</td>
-                                            <td className="py-1 pr-2 text-right font-medium text-violet-700">{fmt(bill.amount)}</td>
-                                            <td className="py-1 text-center">{billUrl ? <a href={billUrl} target="_blank" rel="noreferrer" className="text-violet-500 hover:text-violet-700 text-[10px] font-bold" onClick={(e) => e.stopPropagation()}>NetSuite ↗</a> : null}</td>
-                                          </tr>
-                                        );
-                                      })}
-                                    </tbody>
-                                  </table>
-                                )}
-                              </div>
-                            </td></tr>
-                          )}
-                          </Fragment>
                           );
                         })}
                       </tbody>
