@@ -2086,7 +2086,7 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
         FROM transactionaccountingline tal
         JOIN transaction t ON t.id = tal.transaction
         JOIN account a ON a.id = tal.account
-        WHERE a.accttype IN ('Bank', 'CredCard')
+        WHERE a.accttype = 'Bank'
           AND t.subsidiary = ${subsidiaryId}
           AND tal.posting = 'T' AND tal.accountingbook = ${bookId}
           AND t.trandate >= TO_DATE('${startDate}', 'YYYY-MM-DD')
@@ -2113,7 +2113,7 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
           AND EXISTS (
             SELECT 1 FROM transactionaccountingline tal2
             JOIN account a2 ON a2.id = tal2.account
-            WHERE tal2.transaction = t.id AND a2.accttype IN ('Bank', 'CredCard')
+            WHERE tal2.transaction = t.id AND a2.accttype = 'Bank'
               AND tal2.posting = 'T' AND tal2.accountingbook = ${bookId}
           )
         GROUP BY t.id, a.acctnumber, a.acctname
