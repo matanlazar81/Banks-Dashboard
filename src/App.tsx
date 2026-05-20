@@ -699,6 +699,8 @@ export default function App() {
   const [consolidatedMonthEnd, setConsolidatedMonthEnd] = useState<Record<string, Record<string, { eur: number; ils: number }>>>({});
   const [churnData, setChurnData] = useState<{ year: number; totalCustomers: number; totalRevenue: number; churnedClients: number; lostRevenue: number; churnPct: number; clientChurnPct: number; monthlyImpact: number; monthsCount: number }[]>([]);
   const [churnMonthlyAvg, setChurnMonthlyAvg] = useState(0); // 6-month rolling avg
+  // Quarterly MRR churn from DIM_OPPORTUNITY (is_opportunity_churned=TRUE). 'partial' = quarter in progress.
+  const [sfChurnQuarterly, setSfChurnQuarterly] = useState<{ fy: string; q: string; qs: string; amount: number; opps: number; partial: boolean }[]>([]);
   const [churnDrilldown, setChurnDrilldown] = useState<{ year: number; data: any[] | 'loading' } | null>(null);
   const [nsAccountId, setNsAccountId] = useState('');
   const [asOfDate, setAsOfDate] = useState<string>(''); // YYYY-MM-DD or empty for live
@@ -1922,6 +1924,12 @@ useEffect(() => {
         if (convR?.data) setSfConversion(convR.data);
         if (churnR?.data) setChurnData(churnR.data);
         if (churnR?.recentMonthlyAvg) setChurnMonthlyAvg(churnR.recentMonthlyAvg);
+        // Fetch quarterly MRR churn (DIM_OPPORTUNITY) in the background — sets sfChurnQuarterly
+        // for the churn projection display. Doesn't block the rest of the dashboard.
+        fetch('/api/sf-churn-quarterly', { credentials: 'include' })
+          .then(r => r.ok ? r.json() : null)
+          .then(j => { if (Array.isArray(j?.data)) setSfChurnQuarterly(j.data); })
+          .catch(() => {});
         if (yoyR?.currentYear) setYoyRevenue(yoyR);
         if (finBudR?.data) setSfFinanceBudget(finBudR.data);
         if (arrR?.data) setArrData(arrR.data);
@@ -6696,6 +6704,30 @@ useEffect(() => {
                           <p className="mt-2 font-semibold text-orange-800">Result: <span className="text-lg">{fmt(cd.monthlyAvg)}/month</span> deducted from each projected month</p>
                         </div>
                       </div>
+                      {sfChurnQuarterly.length > 0 && (
+                        <div>
+                          <h4 className="font-semibold text-gray-700 mb-2">Quarterly MRR Churn — DIM_OPPORTUNITY</h4>
+                          <table className="w-full text-sm">
+                            <thead><tr className="border-b text-gray-500 text-xs">
+                              <th className="py-1 text-left">Quarter</th>
+                              <th className="py-1 text-right">Amount</th>
+                              <th className="py-1 text-right">Opps</th>
+                              <th className="py-1 text-right">≈ Monthly</th>
+                              <th className="py-1 text-left pl-2">Status</th>
+                            </tr></thead>
+                            <tbody>{sfChurnQuarterly.slice().sort((a, b) => b.qs.localeCompare(a.qs)).slice(0, 8).map(q => (
+                              <tr key={q.qs} className="border-b border-gray-100">
+                                <td className="py-1.5 font-medium">{q.q}</td>
+                                <td className="py-1.5 text-right text-red-600">{fmt(q.amount)}</td>
+                                <td className="py-1.5 text-right text-gray-500">{q.opps}</td>
+                                <td className="py-1.5 text-right text-orange-600">{q.partial ? '—' : `${fmt(Math.round(q.amount / 3))}/mo`}</td>
+                                <td className="py-1.5 pl-2 text-[10px] uppercase">{q.partial ? <span className="text-amber-500">in progress</span> : <span className="text-gray-400">complete</span>}</td>
+                              </tr>
+                            ))}</tbody>
+                          </table>
+                          <p className="text-[11px] text-gray-400 mt-2">Source: <code>DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY</code> where <code>is_opportunity_churned = TRUE</code>, grouped by <code>opportunity_churn_month_start_date</code> quarter.</p>
+                        </div>
+                      )}
                       <div>
                         <h4 className="font-semibold text-gray-700 mb-2">Yearly Churn Context</h4>
                         <table className="w-full text-sm">

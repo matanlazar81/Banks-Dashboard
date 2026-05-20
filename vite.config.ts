@@ -622,6 +622,25 @@ function banksPlugin(): Plugin {
         }
       });
 
+      // ── GET /api/sf-churn-quarterly — MRR churn grouped by quarter (DIM_OPPORTUNITY). ──
+      server.middlewares.use('/api/sf-churn-quarterly', async (_req, res) => {
+        try {
+          const sf = getSfClient();
+          if (!sf || !sf.fetchQuarterlyChurnMRR) {
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ data: [], error: 'endpoint not available' }));
+            return;
+          }
+          const data = await sf.fetchQuarterlyChurnMRR();
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ data }));
+        } catch (e: any) {
+          console.error('[SF] Quarterly churn fetch failed:', e.message);
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ data: [], error: e.message }));
+        }
+      });
+
       // ── GET /api/sf-churn-drilldown — individual churned customers for a year ──
       server.middlewares.use('/api/sf-churn-drilldown', async (req, res) => {
         try {

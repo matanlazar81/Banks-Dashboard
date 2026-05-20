@@ -1389,6 +1389,42 @@ function createSnowflakeClient(env) {
     return { accounts, months, grid };
   }
 
+  // ── Quarterly MRR churn — opportunities marked churned, grouped by churn-month quarter. ──
+  // Used by the churn forecast section. 'partial' flags the in-progress quarter.
+  async function fetchQuarterlyChurnMRR() {
+    console.log('[Snowflake] Fetching quarterly MRR churn...');
+    const rows = await query(`
+      SELECT
+        DATE_TRUNC('year', opportunity_churn_month_start_date)::VARCHAR AS FISCAL_YEAR,
+        QUARTER(opportunity_churn_month_start_date) AS QUARTER_NUM,
+        DATE_TRUNC('quarter', opportunity_churn_month_start_date)::VARCHAR AS QUARTER_START,
+        SUM(opportunity_amount) AS AMOUNT,
+        COUNT(*) AS OPPS
+      FROM DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY
+      WHERE opportunity_churn_month_start_date >= '2025-01-01'
+        AND opportunity_churn_month_start_date < DATEADD('quarter', 1, DATE_TRUNC('quarter', CURRENT_DATE()))
+        AND is_opportunity_churned = TRUE
+      GROUP BY 1, 2, 3
+      ORDER BY 3
+    `);
+    const now = new Date();
+    const currentQuarterStart = new Date(now.getFullYear(), Math.floor(now.getMonth() / 3) * 3, 1);
+    const currentQuarterStartStr = `${currentQuarterStart.getFullYear()}-${String(currentQuarterStart.getMonth() + 1).padStart(2, '0')}-01`;
+    return rows.map(r => {
+      const qs = (r.QUARTER_START || '').substring(0, 10);
+      const year = (r.FISCAL_YEAR || '').substring(0, 4);
+      const qn = parseInt(r.QUARTER_NUM) || 0;
+      return {
+        fy: `FY${year}`,
+        q: `Q${qn} ${year}`,
+        qs,
+        amount: Math.round(parseFloat(r.AMOUNT) || 0),
+        opps: parseInt(r.OPPS) || 0,
+        partial: qs === currentQuarterStartStr,
+      };
+    });
+  }
+
   return {
     query,
     testConnection,
@@ -1418,6 +1454,7 @@ function createSnowflakeClient(env) {
     fetchHeadcountLeverDetail,
     fetchChurnAnalysis,
     fetchChurnDrilldown,
+    fetchQuarterlyChurnMRR,
     fetchYoYRevenue,
     fetchCurrentARR,
     fetchExpenseExport,
