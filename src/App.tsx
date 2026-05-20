@@ -2400,14 +2400,22 @@ useEffect(() => {
       // bucket (Salary / Vendors / Collections / Reval / Other), so closing balance equals the
       // actual NS month-end bank delta. 'other' surfaces what doesn't fit the first four
       // (manual checks, tax journals, transfers, fees, interest, refunds).
+      //
+      // Collections is *kept* from the existing NS collection-data source so the grid matches the
+      // Revenue Forecast modal's 'NetSuite Collections (actual cash received)' line. The delta
+      // between that and the bank-side collections bucket (interest journals, AR-adjustments
+      // that the modal classifies separately) is absorbed into 'other' so the closing balance
+      // still reconciles to the actual NS bank delta.
       let other = 0;
       let otherILS = 0;
       if (bcm) {
         salary = Math.max(0, -bcm.salary.eur);
         vendors = Math.max(0, -bcm.vendors.eur);
-        collections = bcm.collections.eur;
-        other = -bcm.other.eur; // positive = outflow, negative = inflow
-        otherILS = -bcm.other.ils;
+        // collections stays as-is from the NS collection-data source so the grid matches the
+        // Revenue Forecast modal. Shift the bank-side vs NS-collection delta into 'other' so
+        // closing balance still reconciles to NS month-end bank delta.
+        other = -bcm.other.eur - (collections - bcm.collections.eur);
+        otherILS = -bcm.other.ils; // ILS delta absorbed below after collectionsILS is known
         vendorsBase = vendors;
         salaryBase = salary;
       }
@@ -2426,7 +2434,8 @@ useEffect(() => {
       let net = collections - salary - vendors - other + pipelineWeighted - churnDeduction;
       const salaryILS = bcm ? Math.max(0, -bcm.salary.ils) : Math.round(salary * eurIlsRatio);
       let vendorsILS = bcm ? Math.max(0, -bcm.vendors.ils) : Math.round(vendors * eurIlsRatio);
-      const collectionsILS = bcm ? bcm.collections.ils : Math.round(collections * eurIlsRatio);
+      const collectionsILS = Math.round(collections * eurIlsRatio); // always derive from displayed collections × ratio
+      if (bcm) otherILS = -bcm.other.ils - (collectionsILS - bcm.collections.ils);
       let totalOutflowILS = salaryILS + vendorsILS + Math.max(0, otherILS);
       let netILS = collectionsILS - salaryILS - vendorsILS - otherILS + pipelineWeightedILS - churnDeductionILS;
       runningBalance += net;
