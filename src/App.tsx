@@ -2165,9 +2165,12 @@ useEffect(() => {
     // EUR→ILS ratio from bank balances
     const eurIlsRatio = adjustedCurrent > 0 ? adjustedCurrentLocal / adjustedCurrent : 3.7;
 
-    // Jan 1 opening = bank balance (excl reval) + cumulative pre-year reval
-    let runningBalance = (book?.openingBalance || 0) + (monthlyReval.preYear?.eur || 0);
-    let runningBalanceILS = (bookLocal?.openingBalance || 0) + (monthlyReval.preYear?.ils || 0);
+    // Jan 1 opening = actual NS bank balance at year start. book.openingBalance is the closing
+    // balance of bank/CC accounts at year-end and already includes all cumulative FX reval impact,
+    // so we do not add preYear reval here (that was a vestige from the earlier FxReval-on-bank
+    // source and was double-counting by ~€110k against NS truth for LSports 2026).
+    let runningBalance = (book?.openingBalance || 0);
+    let runningBalanceILS = (bookLocal?.openingBalance || 0);
     const rows: { month: string; mKey: string; openingBalance: number; openingBalanceILS: number; salary: number; salaryILS: number; vendors: number; vendorsILS: number; other: number; otherILS: number; otherDetails: { label: string; bucket: string; eur: number; ils: number }[]; totalOutflow: number; totalOutflowILS: number; collections: number; collectionsILS: number; collectionsActual: number; collectionsRemaining: number; collectionsForecast: number; collectionsRevenue: number; collectionsUnpaidCarry: number; collectionsUnpaidCarryMonth: string; collectionsPipeline: number; customers: number; pipelineWeighted: number; pipelineWeightedILS: number; pipelineTotal: number; pipelineCount: number; pipelineOpps: typeof lowConfPipeline; pipelineHistWinRate: number; pipelineDelayMonths: number; net: number; netILS: number; revalImpact: number; revalImpactILS: number; revalHasBothEnds: boolean; closingBalance: number; closingBalanceILS: number; isCurrent: boolean; isPast: boolean }[] = [];
     let prevMonthSalary = 0;
     let prevMonthUnpaid = 0; // unpaid from previous month rolls forward
@@ -2484,7 +2487,7 @@ useEffect(() => {
     const lastSalary = completedSalaries.length > 0 ? completedSalaries[completedSalaries.length - 1].amountEUR : 0;
     const openBillsTotal = vendorBills.reduce((s, b) => s + b.amountEUR, 0);
     const eurIlsRatio = adjustedCurrent > 0 ? adjustedCurrentLocal / adjustedCurrent : 3.7;
-    let runBal = (book?.openingBalance || 0) + (monthlyReval.preYear?.eur || 0);
+    let runBal = (book?.openingBalance || 0);
     let prevSal = 0;
     let prevUnpaid = 0;
     const rows: { salary: number; vendors: number; collections: number; totalOutflow: number; net: number; closingBalance: number }[] = [];
@@ -2627,7 +2630,7 @@ useEffect(() => {
       const completedSals = salaryArr.filter((s: any) => s.month < currentMonth && s.amountEUR > 0);
       const lastSal = completedSals.length > 0 ? completedSals[completedSals.length - 1].amountEUR : 0;
 
-      let runBal = hasLive ? liveOpenBal! : ((d.bankBalance?.openingBalance || 0) + (mReval.preYear?.eur || 0));
+      let runBal = hasLive ? liveOpenBal! : (d.bankBalance?.openingBalance || 0);
       let prevSal = 0;
       let prevUnpaid = 0;
       const rows: { mKey: string; salary: number; vendors: number; collections: number; totalOutflow: number; net: number; revalImpact: number; closingBalance: number; openingBalance: number; isPast: boolean; isCurrent: boolean }[] = [];
