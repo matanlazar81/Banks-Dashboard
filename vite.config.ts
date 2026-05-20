@@ -23,8 +23,17 @@ function getSfClient() {
   return sfClient;
 }
 function getNsClient(subsidiaryId: number = 3) {
-  if (!nsClients[subsidiaryId]) {
-    const { createNetSuiteClient } = require('./netsuite-api.cjs');
+  // If the cached client is missing a method we expect from current netsuite-api.cjs,
+  // the running Node process is holding an old require()'d copy from before the most
+  // recent deploy. Evict the require cache and rebuild so the new methods become visible
+  // without a full process restart.
+  const expected: string[] = ['fetchBankClassifiedYearly', 'fetchPaidVendorsYearly'];
+  const cached = nsClients[subsidiaryId];
+  const isStale = cached && expected.some(m => typeof cached[m] !== 'function');
+  if (!cached || isStale) {
+    const nsPath = require.resolve('./netsuite-api.cjs');
+    delete require.cache[nsPath];
+    const { createNetSuiteClient } = require(nsPath);
     nsClients[subsidiaryId] = createNetSuiteClient(process.env, subsidiaryId);
   }
   return nsClients[subsidiaryId];
