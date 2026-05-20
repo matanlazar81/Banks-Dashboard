@@ -504,23 +504,26 @@ const COMPANY_CONFIG: Record<string, { name: string; subsidiary: number; hasSF: 
 
 function PaidVendorsByMonth({ subsidiary, year }: { subsidiary: number; year: number }) {
   const [open, setOpen] = useState(false);
+  const [source, setSource] = useState<'ns' | 'sf'>('ns');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [data, setData] = useState<{ accounts: { number: string; name: string; total: number }[]; months: string[]; grid: Record<string, Record<string, number>> } | null>(null);
+  const [cache, setCache] = useState<Record<'ns' | 'sf', { accounts: { number: string; name: string; total: number }[]; months: string[]; grid: Record<string, Record<string, number>> } | null>>({ ns: null, sf: null });
+  const data = cache[source];
 
   useEffect(() => {
     if (!open || data || loading) return;
     setLoading(true);
     setError(null);
-    fetch(`/api/ns-paid-vendors-yearly?subsidiary=${subsidiary}&year=${year}`, { credentials: 'include' })
+    const endpoint = source === 'ns' ? '/api/ns-paid-vendors-yearly' : '/api/sf-vendors-yearly';
+    fetch(`${endpoint}?subsidiary=${subsidiary}&year=${year}`, { credentials: 'include' })
       .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
       .then(j => {
         if (j.error) setError(j.error);
-        setData({ accounts: j.accounts || [], months: j.months || [], grid: j.grid || {} });
+        setCache(c => ({ ...c, [source]: { accounts: j.accounts || [], months: j.months || [], grid: j.grid || {} } }));
       })
       .catch(e => setError(e.message || 'fetch failed'))
       .finally(() => setLoading(false));
-  }, [open, subsidiary, year, data, loading]);
+  }, [open, source, subsidiary, year, data, loading]);
 
   const fmt = (n: number) => n === 0 ? '—' : '€' + Math.round(n).toLocaleString();
   const monthLabel = (mkey: string) => {
@@ -541,16 +544,28 @@ function PaidVendorsByMonth({ subsidiary, year }: { subsidiary: number; year: nu
         className="w-full px-5 py-3 flex items-center justify-between hover:bg-gray-50 text-left"
       >
         <div>
-          <div className="text-sm font-semibold text-gray-800">{open ? '▼' : '▶'} Paid Vendors by Month — NS Cash Basis ({year})</div>
-          <div className="text-xs text-gray-500 mt-0.5">Vendor bills closed in subsidiary {subsidiary}, grouped by expense GL account. Pivot: payment date.</div>
+          <div className="text-sm font-semibold text-gray-800">{open ? '▼' : '▶'} Vendors by Month ({year}) — {source === 'ns' ? 'NS Cash Basis (paid)' : 'SF Accrual (booked)'}</div>
+          <div className="text-xs text-gray-500 mt-0.5">{source === 'ns' ? `Vendor bills closed in subsidiary ${subsidiary}, grouped by expense GL account. Pivot: payment date.` : `FCT_EXPENSE (source=netsuite, subsidiary_id=${subsidiary}), non-payroll expense accounts. Pivot: posting month.`}</div>
         </div>
         {data && <div className="text-sm text-gray-600">Total: <span className="font-semibold text-gray-800">{fmt(grandTotal)}</span></div>}
       </button>
       {open && (
         <div className="border-t border-gray-100 p-4 overflow-x-auto">
-          {loading && <div className="text-sm text-gray-500 py-4 text-center">Loading from NetSuite…</div>}
+          <div className="flex items-center gap-2 mb-3 text-xs">
+            <span className="text-gray-500">Source:</span>
+            <button
+              onClick={() => setSource('ns')}
+              className={`px-3 py-1 rounded ${source === 'ns' ? 'bg-violet-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+            >NS Cash Basis</button>
+            <button
+              onClick={() => setSource('sf')}
+              className={`px-3 py-1 rounded ${source === 'sf' ? 'bg-violet-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+            >SF Accrual</button>
+            <span className="text-gray-400 ml-2">{source === 'ns' ? 'When vendor bills were paid (cash out).' : 'When expenses were booked (accrual).'}</span>
+          </div>
+          {loading && <div className="text-sm text-gray-500 py-4 text-center">Loading from {source === 'ns' ? 'NetSuite' : 'Snowflake'}…</div>}
           {error && !loading && <div className="text-sm text-red-600 py-4">Failed to load: {error}</div>}
-          {!loading && !error && data && data.accounts.length === 0 && <div className="text-sm text-gray-500 py-4 text-center">No paid vendor bills found for {year}.</div>}
+          {!loading && !error && data && data.accounts.length === 0 && <div className="text-sm text-gray-500 py-4 text-center">No vendor data found for {year}.</div>}
           {!loading && !error && data && data.accounts.length > 0 && (
             <table className="w-full text-xs">
               <thead>

@@ -1344,6 +1344,51 @@ function createSnowflakeClient(env) {
     return { byMonth, lastActualMonth };
   }
 
+  // ── Vendor expenses yearly grid: months × GL account (accrual lens via FCT_EXPENSE) ──
+  // Mirrors fetchVendorBreakdown's account filter so the cross-check is apples-to-apples.
+  async function fetchVendorsYearlyGrid(year, subsidiaryId) {
+    const yr = parseInt(year) || new Date().getFullYear();
+    const sub = parseInt(subsidiaryId) || 3;
+    console.log(`[Snowflake] Fetching vendor yearly grid for ${yr}, sub=${sub}...`);
+    const rows = await query(`
+      SELECT DATE_TRUNC('month', e.CAL_MONTH_START_DATE)::VARCHAR AS MONTH_STR,
+             g.GL_ACCOUNT_NUMBER AS ACCT_NUM,
+             g.GL_ACCOUNT_NAME AS ACCT_NAME,
+             ROUND(SUM(e.AMOUNT_EUR)) AS AMOUNT_EUR
+      FROM DL_PRODUCTION.FINANCE.FCT_EXPENSE e
+      JOIN DL_PRODUCTION.FINANCE.DIM_GL_ACCOUNT g ON e.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
+      WHERE e.SUBSIDIARY_ID = ${sub}
+        AND e.SOURCE = 'netsuite'
+        AND g.IS_PAYROLL = FALSE
+        AND g.GL_ACCOUNT_NUMBER NOT LIKE '800%'
+        AND g.GL_ACCOUNT_NUMBER NOT IN ('780502')
+        AND g.GL_ACCOUNT_TYPE = 'Expense'
+        AND e.CAL_MONTH_START_DATE >= '${yr}-01-01'
+        AND e.CAL_MONTH_START_DATE <= '${yr}-12-31'
+      GROUP BY DATE_TRUNC('month', e.CAL_MONTH_START_DATE)::VARCHAR, g.GL_ACCOUNT_NUMBER, g.GL_ACCOUNT_NAME
+      HAVING ABS(SUM(e.AMOUNT_EUR)) > 10
+      ORDER BY MONTH_STR, AMOUNT_EUR DESC
+    `);
+
+    const grid = {};
+    const accountMap = {};
+    const monthSet = new Set();
+    for (const r of rows) {
+      const acct = r.ACCT_NUM || '';
+      const mkey = (r.MONTH_STR || '').substring(0, 7);
+      const amt = Math.round(parseFloat(r.AMOUNT_EUR) || 0);
+      if (!acct || !mkey) continue;
+      monthSet.add(mkey);
+      if (!grid[acct]) grid[acct] = {};
+      grid[acct][mkey] = (grid[acct][mkey] || 0) + amt;
+      if (!accountMap[acct]) accountMap[acct] = { number: acct, name: r.ACCT_NAME || '', total: 0 };
+      accountMap[acct].total += amt;
+    }
+    const months = Array.from(monthSet).sort();
+    const accounts = Object.values(accountMap).sort((a, b) => b.total - a.total);
+    return { accounts, months, grid };
+  }
+
   return {
     query,
     testConnection,
@@ -1356,6 +1401,7 @@ function createSnowflakeClient(env) {
     fetchRevenueProjection,
     fetchMonthlyActualsSplit,
     fetchVendorBreakdown,
+    fetchVendorsYearlyGrid,
     fetchSalaryBreakdown: fetchSalaryBreakdown,
     fetchBudgetCategoryDetail,
     fetchBudgetOverrides,

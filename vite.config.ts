@@ -435,6 +435,28 @@ function banksPlugin(): Plugin {
         }
       });
 
+      // ── Snowflake: Vendor expenses yearly grid (months × GL account, accrual via FCT_EXPENSE) ──
+      server.middlewares.use('/api/sf-vendors-yearly', async (req, res) => {
+        try {
+          const url = new URL(req.url || '', `http://${req.headers.host}`);
+          const sub = parseInt(url.searchParams.get('subsidiary') || '3') || 3;
+          const year = parseInt(url.searchParams.get('year') || '') || new Date().getFullYear();
+          const sf = getSfClient();
+          if (!sf || !sf.fetchVendorsYearlyGrid) {
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ accounts: [], months: [], grid: {}, error: 'endpoint not available' }));
+            return;
+          }
+          const data = await sf.fetchVendorsYearlyGrid(year, sub);
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify(data));
+        } catch (e: any) {
+          console.error('[SF API] Vendors yearly failed:', e.message);
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ accounts: [], months: [], grid: {}, error: e.message }));
+        }
+      });
+
       // ── Snowflake: Vendor breakdown for a month ──
       server.middlewares.use('/api/sf-vendor-breakdown', async (req, res) => {
         try {
