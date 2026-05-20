@@ -6251,10 +6251,16 @@ useEffect(() => {
                       const hasSavings = cashflowForecast.some(r => r.salary !== r.salaryBase || r.vendors !== r.vendorsBase);
                       const salTotal = cashflowForecast.reduce((s, r) => s + (hasSavings ? r.salaryBase : r.salary), 0);
                       const venTotal = cashflowForecast.reduce((s, r) => s + (hasSavings ? r.vendorsBase : r.vendors), 0);
-                      const outTotal = salTotal + venTotal;
+                      // Other is signed per month (positive = outflow, negative = inflow). Sum keeps the sign so the
+                      // year total reconciles: TotalInflows - Salary - Vendors - Other = Net.
+                      const otherTotal = cashflowForecast.reduce((s, r) => s + (r.other || 0), 0);
+                      const outTotal = salTotal + venTotal + Math.max(0, otherTotal);
                       return (<>
                         <td className="py-2.5 px-0.5 text-right text-amber-700">-{fmt(salTotal)}</td>
                         <td className="py-2.5 px-0.5 text-right text-violet-700">-{fmt(venTotal)}</td>
+                        <td className={`py-2.5 px-0.5 text-right ${otherTotal === 0 ? 'text-gray-300' : otherTotal > 0 ? 'text-slate-600' : 'text-emerald-600'}`}>
+                          {otherTotal === 0 ? '-' : (otherTotal > 0 ? `-${fmt(otherTotal)}` : `+${fmt(-otherTotal)}`)}
+                        </td>
                         <td className="py-2.5 px-0.5 text-right text-red-700">-{fmt(outTotal)}</td>
                       </>);
                     })()}
@@ -6306,6 +6312,7 @@ useEffect(() => {
                         <td className="py-2 pr-1 text-green-800" colSpan={6}>TOTAL SAVINGS</td>
                         <td className="py-2 pr-1 text-right">{fmt(totalSalarySaving)}</td>
                         <td className="py-2 pr-1 text-right">{fmt(totalVendorSaving)}</td>
+                        <td className="py-2 pr-1 text-right"></td>
                         <td className="py-2 pr-1 text-right">{fmt(totalSaving)}</td>
                         <td className="py-2 pr-1 text-right">{fmt(totalSaving)}</td>
                         <td className="py-2 pr-1 text-right"></td>
@@ -6315,6 +6322,10 @@ useEffect(() => {
                         <td className="py-2 pr-1" colSpan={6}>TOTAL AFTER SAVINGS</td>
                         <td className="py-2 pr-1 text-right">-{fmt(totalSalaryAfter)}</td>
                         <td className="py-2 pr-1 text-right">-{fmt(totalVendorAfter)}</td>
+                        {(() => {
+                          const otherTotalAfter = cashflowForecast.reduce((s, r) => s + (r.other || 0), 0);
+                          return <td className={`py-2 pr-1 text-right ${otherTotalAfter === 0 ? 'text-gray-300' : otherTotalAfter > 0 ? 'text-slate-700' : 'text-emerald-700'}`}>{otherTotalAfter === 0 ? '-' : (otherTotalAfter > 0 ? `-${fmt(otherTotalAfter)}` : `+${fmt(-otherTotalAfter)}`)}</td>;
+                        })()}
                         <td className="py-2 pr-1 text-right">-{fmt(totalOutflowAfter)}</td>
                         <td className={`py-2 pr-1 text-right ${cashflowForecast.reduce((s, r) => s + r.net, 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmt(cashflowForecast.reduce((s, r) => s + r.net, 0))}</td>
                         <td className="py-2 pr-1 text-right text-amber-600">{fmt(cashflowForecast.reduce((s, r) => s + r.revalImpact, 0))}</td>
