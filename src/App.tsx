@@ -8741,17 +8741,34 @@ useEffect(() => {
                           const vcPct = vcAdj?.pct || 0;
                           const vcInherited = vcAdj?.inherited || false;
                           const vcImpact = Math.round((typeof amt === 'number' ? amt : 0) * (vcPct / 100));
+                          // Past-month: 'cat' is shaped "640001 Servers and cloud services" — pull the account number for the bills drilldown.
+                          const _pastAcctNum = !_isFutureCat ? (String(cat).match(/^(\d+)/)?.[1] || '') : '';
+                          const _isPaidAcctExpanded = !_isFutureCat && (forecastDrilldown as any).__expandedPaidAcct === cat;
                           return (
-                          <tr key={cat} className={`border-b border-gray-50 ${_isFutureCat ? 'cursor-pointer hover:bg-violet-50' : ''} ${vcInherited && vcPct !== 0 ? 'bg-teal-50/50' : ''}`}
+                          <Fragment key={cat}>
+                          <tr className={`border-b border-gray-50 cursor-pointer hover:bg-violet-50 ${vcInherited && vcPct !== 0 ? 'bg-teal-50/50' : ''}`}
                               onClick={() => {
-                                if (!_isFutureCat) return; // past months: NS cash-basis rows are already account-level
-                                const savedCategories = forecastDrilldown.data as Record<string, number>;
-                                setForecastDrilldown(prev => prev ? { ...prev, data: 'loading', categoryData: savedCategories, categoryName: cat } : null);
-                                fetch(`/api/sf-budget-detail?month=${forecastDrilldown.mKey}&category=${encodeURIComponent(cat)}`)
-                                  .then(r => r.json())
-                                  .then(r => setForecastDrilldown(prev => prev ? { ...prev, data: r.data || [] } : null));
+                                if (_isFutureCat) {
+                                  const savedCategories = forecastDrilldown.data as Record<string, number>;
+                                  setForecastDrilldown(prev => prev ? { ...prev, data: 'loading', categoryData: savedCategories, categoryName: cat } : null);
+                                  fetch(`/api/sf-budget-detail?month=${forecastDrilldown.mKey}&category=${encodeURIComponent(cat)}`)
+                                    .then(r => r.json())
+                                    .then(r => setForecastDrilldown(prev => prev ? { ...prev, data: r.data || [] } : null));
+                                  return;
+                                }
+                                // Past month: toggle bill list for this NS account.
+                                if (_isPaidAcctExpanded) {
+                                  setForecastDrilldown(prev => prev ? { ...prev, ...({ __expandedPaidAcct: null, __paidAcctBills: null, __paidAcctNsAcctId: null } as any) } : null);
+                                } else {
+                                  setForecastDrilldown(prev => prev ? { ...prev, ...({ __expandedPaidAcct: cat, __paidAcctBills: null, __paidAcctNsAcctId: null } as any) } : null);
+                                  if (_pastAcctNum) {
+                                    fetch(`/api/ns-vendor-bills?accountId=${_pastAcctNum}&month=${forecastDrilldown.mKey}&paidOnly=1`)
+                                      .then(res => res.json())
+                                      .then(j => setForecastDrilldown(prev => prev ? { ...prev, ...({ __paidAcctBills: j.data || [], __paidAcctNsAcctId: j.nsAcctId } as any) } : null));
+                                  }
+                                }
                               }}>
-                            <td className={`py-1.5 pr-2 ${_isFutureCat ? 'text-violet-600 hover:text-violet-800 underline cursor-pointer' : 'text-gray-700'}`}>{cat}{(sfBudget.overrides || []).some(o => o.mKey === forecastDrilldown.mKey && o.category === cat) && <span className="ml-1 inline-block w-2 h-2 rounded-full bg-orange-500" title="Has Google Sheets override"></span>}</td>
+                            <td className={`py-1.5 pr-2 ${_isFutureCat ? 'text-violet-600 hover:text-violet-800 underline cursor-pointer' : 'text-gray-700'}`}>{!_isFutureCat && <span className="text-gray-400 mr-1">{_isPaidAcctExpanded ? '▼' : '▶'}</span>}{cat}{(sfBudget.overrides || []).some(o => o.mKey === forecastDrilldown.mKey && o.category === cat) && <span className="ml-1 inline-block w-2 h-2 rounded-full bg-orange-500" title="Has Google Sheets override"></span>}</td>
                             <td className="py-1.5 pr-2 text-right font-medium text-violet-700">{fmt(amt)}</td>
                             <td className="py-1.5 pr-2 text-right text-gray-400">{_catTotal > 0 ? (Math.abs(typeof amt === 'number' ? amt : 0) / _catTotal * 100).toFixed(1) + '%' : '—'}</td>
                             {_isFutureCat && <td className="py-1.5 pr-2" onClick={e => e.stopPropagation()}>
@@ -8803,6 +8820,48 @@ useEffect(() => {
                               {vcPct === 0 ? '—' : `${vcImpact >= 0 ? '+' : ''}${fmt(vcImpact)}`}
                             </td>}
                           </tr>
+                          {!_isFutureCat && _isPaidAcctExpanded && (
+                            <tr><td colSpan={3} className="p-0">
+                              <div className="bg-violet-50 p-2 mb-1 rounded">
+                                {!(forecastDrilldown as any).__paidAcctBills && <p className="text-xs text-gray-400 italic">Loading bills from NetSuite…</p>}
+                                {(forecastDrilldown as any).__paidAcctNsAcctId && nsAccountId && (() => {
+                                  const [y, m] = forecastDrilldown.mKey.split('-');
+                                  const endD = new Date(parseInt(y), parseInt(m), 0).getDate();
+                                  return <p className="text-xs mb-1"><a href={`https://${nsAccountId}.app.netsuite.com/app/reporting/reportrunner.nl?acctid=${(forecastDrilldown as any).__paidAcctNsAcctId}&reporttype=REGISTER&subsidiary=${companyConfig.subsidiary}&combinebalance=T&startdate=${m}/1/${y}&enddate=${m}/${endD}/${y}`} target="_blank" rel="noreferrer" className="text-violet-600 hover:text-violet-800 underline font-medium" onClick={(e) => e.stopPropagation()}>📋 View full register in NetSuite</a></p>;
+                                })()}
+                                {(forecastDrilldown as any).__paidAcctBills && (forecastDrilldown as any).__paidAcctBills.length === 0 && <p className="text-xs text-gray-400 italic">No paid bills posted to this account this month.</p>}
+                                {(forecastDrilldown as any).__paidAcctBills && (forecastDrilldown as any).__paidAcctBills.length > 0 && (
+                                  <table className="w-full text-xs">
+                                    <thead><tr className="text-left text-gray-400 uppercase">
+                                      <th className="pb-1 pr-2">Date</th>
+                                      <th className="pb-1 pr-2">Bill #</th>
+                                      <th className="pb-1 pr-2">Vendor</th>
+                                      <th className="pb-1 pr-2">Memo</th>
+                                      <th className="pb-1 pr-2 text-right">Amount</th>
+                                      <th className="pb-1 w-12"></th>
+                                    </tr></thead>
+                                    <tbody>
+                                      {(forecastDrilldown as any).__paidAcctBills.map((bill: any, bi: number) => {
+                                        const billUrl = nsAccountId && bill.billId ? `https://${nsAccountId}.app.netsuite.com/app/accounting/transactions/${bill.nsUrlType || 'vendbill'}.nl?id=${bill.billId}` : null;
+                                        const billDate = bill.date ? (() => { const p = String(bill.date).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); if (p) { const d = new Date(+p[3], +p[2] - 1, +p[1]); return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' }); } const d2 = new Date(bill.date); return isNaN(d2.getTime()) ? String(bill.date).substring(0, 10) : d2.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' }); })() : '-';
+                                        return (
+                                          <tr key={bi} className="border-b border-violet-100 hover:bg-violet-100/40">
+                                            <td className="py-1 pr-2 text-gray-500 whitespace-nowrap">{billDate}</td>
+                                            <td className="py-1 pr-2 font-medium text-violet-700">{billUrl ? <a href={billUrl} target="_blank" rel="noreferrer" className="hover:underline" onClick={(e) => e.stopPropagation()}>{bill.billNumber || bill.billId}</a> : (bill.billNumber || '-')}{bill.tranType && bill.tranType !== 'VendBill' && <span className="ml-1 text-[9px] text-gray-400 font-normal">{bill.tranType}</span>}</td>
+                                            <td className="py-1 pr-2 text-gray-700 truncate max-w-[180px]" title={bill.vendor || ''}>{bill.vendor || '-'}</td>
+                                            <td className="py-1 pr-2 text-gray-500 truncate max-w-[160px]" title={bill.memo || ''}>{bill.memo || '-'}</td>
+                                            <td className="py-1 pr-2 text-right font-medium text-violet-700">{fmt(bill.amount)}</td>
+                                            <td className="py-1 text-center">{billUrl ? <a href={billUrl} target="_blank" rel="noreferrer" className="text-violet-500 hover:text-violet-700 text-[10px] font-bold" onClick={(e) => e.stopPropagation()}>NetSuite ↗</a> : null}</td>
+                                          </tr>
+                                        );
+                                      })}
+                                    </tbody>
+                                  </table>
+                                )}
+                              </div>
+                            </td></tr>
+                          )}
+                          </Fragment>
                           );
                         })}
                       </tbody>
