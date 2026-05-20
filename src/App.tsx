@@ -2662,6 +2662,8 @@ useEffect(() => {
   const [showBankBreakdown, setShowBankBreakdown] = useState(false);
   const [bankBreakdownAsOf, setBankBreakdownAsOf] = useState<{ date: string; label: string; accounts: BankAccount[] | 'loading' } | null>(null);
   const [forecastDrilldown, setForecastDrilldown] = useState<{ type: 'vendors' | 'salary' | 'inflows' | 'pipeline'; month: string; mKey: string; data: any; categoryData?: Record<string, number>; categoryName?: string; adjPct?: number } | null>(null);
+  // NS reconciliation breakdown (per-month NS bank tx grouped by tx type), fetched on demand from the vendor modal.
+  const [nsReconBreakdown, setNsReconBreakdown] = useState<Record<string, { byType: { txType: string; eur: number; ils: number }[]; total: { eur: number; ils: number }; loading?: boolean; error?: string }>>({});
   const [wonOppsDrilldown, setWonOppsDrilldown] = useState<{ year: number; type: 'new' | 'upgrades'; data: any[] | 'loading' } | null>(null);
   const totalPrimaryBalance = bankAccounts.reduce((s, a) => s + a.primaryBalance, 0);
   const totalLocalBalance = bankAccounts.reduce((s, a) => s + a.localBalance, 0);
@@ -8452,6 +8454,17 @@ useEffect(() => {
                         const adj = _effVendorAdj[cat]?.pct || 0;
                         return s + Math.round((typeof amt === 'number' ? amt : 0) * (adj / 100));
                       }, 0);
+                      // NS reconciliation delta for past-month vendor breakdown:
+                      // grid vendors = Snowflake actuals + (computed_running_balance - NS_month_end).
+                      const _sfTotal = _catEntries.reduce((s, [, v]) => s + (typeof v === 'number' ? v : 0), 0);
+                      const _gridRow = forecastDrilldown.type === 'vendors'
+                        ? cashflowForecast?.find(r => r.mKey === forecastDrilldown.mKey)
+                        : undefined;
+                      const _nsEnd = monthEndBalances[forecastDrilldown.mKey];
+                      const _showNsRecon = forecastDrilldown.type === 'vendors' && !_isFutureCat && _gridRow?.isPast && !!_nsEnd && !asOfDate;
+                      const _nsReconDelta = _showNsRecon && _gridRow ? (_gridRow.vendors - _sfTotal) : 0;
+                      // Pre-reconcile closing = NS_end + delta (delta = pre-recon - NS_end, vendors absorb it).
+                      const _preReconClosing = _showNsRecon ? (_nsEnd!.eur + _nsReconDelta) : 0;
                       return (<><p className="text-xs text-gray-500 mb-2">
                       {forecastDrilldown.type === 'vendors' ? (_isFutureCat ? 'Snowflake Budget Breakdown — click category for details' : 'Snowflake Actuals Breakdown — click category for details') : 'Budget Breakdown'}
                       {forecastDrilldown.type === 'vendors' && (_isFutureCat
@@ -8546,9 +8559,56 @@ useEffect(() => {
                           );
                         })}
                       </tbody>
+                      {_showNsRecon && _nsReconDelta !== 0 && (() => {
+                        const nsB = nsReconBreakdown[forecastDrilldown.mKey];
+                        const isLoading = nsB?.loading;
+                        const isExpanded = !!nsB && !isLoading && !nsB.error;
+                        const sub = COMPANY_CONFIG[activeCompany]?.subsidiary;
+                        const loadNs = () => {
+                          if (nsReconBreakdown[forecastDrilldown.mKey] || !sub) return;
+                          setNsReconBreakdown(p => ({ ...p, [forecastDrilldown.mKey]: { byType: [], total: { eur: 0, ils: 0 }, loading: true } }));
+                          fetch(`/api/ns-bank-tx-summary?month=${forecastDrilldown.mKey}&subsidiary=${sub}`, { credentials: 'include' })
+                            .then(r => r.json())
+                            .then(j => setNsReconBreakdown(p => ({ ...p, [forecastDrilldown.mKey]: { byType: j.byType || [], total: j.total || { eur: 0, ils: 0 }, error: j.error } })))
+                            .catch(e => setNsReconBreakdown(p => ({ ...p, [forecastDrilldown.mKey]: { byType: [], total: { eur: 0, ils: 0 }, error: e.message } })));
+                        };
+                        return (
+                          <tbody>
+                            <tr className="border-t border-amber-200 bg-amber-50/40 cursor-pointer hover:bg-amber-50" onClick={loadNs}>
+                              <td className="py-1.5 pr-2 text-amber-700">
+                                {isExpanded ? '▼' : '▶'} NS Reconciliation
+                                <span className="ml-1 text-amber-500 cursor-help" title={`Closing balance was pinned to NS month-end bank balance €${_nsEnd!.eur.toLocaleString()}.\nComputed running balance from Snowflake actuals + opening + reval = €${_preReconClosing.toLocaleString()}.\nGap (€${_nsReconDelta.toLocaleString()}) absorbed into vendors so closing = NS.\n\nClick to see the NS bank transactions that produced the month delta.`}>ⓘ</span>
+                                <span className="ml-2 text-[10px] text-amber-500 font-normal">{isLoading ? '(loading…)' : isExpanded ? '(click row to collapse not supported — re-open modal)' : '(click to expand)'}</span>
+                              </td>
+                              <td className={`py-1.5 pr-2 text-right font-medium ${_nsReconDelta >= 0 ? 'text-red-600' : 'text-green-700'}`}>{_nsReconDelta >= 0 ? '+' : ''}{fmt(_nsReconDelta)}</td>
+                              <td className="py-1.5 pr-2 text-right text-gray-400">{_gridRow && _gridRow.vendors !== 0 ? (Math.abs(_nsReconDelta) / Math.abs(_gridRow.vendors) * 100).toFixed(1) + '%' : '—'}</td>
+                            </tr>
+                            {nsB?.error && (
+                              <tr><td colSpan={3} className="py-1 pr-2 text-[10px] text-red-500 pl-4">NS query failed: {nsB.error}</td></tr>
+                            )}
+                            {isExpanded && nsB && nsB.byType.length > 0 && (
+                              <>
+                                <tr><td colSpan={3} className="py-1 pl-4 text-[10px] text-amber-700 uppercase">NS bank transactions in {forecastDrilldown.month} by type (Δ to bank balance)</td></tr>
+                                {nsB.byType.map(t => (
+                                  <tr key={t.txType} className="border-b border-amber-100/60">
+                                    <td className="py-1 pr-2 pl-6 text-amber-800 text-[11px]">{t.txType}</td>
+                                    <td className={`py-1 pr-2 text-right text-[11px] font-medium ${t.eur < 0 ? 'text-red-600' : 'text-emerald-700'}`}>{fmt(t.eur)}</td>
+                                    <td className="py-1 pr-2 text-right text-[10px] text-gray-400">{nsB.total.eur !== 0 ? (Math.abs(t.eur) / Math.abs(nsB.total.eur) * 100).toFixed(1) + '%' : '—'}</td>
+                                  </tr>
+                                ))}
+                                <tr className="border-t border-amber-300">
+                                  <td className="py-1 pr-2 pl-6 text-[10px] text-amber-700 italic">NS bank Δ (Closing − Opening)</td>
+                                  <td className={`py-1 pr-2 text-right text-[11px] font-semibold ${nsB.total.eur < 0 ? 'text-red-700' : 'text-emerald-800'}`}>{fmt(nsB.total.eur)}</td>
+                                  <td></td>
+                                </tr>
+                              </>
+                            )}
+                          </tbody>
+                        );
+                      })()}
                       <tfoot><tr className="border-t-2 font-bold">
-                        <td className="py-1.5">Total</td>
-                        <td className="py-1.5 pr-2 text-right text-violet-800">{fmt(Object.entries(forecastDrilldown.data as Record<string, any>).filter(([k]) => !k.startsWith('__')).reduce((s, [, v]) => s + (typeof v === 'number' ? v : 0), 0))}</td>
+                        <td className="py-1.5">Total{_showNsRecon && _nsReconDelta !== 0 ? <span className="ml-1 text-[9px] font-normal text-amber-600">(incl. NS recon.)</span> : null}</td>
+                        <td className="py-1.5 pr-2 text-right text-violet-800">{fmt((_showNsRecon && _gridRow ? _gridRow.vendors : Object.entries(forecastDrilldown.data as Record<string, any>).filter(([k]) => !k.startsWith('__')).reduce((s, [, v]) => s + (typeof v === 'number' ? v : 0), 0)))}</td>
                         <td className="py-1.5 pr-2 text-right text-gray-500 font-bold">100%</td>
                         {_isFutureCat && <td className="py-1.5 text-center">
                           {_hasAnyVcAdj && <button onClick={() => setVendorCatAdj({})} className="text-[9px] text-red-500 hover:text-red-700 underline">reset all</button>}
