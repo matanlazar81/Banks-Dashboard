@@ -6052,8 +6052,8 @@ useEffect(() => {
                     })()}
                     {(() => {
                       const hasSavings = cashflowForecast.some(r => r.salary !== r.salaryBase || r.vendors !== r.vendorsBase);
-                      const salSavings = cashflowForecast.reduce((s, r) => s + Math.max(0, r.salaryBase - r.salary), 0);
-                      const venSavings = cashflowForecast.reduce((s, r) => s + Math.max(0, r.vendorsBase - r.vendors), 0);
+                      const salSavings = cashflowForecast.reduce((s, r) => s + (r.salaryBase - r.salary), 0);
+                      const venSavings = cashflowForecast.reduce((s, r) => s + (r.vendorsBase - r.vendors), 0);
                       const totalNetActual = cashflowForecast.reduce((s, r) => s + r.net, 0);
                       const totalNetILSActual = cashflowForecast.reduce((s, r) => s + r.netILS, 0);
                       // BEFORE SAVINGS: subtract the savings from net (since base outflow was higher)
@@ -6086,10 +6086,10 @@ useEffect(() => {
                     })()}
                   </tr>
                   {(() => {
-                    const totalSalarySaving = cashflowForecast.reduce((s, r) => s + Math.max(0, r.salaryBase - r.salary), 0);
-                    const totalVendorSaving = cashflowForecast.reduce((s, r) => s + Math.max(0, r.vendorsBase - r.vendors), 0);
+                    const totalSalarySaving = cashflowForecast.reduce((s, r) => s + (r.salaryBase - r.salary), 0);
+                    const totalVendorSaving = cashflowForecast.reduce((s, r) => s + (r.vendorsBase - r.vendors), 0);
                     const totalSaving = totalSalarySaving + totalVendorSaving;
-                    if (totalSaving === 0) return null;
+                    if (totalSalarySaving === 0 && totalVendorSaving === 0) return null;
                     const totalSalaryAfter = cashflowForecast.reduce((s, r) => s + r.salary, 0);
                     const totalVendorAfter = cashflowForecast.reduce((s, r) => s + r.vendors, 0);
                     const totalOutflowAfter = cashflowForecast.reduce((s, r) => s + r.totalOutflow, 0);
