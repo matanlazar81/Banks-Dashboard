@@ -274,6 +274,23 @@ function banksPlugin(): Plugin {
         }
       });
 
+      // ── GET /api/ns-bank-tx-summary — NS bank-touching transactions for a month, grouped by tx type & account
+      server.middlewares.use('/api/ns-bank-tx-summary', async (req, res) => {
+        try {
+          const url = new URL(req.url || '', `http://${req.headers.host}`);
+          const ns = getNsClient(parseInt(url.searchParams.get('subsidiary') || '3') || 3);
+          const month = url.searchParams.get('month');
+          if (!ns || !month) { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ byType: [], byAccount: [], total: { eur: 0, ils: 0 } })); return; }
+          const data = await queueNsCall(() => ns.fetchBankTxByMonth(month));
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify(data));
+        } catch (e: any) {
+          console.error('[NS API] Bank tx summary failed:', e.message);
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ byType: [], byAccount: [], total: { eur: 0, ils: 0 }, error: e.message }));
+        }
+      });
+
       // ── GET /api/ns-vendor-bills — vendor bills for specific account + month ──
       server.middlewares.use('/api/ns-vendor-bills', async (req, res) => {
         try {
