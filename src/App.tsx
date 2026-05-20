@@ -2293,16 +2293,18 @@ useEffect(() => {
       }
       prevMonthSalary = salary;
 
-      // ── VENDORS: NS paid bills cash basis (past) → SF actuals → NS vendor actuals → SF/NS budget (future) ──
-      // Past months: sum of vendor bills paid in the month (NS cash basis, pivots on bill close date).
+      // ── VENDORS: SF Actuals (past) → NS paid bills → NS vendor actuals → SF/NS budget (future) ──
+      // Past months: prefer SF Actuals (FCT_EXPENSE accrual) so the grid matches the Vendor
+      // Expenses modal's 'Snowflake Actual (this month)' line. NS paid bills is a cash-basis
+      // fallback for subsidiaries / months without SF coverage.
       // Current month: use budget, not partial actuals (bills post throughout the month).
       let vendors: number;
       const nsPaidByMonth = isPastMonth ? (nsPaidVendors.byMonth[mKey] || 0) : 0;
       const nsVendorActual = isPastMonth ? vendorHistory.filter(v => v.paidDate.startsWith(mKey)).reduce((s, v) => s + v.amountEUR, 0) : 0;
-      if (isPastMonth && nsPaidByMonth > 0) {
-        vendors = nsPaidByMonth;
-      } else if (isPastMonth && sfActualsSplit[mKey]?.vendors > 0) {
+      if (isPastMonth && sfActualsSplit[mKey]?.vendors > 0) {
         vendors = sfActualsSplit[mKey].vendors;
+      } else if (isPastMonth && nsPaidByMonth > 0) {
+        vendors = nsPaidByMonth;
       } else if (isPastMonth && nsVendorActual > 0) {
         // NS actual vendor payments (used for non-SF subsidiaries like Statscore)
         vendors = nsVendorActual;
