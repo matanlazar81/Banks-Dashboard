@@ -6567,8 +6567,8 @@ useEffect(() => {
 
         {/* Forecast Cell Drilldown Modal */}
         {forecastDrilldown && (
-          <div className="fixed inset-0 bg-black/40 z-50 flex items-start justify-center pt-12 px-4" onClick={() => setForecastDrilldown(null)}>
-            <div className="bg-white rounded-xl shadow-2xl border w-full max-w-4xl max-h-[85vh] overflow-hidden" onClick={e => e.stopPropagation()}>
+          <div className="fixed inset-0 bg-black/40 z-50 flex items-start justify-center pt-4 px-4" onClick={() => setForecastDrilldown(null)}>
+            <div className="bg-white rounded-xl shadow-2xl border w-full max-w-5xl max-h-[94vh] overflow-hidden" onClick={e => e.stopPropagation()}>
               <div className="flex items-center justify-between px-5 py-4 border-b bg-gray-50">
                 <div className="flex items-center gap-3">
                   <button onClick={() => {
@@ -6585,7 +6585,7 @@ useEffect(() => {
                   </h3>
                 </div>
               </div>
-              <div className="overflow-auto max-h-[72vh] p-5">
+              <div className="overflow-auto max-h-[86vh] p-4">
                 {forecastDrilldown.data === 'loading' && (
                   <div className="flex items-center gap-2 py-8 justify-center text-gray-400"><Loader2 className="w-5 h-5 animate-spin" /> Loading from Snowflake...</div>
                 )}
@@ -8096,7 +8096,7 @@ useEffect(() => {
                     </div>
                   );
                 })()}
-                {Array.isArray(forecastDrilldown.data) && forecastDrilldown.data.length > 0 && (() => {
+                {forecastDrilldown.type !== 'other' && Array.isArray(forecastDrilldown.data) && forecastDrilldown.data.length > 0 && (() => {
                   const _now = new Date();
                   const _curMKey = `${_now.getFullYear()}-${String(_now.getMonth()+1).padStart(2,'0')}`;
                   const _isProjected = forecastDrilldown.mKey >= _curMKey;
