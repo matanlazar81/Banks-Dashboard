@@ -2019,72 +2019,6 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
     return result;
   }
 
-  // Bank-touching transactions for a month, grouped by transaction type.
-  // Used to attribute the gap between Snowflake FCT_EXPENSE vendors and the
-  // actual NS bank delta (Closing - Opening) for the month.
-  async function fetchBankTxByMonth(yearMonth) {
-    const [y, m] = yearMonth.split('-').map(Number);
-    if (!y || !m) return { byType: [], byAccount: [], total: { eur: 0, ils: 0 } };
-    const start = `${y}-${String(m).padStart(2, '0')}-01`;
-    const endExcl = m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, '0')}-01`;
-
-    async function queryBook(bookId) {
-      const q = `
-        SELECT t.type AS tx_type,
-               a.id AS acct_id, a.acctname AS acct_name,
-               SUM(COALESCE(tal.debit, 0)) - SUM(COALESCE(tal.credit, 0)) AS delta
-        FROM transactionaccountingline tal
-        JOIN transaction t ON t.id = tal.transaction
-        JOIN account a ON a.id = tal.account
-        WHERE a.accttype IN ('Bank', 'CredCard')
-          AND t.subsidiary = ${subsidiaryId}
-          AND tal.accountingbook = ${bookId}
-          AND tal.posting = 'T'
-          AND t.trandate >= TO_DATE('${start}', 'YYYY-MM-DD')
-          AND t.trandate < TO_DATE('${endExcl}', 'YYYY-MM-DD')
-        GROUP BY t.type, a.id, a.acctname
-      `;
-      const r = await suiteql(q, 120000);
-      return r.items || [];
-    }
-
-    const [primary, local] = await Promise.all([queryBook(1), queryBook(2)]);
-
-    // Pivot to a single map keyed by (tx_type|acct_id) with EUR + ILS deltas.
-    const cells = {};
-    function upsert(rows, currencyKey) {
-      for (const r of rows) {
-        const k = `${r.tx_type}::${r.acct_id}`;
-        if (!cells[k]) cells[k] = { txType: r.tx_type, acctId: r.acct_id, acctName: (r.acct_name || '').replace(/&amp;/g, '&'), eur: 0, ils: 0 };
-        cells[k][currencyKey] = Math.round(parseFloat(r.delta) || 0);
-      }
-    }
-    upsert(primary, 'eur');
-    upsert(local, 'ils');
-
-    const rows = Object.values(cells);
-    const byType = {};
-    for (const r of rows) {
-      if (!byType[r.txType]) byType[r.txType] = { txType: r.txType, eur: 0, ils: 0 };
-      byType[r.txType].eur += r.eur;
-      byType[r.txType].ils += r.ils;
-    }
-    const byAccount = {};
-    for (const r of rows) {
-      if (!byAccount[r.acctId]) byAccount[r.acctId] = { acctId: r.acctId, acctName: r.acctName, eur: 0, ils: 0 };
-      byAccount[r.acctId].eur += r.eur;
-      byAccount[r.acctId].ils += r.ils;
-    }
-    const totalEur = rows.reduce((s, r) => s + r.eur, 0);
-    const totalIls = rows.reduce((s, r) => s + r.ils, 0);
-
-    return {
-      byType: Object.values(byType).sort((a, b) => Math.abs(b.eur) - Math.abs(a.eur)),
-      byAccount: Object.values(byAccount).sort((a, b) => Math.abs(b.eur) - Math.abs(a.eur)),
-      total: { eur: totalEur, ils: totalIls },
-    };
-  }
-
   // Vendor bills that became paid (status='B') in the given year, grouped by month + expense GL account.
   // Cash basis: pivot on closedate (when bill was paid in full).
   async function fetchPaidVendorsYearly(year) {
@@ -2126,7 +2060,7 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
     return { accounts, months, grid };
   }
 
-  return { suiteql, suiteqlAll, fetchAgingData, fetchCollectionData, buildCollectionJson, fetchClientAnomalies, fetchAllSOsByBillingPeriod, fetchRevenueData, fetchMRRData, fetchBankBalance, fetchVendorBills, fetchVendorPaymentHistory, fetchBankAccountList, fetchBankAccountListAsOf, fetchSalaryData, fetchCashflowHistory, fetchExpenseCategoryData, fetchPaymentsByCategory, fetchCashflowBreakdown, fetchCashflowTransactions, fetchExpenseTransactions, fetchSalaryBreakdown, fetchInvoiceBasedProjection, fetchMonthlyRevaluation, fetchVendorBillsByAccount, fetchNSBudget, fetchCurrencyDefenseBudget, fetchBankTxByMonth, fetchPaidVendorsYearly };
+  return { suiteql, suiteqlAll, fetchAgingData, fetchCollectionData, buildCollectionJson, fetchClientAnomalies, fetchAllSOsByBillingPeriod, fetchRevenueData, fetchMRRData, fetchBankBalance, fetchVendorBills, fetchVendorPaymentHistory, fetchBankAccountList, fetchBankAccountListAsOf, fetchSalaryData, fetchCashflowHistory, fetchExpenseCategoryData, fetchPaymentsByCategory, fetchCashflowBreakdown, fetchCashflowTransactions, fetchExpenseTransactions, fetchSalaryBreakdown, fetchInvoiceBasedProjection, fetchMonthlyRevaluation, fetchVendorBillsByAccount, fetchNSBudget, fetchCurrencyDefenseBudget, fetchPaidVendorsYearly };
 }
 
 
