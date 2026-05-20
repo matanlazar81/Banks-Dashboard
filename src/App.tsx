@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import * as XLSX from 'xlsx-js-style';
 import html2canvas from 'html2canvas';
+import bankClassifiedSeedLsports2026 from './seeds/bank-classified-lsports-2026.json';
 
 // ── Simple Markdown → HTML renderer ──
 function mdToHtml(md: string): string {
@@ -656,9 +657,17 @@ export default function App() {
   const [nsPaidVendors, setNsPaidVendors] = useState<{ byMonth: Record<string, number>; grid: Record<string, Record<string, number>>; accounts: { number: string; name: string; total: number }[] }>({ byMonth: {}, grid: {}, accounts: [] });
   // Bank-side classification: every NS bank/CC line decomposed into Salary/Vendors/Collections/Reval/Other per month.
   // Sum of buckets per month = actual bank delta. No plug. Used to override past-month grid columns.
+  // Static bootstrap from src/seeds/bank-classified-lsports-2026.json gives instant load; live fetch
+  // refreshes if the parent server actually serves /api/ns-bank-classified-yearly.
   type BankBucket = { eur: number; ils: number };
   type BankClassifiedMonth = { vendors: BankBucket; collections: BankBucket; salary: BankBucket; reval: BankBucket; other: BankBucket; total: BankBucket; details: { label: string; bucket: string; eur: number; ils: number }[] };
-  const [nsBankClassified, setNsBankClassified] = useState<{ byMonth: Record<string, BankClassifiedMonth> }>({ byMonth: {} });
+  const [nsBankClassified, setNsBankClassified] = useState<{ byMonth: Record<string, BankClassifiedMonth> }>(() => {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const seed = bankClassifiedSeedLsports2026;
+      return { byMonth: (seed.byMonth || {}) as Record<string, BankClassifiedMonth> };
+    } catch { return { byMonth: {} }; }
+  });
   const [sfRevenuePaid, setSfRevenuePaid] = useState<Record<string, { revenue: number; paid: number; unpaid: number; customers: number }>>({});
   const [sfPipeline, setSfPipeline] = useState<{ name: string; stage: string; amount: number; probability: number; weighted: number; currency: string; closeDate: string; type: string; feedType: string; owner: string }[]>([]);
   const [pipelineMinProb, setPipelineMinProb] = useState(100); // min probability filter for pipeline
@@ -1808,8 +1817,16 @@ useEffect(() => {
 
       const allResults = await Promise.all([...nsUrls, ...sfUrls].map(u => safe(u)));
       const [cfgR, bankR, acctR, billsR, arR, salR, vhR, expR, collR, revalR, paidVR, bankClR, ...sfResults] = allResults;
-      if (bankClR?.byMonth) setNsBankClassified({ byMonth: bankClR.byMonth });
-      else setNsBankClassified({ byMonth: {} });
+      // Prefer live data when populated. Otherwise fall back to the bundled LSports 2026 seed
+      // (src/seeds/bank-classified-lsports-2026.json) so the Other column renders even when the
+      // parent finance-it server doesn't route /api/ns-bank-classified-yearly to bank-dashboard.
+      if (bankClR?.byMonth && Object.keys(bankClR.byMonth).length > 0) {
+        setNsBankClassified({ byMonth: bankClR.byMonth });
+      } else if (co === 'lsports' && (activeYears[co] || currentYear) === 2026) {
+        setNsBankClassified({ byMonth: (bankClassifiedSeedLsports2026.byMonth || {}) as Record<string, BankClassifiedMonth> });
+      } else {
+        setNsBankClassified({ byMonth: {} });
+      }
 
       // Apply NS results
       if (cfgR?.accountId) setNsAccountId(cfgR.accountId);
