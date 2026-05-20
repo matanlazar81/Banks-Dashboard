@@ -1871,11 +1871,12 @@ useEffect(() => {
         const asOfStr = `${prevEnd.getFullYear()}-${String(prevEnd.getMonth()+1).padStart(2,'0')}-${String(prevEnd.getDate()).padStart(2,'0')}`;
         fetch(`/api/ns-bank-accounts-asof?date=${asOfStr}&subsidiary=${cfg.subsidiary}`).then(r => r.json()).then(j => {
           if (j.data && j.data.length > 0) {
+            // Include ALL bank+CC accounts so the prev-month anchor matches the NS Balance Sheet
+            // "CASH & CASH EQUIVALENTS NEW" total. Bank-classified deltas also include CC, so
+            // April closing = May opening.
             const accounts = j.data as BankAccount[];
-            const ccKeywords = ['AMEX', 'MasterCard', 'Isracard', 'Visa'];
-            const bankOnly = accounts.filter(a => !ccKeywords.some(k => a.name.includes(k)));
-            const eur = bankOnly.reduce((s: number, a: BankAccount) => s + a.primaryBalance, 0);
-            const ils = bankOnly.reduce((s: number, a: BankAccount) => s + a.localBalance, 0);
+            const eur = accounts.reduce((s: number, a: BankAccount) => s + a.primaryBalance, 0);
+            const ils = accounts.reduce((s: number, a: BankAccount) => s + a.localBalance, 0);
             setPrevMonthEndBalance({ eur, ils });
           }
         }).catch(() => {});
