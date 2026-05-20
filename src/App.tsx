@@ -146,7 +146,7 @@ function SourceInfo({ source, column, detail, system = 'Snowflake' }: {
         aria-label="Data source"
       >i</button>
       {open && (
-        <span className="absolute z-50 left-1/2 -translate-x-1/2 mt-1 bg-gray-900 text-white text-[10px] font-normal rounded shadow-lg px-2.5 py-1.5 whitespace-nowrap pointer-events-none">
+        <span className="absolute z-[60] left-0 mt-1 bg-gray-900 text-white text-[10px] font-normal rounded shadow-lg px-2.5 py-1.5 whitespace-normal break-words max-w-[340px] w-max pointer-events-none">
           <span className="block font-semibold text-[9px] uppercase tracking-wide opacity-70">Source · {tag}</span>
           <span className="block font-mono text-sky-200">{source}</span>
           {column && <span className="block font-mono text-emerald-200 mt-0.5">column: {column}</span>}
