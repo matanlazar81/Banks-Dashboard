@@ -2459,14 +2459,24 @@ useEffect(() => {
         salaryBase = salary;
       }
       let totalOutflow = salary + vendors + Math.max(0, other);
-      // Churn deduction: for future months, use current year's monthly impact from churn analysis (or manual override)
+      // Churn deduction priority for future months:
+      //   1. manual override per month
+      //   2. latest COMPLETED quarter from DIM_OPPORTUNITY churn (sfChurnQuarterly), amount / 3
+      //   3. current-year monthly impact from churn analysis (yearly aggregate)
+      //   4. trailing 6-month avg
       let churnDeduction = 0;
       if (!isPastMonth && !isCurMonth) {
         if (churnOverride[mKey] !== undefined) {
           churnDeduction = churnOverride[mKey];
         } else {
-          const cyChurn = churnData.find(c => c.year === activeYear);
-          churnDeduction = cyChurn && cyChurn.monthlyImpact > 0 ? cyChurn.monthlyImpact : churnMonthlyAvg;
+          const latestQ = sfChurnQuarterly.filter(q => !q.partial).sort((a, b) => b.qs.localeCompare(a.qs))[0];
+          const quarterlyMonthly = latestQ ? Math.round(latestQ.amount / 3) : 0;
+          if (quarterlyMonthly > 0) {
+            churnDeduction = quarterlyMonthly;
+          } else {
+            const cyChurn = churnData.find(c => c.year === activeYear);
+            churnDeduction = cyChurn && cyChurn.monthlyImpact > 0 ? cyChurn.monthlyImpact : churnMonthlyAvg;
+          }
         }
       }
       const churnDeductionILS = Math.round(churnDeduction * eurIlsRatio);
@@ -2517,7 +2527,7 @@ useEffect(() => {
       rows.push({ month: label, mKey, openingBalance, openingBalanceILS, salary, salaryBase, salaryILS, vendors, vendorsBase, vendorsILS, other, otherILS, otherDetails: bcm?.details || [], totalOutflow, totalOutflowILS, collections, collectionsILS, collectionsActual, collectionsRemaining, collectionsForecast, collectionsRevenue, collectionsUnpaidCarry, collectionsUnpaidCarryMonth, collectionsPipeline, customers, pipelineWeighted, pipelineWeightedILS, pipelineTotal, pipelineCount, pipelineOpps, pipelineHistWinRate, pipelineDelayMonths, churnDeduction, churnDeductionILS, net, netILS, revalImpact, revalImpactILS, revalHasBothEnds, closingBalance: runningBalance, closingBalanceILS: runningBalanceILS, isCurrent: isCurMonth, isPast: isPastMonth });
     }
     return rows;
-  }, [vendorBills, arForecast, salaryData, vendorHistory, expenseCategories, book, bookLocal, actualCollections, sfBudget, sfRevenue, sfActualsSplit, nsPaidVendors, nsBankClassified, salaryAdjPctByMonth, collPctByMonth, monthlyReval, sfSalaryBudget, sfRevenuePaid, sfPipeline, pipelineMinProb, sfConversion, salaryDeptAdj, salaryDeptBudgets, vendorCatAdj, vendorDetailAdj, prevMonthEndBalance, yearStartBalance, monthEndBalances, churnMonthlyAvg, churnData, churnOverride, asOfDate, nsBudget, activeYear, sfFinanceBudget, currencyDefensePct, currencyDefensePctByMonth, pipelineAdjPctByMonth, salaryProjectionMode, salaryActualsByDept, lastActualSalaryMonth, monthlyHCImpact, salaryManualILS]);
+  }, [vendorBills, arForecast, salaryData, vendorHistory, expenseCategories, book, bookLocal, actualCollections, sfBudget, sfRevenue, sfActualsSplit, nsPaidVendors, nsBankClassified, salaryAdjPctByMonth, collPctByMonth, monthlyReval, sfSalaryBudget, sfRevenuePaid, sfPipeline, pipelineMinProb, sfConversion, salaryDeptAdj, salaryDeptBudgets, vendorCatAdj, vendorDetailAdj, prevMonthEndBalance, yearStartBalance, monthEndBalances, churnMonthlyAvg, churnData, sfChurnQuarterly, churnOverride, asOfDate, nsBudget, activeYear, sfFinanceBudget, currencyDefensePct, currencyDefensePctByMonth, pipelineAdjPctByMonth, salaryProjectionMode, salaryActualsByDept, lastActualSalaryMonth, monthlyHCImpact, salaryManualILS]);
 
   // ── Capture current-year cashflow for propagation to next year ──
   useEffect(() => {
@@ -5900,7 +5910,12 @@ useEffect(() => {
                     <th className="pb-2 px-0.5 text-right whitespace-nowrap">Opening Bal.</th>
                     <th className="pb-2 px-0.5 text-right text-green-600 whitespace-nowrap">Inflows (AR)</th>
                     <th className="pb-2 px-0.5 text-right text-teal-600 whitespace-nowrap">Pipeline<div className="text-[8px] font-normal normal-case text-gray-400">{pipelineMinProb}% • {cashflowForecast[0]?.pipelineHistWinRate || 33}% wr • +{cashflowForecast[0]?.pipelineDelayMonths || 2}m</div></th>
-                    <th className="pb-2 px-0.5 text-right text-orange-600 whitespace-nowrap">Churn<div className="text-[8px] font-normal normal-case text-gray-400">{(() => { const cy = churnData.find(c => c.year === activeYear); return cy && cy.monthlyImpact > 0 ? `${activeYear} impact: €${Math.round(cy.monthlyImpact / 1000)}K/mo` : `6m avg: €${Math.round(churnMonthlyAvg / 1000)}K/mo`; })()}</div></th>
+                    <th className="pb-2 px-0.5 text-right text-orange-600 whitespace-nowrap">Churn<div className="text-[8px] font-normal normal-case text-gray-400">{(() => {
+                      const latestQ = sfChurnQuarterly.filter(q => !q.partial).sort((a, b) => b.qs.localeCompare(a.qs))[0];
+                      if (latestQ) return `${latestQ.q}: €${Math.round(latestQ.amount / 3 / 1000)}K/mo`;
+                      const cy = churnData.find(c => c.year === activeYear);
+                      return cy && cy.monthlyImpact > 0 ? `${activeYear} impact: €${Math.round(cy.monthlyImpact / 1000)}K/mo` : `6m avg: €${Math.round(churnMonthlyAvg / 1000)}K/mo`;
+                    })()}</div></th>
                     <th className="pb-2 px-0.5 text-right text-emerald-700 whitespace-nowrap">Total Inflows</th>
                     <th className="pb-2 px-0.5 text-right text-amber-600 whitespace-nowrap">Salary</th>
                     <th className="pb-2 px-0.5 text-right text-violet-600 whitespace-nowrap">Vendors</th>
