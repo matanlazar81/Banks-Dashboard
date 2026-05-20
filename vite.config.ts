@@ -12,10 +12,15 @@ dotenvConfig({ path: path.join(PROJECT_DIR, '.env') });
 const nsClients: Record<number, any> = {};
 let sfClient: any = null;
 function getSfClient() {
-  if (!sfClient) {
+  // Same staleness-check pattern as getNsClient: if the in-memory client is missing methods we
+  // expect from current snowflake-api.cjs, evict the require cache and rebuild so new functions
+  // become visible without a full process restart.
+  const expected: string[] = ['fetchQuarterlyChurnMRR', 'fetchVendorsYearlyGrid'];
+  const isStale = sfClient && expected.some(m => typeof sfClient[m] !== 'function');
+  if (!sfClient || isStale) {
     try {
       const sfPath = path.resolve(__dirname, 'snowflake-api.cjs');
-      delete require.cache[require.resolve(sfPath)]; // bust cache to pick up file changes
+      delete require.cache[require.resolve(sfPath)];
       const { createSnowflakeClient } = require(sfPath);
       sfClient = createSnowflakeClient(process.env);
     } catch (e: any) { console.error('[SF] Failed:', e.message); return null; }
