@@ -68,6 +68,8 @@ type ScenarioData = {
   leverOverrides: Record<string, Record<number, number>>;
   headcountAdj: Record<string, Record<string, number>>; // { "2026-05": { "Playmakers": -5, "HR": -2 } } = delta headcount per dept per month
   pipelineMinProb: number;
+  currencyDefensePct?: number; // global % applied to FX defense budget when no per-month override
+  currencyDefensePctByMonth?: Record<number, number>; // per-month % override (month index 0-11)
 };
 type Scenario = {
   id: string;
@@ -1329,7 +1331,9 @@ useEffect(() => {
     leverOverrides: JSON.parse(JSON.stringify(leverOverrides)),
     headcountAdj: JSON.parse(JSON.stringify(headcountAdj)),
     pipelineMinProb,
-  }), [salaryAdjPctByMonth, collPctByMonth, salaryDeptAdj, vendorCatAdj, vendorDetailAdj, leverOverrides, headcountAdj, pipelineMinProb]);
+    currencyDefensePct,
+    currencyDefensePctByMonth: { ...currencyDefensePctByMonth },
+  }), [salaryAdjPctByMonth, collPctByMonth, salaryDeptAdj, vendorCatAdj, vendorDetailAdj, leverOverrides, headcountAdj, pipelineMinProb, currencyDefensePct, currencyDefensePctByMonth]);
 
   const applyScenarioData = useCallback((data: ScenarioData) => {
     isLoadingScenario.current = true; // prevent auto-save from overwriting during load
@@ -1340,6 +1344,8 @@ useEffect(() => {
     setVendorDetailAdj(data.vendorDetailAdj || {});
     setLeverOverrides(data.leverOverrides || {});
     setPipelineMinProb(data.pipelineMinProb ?? 100);
+    if (data.currencyDefensePct !== undefined) setCurrencyDefensePct(data.currencyDefensePct);
+    if (data.currencyDefensePctByMonth) setCurrencyDefensePctByMonth(data.currencyDefensePctByMonth);
     // If scenario has headcountAdj, use it; otherwise compute from salaryDeptAdj + deptHeadcount
     const hcAdj = data.headcountAdj || {};
     const hasExplicitHc = Object.keys(hcAdj).some(mKey => Object.values(hcAdj[mKey] || {}).some(v => v !== 0));
