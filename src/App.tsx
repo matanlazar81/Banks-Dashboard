@@ -2206,6 +2206,21 @@ useEffect(() => {
     let prevMonthSalary = 0;
     let prevMonthUnpaid = 0; // unpaid from previous month rolls forward
 
+    // Monthly churn run-rate: latest completed quarter / 3, else current-year monthlyImpact, else 6m avg.
+    // Each forecast month deducts rate × (forecast-month index), so the cumulative MRR-lost grows
+    // alongside the cumulative pipeline wins (which are also <= mKey). Manual overrides bypass.
+    let monthlyChurnRate = 0;
+    {
+      const latestQ = sfChurnQuarterly.filter(q => !q.partial).sort((a, b) => b.qs.localeCompare(a.qs))[0];
+      const quarterlyMonthly = latestQ ? Math.round(latestQ.amount / 3) : 0;
+      if (quarterlyMonthly > 0) monthlyChurnRate = quarterlyMonthly;
+      else {
+        const cyChurn = churnData.find(c => c.year === activeYear);
+        monthlyChurnRate = cyChurn && cyChurn.monthlyImpact > 0 ? cyChurn.monthlyImpact : churnMonthlyAvg;
+      }
+    }
+    let forecastMonthIndex = 0;
+
     for (let mi = 0; mi < 12; mi++) {
       const i = mi;
       const d = new Date(forecastYear, mi, 1);
@@ -2457,24 +2472,16 @@ useEffect(() => {
         salaryBase = salary;
       }
       let totalOutflow = salary + vendors + Math.max(0, other);
-      // Churn deduction priority for future months:
-      //   1. manual override per month
-      //   2. latest COMPLETED quarter from DIM_OPPORTUNITY churn (sfChurnQuarterly), amount / 3
-      //   3. current-year monthly impact from churn analysis (yearly aggregate)
-      //   4. trailing 6-month avg
+      // Cumulative churn: every customer that churned in earlier forecast months is still gone,
+      // so each month deducts rate × (number of forecast months elapsed). Mirrors the pipeline,
+      // which sums all opps closing <= mKey. Manual override per month bypasses the cumulation.
       let churnDeduction = 0;
       if (!isPastMonth && !isCurMonth) {
+        forecastMonthIndex++;
         if (churnOverride[mKey] !== undefined) {
           churnDeduction = churnOverride[mKey];
         } else {
-          const latestQ = sfChurnQuarterly.filter(q => !q.partial).sort((a, b) => b.qs.localeCompare(a.qs))[0];
-          const quarterlyMonthly = latestQ ? Math.round(latestQ.amount / 3) : 0;
-          if (quarterlyMonthly > 0) {
-            churnDeduction = quarterlyMonthly;
-          } else {
-            const cyChurn = churnData.find(c => c.year === activeYear);
-            churnDeduction = cyChurn && cyChurn.monthlyImpact > 0 ? cyChurn.monthlyImpact : churnMonthlyAvg;
-          }
+          churnDeduction = monthlyChurnRate * forecastMonthIndex;
         }
       }
       const churnDeductionILS = Math.round(churnDeduction * eurIlsRatio);
@@ -6089,7 +6096,11 @@ useEffect(() => {
                                 {churnOverride[r.mKey] !== undefined && <button onClick={(e) => { e.stopPropagation(); setChurnOverride(prev => { const next = { ...prev }; delete next[r.mKey]; return next; }); }} className="text-[9px] text-gray-400 hover:text-gray-600" title="Reset to auto">✕</button>}
                               </div>
                             )}
-                            <div className="text-[10px] text-gray-400">{churnOverride[r.mKey] !== undefined ? 'manual' : `${activeYear} impact`}</div>
+                            <div className="text-[10px] text-gray-400">{churnOverride[r.mKey] !== undefined ? 'manual' : (() => {
+                              const idx = cashflowForecast.filter(f => !f.isPast && !f.isCurrent && f.mKey <= r.mKey).length;
+                              const rate = idx > 0 ? Math.round(r.churnDeduction / idx) : 0;
+                              return `${idx}× €${Math.round(rate / 1000)}K/mo`;
+                            })()}</div>
                           </div>
                         ) : '-'}
                       </td>
@@ -6711,10 +6722,22 @@ useEffect(() => {
                       <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
                         <h4 className="font-semibold text-orange-800 mb-2">How is churn deduction calculated?</h4>
                         <div className="text-sm text-gray-700 space-y-1">
-                          <p>1. Query all customers who churned in the <b>last 6 months</b> (from DIM_CUSTOMER.CHURN_DATE)</p>
-                          <p>2. For each churned customer, get their <b>last month's revenue</b> before churn (actual run-rate being lost)</p>
-                          <p>3. Sum all lost monthly revenue and <b>divide by 6</b> to get the monthly average</p>
-                          <p className="mt-2 font-semibold text-orange-800">Result: <span className="text-lg">{fmt(cd.monthlyAvg)}/month</span> deducted from each projected month</p>
+                          {(() => {
+                            const latestQ = sfChurnQuarterly.filter(q => !q.partial).sort((a, b) => b.qs.localeCompare(a.qs))[0];
+                            const cyChurn = churnData.find(c => c.year === activeYear);
+                            const monthlyRate = latestQ ? Math.round(latestQ.amount / 3)
+                              : cyChurn && cyChurn.monthlyImpact > 0 ? cyChurn.monthlyImpact
+                              : cd.monthlyAvg;
+                            const source = latestQ ? `${latestQ.q} (DIM_OPPORTUNITY): ${fmt(latestQ.amount)} / 3`
+                              : cyChurn && cyChurn.monthlyImpact > 0 ? `${activeYear} yearly impact (DIM_CUSTOMER)`
+                              : '6-month rolling avg';
+                            return <>
+                              <p>1. Monthly churn run-rate from <b>{source}</b> = <b>{fmt(monthlyRate)}/mo</b></p>
+                              <p>2. Each forecast month is <b>cumulative</b>: month 1 deducts 1× rate, month 2 deducts 2× rate, month N deducts N× rate</p>
+                              <p>3. Mirrors the pipeline logic, which sums all opps closing on or before that month — so the MRR base grows on the win side and shrinks on the churn side at the same monthly cadence</p>
+                              <p className="mt-2 font-semibold text-orange-800">This month's deduction: <span className="text-lg">{fmt(cd.deduction)}</span></p>
+                            </>;
+                          })()}
                         </div>
                       </div>
                       {sfChurnQuarterly.length > 0 && (
