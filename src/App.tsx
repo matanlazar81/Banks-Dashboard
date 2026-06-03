@@ -630,6 +630,8 @@ export default function App() {
   });
   const [availableYearsByCompany, setAvailableYearsByCompany] = useState<Record<string, number[]>>({ lsports: [currentYear], statscore: [currentYear] });
   const [isRollingForward, setIsRollingForward] = useState(false);
+  const [budgetSyncStatus, setBudgetSyncStatus] = useState<'idle' | 'syncing' | 'success' | 'error'>('idle');
+  const [budgetSyncMsg, setBudgetSyncMsg] = useState<string>('');
   useEffect(() => { try { localStorage.setItem('banks-active-years', JSON.stringify(activeYears)); } catch {} }, [activeYears]);
   useEffect(() => {
     fetch('/api/budget-years').then(r => r.json()).then(d => {
@@ -3640,6 +3642,55 @@ useEffect(() => {
                   ✕
                 </button>
               </>)}
+              {/* Sync budget targets table (data/banks-dashboard.db) from Snowflake FCT_BUDGET
+                  for the currently-selected (company, year). */}
+              <button
+                disabled={budgetSyncStatus === 'syncing'}
+                onClick={async () => {
+                  const co = activeCompany;
+                  const yr = activeYears[co] || currentYear;
+                  const sub = COMPANY_CONFIG[co]?.subsidiary || 3;
+                  setBudgetSyncStatus('syncing');
+                  setBudgetSyncMsg('');
+                  try {
+                    const resp = await fetch(`/api/sync-budget-targets?year=${yr}&subsidiary=${sub}`, { method: 'POST' });
+                    const result = await resp.json();
+                    if (result.ok) {
+                      const s = (result.summary || [])[0];
+                      const rows = s ? s.rowCount : 0;
+                      setBudgetSyncStatus('success');
+                      setBudgetSyncMsg(`Synced ${rows} rows for ${yr}`);
+                      setTimeout(() => setBudgetSyncStatus('idle'), 4000);
+                    } else {
+                      setBudgetSyncStatus('error');
+                      setBudgetSyncMsg(result.error || 'Sync failed');
+                      setTimeout(() => setBudgetSyncStatus('idle'), 6000);
+                    }
+                  } catch (e: any) {
+                    setBudgetSyncStatus('error');
+                    setBudgetSyncMsg(e?.message || 'Sync failed');
+                    setTimeout(() => setBudgetSyncStatus('idle'), 6000);
+                  }
+                }}
+                className={`text-[10px] rounded-lg px-2 py-1.5 font-medium transition-colors whitespace-nowrap border ${
+                  budgetSyncStatus === 'syncing'
+                    ? 'text-gray-500 bg-gray-50 border-gray-200 cursor-wait'
+                    : budgetSyncStatus === 'success'
+                    ? 'text-emerald-700 bg-emerald-50 border-emerald-200'
+                    : budgetSyncStatus === 'error'
+                    ? 'text-red-700 bg-red-50 border-red-200'
+                    : 'text-violet-700 bg-violet-50 border-violet-200 hover:bg-violet-100'
+                }`}
+                title={`Sync FCT_BUDGET_TARGET_BY_DEPT_ACCT for ${activeCompany === 'lsports' ? 'LSports' : 'Statscore'} ${activeYears[activeCompany] || currentYear} from Snowflake FCT_BUDGET`}
+              >
+                {budgetSyncStatus === 'syncing'
+                  ? 'Syncing...'
+                  : budgetSyncStatus === 'success'
+                  ? `✓ ${budgetSyncMsg}`
+                  : budgetSyncStatus === 'error'
+                  ? `✕ ${budgetSyncMsg.slice(0, 40)}`
+                  : `⇅ Sync ${activeYears[activeCompany] || currentYear}`}
+              </button>
             </>) : (
               <div className="flex items-center gap-2 text-[11px] font-medium">
                 <span className={`px-2 py-1 rounded-lg ${(activeYears.lsports || currentYear) !== currentYear ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-gray-100 text-gray-600'}`}>

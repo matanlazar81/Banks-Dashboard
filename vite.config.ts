@@ -416,6 +416,39 @@ function banksPlugin(): Plugin {
         } catch (e: any) { res.end(JSON.stringify({ data: { byMonth: {}, totalByMonth: {}, overrides: [] }, error: e.message })); }
       });
 
+      // ── POST /api/sync-budget-targets — refresh FCT_BUDGET_TARGET_BY_DEPT_ACCT
+      // for the (subsidiary, year) currently shown on the dashboard ──
+      server.middlewares.use('/api/sync-budget-targets', async (req, res) => {
+        res.setHeader('Content-Type', 'application/json');
+        if ((req.method || 'GET').toUpperCase() !== 'POST') {
+          res.statusCode = 405;
+          res.end(JSON.stringify({ ok: false, error: 'Method not allowed; use POST' }));
+          return;
+        }
+        try {
+          const url = new URL(req.url || '', 'http://localhost');
+          const subsidiary = parseInt(url.searchParams.get('subsidiary') || '3', 10);
+          const yearsParam = url.searchParams.get('year') || url.searchParams.get('years') || '';
+          const years = yearsParam
+            .split(',')
+            .map((y) => parseInt(y.trim(), 10))
+            .filter((y) => Number.isFinite(y));
+          if (years.length === 0) {
+            res.statusCode = 400;
+            res.end(JSON.stringify({ ok: false, error: 'year query param required, e.g. ?year=2026' }));
+            return;
+          }
+          const sfPath = require.resolve('./scripts/populate-budget-targets.cjs');
+          delete require.cache[sfPath];
+          const { populateBudgetTargets } = require(sfPath);
+          const result = await populateBudgetTargets({ subsidiary, years, env: process.env });
+          res.end(JSON.stringify({ ok: true, ...result }));
+        } catch (e: any) {
+          res.statusCode = 500;
+          res.end(JSON.stringify({ ok: false, error: e?.message || String(e) }));
+        }
+      });
+
       server.middlewares.use('/api/sf-revenue', async (_req, res) => {
         try {
           const sf = getSfClient();
