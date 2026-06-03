@@ -616,6 +616,7 @@ type BudgetTargetRow = {
   NETSUITE_INTERNAL_NUMBER: number | null;
   SOURCE_AMOUNT_ILS: number | null;
   MONTHLY_SOURCE_ILS: Record<string, number> | null;
+  MONTHLY_RAW_ILS: Record<string, number> | null;
   USER_OVERRIDE_AMOUNT_ILS: number | null;
   USER_OVERRIDE_PCT: number | null;
   ANNUAL_BUDGET_TARGET_AMOUNT: number | null;
@@ -757,19 +758,18 @@ function BudgetTargetsDrawer({
           {loading ? <div className="p-6 text-center text-sm text-gray-500">Loading…</div>
             : visible.length === 0 ? <div className="p-6 text-center text-sm text-gray-500">No rows. Click Sync to load from Snowflake.</div>
             : (
-            <table className="text-xs border-collapse" style={{ minWidth: '2000px' }}>
+            <table className="text-[11px] border-collapse w-full table-auto">
               <thead className="bg-gray-100 sticky top-0 z-10">
                 <tr className="text-left text-gray-700">
-                  <th className="px-3 py-2 font-bold border-b border-gray-300 min-w-[120px]">Department</th>
-                  <th className="px-3 py-2 font-bold border-b border-gray-300 min-w-[200px]">Account</th>
-                  <th className="px-3 py-2 font-bold text-right border-b border-gray-300 min-w-[130px]">Annual Source {drawerCurrency}</th>
+                  <th className="px-2 py-1.5 font-bold border-b border-gray-300">Department</th>
+                  <th className="px-2 py-1.5 font-bold border-b border-gray-300">Account</th>
+                  <th className="px-2 py-1.5 font-bold text-right border-b border-gray-300">Source {drawerCurrency}</th>
                   {MONTH_LABELS.map(m => (
-                    <th key={m} className="px-2 py-2 font-bold text-right text-xs text-gray-700 border-b border-gray-300 min-w-[80px]">{m}</th>
+                    <th key={m} className="px-1 py-1.5 font-bold text-right text-[10px] text-gray-700 border-b border-gray-300">{m}</th>
                   ))}
-                  <th className="px-3 py-2 font-bold text-right border-b border-gray-300 min-w-[130px]">Override Amount</th>
-                  <th className="px-3 py-2 font-bold text-right border-b border-gray-300 min-w-[90px]">Override %</th>
-                  <th className="px-3 py-2 font-bold text-right border-b border-gray-300 min-w-[130px]">Final {drawerCurrency}</th>
-                  <th className="px-3 py-2 font-bold border-b border-gray-300 min-w-[120px]">Last edit</th>
+                  <th className="px-1 py-1.5 font-bold text-right border-b border-gray-300">Override Amt</th>
+                  <th className="px-1 py-1.5 font-bold text-right border-b border-gray-300">Ovr %</th>
+                  <th className="px-2 py-1.5 font-bold text-right border-b border-gray-300">Final {drawerCurrency}</th>
                 </tr>
               </thead>
               <tbody>
@@ -777,24 +777,40 @@ function BudgetTargetsDrawer({
                   const key = `${r.DEPARTMENT}::${r.LOCATION}::${r.ACCOUNT_NUMBER}::${r.CURRENCY}`;
                   const hasOverride = r.USER_OVERRIDE_AMOUNT_ILS != null || r.USER_OVERRIDE_PCT != null;
                   const rowBg = hasOverride ? 'bg-amber-50/30' : '';
+                  const editedTitle = r.USER_EDITED_BY
+                    ? `Override set by ${r.USER_EDITED_BY}${r.USER_EDITED_AT ? ` on ${r.USER_EDITED_AT.slice(0, 16)}` : ''}`
+                    : '';
                   return (
                     <tr key={key} className={`border-b border-gray-100 hover:bg-gray-50 ${rowBg}`}>
-                      <td className="px-3 py-1.5">{r.DEPARTMENT}</td>
-                      <td className="px-3 py-1.5">
-                        <div className="font-mono text-[11px] text-gray-700">{r.ACCOUNT_NUMBER}</div>
-                        <div className="text-[10px] text-gray-500 truncate max-w-[260px]">{r.ACCOUNT_NAME || ''}</div>
+                      <td className="px-2 py-1 truncate max-w-[110px]" title={r.DEPARTMENT}>{r.DEPARTMENT}</td>
+                      <td className="px-2 py-1">
+                        <div className="font-mono text-[10px] text-gray-700">{r.ACCOUNT_NUMBER}</div>
+                        <div className="text-[9px] text-gray-500 truncate max-w-[150px]" title={r.ACCOUNT_NAME || ''}>{r.ACCOUNT_NAME || ''}</div>
                       </td>
-                      <td className="px-3 py-1.5 text-right font-mono">{fmtMoney(toCcy(r.SOURCE_AMOUNT_ILS))}</td>
+                      <td className="px-2 py-1 text-right font-mono text-[10px]">{fmtMoney(toCcy(r.SOURCE_AMOUNT_ILS))}</td>
                       {MONTH_KEYS.map(mk => {
-                        const ils = r.MONTHLY_SOURCE_ILS ? r.MONTHLY_SOURCE_ILS[mk] : null;
-                        const v = ils == null || ils === 0 ? null : (drawerCurrency === 'EUR' ? ils / ILS_PER_EUR : ils);
+                        const finalIls = r.MONTHLY_SOURCE_ILS ? r.MONTHLY_SOURCE_ILS[mk] : null;
+                        const rawIls   = r.MONTHLY_RAW_ILS    ? r.MONTHLY_RAW_ILS[mk]    : null;
+                        const fv = finalIls == null || finalIls === 0 ? null : (drawerCurrency === 'EUR' ? finalIls / ILS_PER_EUR : finalIls);
+                        // A cell is "adjusted" when the final post-Layer-2/3 value materially differs from
+                        // the raw FCT_BUDGET value. Tolerance 0.5 = ignore floating-point noise.
+                        const isAdjusted = rawIls != null && finalIls != null && Math.abs(finalIls - rawIls) > 0.5;
+                        let tip = '';
+                        if (isAdjusted && rawIls != null && finalIls != null) {
+                          const deltaIls = finalIls - rawIls;
+                          const pct = rawIls !== 0 ? (deltaIls / rawIls) * 100 : 0;
+                          const fmt = (n: number) => Math.round(n).toLocaleString('en-GB');
+                          tip = `Raw ${fmt(rawIls)} → Final ${fmt(finalIls)} (Δ ${deltaIls >= 0 ? '+' : ''}${fmt(deltaIls)} ILS, ${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%)`;
+                        }
                         return (
-                          <td key={mk} className="px-2 py-1.5 text-right font-mono text-[11px] text-gray-700">
-                            {v == null ? '—' : Math.round(v).toLocaleString('en-GB')}
+                          <td key={mk}
+                            title={tip}
+                            className={`px-1 py-1 text-right font-mono text-[10px] ${isAdjusted ? 'font-bold text-amber-700 bg-amber-50/40' : 'text-gray-700'}`}>
+                            {fv == null ? '—' : Math.round(fv).toLocaleString('en-GB')}
                           </td>
                         );
                       })}
-                      <td className="px-3 py-1.5 text-right">
+                      <td className="px-1 py-1 text-right">
                         <input type="number" step="1" defaultValue={r.USER_OVERRIDE_AMOUNT_ILS ?? ''}
                           onBlur={e => {
                             const newRaw = e.target.value;
@@ -802,10 +818,10 @@ function BudgetTargetsDrawer({
                             if (newRaw !== curStr) saveOverride(r, 'USER_OVERRIDE_AMOUNT_ILS', newRaw);
                           }}
                           disabled={saving === `${r.ACCOUNT_NUMBER}::USER_OVERRIDE_AMOUNT_ILS`}
-                          className="w-32 text-right text-xs border border-gray-200 rounded px-1.5 py-0.5 focus:ring-2 focus:ring-emerald-200 disabled:bg-gray-50"
+                          className="w-20 text-right text-[10px] border border-gray-200 rounded px-1 py-0.5 focus:ring-2 focus:ring-emerald-200 disabled:bg-gray-50"
                           placeholder="—" />
                       </td>
-                      <td className="px-3 py-1.5 text-right">
+                      <td className="px-1 py-1 text-right">
                         <input type="number" step="0.1" defaultValue={r.USER_OVERRIDE_PCT ?? ''}
                           onBlur={e => {
                             const newRaw = e.target.value;
@@ -813,12 +829,12 @@ function BudgetTargetsDrawer({
                             if (newRaw !== curStr) saveOverride(r, 'USER_OVERRIDE_PCT', newRaw);
                           }}
                           disabled={saving === `${r.ACCOUNT_NUMBER}::USER_OVERRIDE_PCT`}
-                          className="w-20 text-right text-xs border border-gray-200 rounded px-1.5 py-0.5 focus:ring-2 focus:ring-emerald-200 disabled:bg-gray-50"
+                          className="w-14 text-right text-[10px] border border-gray-200 rounded px-1 py-0.5 focus:ring-2 focus:ring-emerald-200 disabled:bg-gray-50"
                           placeholder="—" />
                       </td>
-                      <td className={`px-3 py-1.5 text-right font-mono font-semibold ${hasOverride ? 'text-amber-700' : 'text-gray-700'}`}>{fmtMoney(toCcy(r.ANNUAL_BUDGET_TARGET_AMOUNT))}</td>
-                      <td className="px-3 py-1.5 text-[10px] text-gray-500">
-                        {r.USER_EDITED_BY ? <><div>{r.USER_EDITED_BY.split('@')[0]}</div><div>{r.USER_EDITED_AT?.slice(0, 16)}</div></> : '—'}
+                      <td title={editedTitle}
+                          className={`px-2 py-1 text-right font-mono font-semibold text-[10px] ${hasOverride ? 'text-amber-700' : 'text-gray-700'}`}>
+                        {fmtMoney(toCcy(r.ANNUAL_BUDGET_TARGET_AMOUNT))}
                       </td>
                     </tr>
                   );

@@ -75,6 +75,9 @@ function ensureBudgetTablesExist(): Promise<void> {
       await pool.query(`CREATE INDEX IF NOT EXISTS idx_budget_target_year_sub ON budget_target_by_dept_acct (fiscal_year, subsidiary_id);`);
       // Idempotent migration: add monthly breakdown column if the table predates it.
       await pool.query(`ALTER TABLE budget_target_by_dept_acct ADD COLUMN IF NOT EXISTS monthly_source_ils JSONB;`);
+      // Layer 1 raw values (pre-Layer 2 + 3) — used by the frontend to highlight cells
+      // that were modified by an FCT_EXPENSE override or scenario adjustment.
+      await pool.query(`ALTER TABLE budget_target_by_dept_acct ADD COLUMN IF NOT EXISTS monthly_raw_ils JSONB;`);
       await pool.query(`
         CREATE TABLE IF NOT EXISTS budget_target_edit_log (
           id              BIGSERIAL PRIMARY KEY,
@@ -238,7 +241,9 @@ async function populateBudgetTargets(opts: {
     CURRENCY: string; ACCOUNT_NUMBER: string; ACCOUNT_NAME: string | null;
     NETSUITE_INTERNAL_NUMBER: number | null;
     CATEGORY: string | null; IS_PAYROLL: boolean;
-    annual: number; monthly: Record<string, number>;
+    annual: number;
+    monthly: Record<string, number>;     // post-Layer-2+3 final values
+    monthlyRaw: Record<string, number>;  // pre-Layer-2+3 raw values (for highlight delta)
   };
   const groups = new Map<string, Aggregated>();
   for (const r of monthRows) {
@@ -258,10 +263,12 @@ async function populateBudgetTargets(opts: {
         IS_PAYROLL: r.IS_PAYROLL === true || r.IS_PAYROLL === 'true' || r.IS_PAYROLL === 1,
         annual: 0,
         monthly: {},
+        monthlyRaw: {},
       };
       groups.set(key, g);
     }
-    let amt = r.MONTH_AMOUNT_ILS != null ? Number(r.MONTH_AMOUNT_ILS) : 0;
+    const rawAmt = r.MONTH_AMOUNT_ILS != null ? Number(r.MONTH_AMOUNT_ILS) : 0;
+    let amt = rawAmt;
     const mNum = Number(r.MONTH_NUM);
     const mkey = String(mNum).padStart(2, '0'); // "01" .. "12"
     const ymKey = `${r.FISCAL_YEAR}-${mkey}`;
@@ -285,6 +292,7 @@ async function populateBudgetTargets(opts: {
     if (scenarioPct) amt = amt * (1 + scenarioPct / 100);
 
     g.monthly[mkey] = (g.monthly[mkey] || 0) + amt;
+    g.monthlyRaw[mkey] = (g.monthlyRaw[mkey] || 0) + rawAmt;
     g.annual += amt;
   }
 
@@ -331,19 +339,27 @@ async function populateBudgetTargets(opts: {
 
     for (const r of prev.rows) {
       const meta = accountMeta.get(Number(r.netsuite_internal_number)) || { category: null, isPayroll: false };
-      const monthlyRaw: Record<string, any> = typeof r.monthly_source_ils === 'string'
-        ? (() => { try { return JSON.parse(r.monthly_source_ils); } catch { return {}; } })()
-        : (r.monthly_source_ils || {});
+      // For the fallback path, "raw" = previous year's monthly_raw_ils (or its source if absent),
+      // and the adjusted value applies the target-year scenario % to that raw.
+      const rawSource: Record<string, any> = typeof r.monthly_raw_ils === 'string'
+        ? (() => { try { return JSON.parse(r.monthly_raw_ils); } catch { return {}; } })()
+        : (r.monthly_raw_ils
+            || (typeof r.monthly_source_ils === 'string'
+              ? (() => { try { return JSON.parse(r.monthly_source_ils); } catch { return {}; } })()
+              : (r.monthly_source_ils || {})));
       const adjustedMonthly: Record<string, number> = {};
+      const monthlyRawCopy: Record<string, number> = {};
       let annual = 0;
       for (const mkey of MONTH_KEYS_LIST) {
-        let amt = Number(monthlyRaw[mkey]) || 0;
+        const raw = Number(rawSource[mkey]) || 0;
+        let amt = raw;
         const ymKey = `${targetYear}-${mkey}`;
         let scenarioPct = 0;
         if (meta.isPayroll) scenarioPct = salaryDeptAdj[ymKey]?.[r.department] || 0;
         else if (meta.category) scenarioPct = vendorCatAdj[ymKey]?.[meta.category] || 0;
         if (scenarioPct) amt = amt * (1 + scenarioPct / 100);
         if (amt !== 0) adjustedMonthly[mkey] = amt;
+        if (raw !== 0) monthlyRawCopy[mkey] = raw;
         annual += amt;
       }
       if (Math.abs(annual) === 0) continue;
@@ -359,6 +375,7 @@ async function populateBudgetTargets(opts: {
         CATEGORY: meta.category,
         IS_PAYROLL: meta.isPayroll,
         annual,
+        monthlyRaw: monthlyRawCopy,
         monthly: adjustedMonthly,
       });
     }
@@ -373,14 +390,15 @@ async function populateBudgetTargets(opts: {
       await client.query(
         `INSERT INTO budget_target_by_dept_acct
          (fiscal_year, department, location, currency, account_number, account_name,
-          netsuite_internal_number, source_amount_ils, monthly_source_ils, subsidiary_id, source_synced_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11)
+          netsuite_internal_number, source_amount_ils, monthly_source_ils, monthly_raw_ils, subsidiary_id, source_synced_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11, $12)
          ON CONFLICT (fiscal_year, subsidiary_id, department, location, account_number, currency)
          DO UPDATE SET
            account_name = EXCLUDED.account_name,
            netsuite_internal_number = EXCLUDED.netsuite_internal_number,
            source_amount_ils = EXCLUDED.source_amount_ils,
            monthly_source_ils = EXCLUDED.monthly_source_ils,
+           monthly_raw_ils = EXCLUDED.monthly_raw_ils,
            source_synced_at = EXCLUDED.source_synced_at`,
         [
           g.FISCAL_YEAR,
@@ -392,6 +410,7 @@ async function populateBudgetTargets(opts: {
           g.NETSUITE_INTERNAL_NUMBER,
           Math.round(g.annual * 100) / 100,
           JSON.stringify(g.monthly),
+          JSON.stringify(g.monthlyRaw),
           g.SUBSIDIARY_ID,
           syncStart,
         ]
@@ -490,6 +509,7 @@ router.get('/budget-targets', bankRole, async (req: any, res: Response) => {
               netsuite_internal_number AS "NETSUITE_INTERNAL_NUMBER",
               source_amount_ils AS "SOURCE_AMOUNT_ILS",
               monthly_source_ils AS "MONTHLY_SOURCE_ILS",
+              monthly_raw_ils AS "MONTHLY_RAW_ILS",
               user_override_amount_ils AS "USER_OVERRIDE_AMOUNT_ILS",
               user_override_pct AS "USER_OVERRIDE_PCT",
               annual_budget_target_amount AS "ANNUAL_BUDGET_TARGET_AMOUNT",
@@ -508,6 +528,7 @@ router.get('/budget-targets', bankRole, async (req: any, res: Response) => {
       SOURCE_SYNCED_AT: r.SOURCE_SYNCED_AT instanceof Date ? r.SOURCE_SYNCED_AT.toISOString() : r.SOURCE_SYNCED_AT,
       SOURCE_AMOUNT_ILS: r.SOURCE_AMOUNT_ILS != null ? Number(r.SOURCE_AMOUNT_ILS) : null,
       MONTHLY_SOURCE_ILS: r.MONTHLY_SOURCE_ILS || null, // JSONB returns parsed object from node-postgres
+      MONTHLY_RAW_ILS: r.MONTHLY_RAW_ILS || null,
       USER_OVERRIDE_AMOUNT_ILS: r.USER_OVERRIDE_AMOUNT_ILS != null ? Number(r.USER_OVERRIDE_AMOUNT_ILS) : null,
       USER_OVERRIDE_PCT: r.USER_OVERRIDE_PCT != null ? Number(r.USER_OVERRIDE_PCT) : null,
       ANNUAL_BUDGET_TARGET_AMOUNT: r.ANNUAL_BUDGET_TARGET_AMOUNT != null ? Number(r.ANNUAL_BUDGET_TARGET_AMOUNT) : null,
