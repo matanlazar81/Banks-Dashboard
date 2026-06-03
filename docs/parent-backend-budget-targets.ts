@@ -181,36 +181,51 @@ async function populateBudgetTargets(opts: {
   const monthRows: any[] = await sf.query(sfSql);
 
   // Layer 2: FCT_EXPENSE overrides. Match on (year-month, department_id, account_number).
-  // Returns AMOUNT_ILS_CC if available, otherwise AMOUNT_EUR converted at 3.68.
-  const expenseColsRows: any[] = await sf.query(`
-    SELECT COLUMN_NAME FROM DL_PRODUCTION.INFORMATION_SCHEMA.COLUMNS
-    WHERE TABLE_SCHEMA = 'FINANCE' AND TABLE_NAME = 'FCT_EXPENSE'
-  `);
-  const expenseCols = new Set<string>(expenseColsRows.map(r => r.COLUMN_NAME));
-  const hasExpenseIls = expenseCols.has('AMOUNT_ILS_CC');
-  const overrideRows: any[] = await sf.query(`
-    SELECT
-      e.DEPARTMENT_ID,
-      g.GL_ACCOUNT_NUMBER,
-      e.CAL_MONTH_START_DATE::VARCHAR AS MONTH_STR,
-      ${hasExpenseIls ? 'ROUND(e.AMOUNT_ILS_CC, 2)' : 'ROUND(e.AMOUNT_EUR_CC * 3.68, 2)'} AS AMOUNT_ILS,
-      e.SOURCE
-    FROM DL_PRODUCTION.FINANCE.FCT_EXPENSE e
-    JOIN DL_PRODUCTION.FINANCE.DIM_GL_ACCOUNT g ON e.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
-    WHERE e.SOURCE IN ('future_cost_override', 'future_cost_increment')
-      AND e.SUBSIDIARY_ID = ${subsidiary}
-      AND EXTRACT(YEAR FROM e.CAL_MONTH_START_DATE) IN (${years.join(',')})
-  `);
-  // Index overrides by composite key: "YYYY-MM|dept_id|account_number".
+  // Defensive: any failure here (missing columns, query errors) skips overrides
+  // so Sync still produces Layer 1 + Layer 3 figures rather than blowing up.
   const overrideIndex = new Map<string, { amount: number; mode: 'Override' | 'Increment' }>();
-  for (const ov of overrideRows) {
-    const mKey = (ov.MONTH_STR || '').substring(0, 7); // "2026-07"
-    if (!mKey) continue;
-    const key = `${mKey}|${ov.DEPARTMENT_ID}|${ov.GL_ACCOUNT_NUMBER}`;
-    overrideIndex.set(key, {
-      amount: Number(ov.AMOUNT_ILS) || 0,
-      mode: ov.SOURCE === 'future_cost_override' ? 'Override' : 'Increment',
-    });
+  try {
+    const expenseColsRows: any[] = await sf.query(`
+      SELECT COLUMN_NAME FROM DL_PRODUCTION.INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = 'FINANCE' AND TABLE_NAME = 'FCT_EXPENSE'
+    `);
+    const expenseCols = new Set<string>(expenseColsRows.map(r => r.COLUMN_NAME));
+    // Pick the best available amount column. FCT_EXPENSE column naming differs across
+    // environments — try the *_CC currency-converted ones first, then the plain names.
+    let amountExpr: string | null = null;
+    if (expenseCols.has('AMOUNT_ILS_CC'))      amountExpr = 'ROUND(e.AMOUNT_ILS_CC, 2)';
+    else if (expenseCols.has('AMOUNT_ILS'))    amountExpr = 'ROUND(e.AMOUNT_ILS, 2)';
+    else if (expenseCols.has('AMOUNT_EUR_CC')) amountExpr = 'ROUND(e.AMOUNT_EUR_CC * 3.68, 2)';
+    else if (expenseCols.has('AMOUNT_EUR'))    amountExpr = 'ROUND(e.AMOUNT_EUR * 3.68, 2)';
+
+    if (amountExpr) {
+      const overrideRows: any[] = await sf.query(`
+        SELECT
+          e.DEPARTMENT_ID,
+          g.GL_ACCOUNT_NUMBER,
+          e.CAL_MONTH_START_DATE::VARCHAR AS MONTH_STR,
+          ${amountExpr} AS AMOUNT_ILS,
+          e.SOURCE
+        FROM DL_PRODUCTION.FINANCE.FCT_EXPENSE e
+        JOIN DL_PRODUCTION.FINANCE.DIM_GL_ACCOUNT g ON e.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
+        WHERE e.SOURCE IN ('future_cost_override', 'future_cost_increment')
+          AND e.SUBSIDIARY_ID = ${subsidiary}
+          AND EXTRACT(YEAR FROM e.CAL_MONTH_START_DATE) IN (${years.join(',')})
+      `);
+      // Index overrides by composite key: "YYYY-MM|dept_id|account_number".
+      for (const ov of overrideRows) {
+        const mKey = (ov.MONTH_STR || '').substring(0, 7); // "2026-07"
+        if (!mKey) continue;
+        const key = `${mKey}|${ov.DEPARTMENT_ID}|${ov.GL_ACCOUNT_NUMBER}`;
+        overrideIndex.set(key, {
+          amount: Number(ov.AMOUNT_ILS) || 0,
+          mode: ov.SOURCE === 'future_cost_override' ? 'Override' : 'Increment',
+        });
+      }
+    }
+  } catch (overrideErr: any) {
+    // Don't block Sync if Layer 2 fails — log and continue with Layer 1 (+ Layer 3) only.
+    logger.warn?.(`Layer 2 (FCT_EXPENSE overrides) skipped: ${overrideErr?.message || overrideErr}`);
   }
 
   const elapsedMs = Date.now() - t0;
