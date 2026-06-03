@@ -704,45 +704,46 @@ function BudgetTargetsDrawer({
               ))}
             </div>
             <input type="text" placeholder="Filter dept / account…" value={filter} onChange={e => setFilter(e.target.value)}
-              className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 w-56 focus:ring-2 focus:ring-emerald-200" />
-            <button
-              onClick={() => {
-                const ccy = drawerCurrency;
-                const convert = (ilsVal: number | null): number | null => {
-                  if (ilsVal == null) return null;
-                  return ccy === 'EUR' ? Math.round(ilsVal / ILS_PER_EUR) : Math.round(ilsVal);
-                };
-                const exportRows = (filter ? visible : rows).map(r => {
-                  const monthly = r.MONTHLY_SOURCE_ILS || {};
-                  const out: Record<string, any> = {
-                    Department: r.DEPARTMENT,
-                    Location: r.LOCATION,
-                    'Source Currency': r.CURRENCY,
-                    'Account Number': r.ACCOUNT_NUMBER,
-                    'Account Name': r.ACCOUNT_NAME || '',
-                    'NetSuite Internal ID': r.NETSUITE_INTERNAL_NUMBER ?? '',
-                    [`Annual Source ${ccy}`]: convert(r.SOURCE_AMOUNT_ILS) ?? 0,
+              className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 w-40 focus:ring-2 focus:ring-emerald-200" />
+            {(['ILS', 'EUR'] as const).map(ccy => (
+              <button key={ccy}
+                onClick={() => {
+                  const convert = (ilsVal: number | null): number | null => {
+                    if (ilsVal == null) return null;
+                    return ccy === 'EUR' ? Math.round(ilsVal / ILS_PER_EUR) : Math.round(ilsVal);
                   };
-                  MONTH_LABELS.forEach((label, i) => {
-                    out[`${label} ${ccy}`] = convert(monthly[MONTH_KEYS[i]] ?? null) ?? 0;
+                  const exportRows = (filter ? visible : rows).map(r => {
+                    const monthly = r.MONTHLY_SOURCE_ILS || {};
+                    const out: Record<string, any> = {
+                      Department: r.DEPARTMENT,
+                      Location: r.LOCATION,
+                      'Source Currency': r.CURRENCY,
+                      'Account Number': r.ACCOUNT_NUMBER,
+                      'Account Name': r.ACCOUNT_NAME || '',
+                      'NetSuite Internal ID': r.NETSUITE_INTERNAL_NUMBER ?? '',
+                      [`Annual Source ${ccy}`]: convert(r.SOURCE_AMOUNT_ILS) ?? 0,
+                    };
+                    MONTH_LABELS.forEach((label, i) => {
+                      out[`${label} ${ccy}`] = convert(monthly[MONTH_KEYS[i]] ?? null) ?? 0;
+                    });
+                    out[`Override Amount ${ccy}`] = convert(r.USER_OVERRIDE_AMOUNT_ILS) ?? '';
+                    out['Override %'] = r.USER_OVERRIDE_PCT ?? '';
+                    out[`Annual Budget Target ${ccy}`] = convert(r.ANNUAL_BUDGET_TARGET_AMOUNT) ?? 0;
+                    out['Last Edited By'] = r.USER_EDITED_BY || '';
+                    out['Last Edited At'] = r.USER_EDITED_AT || '';
+                    return out;
                   });
-                  out[`Override Amount ${ccy}`] = convert(r.USER_OVERRIDE_AMOUNT_ILS) ?? '';
-                  out['Override %'] = r.USER_OVERRIDE_PCT ?? '';
-                  out[`Annual Budget Target ${ccy}`] = convert(r.ANNUAL_BUDGET_TARGET_AMOUNT) ?? 0;
-                  out['Last Edited By'] = r.USER_EDITED_BY || '';
-                  out['Last Edited At'] = r.USER_EDITED_AT || '';
-                  return out;
-                });
-                const ws = XLSX.utils.json_to_sheet(exportRows);
-                const wb = XLSX.utils.book_new();
-                XLSX.utils.book_append_sheet(wb, ws, `FY${year} ${ccy}`);
-                XLSX.writeFile(wb, `budget-targets-FY${year}-sub${subsidiary}-${ccy}.xlsx`);
-              }}
-              className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 rounded-lg px-3 py-1.5 font-medium whitespace-nowrap"
-              title={`Download the current view as an Excel file (${drawerCurrency})`}
-            >
-              ⬇ Excel ({drawerCurrency})
-            </button>
+                  const ws = XLSX.utils.json_to_sheet(exportRows);
+                  const wb = XLSX.utils.book_new();
+                  XLSX.utils.book_append_sheet(wb, ws, `FY${year} ${ccy}`);
+                  XLSX.writeFile(wb, `budget-targets-FY${year}-sub${subsidiary}-${ccy}.xlsx`);
+                }}
+                className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 rounded-lg px-3 py-1.5 font-medium whitespace-nowrap"
+                title={`Download the current view as an Excel file in ${ccy}`}
+              >
+                ⬇ Excel {ccy}
+              </button>
+            ))}
             <button
               onClick={onClose}
               className="text-xs text-gray-700 bg-white border border-gray-300 hover:bg-gray-100 rounded-lg px-3 py-1.5 font-medium whitespace-nowrap"
