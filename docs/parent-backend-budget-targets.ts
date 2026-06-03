@@ -100,10 +100,25 @@ function ensureBudgetTablesExist(): Promise<void> {
 ensureBudgetTablesExist().catch(e => logger.error('ensureBudgetTablesExist failed', e));
 
 // Pull Snowflake FCT_BUDGET → Postgres budget_target_by_dept_acct.
+// Layer 1: raw FCT_BUDGET monthly values.
+// Layer 2: FCT_EXPENSE overrides (future_cost_override = replace,
+//          future_cost_increment = add).
+// Layer 3: caller-supplied scenario adjustments — vendorCatAdj (non-payroll)
+//          and salaryDeptAdj (payroll), each shaped as { "YYYY-MM": { key: pct } }.
 // Idempotent: preserves user_override_* columns; deletes only rows that didn't
 // appear in this sync AND have no user override.
-async function populateBudgetTargets(opts: { subsidiary: number; years: number[] }) {
+async function populateBudgetTargets(opts: {
+  subsidiary: number;
+  years: number[];
+  scenarioAdj?: {
+    vendorCatAdj?: Record<string, Record<string, number>>;
+    salaryDeptAdj?: Record<string, Record<string, number>>;
+  };
+}) {
   const { subsidiary, years } = opts;
+  const scenarioAdj = opts.scenarioAdj || {};
+  const vendorCatAdj = scenarioAdj.vendorCatAdj || {};
+  const salaryDeptAdj = scenarioAdj.salaryDeptAdj || {};
   const sf: any = snowflakeService.getClient();
   if (!sf) throw new Error('Snowflake client not configured');
 
@@ -126,17 +141,21 @@ async function populateBudgetTargets(opts: { subsidiary: number; years: number[]
     hasDimLocation = new Set(dimRows.map(r => r.COLUMN_NAME)).has('LOCATION_NAME');
   }
 
-  // Fetch at monthly grain so we can store both an annual total and a per-month breakdown.
+  // Fetch at monthly grain. Includes CATEGORY (PARENT_GL_ACCOUNT_NAME),
+  // IS_PAYROLL and DEPARTMENT_ID so we can apply overrides and scenario adjustments.
   const sfSql = `
     SELECT
       EXTRACT(YEAR  FROM b.BUDGET_MONTH_DATE) AS FISCAL_YEAR,
       EXTRACT(MONTH FROM b.BUDGET_MONTH_DATE) AS MONTH_NUM,
+      b.DEPARTMENT_ID    AS DEPARTMENT_ID,
       COALESCE(d.DEPARTMENT_NAME, 'Unassigned') AS DEPARTMENT,
       ${hasLocationId && hasDimLocation ? `COALESCE(l.LOCATION_NAME, 'Unassigned')` : `'Unassigned'`} AS LOCATION,
       ${hasCurrencyCode ? `COALESCE(b.CURRENCY_CODE, 'ILS')` : `'ILS'`} AS CURRENCY,
       g.GL_ACCOUNT_NUMBER AS ACCOUNT_NUMBER,
       g.GL_ACCOUNT_NAME   AS ACCOUNT_NAME,
       g.GL_ACCOUNT_ID     AS NETSUITE_INTERNAL_NUMBER,
+      g.PARENT_GL_ACCOUNT_NAME AS CATEGORY,
+      g.IS_PAYROLL        AS IS_PAYROLL,
       ROUND(SUM(b.AMOUNT_ILS_CC), 2) AS MONTH_AMOUNT_ILS,
       b.SUBSIDIARY_ID     AS SUBSIDIARY_ID
     FROM DL_PRODUCTION.FINANCE.FCT_BUDGET b
@@ -150,14 +169,50 @@ async function populateBudgetTargets(opts: { subsidiary: number; years: number[]
     GROUP BY
       EXTRACT(YEAR  FROM b.BUDGET_MONTH_DATE),
       EXTRACT(MONTH FROM b.BUDGET_MONTH_DATE),
-      d.DEPARTMENT_NAME,
+      b.DEPARTMENT_ID, d.DEPARTMENT_NAME,
       ${hasLocationId && hasDimLocation ? 'l.LOCATION_NAME,' : ''}
       ${hasCurrencyCode ? 'b.CURRENCY_CODE,' : ''}
-      g.GL_ACCOUNT_NUMBER, g.GL_ACCOUNT_NAME, g.GL_ACCOUNT_ID, b.SUBSIDIARY_ID
+      g.GL_ACCOUNT_NUMBER, g.GL_ACCOUNT_NAME, g.GL_ACCOUNT_ID,
+      g.PARENT_GL_ACCOUNT_NAME, g.IS_PAYROLL,
+      b.SUBSIDIARY_ID
   `;
 
   const t0 = Date.now();
   const monthRows: any[] = await sf.query(sfSql);
+
+  // Layer 2: FCT_EXPENSE overrides. Match on (year-month, department_id, account_number).
+  // Returns AMOUNT_ILS_CC if available, otherwise AMOUNT_EUR converted at 3.68.
+  const expenseColsRows: any[] = await sf.query(`
+    SELECT COLUMN_NAME FROM DL_PRODUCTION.INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA = 'FINANCE' AND TABLE_NAME = 'FCT_EXPENSE'
+  `);
+  const expenseCols = new Set<string>(expenseColsRows.map(r => r.COLUMN_NAME));
+  const hasExpenseIls = expenseCols.has('AMOUNT_ILS_CC');
+  const overrideRows: any[] = await sf.query(`
+    SELECT
+      e.DEPARTMENT_ID,
+      g.GL_ACCOUNT_NUMBER,
+      e.CAL_MONTH_START_DATE::VARCHAR AS MONTH_STR,
+      ${hasExpenseIls ? 'ROUND(e.AMOUNT_ILS_CC, 2)' : 'ROUND(e.AMOUNT_EUR_CC * 3.68, 2)'} AS AMOUNT_ILS,
+      e.SOURCE
+    FROM DL_PRODUCTION.FINANCE.FCT_EXPENSE e
+    JOIN DL_PRODUCTION.FINANCE.DIM_GL_ACCOUNT g ON e.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
+    WHERE e.SOURCE IN ('future_cost_override', 'future_cost_increment')
+      AND e.SUBSIDIARY_ID = ${subsidiary}
+      AND EXTRACT(YEAR FROM e.CAL_MONTH_START_DATE) IN (${years.join(',')})
+  `);
+  // Index overrides by composite key: "YYYY-MM|dept_id|account_number".
+  const overrideIndex = new Map<string, { amount: number; mode: 'Override' | 'Increment' }>();
+  for (const ov of overrideRows) {
+    const mKey = (ov.MONTH_STR || '').substring(0, 7); // "2026-07"
+    if (!mKey) continue;
+    const key = `${mKey}|${ov.DEPARTMENT_ID}|${ov.GL_ACCOUNT_NUMBER}`;
+    overrideIndex.set(key, {
+      amount: Number(ov.AMOUNT_ILS) || 0,
+      mode: ov.SOURCE === 'future_cost_override' ? 'Override' : 'Increment',
+    });
+  }
+
   const elapsedMs = Date.now() - t0;
 
   // Group monthly rows into one entry per (year, subsidiary, dept, location, account, currency).
@@ -165,6 +220,7 @@ async function populateBudgetTargets(opts: { subsidiary: number; years: number[]
     FISCAL_YEAR: number; SUBSIDIARY_ID: number; DEPARTMENT: string; LOCATION: string;
     CURRENCY: string; ACCOUNT_NUMBER: string; ACCOUNT_NAME: string | null;
     NETSUITE_INTERNAL_NUMBER: number | null;
+    CATEGORY: string | null; IS_PAYROLL: boolean;
     annual: number; monthly: Record<string, number>;
   };
   const groups = new Map<string, Aggregated>();
@@ -181,13 +237,36 @@ async function populateBudgetTargets(opts: { subsidiary: number; years: number[]
         ACCOUNT_NUMBER: String(r.ACCOUNT_NUMBER || ''),
         ACCOUNT_NAME: r.ACCOUNT_NAME || null,
         NETSUITE_INTERNAL_NUMBER: r.NETSUITE_INTERNAL_NUMBER != null ? Number(r.NETSUITE_INTERNAL_NUMBER) : null,
+        CATEGORY: r.CATEGORY || null,
+        IS_PAYROLL: r.IS_PAYROLL === true || r.IS_PAYROLL === 'true' || r.IS_PAYROLL === 1,
         annual: 0,
         monthly: {},
       };
       groups.set(key, g);
     }
-    const amt = r.MONTH_AMOUNT_ILS != null ? Number(r.MONTH_AMOUNT_ILS) : 0;
-    const mkey = String(Number(r.MONTH_NUM)).padStart(2, '0'); // "01" .. "12"
+    let amt = r.MONTH_AMOUNT_ILS != null ? Number(r.MONTH_AMOUNT_ILS) : 0;
+    const mNum = Number(r.MONTH_NUM);
+    const mkey = String(mNum).padStart(2, '0'); // "01" .. "12"
+    const ymKey = `${r.FISCAL_YEAR}-${mkey}`;
+
+    // Layer 2: FCT_EXPENSE override at (ym, dept_id, account).
+    const ovKey = `${ymKey}|${r.DEPARTMENT_ID}|${r.ACCOUNT_NUMBER}`;
+    const ov = overrideIndex.get(ovKey);
+    if (ov) {
+      amt = ov.mode === 'Override' ? ov.amount : amt + ov.amount;
+    }
+
+    // Layer 3: scenario adjustment. Percent of the post-override monthly amount.
+    //  - payroll rows  → salaryDeptAdj[ym][department_name]
+    //  - non-payroll  → vendorCatAdj[ym][category]
+    let scenarioPct = 0;
+    if (g.IS_PAYROLL) {
+      scenarioPct = salaryDeptAdj[ymKey]?.[g.DEPARTMENT] || 0;
+    } else if (g.CATEGORY) {
+      scenarioPct = vendorCatAdj[ymKey]?.[g.CATEGORY] || 0;
+    }
+    if (scenarioPct) amt = amt * (1 + scenarioPct / 100);
+
     g.monthly[mkey] = (g.monthly[mkey] || 0) + amt;
     g.annual += amt;
   }
@@ -292,8 +371,15 @@ router.post('/sync-budget-targets', bankRole, async (req: any, res: Response) =>
     if (years.length === 0) {
       return res.status(400).json({ ok: false, error: 'year query param required, e.g. ?year=2026' });
     }
+    // Optional Layer 3 scenario adjustments from the caller (frontend extracts
+    // these from the active scenario's vendorCatAdj / salaryDeptAdj).
+    const body = (req.body || {}) as any;
+    const scenarioAdj = {
+      vendorCatAdj: body.vendorCatAdj && typeof body.vendorCatAdj === 'object' ? body.vendorCatAdj : undefined,
+      salaryDeptAdj: body.salaryDeptAdj && typeof body.salaryDeptAdj === 'object' ? body.salaryDeptAdj : undefined,
+    };
     await ensureBudgetTablesExist();
-    const result = await populateBudgetTargets({ subsidiary, years });
+    const result = await populateBudgetTargets({ subsidiary, years, scenarioAdj });
     res.json({ ok: true, triggeredBy: email, ...result });
   } catch (e: any) {
     logger.error('sync-budget-targets failed', e);
