@@ -628,6 +628,11 @@ type BudgetTargetRow = {
 const MONTH_KEYS = ['01','02','03','04','05','06','07','08','09','10','11','12'] as const;
 const MONTH_LABELS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'] as const;
 
+// ILS → EUR conversion rate. Matches the 3.68 rate used elsewhere in the codebase
+// (see snowflake-api.cjs revenue/budget conversions). Frontend-only conversion so
+// the stored values (in ILS) are not modified.
+const ILS_PER_EUR = 3.68;
+
 function BudgetTargetsDrawer({
   open, onClose, subsidiary, year,
 }: { open: boolean; onClose: () => void; subsidiary: number; year: number; }) {
@@ -635,6 +640,7 @@ function BudgetTargetsDrawer({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
+  const [drawerCurrency, setDrawerCurrency] = useState<'ILS' | 'EUR'>('ILS');
 
   const reload = useCallback(() => {
     setLoading(true);
@@ -672,7 +678,11 @@ function BudgetTargetsDrawer({
   const visible = filter
     ? rows.filter(r => (r.DEPARTMENT + ' ' + r.ACCOUNT_NUMBER + ' ' + (r.ACCOUNT_NAME || '')).toLowerCase().includes(filter.toLowerCase()))
     : rows;
-  const fmtILS = (v: number | null) => v == null ? '—' : Math.round(v).toLocaleString('en-GB');
+  const toCcy = (ilsVal: number | null): number | null => {
+    if (ilsVal == null) return null;
+    return drawerCurrency === 'EUR' ? ilsVal / ILS_PER_EUR : ilsVal;
+  };
+  const fmtMoney = (v: number | null) => v == null ? '—' : Math.round(v).toLocaleString('en-GB');
 
   return (
     <div className="fixed inset-0 z-40 flex justify-end" onClick={onClose}>
@@ -684,40 +694,54 @@ function BudgetTargetsDrawer({
             <p className="text-xs text-gray-500">Override absolute amount or % adjustment. Source values come from Snowflake via Sync.</p>
           </div>
           <div className="flex items-center gap-2">
+            <div className="inline-flex bg-gray-100 rounded-lg p-0.5">
+              {(['ILS', 'EUR'] as const).map(c => (
+                <button key={c}
+                  onClick={() => setDrawerCurrency(c)}
+                  className={`text-xs px-3 py-1 rounded-md font-semibold transition-colors ${drawerCurrency === c ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                  title={`Display amounts in ${c}`}
+                >{c}</button>
+              ))}
+            </div>
             <input type="text" placeholder="Filter dept / account…" value={filter} onChange={e => setFilter(e.target.value)}
               className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 w-56 focus:ring-2 focus:ring-emerald-200" />
             <button
               onClick={() => {
+                const ccy = drawerCurrency;
+                const convert = (ilsVal: number | null): number | null => {
+                  if (ilsVal == null) return null;
+                  return ccy === 'EUR' ? Math.round(ilsVal / ILS_PER_EUR) : Math.round(ilsVal);
+                };
                 const exportRows = (filter ? visible : rows).map(r => {
                   const monthly = r.MONTHLY_SOURCE_ILS || {};
                   const out: Record<string, any> = {
                     Department: r.DEPARTMENT,
                     Location: r.LOCATION,
-                    Currency: r.CURRENCY,
+                    'Source Currency': r.CURRENCY,
                     'Account Number': r.ACCOUNT_NUMBER,
                     'Account Name': r.ACCOUNT_NAME || '',
                     'NetSuite Internal ID': r.NETSUITE_INTERNAL_NUMBER ?? '',
-                    'Annual Source ILS': r.SOURCE_AMOUNT_ILS ?? 0,
+                    [`Annual Source ${ccy}`]: convert(r.SOURCE_AMOUNT_ILS) ?? 0,
                   };
                   MONTH_LABELS.forEach((label, i) => {
-                    out[label] = monthly[MONTH_KEYS[i]] ?? 0;
+                    out[`${label} ${ccy}`] = convert(monthly[MONTH_KEYS[i]] ?? null) ?? 0;
                   });
-                  out['Override Amount ILS'] = r.USER_OVERRIDE_AMOUNT_ILS ?? '';
+                  out[`Override Amount ${ccy}`] = convert(r.USER_OVERRIDE_AMOUNT_ILS) ?? '';
                   out['Override %'] = r.USER_OVERRIDE_PCT ?? '';
-                  out['Annual Budget Target Amount'] = r.ANNUAL_BUDGET_TARGET_AMOUNT ?? 0;
+                  out[`Annual Budget Target ${ccy}`] = convert(r.ANNUAL_BUDGET_TARGET_AMOUNT) ?? 0;
                   out['Last Edited By'] = r.USER_EDITED_BY || '';
                   out['Last Edited At'] = r.USER_EDITED_AT || '';
                   return out;
                 });
                 const ws = XLSX.utils.json_to_sheet(exportRows);
                 const wb = XLSX.utils.book_new();
-                XLSX.utils.book_append_sheet(wb, ws, `FY${year} Sub${subsidiary}`);
-                XLSX.writeFile(wb, `budget-targets-FY${year}-sub${subsidiary}.xlsx`);
+                XLSX.utils.book_append_sheet(wb, ws, `FY${year} ${ccy}`);
+                XLSX.writeFile(wb, `budget-targets-FY${year}-sub${subsidiary}-${ccy}.xlsx`);
               }}
               className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 rounded-lg px-3 py-1.5 font-medium whitespace-nowrap"
-              title="Download the current view as an Excel file"
+              title={`Download the current view as an Excel file (${drawerCurrency})`}
             >
-              ⬇ Excel
+              ⬇ Excel ({drawerCurrency})
             </button>
             <button
               onClick={onClose}
@@ -732,19 +756,19 @@ function BudgetTargetsDrawer({
           {loading ? <div className="p-6 text-center text-sm text-gray-500">Loading…</div>
             : visible.length === 0 ? <div className="p-6 text-center text-sm text-gray-500">No rows. Click Sync to load from Snowflake.</div>
             : (
-            <table className="text-xs" style={{ minWidth: '1600px' }}>
-              <thead className="bg-gray-50 sticky top-0 z-10">
-                <tr className="text-left text-gray-600">
-                  <th className="px-3 py-2 font-semibold sticky left-0 bg-gray-50 z-20">Department</th>
-                  <th className="px-3 py-2 font-semibold sticky left-[120px] bg-gray-50 z-20">Account</th>
-                  <th className="px-3 py-2 font-semibold text-right">Annual Source ILS</th>
+            <table className="text-xs border-collapse" style={{ minWidth: '2000px' }}>
+              <thead className="bg-gray-100 sticky top-0 z-10">
+                <tr className="text-left text-gray-700">
+                  <th className="px-3 py-2 font-bold border-b border-gray-300 min-w-[120px]">Department</th>
+                  <th className="px-3 py-2 font-bold border-b border-gray-300 min-w-[200px]">Account</th>
+                  <th className="px-3 py-2 font-bold text-right border-b border-gray-300 min-w-[130px]">Annual Source {drawerCurrency}</th>
                   {MONTH_LABELS.map(m => (
-                    <th key={m} className="px-2 py-2 font-semibold text-right text-[10px] text-gray-500">{m}</th>
+                    <th key={m} className="px-2 py-2 font-bold text-right text-xs text-gray-700 border-b border-gray-300 min-w-[80px]">{m}</th>
                   ))}
-                  <th className="px-3 py-2 font-semibold text-right">Override Amount</th>
-                  <th className="px-3 py-2 font-semibold text-right">Override %</th>
-                  <th className="px-3 py-2 font-semibold text-right">Final ILS</th>
-                  <th className="px-3 py-2 font-semibold">Last edit</th>
+                  <th className="px-3 py-2 font-bold text-right border-b border-gray-300 min-w-[130px]">Override Amount</th>
+                  <th className="px-3 py-2 font-bold text-right border-b border-gray-300 min-w-[90px]">Override %</th>
+                  <th className="px-3 py-2 font-bold text-right border-b border-gray-300 min-w-[130px]">Final {drawerCurrency}</th>
+                  <th className="px-3 py-2 font-bold border-b border-gray-300 min-w-[120px]">Last edit</th>
                 </tr>
               </thead>
               <tbody>
@@ -754,17 +778,18 @@ function BudgetTargetsDrawer({
                   const rowBg = hasOverride ? 'bg-amber-50/30' : '';
                   return (
                     <tr key={key} className={`border-b border-gray-100 hover:bg-gray-50 ${rowBg}`}>
-                      <td className={`px-3 py-1.5 sticky left-0 z-10 ${rowBg || 'bg-white'}`}>{r.DEPARTMENT}</td>
-                      <td className={`px-3 py-1.5 sticky left-[120px] z-10 ${rowBg || 'bg-white'}`}>
+                      <td className="px-3 py-1.5">{r.DEPARTMENT}</td>
+                      <td className="px-3 py-1.5">
                         <div className="font-mono text-[11px] text-gray-700">{r.ACCOUNT_NUMBER}</div>
-                        <div className="text-[10px] text-gray-500 truncate max-w-[220px]">{r.ACCOUNT_NAME || ''}</div>
+                        <div className="text-[10px] text-gray-500 truncate max-w-[260px]">{r.ACCOUNT_NAME || ''}</div>
                       </td>
-                      <td className="px-3 py-1.5 text-right font-mono">{fmtILS(r.SOURCE_AMOUNT_ILS)}</td>
+                      <td className="px-3 py-1.5 text-right font-mono">{fmtMoney(toCcy(r.SOURCE_AMOUNT_ILS))}</td>
                       {MONTH_KEYS.map(mk => {
-                        const v = r.MONTHLY_SOURCE_ILS ? r.MONTHLY_SOURCE_ILS[mk] : null;
+                        const ils = r.MONTHLY_SOURCE_ILS ? r.MONTHLY_SOURCE_ILS[mk] : null;
+                        const v = ils == null || ils === 0 ? null : (drawerCurrency === 'EUR' ? ils / ILS_PER_EUR : ils);
                         return (
-                          <td key={mk} className="px-2 py-1.5 text-right font-mono text-[10px] text-gray-600">
-                            {v == null || v === 0 ? '—' : Math.round(v).toLocaleString('en-GB')}
+                          <td key={mk} className="px-2 py-1.5 text-right font-mono text-[11px] text-gray-700">
+                            {v == null ? '—' : Math.round(v).toLocaleString('en-GB')}
                           </td>
                         );
                       })}
@@ -790,7 +815,7 @@ function BudgetTargetsDrawer({
                           className="w-20 text-right text-xs border border-gray-200 rounded px-1.5 py-0.5 focus:ring-2 focus:ring-emerald-200 disabled:bg-gray-50"
                           placeholder="—" />
                       </td>
-                      <td className={`px-3 py-1.5 text-right font-mono font-semibold ${hasOverride ? 'text-amber-700' : 'text-gray-700'}`}>{fmtILS(r.ANNUAL_BUDGET_TARGET_AMOUNT)}</td>
+                      <td className={`px-3 py-1.5 text-right font-mono font-semibold ${hasOverride ? 'text-amber-700' : 'text-gray-700'}`}>{fmtMoney(toCcy(r.ANNUAL_BUDGET_TARGET_AMOUNT))}</td>
                       <td className="px-3 py-1.5 text-[10px] text-gray-500">
                         {r.USER_EDITED_BY ? <><div>{r.USER_EDITED_BY.split('@')[0]}</div><div>{r.USER_EDITED_AT?.slice(0, 16)}</div></> : '—'}
                       </td>
