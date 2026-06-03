@@ -685,9 +685,9 @@ function BudgetTargetsDrawer({
   const fmtMoney = (v: number | null) => v == null ? '—' : Math.round(v).toLocaleString('en-GB');
 
   return (
-    <div className="fixed inset-0 z-40 flex justify-end" onClick={onClose}>
-      <div className="absolute inset-0 bg-black/30" />
-      <div className="relative w-[min(95vw,1100px)] h-full bg-white shadow-2xl flex flex-col" onClick={e => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-[1px]" />
+      <div className="relative w-[min(98vw,1700px)] h-[min(92vh,950px)] bg-white shadow-2xl flex flex-col rounded-xl overflow-hidden" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-3 border-b bg-gray-50">
           <div>
             <h2 className="text-base font-bold text-gray-800">Budget Targets — FY{year} · Subsidiary {subsidiary}</h2>
