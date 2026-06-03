@@ -3626,7 +3626,14 @@ useEffect(() => {
               <div className="space-y-1 max-h-[40vh] overflow-y-auto">
                 {visibleBudgetEdits.slice(0, 8).map(e => {
                   const who = (e.EDITED_BY || 'Someone').split('@')[0];
-                  const when = new Date(e.EDITED_AT.replace(' ', 'T') + 'Z').toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+                  // Accept both PostgreSQL ISO ("2026-06-03T13:38:54.000Z") and
+                  // SQLite-style ("2026-06-03 13:38:54", treated as UTC).
+                  const parseEditedAt = (s: string): Date => {
+                    if (!s) return new Date(NaN);
+                    if (/[zZ]$|[+\-]\d\d:?\d\d$/.test(s)) return new Date(s);
+                    return new Date(s.replace(' ', 'T') + 'Z');
+                  };
+                  const when = parseEditedAt(e.EDITED_AT).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
                   const fld = e.FIELD_NAME === 'USER_OVERRIDE_AMOUNT_ILS' ? 'override amount'
                             : e.FIELD_NAME === 'USER_OVERRIDE_PCT' ? 'override %'
                             : e.FIELD_NAME;
