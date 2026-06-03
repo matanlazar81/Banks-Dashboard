@@ -4000,8 +4000,9 @@ useEffect(() => {
                     if (result.ok) {
                       const s = (result.summary || [])[0];
                       const rows = s ? s.rowCount : 0;
+                      const fb = result.fallbackFromYear;
                       setBudgetSyncStatus('success');
-                      setBudgetSyncMsg(`Synced ${rows} rows for ${yr}`);
+                      setBudgetSyncMsg(fb ? `Synced ${rows} rows for ${yr} (from ${fb})` : `Synced ${rows} rows for ${yr}`);
                       setTimeout(() => setBudgetSyncStatus('idle'), 4000);
                     } else {
                       setBudgetSyncStatus('error');

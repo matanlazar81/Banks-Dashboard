@@ -230,6 +230,8 @@ async function populateBudgetTargets(opts: {
 
   const elapsedMs = Date.now() - t0;
 
+  const MONTH_KEYS_LIST = ['01','02','03','04','05','06','07','08','09','10','11','12'] as const;
+
   // Group monthly rows into one entry per (year, subsidiary, dept, location, account, currency).
   type Aggregated = {
     FISCAL_YEAR: number; SUBSIDIARY_ID: number; DEPARTMENT: string; LOCATION: string;
@@ -287,7 +289,80 @@ async function populateBudgetTargets(opts: {
   }
 
   // Drop rows whose annual is effectively zero (matches the prior HAVING > 0 filter).
-  const rowsToWrite = [...groups.values()].filter(g => Math.abs(g.annual) > 0);
+  let rowsToWrite = [...groups.values()].filter(g => Math.abs(g.annual) > 0);
+  let fallbackUsedFromYear: number | null = null;
+
+  // Fallback for years not yet in Snowflake (e.g. FY2027 before FP&A loads it):
+  // if a requested year produced no rows, try copying year-1's Postgres rows.
+  // Scenario adjustments (Layer 3) are then applied with the TARGET year's keys.
+  for (const targetYear of years) {
+    if (rowsToWrite.some(r => r.FISCAL_YEAR === targetYear)) continue; // got data from Snowflake
+    const sourceYear = targetYear - 1;
+    const prev = await pool.query(
+      `SELECT department, location, currency, account_number, account_name,
+              netsuite_internal_number, source_amount_ils, monthly_source_ils, subsidiary_id
+       FROM budget_target_by_dept_acct
+       WHERE fiscal_year = $1 AND subsidiary_id = $2`,
+      [sourceYear, subsidiary]
+    );
+    if (prev.rows.length === 0) continue;
+    fallbackUsedFromYear = sourceYear;
+
+    // Re-query account category / payroll flag so Layer 3 can apply.
+    const accountIds = [...new Set(prev.rows.map((r: any) => r.netsuite_internal_number).filter((x: any) => x != null))];
+    const accountMeta = new Map<number, { category: string | null; isPayroll: boolean }>();
+    if (accountIds.length > 0) {
+      try {
+        const metaRows: any[] = await sf.query(`
+          SELECT GL_ACCOUNT_ID, PARENT_GL_ACCOUNT_NAME AS CATEGORY, IS_PAYROLL
+          FROM DL_PRODUCTION.FINANCE.DIM_GL_ACCOUNT
+          WHERE GL_ACCOUNT_ID IN (${accountIds.join(',')})
+        `);
+        for (const m of metaRows) {
+          accountMeta.set(Number(m.GL_ACCOUNT_ID), {
+            category: m.CATEGORY || null,
+            isPayroll: m.IS_PAYROLL === true || m.IS_PAYROLL === 'true' || m.IS_PAYROLL === 1,
+          });
+        }
+      } catch (e: any) {
+        logger.warn?.(`Account metadata lookup failed in fallback: ${e?.message || e}`);
+      }
+    }
+
+    for (const r of prev.rows) {
+      const meta = accountMeta.get(Number(r.netsuite_internal_number)) || { category: null, isPayroll: false };
+      const monthlyRaw: Record<string, any> = typeof r.monthly_source_ils === 'string'
+        ? (() => { try { return JSON.parse(r.monthly_source_ils); } catch { return {}; } })()
+        : (r.monthly_source_ils || {});
+      const adjustedMonthly: Record<string, number> = {};
+      let annual = 0;
+      for (const mkey of MONTH_KEYS_LIST) {
+        let amt = Number(monthlyRaw[mkey]) || 0;
+        const ymKey = `${targetYear}-${mkey}`;
+        let scenarioPct = 0;
+        if (meta.isPayroll) scenarioPct = salaryDeptAdj[ymKey]?.[r.department] || 0;
+        else if (meta.category) scenarioPct = vendorCatAdj[ymKey]?.[meta.category] || 0;
+        if (scenarioPct) amt = amt * (1 + scenarioPct / 100);
+        if (amt !== 0) adjustedMonthly[mkey] = amt;
+        annual += amt;
+      }
+      if (Math.abs(annual) === 0) continue;
+      rowsToWrite.push({
+        FISCAL_YEAR: targetYear,
+        SUBSIDIARY_ID: Number(r.subsidiary_id),
+        DEPARTMENT: r.department,
+        LOCATION: r.location,
+        CURRENCY: r.currency,
+        ACCOUNT_NUMBER: r.account_number,
+        ACCOUNT_NAME: r.account_name,
+        NETSUITE_INTERNAL_NUMBER: r.netsuite_internal_number != null ? Number(r.netsuite_internal_number) : null,
+        CATEGORY: meta.category,
+        IS_PAYROLL: meta.isPayroll,
+        annual,
+        monthly: adjustedMonthly,
+      });
+    }
+  }
 
   const syncStart = new Date();
   let deletedOrphans = 0;
@@ -358,6 +433,7 @@ async function populateBudgetTargets(opts: {
     rowCount: rowsToWrite.length,
     elapsedMs,
     deletedOrphans,
+    fallbackFromYear: fallbackUsedFromYear,
     summary: summary.rows.map((s: any) => ({
       fiscalYear: Number(s.fiscal_year),
       rowCount: Number(s.row_count),
