@@ -3989,7 +3989,13 @@ useEffect(() => {
                   setBudgetSyncStatus('syncing');
                   setBudgetSyncMsg('');
                   try {
-                    const resp = await fetch(`/api/sync-budget-targets?year=${yr}&subsidiary=${sub}`, { method: 'POST' });
+                    // Layer 3: send the currently-loaded scenario's category/dept adjustments.
+                    // Server applies them on top of FCT_BUDGET (Layer 1) + FCT_EXPENSE overrides (Layer 2).
+                    const resp = await fetch(`/api/sync-budget-targets?year=${yr}&subsidiary=${sub}`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ vendorCatAdj, salaryDeptAdj }),
+                    });
                     const result = await resp.json();
                     if (result.ok) {
                       const s = (result.summary || [])[0];
