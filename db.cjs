@@ -87,6 +87,12 @@ function migrate(d) {
     CREATE INDEX IF NOT EXISTS IDX_EDIT_LOG_SCOPE
       ON BUDGET_TARGET_EDIT_LOG (FISCAL_YEAR, SUBSIDIARY_ID, EDITED_AT);
   `);
+
+  // Idempotent migration: add monthly breakdown column (JSON string in SQLite).
+  const cols2 = d.prepare("PRAGMA table_info('FCT_BUDGET_TARGET_BY_DEPT_ACCT')").all();
+  if (!cols2.some((c) => c.name === 'MONTHLY_SOURCE_ILS')) {
+    d.exec(`ALTER TABLE FCT_BUDGET_TARGET_BY_DEPT_ACCT ADD COLUMN MONTHLY_SOURCE_ILS TEXT;`);
+  }
 }
 
 module.exports = { getDb, DB_PATH };

@@ -615,6 +615,7 @@ type BudgetTargetRow = {
   ACCOUNT_NUMBER: string; ACCOUNT_NAME: string | null;
   NETSUITE_INTERNAL_NUMBER: number | null;
   SOURCE_AMOUNT_ILS: number | null;
+  MONTHLY_SOURCE_ILS: Record<string, number> | null;
   USER_OVERRIDE_AMOUNT_ILS: number | null;
   USER_OVERRIDE_PCT: number | null;
   ANNUAL_BUDGET_TARGET_AMOUNT: number | null;
@@ -623,6 +624,9 @@ type BudgetTargetRow = {
   USER_EDITED_AT: string | null;
   SOURCE_SYNCED_AT: string | null;
 };
+
+const MONTH_KEYS = ['01','02','03','04','05','06','07','08','09','10','11','12'] as const;
+const MONTH_LABELS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'] as const;
 
 function BudgetTargetsDrawer({
   open, onClose, subsidiary, year,
@@ -689,12 +693,15 @@ function BudgetTargetsDrawer({
           {loading ? <div className="p-6 text-center text-sm text-gray-500">Loading…</div>
             : visible.length === 0 ? <div className="p-6 text-center text-sm text-gray-500">No rows. Click Sync to load from Snowflake.</div>
             : (
-            <table className="w-full text-xs">
+            <table className="text-xs" style={{ minWidth: '1600px' }}>
               <thead className="bg-gray-50 sticky top-0 z-10">
                 <tr className="text-left text-gray-600">
-                  <th className="px-3 py-2 font-semibold">Department</th>
-                  <th className="px-3 py-2 font-semibold">Account</th>
-                  <th className="px-3 py-2 font-semibold text-right">Source ILS</th>
+                  <th className="px-3 py-2 font-semibold sticky left-0 bg-gray-50 z-20">Department</th>
+                  <th className="px-3 py-2 font-semibold sticky left-[120px] bg-gray-50 z-20">Account</th>
+                  <th className="px-3 py-2 font-semibold text-right">Annual Source ILS</th>
+                  {MONTH_LABELS.map(m => (
+                    <th key={m} className="px-2 py-2 font-semibold text-right text-[10px] text-gray-500">{m}</th>
+                  ))}
                   <th className="px-3 py-2 font-semibold text-right">Override Amount</th>
                   <th className="px-3 py-2 font-semibold text-right">Override %</th>
                   <th className="px-3 py-2 font-semibold text-right">Final ILS</th>
@@ -705,14 +712,23 @@ function BudgetTargetsDrawer({
                 {visible.map(r => {
                   const key = `${r.DEPARTMENT}::${r.LOCATION}::${r.ACCOUNT_NUMBER}::${r.CURRENCY}`;
                   const hasOverride = r.USER_OVERRIDE_AMOUNT_ILS != null || r.USER_OVERRIDE_PCT != null;
+                  const rowBg = hasOverride ? 'bg-amber-50/30' : '';
                   return (
-                    <tr key={key} className={`border-b border-gray-100 hover:bg-gray-50 ${hasOverride ? 'bg-amber-50/30' : ''}`}>
-                      <td className="px-3 py-1.5">{r.DEPARTMENT}</td>
-                      <td className="px-3 py-1.5">
+                    <tr key={key} className={`border-b border-gray-100 hover:bg-gray-50 ${rowBg}`}>
+                      <td className={`px-3 py-1.5 sticky left-0 z-10 ${rowBg || 'bg-white'}`}>{r.DEPARTMENT}</td>
+                      <td className={`px-3 py-1.5 sticky left-[120px] z-10 ${rowBg || 'bg-white'}`}>
                         <div className="font-mono text-[11px] text-gray-700">{r.ACCOUNT_NUMBER}</div>
-                        <div className="text-[10px] text-gray-500 truncate max-w-[260px]">{r.ACCOUNT_NAME || ''}</div>
+                        <div className="text-[10px] text-gray-500 truncate max-w-[220px]">{r.ACCOUNT_NAME || ''}</div>
                       </td>
                       <td className="px-3 py-1.5 text-right font-mono">{fmtILS(r.SOURCE_AMOUNT_ILS)}</td>
+                      {MONTH_KEYS.map(mk => {
+                        const v = r.MONTHLY_SOURCE_ILS ? r.MONTHLY_SOURCE_ILS[mk] : null;
+                        return (
+                          <td key={mk} className="px-2 py-1.5 text-right font-mono text-[10px] text-gray-600">
+                            {v == null || v === 0 ? '—' : Math.round(v).toLocaleString('en-GB')}
+                          </td>
+                        );
+                      })}
                       <td className="px-3 py-1.5 text-right">
                         <input type="number" step="1" defaultValue={r.USER_OVERRIDE_AMOUNT_ILS ?? ''}
                           onBlur={e => {

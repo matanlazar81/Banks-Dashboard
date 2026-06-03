@@ -56,9 +56,11 @@ async function populateBudgetTargets({ subsidiary, years, env, log = console.log
   const yearStart = Math.min(...fiscalYears);
   const yearEnd = Math.max(...fiscalYears);
 
+  // Fetch at monthly grain so we can store both annual total and per-month breakdown.
   const sql = `
     SELECT
-      EXTRACT(YEAR FROM b.BUDGET_MONTH_DATE)                     AS FISCAL_YEAR,
+      EXTRACT(YEAR  FROM b.BUDGET_MONTH_DATE)                    AS FISCAL_YEAR,
+      EXTRACT(MONTH FROM b.BUDGET_MONTH_DATE)                    AS MONTH_NUM,
       COALESCE(d.DEPARTMENT_NAME, 'Unassigned')                  AS DEPARTMENT,
       ${hasLocationId && hasDimLocation
         ? `COALESCE(l.LOCATION_NAME, 'Unassigned')`
@@ -68,7 +70,7 @@ async function populateBudgetTargets({ subsidiary, years, env, log = console.log
       g.GL_ACCOUNT_NUMBER                                        AS ACCOUNT_NUMBER,
       g.GL_ACCOUNT_NAME                                          AS ACCOUNT_NAME,
       g.GL_ACCOUNT_ID                                            AS NETSUITE_INTERNAL_NUMBER,
-      ROUND(SUM(b.AMOUNT_ILS_CC), 2)                             AS ANNUAL_BUDGET_TARGET_AMOUNT,
+      ROUND(SUM(b.AMOUNT_ILS_CC), 2)                             AS MONTH_AMOUNT_ILS,
       b.SUBSIDIARY_ID                                            AS SUBSIDIARY_ID
     FROM DL_PRODUCTION.FINANCE.FCT_BUDGET b
     JOIN      DL_PRODUCTION.FINANCE.DIM_GL_ACCOUNT  g ON b.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
@@ -81,20 +83,46 @@ async function populateBudgetTargets({ subsidiary, years, env, log = console.log
       AND b.BUDGET_MONTH_DATE <= '${yearEnd}-12-31'
       AND EXTRACT(YEAR FROM b.BUDGET_MONTH_DATE) IN (${fiscalYears.join(',')})
     GROUP BY
-      EXTRACT(YEAR FROM b.BUDGET_MONTH_DATE),
+      EXTRACT(YEAR  FROM b.BUDGET_MONTH_DATE),
+      EXTRACT(MONTH FROM b.BUDGET_MONTH_DATE),
       d.DEPARTMENT_NAME,
       ${hasLocationId && hasDimLocation ? 'l.LOCATION_NAME,' : ''}
       ${hasCurrencyCode ? 'b.CURRENCY_CODE,' : ''}
       g.GL_ACCOUNT_NUMBER, g.GL_ACCOUNT_NAME, g.GL_ACCOUNT_ID,
       b.SUBSIDIARY_ID
-    HAVING ABS(SUM(b.AMOUNT_ILS_CC)) > 0
-    ORDER BY FISCAL_YEAR, DEPARTMENT, ACCOUNT_NUMBER
   `;
 
   const t0 = Date.now();
-  const rows = await runSelect(conn, sql);
+  const monthRows = await runSelect(conn, sql);
   const elapsedMs = Date.now() - t0;
-  log(`[populate] fetched ${rows.length} rows in ${(elapsedMs / 1000).toFixed(1)}s`);
+  log(`[populate] fetched ${monthRows.length} monthly rows in ${(elapsedMs / 1000).toFixed(1)}s`);
+
+  // Group monthly rows into one entry per (year, sub, dept, loc, acct, currency).
+  const groups = new Map();
+  for (const r of monthRows) {
+    const key = `${r.FISCAL_YEAR}|${r.SUBSIDIARY_ID}|${r.DEPARTMENT}|${r.LOCATION}|${r.ACCOUNT_NUMBER}|${r.CURRENCY}`;
+    let g = groups.get(key);
+    if (!g) {
+      g = {
+        FISCAL_YEAR: Number(r.FISCAL_YEAR),
+        SUBSIDIARY_ID: Number(r.SUBSIDIARY_ID),
+        DEPARTMENT: r.DEPARTMENT || 'Unassigned',
+        LOCATION: r.LOCATION || 'Unassigned',
+        CURRENCY: r.CURRENCY || 'ILS',
+        ACCOUNT_NUMBER: String(r.ACCOUNT_NUMBER || ''),
+        ACCOUNT_NAME: r.ACCOUNT_NAME || null,
+        NETSUITE_INTERNAL_NUMBER: r.NETSUITE_INTERNAL_NUMBER != null ? Number(r.NETSUITE_INTERNAL_NUMBER) : null,
+        annual: 0,
+        monthly: {},
+      };
+      groups.set(key, g);
+    }
+    const amt = r.MONTH_AMOUNT_ILS != null ? Number(r.MONTH_AMOUNT_ILS) : 0;
+    const mkey = String(Number(r.MONTH_NUM)).padStart(2, '0');
+    g.monthly[mkey] = (g.monthly[mkey] || 0) + amt;
+    g.annual += amt;
+  }
+  const rows = [...groups.values()].filter((g) => Math.abs(g.annual) > 0);
 
   const db = getDb();
 
@@ -110,17 +138,18 @@ async function populateBudgetTargets({ subsidiary, years, env, log = console.log
     INSERT INTO FCT_BUDGET_TARGET_BY_DEPT_ACCT (
       FISCAL_YEAR, DEPARTMENT, LOCATION, CURRENCY,
       ACCOUNT_NUMBER, ACCOUNT_NAME, NETSUITE_INTERNAL_NUMBER,
-      SOURCE_AMOUNT_ILS, SUBSIDIARY_ID, SOURCE_SYNCED_AT
+      SOURCE_AMOUNT_ILS, MONTHLY_SOURCE_ILS, SUBSIDIARY_ID, SOURCE_SYNCED_AT
     ) VALUES (
       @FISCAL_YEAR, @DEPARTMENT, @LOCATION, @CURRENCY,
       @ACCOUNT_NUMBER, @ACCOUNT_NAME, @NETSUITE_INTERNAL_NUMBER,
-      @SOURCE_AMOUNT_ILS, @SUBSIDIARY_ID, @SOURCE_SYNCED_AT
+      @SOURCE_AMOUNT_ILS, @MONTHLY_SOURCE_ILS, @SUBSIDIARY_ID, @SOURCE_SYNCED_AT
     )
     ON CONFLICT (FISCAL_YEAR, SUBSIDIARY_ID, DEPARTMENT, LOCATION, ACCOUNT_NUMBER, CURRENCY)
     DO UPDATE SET
       ACCOUNT_NAME             = excluded.ACCOUNT_NAME,
       NETSUITE_INTERNAL_NUMBER = excluded.NETSUITE_INTERNAL_NUMBER,
       SOURCE_AMOUNT_ILS        = excluded.SOURCE_AMOUNT_ILS,
+      MONTHLY_SOURCE_ILS       = excluded.MONTHLY_SOURCE_ILS,
       SOURCE_SYNCED_AT         = excluded.SOURCE_SYNCED_AT
   `);
 
@@ -136,15 +165,16 @@ async function populateBudgetTargets({ subsidiary, years, env, log = console.log
   const txn = db.transaction(() => {
     for (const r of rows) {
       upsert.run({
-        FISCAL_YEAR: Number(r.FISCAL_YEAR),
-        DEPARTMENT: r.DEPARTMENT || 'Unassigned',
-        LOCATION: r.LOCATION || 'Unassigned',
-        CURRENCY: r.CURRENCY || 'ILS',
-        ACCOUNT_NUMBER: String(r.ACCOUNT_NUMBER || ''),
-        ACCOUNT_NAME: r.ACCOUNT_NAME || null,
-        NETSUITE_INTERNAL_NUMBER: r.NETSUITE_INTERNAL_NUMBER != null ? Number(r.NETSUITE_INTERNAL_NUMBER) : null,
-        SOURCE_AMOUNT_ILS: r.ANNUAL_BUDGET_TARGET_AMOUNT != null ? Number(r.ANNUAL_BUDGET_TARGET_AMOUNT) : 0,
-        SUBSIDIARY_ID: Number(r.SUBSIDIARY_ID),
+        FISCAL_YEAR: r.FISCAL_YEAR,
+        DEPARTMENT: r.DEPARTMENT,
+        LOCATION: r.LOCATION,
+        CURRENCY: r.CURRENCY,
+        ACCOUNT_NUMBER: r.ACCOUNT_NUMBER,
+        ACCOUNT_NAME: r.ACCOUNT_NAME,
+        NETSUITE_INTERNAL_NUMBER: r.NETSUITE_INTERNAL_NUMBER,
+        SOURCE_AMOUNT_ILS: Math.round(r.annual * 100) / 100,
+        MONTHLY_SOURCE_ILS: JSON.stringify(r.monthly),
+        SUBSIDIARY_ID: r.SUBSIDIARY_ID,
         SOURCE_SYNCED_AT: syncStart,
       });
     }

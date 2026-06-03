@@ -455,15 +455,19 @@ function banksPlugin(): Plugin {
             const year = parseInt(url.searchParams.get('year') || '0', 10);
             const subsidiary = parseInt(url.searchParams.get('subsidiary') || '3', 10);
             if (!year) { res.statusCode = 400; res.end(JSON.stringify({ ok: false, error: 'year required' })); return; }
-            const rows = db.prepare(`
+            const raw = db.prepare(`
               SELECT FISCAL_YEAR, DEPARTMENT, LOCATION, CURRENCY, ACCOUNT_NUMBER, ACCOUNT_NAME,
-                     NETSUITE_INTERNAL_NUMBER, SOURCE_AMOUNT_ILS, USER_OVERRIDE_AMOUNT_ILS,
-                     USER_OVERRIDE_PCT, ANNUAL_BUDGET_TARGET_AMOUNT, SUBSIDIARY_ID,
-                     USER_EDITED_BY, USER_EDITED_AT, SOURCE_SYNCED_AT
+                     NETSUITE_INTERNAL_NUMBER, SOURCE_AMOUNT_ILS, MONTHLY_SOURCE_ILS,
+                     USER_OVERRIDE_AMOUNT_ILS, USER_OVERRIDE_PCT, ANNUAL_BUDGET_TARGET_AMOUNT,
+                     SUBSIDIARY_ID, USER_EDITED_BY, USER_EDITED_AT, SOURCE_SYNCED_AT
               FROM FCT_BUDGET_TARGET_BY_DEPT_ACCT
               WHERE FISCAL_YEAR = ? AND SUBSIDIARY_ID = ?
               ORDER BY DEPARTMENT, ACCOUNT_NUMBER
             `).all(year, subsidiary);
+            const rows = raw.map((r: any) => ({
+              ...r,
+              MONTHLY_SOURCE_ILS: r.MONTHLY_SOURCE_ILS ? (() => { try { return JSON.parse(r.MONTHLY_SOURCE_ILS); } catch { return null; } })() : null,
+            }));
             res.end(JSON.stringify({ ok: true, rows }));
             return;
           }
