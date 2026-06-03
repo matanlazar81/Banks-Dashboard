@@ -610,6 +610,147 @@ function PaidVendorsByMonth({ subsidiary, year }: { subsidiary: number; year: nu
   );
 }
 
+type BudgetTargetRow = {
+  FISCAL_YEAR: number; DEPARTMENT: string; LOCATION: string; CURRENCY: string;
+  ACCOUNT_NUMBER: string; ACCOUNT_NAME: string | null;
+  NETSUITE_INTERNAL_NUMBER: number | null;
+  SOURCE_AMOUNT_ILS: number | null;
+  USER_OVERRIDE_AMOUNT_ILS: number | null;
+  USER_OVERRIDE_PCT: number | null;
+  ANNUAL_BUDGET_TARGET_AMOUNT: number | null;
+  SUBSIDIARY_ID: number;
+  USER_EDITED_BY: string | null;
+  USER_EDITED_AT: string | null;
+  SOURCE_SYNCED_AT: string | null;
+};
+
+function BudgetTargetsDrawer({
+  open, onClose, subsidiary, year,
+}: { open: boolean; onClose: () => void; subsidiary: number; year: number; }) {
+  const [rows, setRows] = useState<BudgetTargetRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState<string | null>(null);
+  const [filter, setFilter] = useState('');
+
+  const reload = useCallback(() => {
+    setLoading(true);
+    fetch(`/api/budget-targets?year=${year}&subsidiary=${subsidiary}`)
+      .then(r => r.json())
+      .then(d => setRows(d.ok ? d.rows : []))
+      .catch(() => setRows([]))
+      .finally(() => setLoading(false));
+  }, [year, subsidiary]);
+
+  useEffect(() => { if (open) reload(); }, [open, reload]);
+
+  const saveOverride = async (r: BudgetTargetRow, field: 'USER_OVERRIDE_AMOUNT_ILS' | 'USER_OVERRIDE_PCT', raw: string) => {
+    const key = `${r.ACCOUNT_NUMBER}::${field}`;
+    setSaving(key);
+    const v = raw.trim() === '' ? null : Number(raw);
+    if (v !== null && !isFinite(v)) { setSaving(null); return; }
+    try {
+      const resp = await fetch('/api/budget-targets', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fiscalYear: r.FISCAL_YEAR, subsidiaryId: r.SUBSIDIARY_ID,
+          department: r.DEPARTMENT, location: r.LOCATION,
+          accountNumber: r.ACCOUNT_NUMBER, currency: r.CURRENCY,
+          [field]: v,
+        }),
+      });
+      const result = await resp.json();
+      if (result.ok) reload();
+    } finally { setSaving(null); }
+  };
+
+  if (!open) return null;
+  const visible = filter
+    ? rows.filter(r => (r.DEPARTMENT + ' ' + r.ACCOUNT_NUMBER + ' ' + (r.ACCOUNT_NAME || '')).toLowerCase().includes(filter.toLowerCase()))
+    : rows;
+  const fmtILS = (v: number | null) => v == null ? '—' : Math.round(v).toLocaleString('en-GB');
+
+  return (
+    <div className="fixed inset-0 z-40 flex justify-end" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/30" />
+      <div className="relative w-[min(95vw,1100px)] h-full bg-white shadow-2xl flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-3 border-b bg-gray-50">
+          <div>
+            <h2 className="text-base font-bold text-gray-800">Budget Targets — FY{year} · Subsidiary {subsidiary}</h2>
+            <p className="text-xs text-gray-500">Override absolute amount or % adjustment. Source values come from Snowflake via Sync.</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <input type="text" placeholder="Filter dept / account…" value={filter} onChange={e => setFilter(e.target.value)}
+              className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 w-56 focus:ring-2 focus:ring-emerald-200" />
+            <button onClick={onClose} className="text-gray-500 hover:text-gray-800 text-xl px-2">✕</button>
+          </div>
+        </div>
+        <div className="flex-1 overflow-auto">
+          {loading ? <div className="p-6 text-center text-sm text-gray-500">Loading…</div>
+            : visible.length === 0 ? <div className="p-6 text-center text-sm text-gray-500">No rows. Click Sync to load from Snowflake.</div>
+            : (
+            <table className="w-full text-xs">
+              <thead className="bg-gray-50 sticky top-0 z-10">
+                <tr className="text-left text-gray-600">
+                  <th className="px-3 py-2 font-semibold">Department</th>
+                  <th className="px-3 py-2 font-semibold">Account</th>
+                  <th className="px-3 py-2 font-semibold text-right">Source ILS</th>
+                  <th className="px-3 py-2 font-semibold text-right">Override Amount</th>
+                  <th className="px-3 py-2 font-semibold text-right">Override %</th>
+                  <th className="px-3 py-2 font-semibold text-right">Final ILS</th>
+                  <th className="px-3 py-2 font-semibold">Last edit</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visible.map(r => {
+                  const key = `${r.DEPARTMENT}::${r.LOCATION}::${r.ACCOUNT_NUMBER}::${r.CURRENCY}`;
+                  const hasOverride = r.USER_OVERRIDE_AMOUNT_ILS != null || r.USER_OVERRIDE_PCT != null;
+                  return (
+                    <tr key={key} className={`border-b border-gray-100 hover:bg-gray-50 ${hasOverride ? 'bg-amber-50/30' : ''}`}>
+                      <td className="px-3 py-1.5">{r.DEPARTMENT}</td>
+                      <td className="px-3 py-1.5">
+                        <div className="font-mono text-[11px] text-gray-700">{r.ACCOUNT_NUMBER}</div>
+                        <div className="text-[10px] text-gray-500 truncate max-w-[260px]">{r.ACCOUNT_NAME || ''}</div>
+                      </td>
+                      <td className="px-3 py-1.5 text-right font-mono">{fmtILS(r.SOURCE_AMOUNT_ILS)}</td>
+                      <td className="px-3 py-1.5 text-right">
+                        <input type="number" step="1" defaultValue={r.USER_OVERRIDE_AMOUNT_ILS ?? ''}
+                          onBlur={e => {
+                            const newRaw = e.target.value;
+                            const curStr = r.USER_OVERRIDE_AMOUNT_ILS == null ? '' : String(r.USER_OVERRIDE_AMOUNT_ILS);
+                            if (newRaw !== curStr) saveOverride(r, 'USER_OVERRIDE_AMOUNT_ILS', newRaw);
+                          }}
+                          disabled={saving === `${r.ACCOUNT_NUMBER}::USER_OVERRIDE_AMOUNT_ILS`}
+                          className="w-32 text-right text-xs border border-gray-200 rounded px-1.5 py-0.5 focus:ring-2 focus:ring-emerald-200 disabled:bg-gray-50"
+                          placeholder="—" />
+                      </td>
+                      <td className="px-3 py-1.5 text-right">
+                        <input type="number" step="0.1" defaultValue={r.USER_OVERRIDE_PCT ?? ''}
+                          onBlur={e => {
+                            const newRaw = e.target.value;
+                            const curStr = r.USER_OVERRIDE_PCT == null ? '' : String(r.USER_OVERRIDE_PCT);
+                            if (newRaw !== curStr) saveOverride(r, 'USER_OVERRIDE_PCT', newRaw);
+                          }}
+                          disabled={saving === `${r.ACCOUNT_NUMBER}::USER_OVERRIDE_PCT`}
+                          className="w-20 text-right text-xs border border-gray-200 rounded px-1.5 py-0.5 focus:ring-2 focus:ring-emerald-200 disabled:bg-gray-50"
+                          placeholder="—" />
+                      </td>
+                      <td className={`px-3 py-1.5 text-right font-mono font-semibold ${hasOverride ? 'text-amber-700' : 'text-gray-700'}`}>{fmtILS(r.ANNUAL_BUDGET_TARGET_AMOUNT)}</td>
+                      <td className="px-3 py-1.5 text-[10px] text-gray-500">
+                        {r.USER_EDITED_BY ? <><div>{r.USER_EDITED_BY.split('@')[0]}</div><div>{r.USER_EDITED_AT?.slice(0, 16)}</div></> : '—'}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [activeCompany, setActiveCompany] = useState<CompanyView>(() => {
     try { return (localStorage.getItem('banks-active-company') as CompanyView) || 'lsports'; } catch { return 'lsports'; }
@@ -630,6 +771,67 @@ export default function App() {
   });
   const [availableYearsByCompany, setAvailableYearsByCompany] = useState<Record<string, number[]>>({ lsports: [currentYear], statscore: [currentYear] });
   const [isRollingForward, setIsRollingForward] = useState(false);
+  const [budgetSyncStatus, setBudgetSyncStatus] = useState<'idle' | 'syncing' | 'success' | 'error'>('idle');
+  const [budgetSyncMsg, setBudgetSyncMsg] = useState<string>('');
+  const [canSyncBudget, setCanSyncBudget] = useState<boolean>(false);
+  const [budgetViewerEmail, setBudgetViewerEmail] = useState<string>('');
+  useEffect(() => {
+    fetch('/api/whoami')
+      .then(r => r.json())
+      .then(d => { setCanSyncBudget(!!d.canSync); setBudgetViewerEmail((d.email || '').toLowerCase()); })
+      .catch(() => setCanSyncBudget(false));
+  }, []);
+  const [targetsDrawerOpen, setTargetsDrawerOpen] = useState(false);
+  const [budgetEdits, setBudgetEdits] = useState<Array<{ID:number;EDITED_AT:string;EDITED_BY:string;FISCAL_YEAR:number;SUBSIDIARY_ID:number;DEPARTMENT:string;ACCOUNT_NUMBER:string;FIELD_NAME:string;OLD_VALUE:string|null;NEW_VALUE:string|null}>>([]);
+  const [dismissedBudgetEdits, setDismissedBudgetEdits] = useState<Set<number>>(() => {
+    try { return new Set(JSON.parse(localStorage.getItem('banks-dismissed-budget-edits') || '[]')); }
+    catch { return new Set(); }
+  });
+  const [budgetEditsWatermark, setBudgetEditsWatermark] = useState<string>(() => {
+    try { return localStorage.getItem('banks-budget-edits-watermark') || new Date(Date.now() - 24 * 3600 * 1000).toISOString(); }
+    catch { return new Date(Date.now() - 24 * 3600 * 1000).toISOString(); }
+  });
+  useEffect(() => {
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const resp = await fetch(`/api/budget-target-edits?since=${encodeURIComponent(budgetEditsWatermark)}`);
+        const d = await resp.json();
+        if (cancelled || !d.ok) return;
+        if (Array.isArray(d.edits) && d.edits.length > 0) {
+          setBudgetEdits(prev => {
+            const seen = new Set(prev.map(e => e.ID));
+            const incoming = d.edits.filter((e: any) => !seen.has(e.ID));
+            return [...incoming, ...prev].slice(0, 50);
+          });
+        }
+      } catch {}
+    };
+    poll();
+    const id = setInterval(poll, 30000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [budgetEditsWatermark]);
+  const visibleBudgetEdits = budgetEdits
+    .filter(e => !dismissedBudgetEdits.has(e.ID))
+    .filter(e => e.EDITED_BY.toLowerCase() !== budgetViewerEmail);
+  const dismissBudgetEdit = (id: number) => setDismissedBudgetEdits(prev => {
+    const next = new Set([...prev, id]);
+    try { localStorage.setItem('banks-dismissed-budget-edits', JSON.stringify([...next])); } catch {}
+    return next;
+  });
+  const dismissAllBudgetEdits = () => {
+    const ids = budgetEdits.map(e => e.ID);
+    setDismissedBudgetEdits(prev => {
+      const next = new Set([...prev, ...ids]);
+      try { localStorage.setItem('banks-dismissed-budget-edits', JSON.stringify([...next])); } catch {}
+      return next;
+    });
+    const latest = budgetEdits[0]?.EDITED_AT;
+    if (latest) {
+      setBudgetEditsWatermark(latest);
+      try { localStorage.setItem('banks-budget-edits-watermark', latest); } catch {}
+    }
+  };
   useEffect(() => { try { localStorage.setItem('banks-active-years', JSON.stringify(activeYears)); } catch {} }, [activeYears]);
   useEffect(() => {
     fetch('/api/budget-years').then(r => r.json()).then(d => {
@@ -3408,6 +3610,52 @@ useEffect(() => {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {/* ── Budget-target Edit Notification Banner ── */}
+      {visibleBudgetEdits.length > 0 && (
+        <div className="fixed top-0 left-0 right-0 z-[60]" style={{ pointerEvents: 'none' }}>
+          <div className="bg-amber-500 shadow-2xl border-b-4 border-amber-600" style={{ pointerEvents: 'auto' }}>
+            <div className="max-w-[1800px] mx-auto px-4 py-2.5">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-white font-bold text-sm flex items-center gap-2">
+                  <span className="text-lg">📊</span> {visibleBudgetEdits.length} Budget Target Edit{visibleBudgetEdits.length > 1 ? 's' : ''}
+                </span>
+                <button onClick={dismissAllBudgetEdits} className="text-amber-100 hover:text-white text-xs font-medium px-2 py-1 rounded hover:bg-amber-600">
+                  Dismiss All ✕
+                </button>
+              </div>
+              <div className="space-y-1 max-h-[40vh] overflow-y-auto">
+                {visibleBudgetEdits.slice(0, 8).map(e => {
+                  const who = (e.EDITED_BY || 'Someone').split('@')[0];
+                  const when = new Date(e.EDITED_AT.replace(' ', 'T') + 'Z').toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+                  const fld = e.FIELD_NAME === 'USER_OVERRIDE_AMOUNT_ILS' ? 'override amount'
+                            : e.FIELD_NAME === 'USER_OVERRIDE_PCT' ? 'override %'
+                            : e.FIELD_NAME;
+                  const fmtV = (v: string | null) => v == null || v === '' ? '∅' : v;
+                  return (
+                    <div key={e.ID} className="bg-amber-400/40 rounded-md px-2.5 py-1.5 flex items-center gap-2 text-xs">
+                      <span className="text-amber-50 font-mono text-[10px] font-bold bg-amber-700/50 px-1.5 py-0.5 rounded">FY{e.FISCAL_YEAR} · SUB{e.SUBSIDIARY_ID}</span>
+                      <span className="text-white font-semibold">{e.DEPARTMENT}</span>
+                      <span className="text-amber-50 font-mono">{e.ACCOUNT_NUMBER}</span>
+                      <span className="text-amber-100">{fld}: <span className="font-mono">{fmtV(e.OLD_VALUE)}</span> → <span className="font-mono font-semibold text-white">{fmtV(e.NEW_VALUE)}</span></span>
+                      <span className="text-amber-50 ml-auto">by <span className="font-semibold text-white">{who}</span> · {when}</span>
+                      <button onClick={() => dismissBudgetEdit(e.ID)} className="text-amber-200 hover:text-white text-sm">✕</button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Budget Targets edit drawer */}
+      <BudgetTargetsDrawer
+        open={targetsDrawerOpen}
+        onClose={() => setTargetsDrawerOpen(false)}
+        subsidiary={COMPANY_CONFIG[activeCompany]?.subsidiary || 3}
+        year={activeYears[activeCompany] || currentYear}
+      />
+
       {/* ── Scenario-edit Notification Banner ── */}
       {_visibleScenarioNotifs.length > 0 && (
         <div className="fixed top-0 left-0 right-0 z-50" style={{ pointerEvents: 'none' }}>
@@ -3640,6 +3888,65 @@ useEffect(() => {
                   ✕
                 </button>
               </>)}
+              {/* Sync budget targets table (data/banks-dashboard.db) from Snowflake FCT_BUDGET
+                  for the currently-selected (company, year). Gated server-side via SYNC_ALLOWLIST;
+                  hidden client-side when /api/whoami reports canSync = false. */}
+              {canSyncBudget && (
+              <button
+                disabled={budgetSyncStatus === 'syncing'}
+                onClick={async () => {
+                  const co = activeCompany;
+                  const yr = activeYears[co] || currentYear;
+                  const sub = COMPANY_CONFIG[co]?.subsidiary || 3;
+                  setBudgetSyncStatus('syncing');
+                  setBudgetSyncMsg('');
+                  try {
+                    const resp = await fetch(`/api/sync-budget-targets?year=${yr}&subsidiary=${sub}`, { method: 'POST' });
+                    const result = await resp.json();
+                    if (result.ok) {
+                      const s = (result.summary || [])[0];
+                      const rows = s ? s.rowCount : 0;
+                      setBudgetSyncStatus('success');
+                      setBudgetSyncMsg(`Synced ${rows} rows for ${yr}`);
+                      setTimeout(() => setBudgetSyncStatus('idle'), 4000);
+                    } else {
+                      setBudgetSyncStatus('error');
+                      setBudgetSyncMsg(result.error || 'Sync failed');
+                      setTimeout(() => setBudgetSyncStatus('idle'), 6000);
+                    }
+                  } catch (e: any) {
+                    setBudgetSyncStatus('error');
+                    setBudgetSyncMsg(e?.message || 'Sync failed');
+                    setTimeout(() => setBudgetSyncStatus('idle'), 6000);
+                  }
+                }}
+                className={`text-[10px] rounded-lg px-2 py-1.5 font-medium transition-colors whitespace-nowrap border ${
+                  budgetSyncStatus === 'syncing'
+                    ? 'text-gray-500 bg-gray-50 border-gray-200 cursor-wait'
+                    : budgetSyncStatus === 'success'
+                    ? 'text-emerald-700 bg-emerald-50 border-emerald-200'
+                    : budgetSyncStatus === 'error'
+                    ? 'text-red-700 bg-red-50 border-red-200'
+                    : 'text-violet-700 bg-violet-50 border-violet-200 hover:bg-violet-100'
+                }`}
+                title={`Sync FCT_BUDGET_TARGET_BY_DEPT_ACCT for ${activeCompany === 'lsports' ? 'LSports' : 'Statscore'} ${activeYears[activeCompany] || currentYear} from Snowflake FCT_BUDGET`}
+              >
+                {budgetSyncStatus === 'syncing'
+                  ? 'Syncing...'
+                  : budgetSyncStatus === 'success'
+                  ? `✓ ${budgetSyncMsg}`
+                  : budgetSyncStatus === 'error'
+                  ? `✕ ${budgetSyncMsg.slice(0, 40)}`
+                  : `⇅ Sync ${activeYears[activeCompany] || currentYear}`}
+              </button>
+              )}
+              <button
+                onClick={() => setTargetsDrawerOpen(true)}
+                className="text-[10px] rounded-lg px-2 py-1.5 font-medium transition-colors whitespace-nowrap border text-amber-700 bg-amber-50 border-amber-200 hover:bg-amber-100"
+                title="Edit budget target overrides (amount or %) for the selected year"
+              >
+                ✎ Targets
+              </button>
             </>) : (
               <div className="flex items-center gap-2 text-[11px] font-medium">
                 <span className={`px-2 py-1 rounded-lg ${(activeYears.lsports || currentYear) !== currentYear ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-gray-100 text-gray-600'}`}>

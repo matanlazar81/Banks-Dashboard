@@ -54,6 +54,26 @@ function getYear(req: any): number {
   return parseInt(url.searchParams.get('year') || '') || new Date().getFullYear();
 }
 
+// User identity: trust an upstream-injected header (the finance-it parent app should set
+// X-User-Email when proxying). DEV_USER_EMAIL is a local-dev fallback only.
+function getUserEmail(req: any): string {
+  const h = req.headers || {};
+  const raw = (h['x-user-email'] || h['x-forwarded-user'] || h['x-auth-user'] || process.env.DEV_USER_EMAIL || '').toString();
+  return raw.trim().toLowerCase();
+}
+
+function getSyncAllowlist(): string[] {
+  return (process.env.SYNC_ALLOWLIST || 'matan.l@lsports.eu')
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function canUserSync(email: string): boolean {
+  if (!email) return false;
+  return getSyncAllowlist().includes(email);
+}
+
 // NetSuite request queue — serialize all NS API calls to avoid 429 rate limits
 let nsQueue: Promise<any> = Promise.resolve();
 function queueNsCall<T>(fn: () => Promise<T>): Promise<T> {
@@ -414,6 +434,187 @@ function banksPlugin(): Plugin {
           res.setHeader('Content-Type', 'application/json');
           res.end(JSON.stringify({ data: { ...data, overrides: appliedOverrides } }));
         } catch (e: any) { res.end(JSON.stringify({ data: { byMonth: {}, totalByMonth: {}, overrides: [] }, error: e.message })); }
+      });
+
+      // ── Budget targets list / edit ─────────────────────────────────────────
+      // GET  /api/budget-targets?year=YYYY&subsidiary=N → list rows
+      // PUT  /api/budget-targets                       → set override (auth: any logged-in user)
+      // GET  /api/budget-target-edits?since=ISO        → audit log since a watermark (for notifications)
+      // ─────────────────────────────────────────────────────────────────────
+      server.middlewares.use('/api/budget-targets', async (req, res) => {
+        res.setHeader('Content-Type', 'application/json');
+        try {
+          const dbPath = require.resolve('./db.cjs');
+          delete require.cache[dbPath];
+          const { getDb } = require(dbPath);
+          const db = getDb();
+          const method = (req.method || 'GET').toUpperCase();
+          const url = new URL(req.url || '', 'http://localhost');
+
+          if (method === 'GET') {
+            const year = parseInt(url.searchParams.get('year') || '0', 10);
+            const subsidiary = parseInt(url.searchParams.get('subsidiary') || '3', 10);
+            if (!year) { res.statusCode = 400; res.end(JSON.stringify({ ok: false, error: 'year required' })); return; }
+            const rows = db.prepare(`
+              SELECT FISCAL_YEAR, DEPARTMENT, LOCATION, CURRENCY, ACCOUNT_NUMBER, ACCOUNT_NAME,
+                     NETSUITE_INTERNAL_NUMBER, SOURCE_AMOUNT_ILS, USER_OVERRIDE_AMOUNT_ILS,
+                     USER_OVERRIDE_PCT, ANNUAL_BUDGET_TARGET_AMOUNT, SUBSIDIARY_ID,
+                     USER_EDITED_BY, USER_EDITED_AT, SOURCE_SYNCED_AT
+              FROM FCT_BUDGET_TARGET_BY_DEPT_ACCT
+              WHERE FISCAL_YEAR = ? AND SUBSIDIARY_ID = ?
+              ORDER BY DEPARTMENT, ACCOUNT_NUMBER
+            `).all(year, subsidiary);
+            res.end(JSON.stringify({ ok: true, rows }));
+            return;
+          }
+
+          if (method === 'PUT') {
+            const email = getUserEmail(req);
+            if (!email) { res.statusCode = 401; res.end(JSON.stringify({ ok: false, error: 'Not authenticated' })); return; }
+            let body = '';
+            for await (const chunk of req) body += chunk;
+            const p = JSON.parse(body || '{}');
+            const { fiscalYear, subsidiaryId, department, location, accountNumber, currency } = p;
+            if (!fiscalYear || !subsidiaryId || !accountNumber) {
+              res.statusCode = 400;
+              res.end(JSON.stringify({ ok: false, error: 'fiscalYear, subsidiaryId, accountNumber required' }));
+              return;
+            }
+            // Validate field/value pairs. Only USER_OVERRIDE_AMOUNT_ILS and USER_OVERRIDE_PCT are writable.
+            const allowed: Record<string, 'real' | 'null'> = {
+              USER_OVERRIDE_AMOUNT_ILS: 'real',
+              USER_OVERRIDE_PCT: 'real',
+            };
+            const updates: Array<{ field: string; oldVal: any; newVal: any }> = [];
+            const current = db.prepare(`
+              SELECT USER_OVERRIDE_AMOUNT_ILS, USER_OVERRIDE_PCT FROM FCT_BUDGET_TARGET_BY_DEPT_ACCT
+              WHERE FISCAL_YEAR=? AND SUBSIDIARY_ID=? AND DEPARTMENT=? AND LOCATION=? AND ACCOUNT_NUMBER=? AND CURRENCY=?
+            `).get(fiscalYear, subsidiaryId, department, location, accountNumber, currency);
+            if (!current) {
+              res.statusCode = 404;
+              res.end(JSON.stringify({ ok: false, error: 'Row not found' }));
+              return;
+            }
+            for (const [field] of Object.entries(allowed)) {
+              if (field in p) {
+                const nv = p[field] === null || p[field] === '' || p[field] === undefined ? null : Number(p[field]);
+                const cv = (current as any)[field];
+                if (nv !== cv) updates.push({ field, oldVal: cv, newVal: nv });
+              }
+            }
+            if (updates.length === 0) { res.end(JSON.stringify({ ok: true, changes: 0 })); return; }
+
+            const editAt = new Date().toISOString().slice(0, 19).replace('T', ' ');
+            const logStmt = db.prepare(`
+              INSERT INTO BUDGET_TARGET_EDIT_LOG
+                (EDITED_AT, EDITED_BY, FISCAL_YEAR, SUBSIDIARY_ID, DEPARTMENT, LOCATION, ACCOUNT_NUMBER, CURRENCY, FIELD_NAME, OLD_VALUE, NEW_VALUE)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `);
+            const txn = db.transaction(() => {
+              for (const u of updates) {
+                db.prepare(`
+                  UPDATE FCT_BUDGET_TARGET_BY_DEPT_ACCT
+                  SET ${u.field} = ?, USER_EDITED_BY = ?, USER_EDITED_AT = ?
+                  WHERE FISCAL_YEAR=? AND SUBSIDIARY_ID=? AND DEPARTMENT=? AND LOCATION=? AND ACCOUNT_NUMBER=? AND CURRENCY=?
+                `).run(u.newVal, email, editAt, fiscalYear, subsidiaryId, department, location, accountNumber, currency);
+                logStmt.run(
+                  editAt, email, fiscalYear, subsidiaryId, department, location, accountNumber, currency,
+                  u.field,
+                  u.oldVal == null ? null : String(u.oldVal),
+                  u.newVal == null ? null : String(u.newVal),
+                );
+              }
+            });
+            txn();
+            res.end(JSON.stringify({ ok: true, changes: updates.length, editedBy: email, editedAt: editAt }));
+            return;
+          }
+
+          res.statusCode = 405;
+          res.end(JSON.stringify({ ok: false, error: 'Method not allowed' }));
+        } catch (e: any) {
+          res.statusCode = 500;
+          res.end(JSON.stringify({ ok: false, error: e?.message || String(e) }));
+        }
+      });
+
+      server.middlewares.use('/api/budget-target-edits', (req, res) => {
+        res.setHeader('Content-Type', 'application/json');
+        try {
+          const dbPath = require.resolve('./db.cjs');
+          delete require.cache[dbPath];
+          const { getDb } = require(dbPath);
+          const db = getDb();
+          const url = new URL(req.url || '', 'http://localhost');
+          const since = url.searchParams.get('since') || '1970-01-01 00:00:00';
+          const subsidiary = parseInt(url.searchParams.get('subsidiary') || '0', 10);
+          const year = parseInt(url.searchParams.get('year') || '0', 10);
+          const conds = ['EDITED_AT > ?'];
+          const args: any[] = [since.replace('T', ' ').slice(0, 19)];
+          if (subsidiary) { conds.push('SUBSIDIARY_ID = ?'); args.push(subsidiary); }
+          if (year) { conds.push('FISCAL_YEAR = ?'); args.push(year); }
+          const edits = db.prepare(`
+            SELECT ID, EDITED_AT, EDITED_BY, FISCAL_YEAR, SUBSIDIARY_ID, DEPARTMENT, LOCATION,
+                   ACCOUNT_NUMBER, CURRENCY, FIELD_NAME, OLD_VALUE, NEW_VALUE
+            FROM BUDGET_TARGET_EDIT_LOG
+            WHERE ${conds.join(' AND ')}
+            ORDER BY EDITED_AT DESC
+            LIMIT 200
+          `).all(...args);
+          const me = getUserEmail(req);
+          res.end(JSON.stringify({ ok: true, edits, viewerEmail: me, now: new Date().toISOString() }));
+        } catch (e: any) {
+          res.statusCode = 500;
+          res.end(JSON.stringify({ ok: false, error: e?.message || String(e) }));
+        }
+      });
+
+      // ── GET /api/whoami — current user + permission flags for budget-targets sync ──
+      server.middlewares.use('/api/whoami', (req, res) => {
+        const email = getUserEmail(req);
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ email, canSync: canUserSync(email) }));
+      });
+
+      // ── POST /api/sync-budget-targets — refresh FCT_BUDGET_TARGET_BY_DEPT_ACCT
+      // for the (subsidiary, year) currently shown on the dashboard.
+      // Gated to SYNC_ALLOWLIST (defaults to matan.l@lsports.eu). User overrides
+      // (USER_OVERRIDE_AMOUNT_ILS / USER_OVERRIDE_PCT) are preserved silently. ──
+      server.middlewares.use('/api/sync-budget-targets', async (req, res) => {
+        res.setHeader('Content-Type', 'application/json');
+        if ((req.method || 'GET').toUpperCase() !== 'POST') {
+          res.statusCode = 405;
+          res.end(JSON.stringify({ ok: false, error: 'Method not allowed; use POST' }));
+          return;
+        }
+        const email = getUserEmail(req);
+        if (!canUserSync(email)) {
+          res.statusCode = 403;
+          res.end(JSON.stringify({ ok: false, error: 'Not authorized to sync. Contact the dashboard owner.' }));
+          return;
+        }
+        try {
+          const url = new URL(req.url || '', 'http://localhost');
+          const subsidiary = parseInt(url.searchParams.get('subsidiary') || '3', 10);
+          const yearsParam = url.searchParams.get('year') || url.searchParams.get('years') || '';
+          const years = yearsParam
+            .split(',')
+            .map((y) => parseInt(y.trim(), 10))
+            .filter((y) => Number.isFinite(y));
+          if (years.length === 0) {
+            res.statusCode = 400;
+            res.end(JSON.stringify({ ok: false, error: 'year query param required, e.g. ?year=2026' }));
+            return;
+          }
+          const sfPath = require.resolve('./scripts/populate-budget-targets.cjs');
+          delete require.cache[sfPath];
+          const { populateBudgetTargets } = require(sfPath);
+          const result = await populateBudgetTargets({ subsidiary, years, env: process.env });
+          res.end(JSON.stringify({ ok: true, triggeredBy: email, ...result }));
+        } catch (e: any) {
+          res.statusCode = 500;
+          res.end(JSON.stringify({ ok: false, error: e?.message || String(e) }));
+        }
       });
 
       server.middlewares.use('/api/sf-revenue', async (_req, res) => {
