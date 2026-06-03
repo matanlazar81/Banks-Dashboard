@@ -98,34 +98,44 @@ async function populateBudgetTargets({ subsidiary, years, env, log = console.log
 
   const db = getDb();
 
-  // Wipe and re-insert ONLY the (subsidiary, year) slices being refreshed so other
-  // years/subs that aren't in scope are left untouched.
-  const deleteScope = db.prepare(`
-    DELETE FROM FCT_BUDGET_TARGET_BY_DEPT_ACCT
-    WHERE SUBSIDIARY_ID = ? AND FISCAL_YEAR = ?
-  `);
-  const insert = db.prepare(`
+  // Non-destructive sync:
+  // - Upsert rows from Snowflake, touching ONLY source-owned columns. User-override
+  //   columns (USER_OVERRIDE_*, USER_EDITED_*) are preserved.
+  // - Delete rows in scope (subsidiary, year) that did not appear in this sync AND
+  //   carry no user override. User-overridden rows are kept even if the underlying
+  //   GL account is removed from Snowflake.
+  const syncStart = new Date().toISOString().slice(0, 19).replace('T', ' ');
+
+  const upsert = db.prepare(`
     INSERT INTO FCT_BUDGET_TARGET_BY_DEPT_ACCT (
       FISCAL_YEAR, DEPARTMENT, LOCATION, CURRENCY,
       ACCOUNT_NUMBER, ACCOUNT_NAME, NETSUITE_INTERNAL_NUMBER,
-      ANNUAL_BUDGET_TARGET_AMOUNT, SUBSIDIARY_ID
+      SOURCE_AMOUNT_ILS, SUBSIDIARY_ID, SOURCE_SYNCED_AT
     ) VALUES (
       @FISCAL_YEAR, @DEPARTMENT, @LOCATION, @CURRENCY,
       @ACCOUNT_NUMBER, @ACCOUNT_NAME, @NETSUITE_INTERNAL_NUMBER,
-      @ANNUAL_BUDGET_TARGET_AMOUNT, @SUBSIDIARY_ID
+      @SOURCE_AMOUNT_ILS, @SUBSIDIARY_ID, @SOURCE_SYNCED_AT
     )
     ON CONFLICT (FISCAL_YEAR, SUBSIDIARY_ID, DEPARTMENT, LOCATION, ACCOUNT_NUMBER, CURRENCY)
     DO UPDATE SET
-      ACCOUNT_NAME                = excluded.ACCOUNT_NAME,
-      NETSUITE_INTERNAL_NUMBER    = excluded.NETSUITE_INTERNAL_NUMBER,
-      ANNUAL_BUDGET_TARGET_AMOUNT = excluded.ANNUAL_BUDGET_TARGET_AMOUNT,
-      LOADED_AT                   = datetime('now')
+      ACCOUNT_NAME             = excluded.ACCOUNT_NAME,
+      NETSUITE_INTERNAL_NUMBER = excluded.NETSUITE_INTERNAL_NUMBER,
+      SOURCE_AMOUNT_ILS        = excluded.SOURCE_AMOUNT_ILS,
+      SOURCE_SYNCED_AT         = excluded.SOURCE_SYNCED_AT
   `);
 
+  const cleanup = db.prepare(`
+    DELETE FROM FCT_BUDGET_TARGET_BY_DEPT_ACCT
+    WHERE SUBSIDIARY_ID = ? AND FISCAL_YEAR = ?
+      AND SOURCE_SYNCED_AT < ?
+      AND USER_OVERRIDE_AMOUNT_ILS IS NULL
+      AND USER_OVERRIDE_PCT IS NULL
+  `);
+
+  let deletedOrphans = 0;
   const txn = db.transaction(() => {
-    for (const yr of fiscalYears) deleteScope.run(subsidiary, yr);
     for (const r of rows) {
-      insert.run({
+      upsert.run({
         FISCAL_YEAR: Number(r.FISCAL_YEAR),
         DEPARTMENT: r.DEPARTMENT || 'Unassigned',
         LOCATION: r.LOCATION || 'Unassigned',
@@ -133,16 +143,24 @@ async function populateBudgetTargets({ subsidiary, years, env, log = console.log
         ACCOUNT_NUMBER: String(r.ACCOUNT_NUMBER || ''),
         ACCOUNT_NAME: r.ACCOUNT_NAME || null,
         NETSUITE_INTERNAL_NUMBER: r.NETSUITE_INTERNAL_NUMBER != null ? Number(r.NETSUITE_INTERNAL_NUMBER) : null,
-        ANNUAL_BUDGET_TARGET_AMOUNT: r.ANNUAL_BUDGET_TARGET_AMOUNT != null ? Number(r.ANNUAL_BUDGET_TARGET_AMOUNT) : 0,
+        SOURCE_AMOUNT_ILS: r.ANNUAL_BUDGET_TARGET_AMOUNT != null ? Number(r.ANNUAL_BUDGET_TARGET_AMOUNT) : 0,
         SUBSIDIARY_ID: Number(r.SUBSIDIARY_ID),
+        SOURCE_SYNCED_AT: syncStart,
       });
+    }
+    for (const yr of fiscalYears) {
+      deletedOrphans += cleanup.run(subsidiary, yr, syncStart).changes;
     }
   });
   txn();
 
   const summary = db
     .prepare(`
-      SELECT FISCAL_YEAR, COUNT(*) AS ROW_COUNT, ROUND(SUM(ANNUAL_BUDGET_TARGET_AMOUNT), 2) AS TOTAL_ILS
+      SELECT
+        FISCAL_YEAR,
+        COUNT(*) AS ROW_COUNT,
+        ROUND(SUM(ANNUAL_BUDGET_TARGET_AMOUNT), 2) AS TOTAL_ILS,
+        SUM(CASE WHEN USER_OVERRIDE_AMOUNT_ILS IS NOT NULL OR USER_OVERRIDE_PCT IS NOT NULL THEN 1 ELSE 0 END) AS OVERRIDE_COUNT
       FROM FCT_BUDGET_TARGET_BY_DEPT_ACCT
       WHERE SUBSIDIARY_ID = ? AND FISCAL_YEAR IN (${fiscalYears.join(',')})
       GROUP BY FISCAL_YEAR ORDER BY FISCAL_YEAR
@@ -150,17 +168,20 @@ async function populateBudgetTargets({ subsidiary, years, env, log = console.log
     .all(subsidiary);
 
   log('[populate] summary by year:');
-  for (const s of summary) log(`  ${s.FISCAL_YEAR}: ${s.ROW_COUNT} rows, total ILS ${s.TOTAL_ILS}`);
+  for (const s of summary) log(`  ${s.FISCAL_YEAR}: ${s.ROW_COUNT} rows, total ILS ${s.TOTAL_ILS}, preserved ${s.OVERRIDE_COUNT} user override(s)`);
+  if (deletedOrphans > 0) log(`[populate] cleaned up ${deletedOrphans} stale row(s) without user overrides`);
 
   return {
     subsidiary,
     fiscalYears,
     rowCount: rows.length,
     elapsedMs,
+    deletedOrphans,
     summary: summary.map((s) => ({
       fiscalYear: s.FISCAL_YEAR,
       rowCount: s.ROW_COUNT,
       totalIls: s.TOTAL_ILS,
+      preservedOverrides: s.OVERRIDE_COUNT,
     })),
     dbPath: DB_PATH,
   };

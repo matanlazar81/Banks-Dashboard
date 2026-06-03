@@ -54,6 +54,26 @@ function getYear(req: any): number {
   return parseInt(url.searchParams.get('year') || '') || new Date().getFullYear();
 }
 
+// User identity: trust an upstream-injected header (the finance-it parent app should set
+// X-User-Email when proxying). DEV_USER_EMAIL is a local-dev fallback only.
+function getUserEmail(req: any): string {
+  const h = req.headers || {};
+  const raw = (h['x-user-email'] || h['x-forwarded-user'] || h['x-auth-user'] || process.env.DEV_USER_EMAIL || '').toString();
+  return raw.trim().toLowerCase();
+}
+
+function getSyncAllowlist(): string[] {
+  return (process.env.SYNC_ALLOWLIST || 'matan.l@lsports.eu')
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function canUserSync(email: string): boolean {
+  if (!email) return false;
+  return getSyncAllowlist().includes(email);
+}
+
 // NetSuite request queue — serialize all NS API calls to avoid 429 rate limits
 let nsQueue: Promise<any> = Promise.resolve();
 function queueNsCall<T>(fn: () => Promise<T>): Promise<T> {
@@ -416,13 +436,28 @@ function banksPlugin(): Plugin {
         } catch (e: any) { res.end(JSON.stringify({ data: { byMonth: {}, totalByMonth: {}, overrides: [] }, error: e.message })); }
       });
 
+      // ── GET /api/whoami — current user + permission flags for budget-targets sync ──
+      server.middlewares.use('/api/whoami', (req, res) => {
+        const email = getUserEmail(req);
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ email, canSync: canUserSync(email) }));
+      });
+
       // ── POST /api/sync-budget-targets — refresh FCT_BUDGET_TARGET_BY_DEPT_ACCT
-      // for the (subsidiary, year) currently shown on the dashboard ──
+      // for the (subsidiary, year) currently shown on the dashboard.
+      // Gated to SYNC_ALLOWLIST (defaults to matan.l@lsports.eu). User overrides
+      // (USER_OVERRIDE_AMOUNT_ILS / USER_OVERRIDE_PCT) are preserved silently. ──
       server.middlewares.use('/api/sync-budget-targets', async (req, res) => {
         res.setHeader('Content-Type', 'application/json');
         if ((req.method || 'GET').toUpperCase() !== 'POST') {
           res.statusCode = 405;
           res.end(JSON.stringify({ ok: false, error: 'Method not allowed; use POST' }));
+          return;
+        }
+        const email = getUserEmail(req);
+        if (!canUserSync(email)) {
+          res.statusCode = 403;
+          res.end(JSON.stringify({ ok: false, error: 'Not authorized to sync. Contact the dashboard owner.' }));
           return;
         }
         try {
@@ -442,7 +477,7 @@ function banksPlugin(): Plugin {
           delete require.cache[sfPath];
           const { populateBudgetTargets } = require(sfPath);
           const result = await populateBudgetTargets({ subsidiary, years, env: process.env });
-          res.end(JSON.stringify({ ok: true, ...result }));
+          res.end(JSON.stringify({ ok: true, triggeredBy: email, ...result }));
         } catch (e: any) {
           res.statusCode = 500;
           res.end(JSON.stringify({ ok: false, error: e?.message || String(e) }));

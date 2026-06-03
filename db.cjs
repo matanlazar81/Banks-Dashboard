@@ -22,6 +22,21 @@ function getDb() {
 }
 
 function migrate(d) {
+  // If a previous version of the table exists without the SOURCE_AMOUNT_ILS column
+  // (pre-overrides schema), drop it. There is no production data to preserve yet —
+  // the live server hasn't run Sync against this schema.
+  const tbl = d
+    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='FCT_BUDGET_TARGET_BY_DEPT_ACCT'")
+    .get();
+  if (tbl) {
+    const cols = d.prepare("PRAGMA table_info('FCT_BUDGET_TARGET_BY_DEPT_ACCT')").all();
+    const hasNew = cols.some((c) => c.name === 'SOURCE_AMOUNT_ILS');
+    if (!hasNew) {
+      console.warn('[db] Dropping old-schema FCT_BUDGET_TARGET_BY_DEPT_ACCT (no user overrides existed). Re-run Sync to repopulate.');
+      d.exec('DROP TABLE FCT_BUDGET_TARGET_BY_DEPT_ACCT');
+    }
+  }
+
   d.exec(`
     CREATE TABLE IF NOT EXISTS FCT_BUDGET_TARGET_BY_DEPT_ACCT (
       FISCAL_YEAR                  INTEGER NOT NULL,
@@ -31,8 +46,20 @@ function migrate(d) {
       ACCOUNT_NUMBER               TEXT,
       ACCOUNT_NAME                 TEXT,
       NETSUITE_INTERNAL_NUMBER     INTEGER,
-      ANNUAL_BUDGET_TARGET_AMOUNT  REAL,
+      SOURCE_AMOUNT_ILS            REAL,
+      USER_OVERRIDE_AMOUNT_ILS     REAL,
+      USER_OVERRIDE_PCT            REAL,
+      USER_EDITED_BY               TEXT,
+      USER_EDITED_AT               TEXT,
+      ANNUAL_BUDGET_TARGET_AMOUNT  REAL GENERATED ALWAYS AS (
+        COALESCE(
+          USER_OVERRIDE_AMOUNT_ILS,
+          SOURCE_AMOUNT_ILS * (1 + COALESCE(USER_OVERRIDE_PCT, 0) / 100.0),
+          SOURCE_AMOUNT_ILS
+        )
+      ) STORED,
       SUBSIDIARY_ID                INTEGER NOT NULL,
+      SOURCE_SYNCED_AT             TEXT NOT NULL DEFAULT (datetime('now')),
       LOADED_AT                    TEXT NOT NULL DEFAULT (datetime('now')),
       PRIMARY KEY (FISCAL_YEAR, SUBSIDIARY_ID, DEPARTMENT, LOCATION, ACCOUNT_NUMBER, CURRENCY)
     ) STRICT;

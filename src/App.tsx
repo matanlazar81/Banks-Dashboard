@@ -632,6 +632,13 @@ export default function App() {
   const [isRollingForward, setIsRollingForward] = useState(false);
   const [budgetSyncStatus, setBudgetSyncStatus] = useState<'idle' | 'syncing' | 'success' | 'error'>('idle');
   const [budgetSyncMsg, setBudgetSyncMsg] = useState<string>('');
+  const [canSyncBudget, setCanSyncBudget] = useState<boolean>(false);
+  useEffect(() => {
+    fetch('/api/whoami')
+      .then(r => r.json())
+      .then(d => setCanSyncBudget(!!d.canSync))
+      .catch(() => setCanSyncBudget(false));
+  }, []);
   useEffect(() => { try { localStorage.setItem('banks-active-years', JSON.stringify(activeYears)); } catch {} }, [activeYears]);
   useEffect(() => {
     fetch('/api/budget-years').then(r => r.json()).then(d => {
@@ -3643,7 +3650,9 @@ useEffect(() => {
                 </button>
               </>)}
               {/* Sync budget targets table (data/banks-dashboard.db) from Snowflake FCT_BUDGET
-                  for the currently-selected (company, year). */}
+                  for the currently-selected (company, year). Gated server-side via SYNC_ALLOWLIST;
+                  hidden client-side when /api/whoami reports canSync = false. */}
+              {canSyncBudget && (
               <button
                 disabled={budgetSyncStatus === 'syncing'}
                 onClick={async () => {
@@ -3691,6 +3700,7 @@ useEffect(() => {
                   ? `✕ ${budgetSyncMsg.slice(0, 40)}`
                   : `⇅ Sync ${activeYears[activeCompany] || currentYear}`}
               </button>
+              )}
             </>) : (
               <div className="flex items-center gap-2 text-[11px] font-medium">
                 <span className={`px-2 py-1 rounded-lg ${(activeYears.lsports || currentYear) !== currentYear ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-gray-100 text-gray-600'}`}>
