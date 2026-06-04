@@ -732,7 +732,11 @@ function BudgetTargetsDrawer({
                 onClick={() => {
                   // PR-H: native EUR export. Monthly EUR cells = Snowflake's stored EUR;
                   // ILS columns convert via each row's native rate (stored EUR vs ILS totals).
-                  const exportRows = (filter ? visible : rows).map(r => {
+                  // PR-N: exclude account 800029 (Unrealized Gain/Loss reval) from the export
+                  // so the grand total equals the dashboard scenario figure exactly. Also
+                  // append a TOTALS row at the bottom summing every numeric column.
+                  const sourceRows = (filter ? visible : rows).filter(r => r.ACCOUNT_NUMBER !== '800029');
+                  const exportRows = sourceRows.map(r => {
                     const monthly = r.MONTHLY_SOURCE_ILS || {};
                     const monthlyEur = r.MONTHLY_SOURCE_EUR || {};
                     const ilsTot = sumVals(r.MONTHLY_SOURCE_ILS) || (r.SOURCE_AMOUNT_ILS || 0);
@@ -770,6 +774,27 @@ function BudgetTargetsDrawer({
                     out['Last Edited At'] = r.USER_EDITED_AT || '';
                     return out;
                   });
+                  // PR-N: append a TOTALS row summing all numeric columns. Non-numeric
+                  // columns are blanked except the leftmost which says "TOTAL".
+                  if (exportRows.length > 0) {
+                    const total: Record<string, any> = {
+                      Department: 'TOTAL',
+                      Location: '',
+                      'Source Currency': '',
+                      'Account Number': '',
+                      'Account Name': '',
+                      'NetSuite Internal ID': '',
+                    };
+                    const sumCol = (k: string) => exportRows.reduce((s, r) => s + (typeof r[k] === 'number' ? r[k] : 0), 0);
+                    total[`Annual Source ${ccy}`] = sumCol(`Annual Source ${ccy}`);
+                    MONTH_LABELS.forEach(label => { total[`${label} ${ccy}`] = sumCol(`${label} ${ccy}`); });
+                    total[`Override Amount ${ccy}`] = sumCol(`Override Amount ${ccy}`);
+                    total['Override %'] = '';
+                    total[`Annual Budget Target ${ccy}`] = sumCol(`Annual Budget Target ${ccy}`);
+                    total['Last Edited By'] = '';
+                    total['Last Edited At'] = '';
+                    exportRows.push(total);
+                  }
                   const ws = XLSX.utils.json_to_sheet(exportRows);
                   const wb = XLSX.utils.book_new();
                   XLSX.utils.book_append_sheet(wb, ws, `FY${year} ${ccy}`);
