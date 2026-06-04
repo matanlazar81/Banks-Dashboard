@@ -42,7 +42,7 @@ function canUserSync(email: string): boolean {
 // Create the tables on first use (idempotent). Kicks off at module load so the
 // first request doesn't pay the migration latency.
 let budgetTablesReady: Promise<void> | null = null;
-function ensureBudgetTablesExist(): Promise<void> {
+export function ensureBudgetTablesExist(): Promise<void> {
   if (!budgetTablesReady) {
     budgetTablesReady = (async () => {
       await pool.query(`
@@ -131,7 +131,7 @@ type DashboardBucketTotals = {
   other:   { eur: number; ils: number };
 };
 
-async function populateBudgetTargets(opts: {
+export async function populateBudgetTargets(opts: {
   subsidiary: number;
   years: number[];
   scenarioAdj?: {
