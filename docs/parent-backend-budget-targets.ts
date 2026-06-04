@@ -565,6 +565,101 @@ export async function populateBudgetTargets(opts: {
   }
   const overlayError = await applyActualsForPastMonths();
 
+  // PR-O: rescale account amounts so per-month bucket totals match the
+  // dashboard's cash-view figures exactly. User wants Targets file = dashboard
+  // (TOTAL OUTFLOW per month, by SALARY / VENDORS / OTHER) including all
+  // manual adjustments. The dashboard sends dashboardTotals straight from
+  // cashflowForecast, so we trust those as the source of truth per month/
+  // bucket and scale account-level lines proportionally to hit them.
+  //
+  // Excluded from scaling:
+  //   - 800029 (Unrealized Gain/Loss reval) — surfaced in dashboard's REVAL
+  //     column, not in TOTAL OUTFLOW. Kept as a separate row in the DB but
+  //     not scaled by the vendor factor.
+  //   - The synthetic OTHER row (created here) carries the dashboard's "Other"
+  //     bucket directly per month — not scaled.
+  if (opts.dashboardTotals && Object.keys(opts.dashboardTotals).length > 0) {
+    const ilsPerEur = 3.68;
+    for (const ym of Object.keys(opts.dashboardTotals)) {
+      const dt = opts.dashboardTotals[ym];
+      const [yrStr, mkey] = ym.split('-');
+      const yr = Number(yrStr);
+      if (!yr || !mkey) continue;
+
+      // Current per-bucket totals from in-memory groups, EXCLUDING 800029.
+      let curSalaryILS = 0, curSalaryEUR = 0;
+      let curVendorsILS = 0, curVendorsEUR = 0;
+      for (const g of groups.values()) {
+        if (g.FISCAL_YEAR !== yr) continue;
+        if (g.ACCOUNT_NUMBER === '800029') continue;
+        const ils = g.monthly[mkey] || 0;
+        const eur = g.monthlyEur[mkey] || 0;
+        if (g.IS_PAYROLL) { curSalaryILS += ils; curSalaryEUR += eur; }
+        else              { curVendorsILS += ils; curVendorsEUR += eur; }
+      }
+
+      const targetSalaryILS  = Number(dt.salary?.ils)  || (Number(dt.salary?.eur)  || 0) * ilsPerEur;
+      const targetSalaryEUR  = Number(dt.salary?.eur)  || (Number(dt.salary?.ils)  || 0) / ilsPerEur;
+      const targetVendorsILS = Number(dt.vendors?.ils) || (Number(dt.vendors?.eur) || 0) * ilsPerEur;
+      const targetVendorsEUR = Number(dt.vendors?.eur) || (Number(dt.vendors?.ils) || 0) / ilsPerEur;
+      const targetOtherILS   = Number(dt.other?.ils)   || (Number(dt.other?.eur)   || 0) * ilsPerEur;
+      const targetOtherEUR   = Number(dt.other?.eur)   || (Number(dt.other?.ils)   || 0) / ilsPerEur;
+
+      const salaryScaleILS  = curSalaryILS  > 0 && targetSalaryILS  > 0 ? targetSalaryILS  / curSalaryILS  : null;
+      const salaryScaleEUR  = curSalaryEUR  > 0 && targetSalaryEUR  > 0 ? targetSalaryEUR  / curSalaryEUR  : null;
+      const vendorsScaleILS = curVendorsILS > 0 && targetVendorsILS > 0 ? targetVendorsILS / curVendorsILS : null;
+      const vendorsScaleEUR = curVendorsEUR > 0 && targetVendorsEUR > 0 ? targetVendorsEUR / curVendorsEUR : null;
+
+      for (const g of groups.values()) {
+        if (g.FISCAL_YEAR !== yr) continue;
+        if (g.ACCOUNT_NUMBER === '800029') continue;
+        const sILS = g.IS_PAYROLL ? salaryScaleILS : vendorsScaleILS;
+        const sEUR = g.IS_PAYROLL ? salaryScaleEUR : vendorsScaleEUR;
+        if (sILS !== null) {
+          const v = g.monthly[mkey] || 0;
+          const scaled = v * sILS;
+          g.annual += scaled - v;
+          g.monthly[mkey] = scaled;
+        }
+        if (sEUR !== null) {
+          g.monthlyEur[mkey] = (g.monthlyEur[mkey] || 0) * sEUR;
+        }
+      }
+
+      // Synthetic OTHER row per year carrying the dashboard's Other-bucket
+      // (tax / IC / bank fees) directly. No Snowflake source exists for these.
+      if (targetOtherILS !== 0 || targetOtherEUR !== 0) {
+        const otherKey = `${yr}|${subsidiary}|Unassigned|Unassigned|OTHER|ILS`;
+        let og = groups.get(otherKey);
+        if (!og) {
+          og = {
+            FISCAL_YEAR: yr,
+            SUBSIDIARY_ID: subsidiary,
+            DEPARTMENT: 'Unassigned',
+            LOCATION: 'Unassigned',
+            CURRENCY: 'ILS',
+            ACCOUNT_NUMBER: 'OTHER',
+            ACCOUNT_NAME: 'Other (tax, IC, bank fees - from dashboard)',
+            NETSUITE_INTERNAL_NUMBER: null,
+            CATEGORY: null,
+            IS_PAYROLL: false,
+            annual: 0,
+            monthly: {},
+            monthlyRaw: {},
+            monthlyEur: {},
+          };
+          groups.set(otherKey, og);
+        }
+        const prevIls = og.monthly[mkey] || 0;
+        og.monthly[mkey] = targetOtherILS;
+        og.monthlyRaw[mkey] = targetOtherILS;
+        og.monthlyEur[mkey] = targetOtherEUR;
+        og.annual += targetOtherILS - prevIls;
+      }
+    }
+    logger.info?.(`PR-O: scaled GL accounts to dashboard cash totals across ${Object.keys(opts.dashboardTotals).length} months`);
+  }
+
   // Drop rows whose annual is effectively zero (matches the prior HAVING > 0 filter).
   let rowsToWrite = [...groups.values()].filter(g => Math.abs(g.annual) > 0);
   let fallbackUsedFromYear: number | null = null;
