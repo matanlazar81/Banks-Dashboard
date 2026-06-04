@@ -142,6 +142,10 @@ export async function populateBudgetTargets(opts: {
     deptHeadcount?: Record<string, { count?: number }>;    // { dept: { count } } — current headcount
   };
   dashboardTotals?: Record<string, DashboardBucketTotals>; // { "YYYY-MM": { salary, vendors, other } }
+  // PR-S: per-(YYYY-MM, department) salary breakdown from the dashboard
+  // (mirrors the salary modal's Adjusted EUR per dept). When present,
+  // the backend scales each dept's payroll account values to match.
+  salaryByDept?: Record<string, Record<string, { eur: number; ils: number }>>;
 }) {
   const { subsidiary, years } = opts;
   const scenarioAdj = opts.scenarioAdj || {};
@@ -636,6 +640,66 @@ export async function populateBudgetTargets(opts: {
     logger.info?.(`PR-O: scaled GL accounts to dashboard cash totals across ${Object.keys(opts.dashboardTotals).length} months`);
   }
 
+  // PR-S: per-department salary scaling. PR-O makes the per-month payroll
+  // bucket total equal the dashboard's salary number, but distributes it
+  // proportionally to whatever shape FCT_BUDGET happens to have — which is
+  // wrong once the user is in lastActual projection mode or has applied
+  // per-dept adjustments. The salary modal shows per-dept "Adjusted EUR" =
+  // basis × multiplier + per-dept % + dept share of SF overrides + dept
+  // share of HC lever impact, and that's what the user expects to see in
+  // Targets too. Here we rescale each (year, month, dept) payroll cluster
+  // so its sum equals salaryByDept[ym][dept] (eur + ils independently),
+  // preserving the within-dept distribution across payroll accounts
+  // (760001 Gross vs 760002 Bonus vs 760003 Benefits etc.).
+  //
+  // Order matters: this runs AFTER PR-O. PR-O may have nudged the
+  // per-bucket total to dashboard.salary; PR-S then refines per-dept.
+  // Departments not in salaryByDept[ym] are left at their PR-O values.
+  if (opts.salaryByDept && Object.keys(opts.salaryByDept).length > 0) {
+    let scaledCells = 0;
+    for (const ym of Object.keys(opts.salaryByDept)) {
+      const dt = opts.salaryByDept[ym];
+      if (!dt) continue;
+      const [yrStr, mkey] = ym.split('-');
+      const yr = Number(yrStr);
+      if (!yr || !mkey) continue;
+      for (const dept of Object.keys(dt)) {
+        const t = dt[dept];
+        const targetILS = Number(t?.ils) || 0;
+        const targetEUR = Number(t?.eur) || 0;
+        let curILS = 0, curEUR = 0;
+        for (const g of groups.values()) {
+          if (g.FISCAL_YEAR !== yr) continue;
+          if (!g.IS_PAYROLL) continue;
+          if (g.ACCOUNT_NUMBER === '800029') continue;
+          if (g.DEPARTMENT !== dept) continue;
+          curILS += g.monthly[mkey] || 0;
+          curEUR += g.monthlyEur[mkey] || 0;
+        }
+        const scaleILS = curILS > 0 && targetILS > 0 ? targetILS / curILS : null;
+        const scaleEUR = curEUR > 0 && targetEUR > 0 ? targetEUR / curEUR : null;
+        if (scaleILS === null && scaleEUR === null) continue;
+        for (const g of groups.values()) {
+          if (g.FISCAL_YEAR !== yr) continue;
+          if (!g.IS_PAYROLL) continue;
+          if (g.ACCOUNT_NUMBER === '800029') continue;
+          if (g.DEPARTMENT !== dept) continue;
+          if (scaleILS !== null) {
+            const v = g.monthly[mkey] || 0;
+            const scaled = v * scaleILS;
+            g.annual += scaled - v;
+            g.monthly[mkey] = scaled;
+          }
+          if (scaleEUR !== null) {
+            g.monthlyEur[mkey] = (g.monthlyEur[mkey] || 0) * scaleEUR;
+          }
+        }
+        scaledCells++;
+      }
+    }
+    logger.info?.(`PR-S: scaled payroll per-dept across ${scaledCells} (month×dept) cells in ${Object.keys(opts.salaryByDept).length} months`);
+  }
+
   // PR-R: delete any pre-existing synthetic OTHER rows from previous syncs.
   // The OTHER account is sentinel ('OTHER', not a real NS GL number) so this
   // is a safe targeted delete that doesn't touch real GL accounts.
@@ -877,8 +941,14 @@ router.post('/sync-budget-targets', bankRole, async (req: any, res: Response) =>
     const dashboardTotals = body.dashboardTotals && typeof body.dashboardTotals === 'object'
       ? body.dashboardTotals
       : undefined;
+    // PR-S: per-department salary breakdown mirroring the salary modal's
+    // "Adjusted EUR" column. Lets the backend scale each (month × dept)
+    // payroll cluster individually so Targets per-dept matches the modal.
+    const salaryByDept = body.salaryByDept && typeof body.salaryByDept === 'object'
+      ? body.salaryByDept
+      : undefined;
     await ensureBudgetTablesExist();
-    const result = await populateBudgetTargets({ subsidiary, years, scenarioAdj, dashboardTotals });
+    const result = await populateBudgetTargets({ subsidiary, years, scenarioAdj, dashboardTotals, salaryByDept });
     res.json({ ok: true, triggeredBy: email, ...result });
   } catch (e: any) {
     logger.error('sync-budget-targets failed', e);
