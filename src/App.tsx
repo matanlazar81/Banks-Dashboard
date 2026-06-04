@@ -6718,19 +6718,26 @@ useEffect(() => {
                     </td>
                     {(() => {
                       const hasSavings = cashflowForecast.some(r => r.salary !== r.salaryBase || r.vendors !== r.vendorsBase);
+                      const ilsRate = adjustedCurrent > 0 ? adjustedCurrentLocal / adjustedCurrent : 3.7;
                       const salTotal = cashflowForecast.reduce((s, r) => s + (hasSavings ? r.salaryBase : r.salary), 0);
                       const venTotal = cashflowForecast.reduce((s, r) => s + (hasSavings ? r.vendorsBase : r.vendors), 0);
                       // Other is signed per month (positive = outflow, negative = inflow). Sum keeps the sign so the
                       // year total reconciles: TotalInflows - Salary - Vendors - Other = Net.
                       const otherTotal = cashflowForecast.reduce((s, r) => s + (r.other || 0), 0);
                       const outTotal = salTotal + venTotal + Math.max(0, otherTotal);
+                      // ILS counterparts. salaryBase / vendorsBase have no ILS field on the row, so derive them
+                      // by adding the EUR savings back at the live ILS rate (matches the netILS logic below).
+                      const salTotalILS = cashflowForecast.reduce((s, r) => s + (hasSavings ? Math.round(r.salaryILS + (r.salaryBase - r.salary) * ilsRate) : r.salaryILS), 0);
+                      const venTotalILS = cashflowForecast.reduce((s, r) => s + (hasSavings ? Math.round(r.vendorsILS + (r.vendorsBase - r.vendors) * ilsRate) : r.vendorsILS), 0);
+                      const otherTotalILS = cashflowForecast.reduce((s, r) => s + (r.otherILS || 0), 0);
+                      const outTotalILS = salTotalILS + venTotalILS + Math.max(0, otherTotalILS);
                       return (<>
-                        <td className="py-2.5 px-0.5 text-right text-amber-700">-{fmt(salTotal)}</td>
-                        <td className="py-2.5 px-0.5 text-right text-violet-700">-{fmt(venTotal)}</td>
+                        <td className="py-2.5 px-0.5 text-right text-amber-700">-{fmtC(salTotal, salTotalILS)}</td>
+                        <td className="py-2.5 px-0.5 text-right text-violet-700">-{fmtC(venTotal, venTotalILS)}</td>
                         <td className={`py-2.5 px-0.5 text-right ${otherTotal === 0 ? 'text-gray-300' : otherTotal > 0 ? 'text-slate-600' : 'text-emerald-600'}`}>
-                          {otherTotal === 0 ? '-' : (otherTotal > 0 ? `-${fmt(otherTotal)}` : `+${fmt(-otherTotal)}`)}
+                          {otherTotal === 0 ? '-' : (otherTotal > 0 ? `-${fmtC(otherTotal, otherTotalILS)}` : `+${fmtC(-otherTotal, -otherTotalILS)}`)}
                         </td>
-                        <td className="py-2.5 px-0.5 text-right text-red-700">-{fmt(outTotal)}</td>
+                        <td className="py-2.5 px-0.5 text-right text-red-700">-{fmtC(outTotal, outTotalILS)}</td>
                       </>);
                     })()}
                     {(() => {
@@ -6776,35 +6783,47 @@ useEffect(() => {
                     const totalSalaryAfter = cashflowForecast.reduce((s, r) => s + r.salary, 0);
                     const totalVendorAfter = cashflowForecast.reduce((s, r) => s + r.vendors, 0);
                     const totalOutflowAfter = cashflowForecast.reduce((s, r) => s + r.totalOutflow, 0);
+                    // ILS conversions using the same live rate the BEFORE-SAVINGS row uses
+                    const ilsRate = adjustedCurrent > 0 ? adjustedCurrentLocal / adjustedCurrent : 3.7;
+                    const totalSalarySavingILS = Math.round(totalSalarySaving * ilsRate);
+                    const totalVendorSavingILS = Math.round(totalVendorSaving * ilsRate);
+                    const totalSavingILS = totalSalarySavingILS + totalVendorSavingILS;
+                    const totalSalaryAfterILS = cashflowForecast.reduce((s, r) => s + r.salaryILS, 0);
+                    const totalVendorAfterILS = cashflowForecast.reduce((s, r) => s + r.vendorsILS, 0);
+                    const totalOutflowAfterILS = cashflowForecast.reduce((s, r) => s + r.totalOutflowILS, 0);
+                    const totalNetAfter = cashflowForecast.reduce((s, r) => s + r.net, 0);
+                    const totalNetAfterILS = cashflowForecast.reduce((s, r) => s + r.netILS, 0);
+                    const totalRevalAfter = cashflowForecast.reduce((s, r) => s + r.revalImpact, 0);
+                    const totalRevalAfterILS = cashflowForecast.reduce((s, r) => s + r.revalImpactILS, 0);
+                    const finalClosing = cashflowForecast[cashflowForecast.length - 1]?.closingBalance || 0;
+                    const finalClosingILS = cashflowForecast[cashflowForecast.length - 1]?.closingBalanceILS || 0;
+                    const otherTotalAfter = cashflowForecast.reduce((s, r) => s + (r.other || 0), 0);
+                    const otherTotalAfterILS = cashflowForecast.reduce((s, r) => s + (r.otherILS || 0), 0);
                     return (<>
                       <tr className="bg-green-50 border-t border-green-200 font-semibold text-green-700 whitespace-nowrap">
                         <td className="py-2 pr-1 text-green-800" colSpan={6}>TOTAL SAVINGS</td>
-                        <td className="py-2 pr-1 text-right">{fmt(totalSalarySaving)}</td>
-                        <td className="py-2 pr-1 text-right">{fmt(totalVendorSaving)}</td>
+                        <td className="py-2 pr-1 text-right">{fmtC(totalSalarySaving, totalSalarySavingILS)}</td>
+                        <td className="py-2 pr-1 text-right">{fmtC(totalVendorSaving, totalVendorSavingILS)}</td>
                         <td className="py-2 pr-1 text-right"></td>
-                        <td className="py-2 pr-1 text-right">{fmt(totalSaving)}</td>
-                        <td className="py-2 pr-1 text-right">{fmt(totalSaving)}</td>
+                        <td className="py-2 pr-1 text-right">{fmtC(totalSaving, totalSavingILS)}</td>
+                        <td className="py-2 pr-1 text-right">{fmtC(totalSaving, totalSavingILS)}</td>
                         <td className="py-2 pr-1 text-right"></td>
-                        <td className="py-2 pr-1 text-right">{fmt(totalSaving)}</td>
+                        <td className="py-2 pr-1 text-right">{fmtC(totalSaving, totalSavingILS)}</td>
                       </tr>
                       <tr className="bg-emerald-50 font-bold text-emerald-800 whitespace-nowrap">
                         <td className="py-2 pr-1" colSpan={6}>TOTAL AFTER SAVINGS</td>
-                        <td className="py-2 pr-1 text-right">-{fmt(totalSalaryAfter)}</td>
-                        <td className="py-2 pr-1 text-right">-{fmt(totalVendorAfter)}</td>
-                        {(() => {
-                          const otherTotalAfter = cashflowForecast.reduce((s, r) => s + (r.other || 0), 0);
-                          return <td className={`py-2 pr-1 text-right ${otherTotalAfter === 0 ? 'text-gray-300' : otherTotalAfter > 0 ? 'text-slate-700' : 'text-emerald-700'}`}>{otherTotalAfter === 0 ? '-' : (otherTotalAfter > 0 ? `-${fmt(otherTotalAfter)}` : `+${fmt(-otherTotalAfter)}`)}</td>;
-                        })()}
-                        <td className="py-2 pr-1 text-right">-{fmt(totalOutflowAfter)}</td>
-                        <td className={`py-2 pr-1 text-right ${cashflowForecast.reduce((s, r) => s + r.net, 0) >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmt(cashflowForecast.reduce((s, r) => s + r.net, 0))}</td>
-                        <td className="py-2 pr-1 text-right text-amber-600">{fmt(cashflowForecast.reduce((s, r) => s + r.revalImpact, 0))}</td>
-                        <td className={`py-2 pr-1 text-right ${(cashflowForecast[cashflowForecast.length - 1]?.closingBalance || 0) >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
-                          {fmt(cashflowForecast[cashflowForecast.length - 1]?.closingBalance || 0)}
+                        <td className="py-2 pr-1 text-right">-{fmtC(totalSalaryAfter, totalSalaryAfterILS)}</td>
+                        <td className="py-2 pr-1 text-right">-{fmtC(totalVendorAfter, totalVendorAfterILS)}</td>
+                        <td className={`py-2 pr-1 text-right ${otherTotalAfter === 0 ? 'text-gray-300' : otherTotalAfter > 0 ? 'text-slate-700' : 'text-emerald-700'}`}>{otherTotalAfter === 0 ? '-' : (otherTotalAfter > 0 ? `-${fmtC(otherTotalAfter, otherTotalAfterILS)}` : `+${fmtC(-otherTotalAfter, -otherTotalAfterILS)}`)}</td>
+                        <td className="py-2 pr-1 text-right">-{fmtC(totalOutflowAfter, totalOutflowAfterILS)}</td>
+                        <td className={`py-2 pr-1 text-right ${totalNetAfter >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtC(totalNetAfter, totalNetAfterILS)}</td>
+                        <td className="py-2 pr-1 text-right text-amber-600">{fmtC(totalRevalAfter, totalRevalAfterILS)}</td>
+                        <td className={`py-2 pr-1 text-right ${finalClosing >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
+                          {fmtC(finalClosing, finalClosingILS)}
                           {(() => {
-                            const totalNetAfter = cashflowForecast.reduce((s, r) => s + r.net, 0);
-                            const totalRevalAfter = cashflowForecast.reduce((s, r) => s + r.revalImpact, 0);
                             const totalGrowthAfter = totalNetAfter + totalRevalAfter;
-                            return <div className={`text-xs font-bold mt-1 ${totalGrowthAfter >= 0 ? 'text-green-600' : 'text-red-500'}`}>Net Growth: {totalGrowthAfter >= 0 ? '+' : ''}{fmt(totalGrowthAfter)}</div>;
+                            const totalGrowthAfterILS = totalNetAfterILS + totalRevalAfterILS;
+                            return <div className={`text-xs font-bold mt-1 ${totalGrowthAfter >= 0 ? 'text-green-600' : 'text-red-500'}`}>Net Growth: {totalGrowthAfter >= 0 ? '+' : ''}{fmtC(totalGrowthAfter, totalGrowthAfterILS)}</div>;
                           })()}
                         </td>
                       </tr>
