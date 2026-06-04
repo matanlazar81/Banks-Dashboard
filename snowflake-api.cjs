@@ -280,9 +280,6 @@ function createSnowflakeClient(env) {
       WHERE e.SUBSIDIARY_ID = 3
         AND e.SOURCE = 'netsuite'
         AND e.CAL_MONTH_START_DATE >= '2025-01-01'
-        AND NOT (g.IS_PAYROLL = TRUE AND g.GL_ACCOUNT_NUMBER IN (
-          '760038','76003','760023','760020','760017','760029','760014','760015','760008'
-        ))
       GROUP BY DATE_TRUNC('month', e.CAL_MONTH_START_DATE)::VARCHAR,
                CASE WHEN g.IS_PAYROLL THEN 'Salary'
                     WHEN g.GL_ACCOUNT_NUMBER LIKE '800%' THEN 'Finance'
@@ -359,7 +356,6 @@ function createSnowflakeClient(env) {
       WHERE e.SUBSIDIARY_ID = 3
         AND e.SOURCE = 'netsuite'
         AND g.IS_PAYROLL = TRUE
-        AND g.GL_ACCOUNT_NUMBER NOT IN ('760038','76003','760023','760020','760017','760029','760014','760015','760008')
         AND DATE_TRUNC('month', e.CAL_MONTH_START_DATE) = TO_DATE('${startDate}')
       GROUP BY g.GL_ACCOUNT_NUMBER, g.GL_ACCOUNT_NAME
       HAVING ABS(SUM(e.AMOUNT_EUR)) > 10
@@ -1332,7 +1328,6 @@ function createSnowflakeClient(env) {
       WHERE e.SUBSIDIARY_ID = 3
         AND e.SOURCE = 'netsuite'
         AND g.IS_PAYROLL = TRUE
-        AND g.GL_ACCOUNT_NUMBER NOT IN ('760038','76003','760023','760020','760017','760029','760014','760015','760008')
         AND e.CAL_MONTH_START_DATE >= '${yr}-01-01'
         AND e.CAL_MONTH_START_DATE <= '${yr}-12-31'
       GROUP BY d.DEPARTMENT_NAME, DATE_TRUNC('month', e.CAL_MONTH_START_DATE)::VARCHAR
