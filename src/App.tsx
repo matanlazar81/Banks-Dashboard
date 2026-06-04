@@ -4010,7 +4010,7 @@ useEffect(() => {
                     const resp = await fetch(`/api/sync-budget-targets?year=${yr}&subsidiary=${sub}`, {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ vendorCatAdj, salaryDeptAdj }),
+                      body: JSON.stringify({ vendorCatAdj, salaryDeptAdj, salaryAdjPctByMonth, headcountAdj, deptHeadcount }),
                     });
                     const result = await resp.json();
                     if (result.ok) {

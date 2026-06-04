@@ -108,6 +108,10 @@ ensureBudgetTablesExist().catch(e => logger.error('ensureBudgetTablesExist faile
 //          future_cost_increment = add).
 // Layer 3: caller-supplied scenario adjustments — vendorCatAdj (non-payroll)
 //          and salaryDeptAdj (payroll), each shaped as { "YYYY-MM": { key: pct } }.
+// Layer 4 (manual %): salaryAdjPctByMonth (Record<monthIdx, pct>) applied to ALL
+//          payroll rows for the matching month.
+// Layer 5 (HC levers): headcountAdj + deptHeadcount converted to a % per (dept,
+//          month) using cumulative within-year HC delta / current headcount.
 // Idempotent: preserves user_override_* columns; deletes only rows that didn't
 // appear in this sync AND have no user override.
 async function populateBudgetTargets(opts: {
@@ -116,12 +120,37 @@ async function populateBudgetTargets(opts: {
   scenarioAdj?: {
     vendorCatAdj?: Record<string, Record<string, number>>;
     salaryDeptAdj?: Record<string, Record<string, number>>;
+    salaryAdjPctByMonth?: Record<string, number>;          // { "0".."11": pct } — 0 = January
+    headcountAdj?: Record<string, Record<string, number>>; // { "YYYY-MM": { dept: hcDelta } }
+    deptHeadcount?: Record<string, { count?: number }>;    // { dept: { count } } — current headcount
   };
 }) {
   const { subsidiary, years } = opts;
   const scenarioAdj = opts.scenarioAdj || {};
   const vendorCatAdj = scenarioAdj.vendorCatAdj || {};
   const salaryDeptAdj = scenarioAdj.salaryDeptAdj || {};
+  const salaryAdjPctByMonth = scenarioAdj.salaryAdjPctByMonth || {};
+  const headcountAdj = scenarioAdj.headcountAdj || {};
+  const deptHeadcount = scenarioAdj.deptHeadcount || {};
+
+  // Pre-build cumulative HC delta per (year, month, dept). For payroll rows we then
+  // convert this to a % using deptHeadcount and apply it on top of Layer 3.
+  // Cumulative within-year semantics matches App.tsx (line ~1226-1228).
+  const cumulativeHc: Record<string, Record<string, number>> = {}; // { "YYYY-MM": { dept: delta } }
+  const hcYmKeys = Object.keys(headcountAdj).sort();
+  for (const ym of hcYmKeys) {
+    const year = ym.slice(0, 4);
+    const cum: Record<string, number> = {};
+    // Walk all entries up through ym within the same year
+    for (const earlier of hcYmKeys) {
+      if (earlier > ym) break;
+      if (earlier.slice(0, 4) !== year) continue;
+      for (const [dept, delta] of Object.entries(headcountAdj[earlier] || {})) {
+        cum[dept] = (cum[dept] || 0) + (Number(delta) || 0);
+      }
+    }
+    cumulativeHc[ym] = cum;
+  }
   const sf: any = snowflakeService.getClient();
   if (!sf) throw new Error('Snowflake client not configured');
 
@@ -291,6 +320,25 @@ async function populateBudgetTargets(opts: {
     }
     if (scenarioPct) amt = amt * (1 + scenarioPct / 100);
 
+    // Layer 4: manual % per month (salaryAdjPctByMonth) — applies to ALL payroll
+    // rows for the matching month index. Frontend stores this per the active year.
+    if (g.IS_PAYROLL) {
+      const monthIdxKey = String(mNum - 1); // "0" for January
+      const manualPct = Number(salaryAdjPctByMonth[monthIdxKey]) || 0;
+      if (manualPct) amt = amt * (1 + manualPct / 100);
+    }
+
+    // Layer 5: HC levers. Cumulative within-year HC delta divided by dept's
+    // current headcount = % impact on the dept's payroll for that month.
+    if (g.IS_PAYROLL) {
+      const cumDelta = cumulativeHc[ymKey]?.[g.DEPARTMENT] || 0;
+      const headcount = Number(deptHeadcount[g.DEPARTMENT]?.count) || 0;
+      if (cumDelta !== 0 && headcount > 0) {
+        const hcPct = (cumDelta / headcount) * 100;
+        amt = amt * (1 + hcPct / 100);
+      }
+    }
+
     g.monthly[mkey] = (g.monthly[mkey] || 0) + amt;
     g.monthlyRaw[mkey] = (g.monthlyRaw[mkey] || 0) + rawAmt;
     g.annual += amt;
@@ -354,10 +402,22 @@ async function populateBudgetTargets(opts: {
         const raw = Number(rawSource[mkey]) || 0;
         let amt = raw;
         const ymKey = `${targetYear}-${mkey}`;
+        const mNumLocal = parseInt(mkey, 10);
         let scenarioPct = 0;
         if (meta.isPayroll) scenarioPct = salaryDeptAdj[ymKey]?.[r.department] || 0;
         else if (meta.category) scenarioPct = vendorCatAdj[ymKey]?.[meta.category] || 0;
         if (scenarioPct) amt = amt * (1 + scenarioPct / 100);
+        // Layer 4 + 5 also apply in the fallback path so 2027 figures match the dashboard's 2027 projections.
+        if (meta.isPayroll) {
+          const manualPct = Number(salaryAdjPctByMonth[String(mNumLocal - 1)]) || 0;
+          if (manualPct) amt = amt * (1 + manualPct / 100);
+          const cumDelta = cumulativeHc[ymKey]?.[r.department] || 0;
+          const hc = Number(deptHeadcount[r.department]?.count) || 0;
+          if (cumDelta !== 0 && hc > 0) {
+            const hcPct = (cumDelta / hc) * 100;
+            amt = amt * (1 + hcPct / 100);
+          }
+        }
         if (amt !== 0) adjustedMonthly[mkey] = amt;
         if (raw !== 0) monthlyRawCopy[mkey] = raw;
         annual += amt;
@@ -487,6 +547,9 @@ router.post('/sync-budget-targets', bankRole, async (req: any, res: Response) =>
     const scenarioAdj = {
       vendorCatAdj: body.vendorCatAdj && typeof body.vendorCatAdj === 'object' ? body.vendorCatAdj : undefined,
       salaryDeptAdj: body.salaryDeptAdj && typeof body.salaryDeptAdj === 'object' ? body.salaryDeptAdj : undefined,
+      salaryAdjPctByMonth: body.salaryAdjPctByMonth && typeof body.salaryAdjPctByMonth === 'object' ? body.salaryAdjPctByMonth : undefined,
+      headcountAdj: body.headcountAdj && typeof body.headcountAdj === 'object' ? body.headcountAdj : undefined,
+      deptHeadcount: body.deptHeadcount && typeof body.deptHeadcount === 'object' ? body.deptHeadcount : undefined,
     };
     await ensureBudgetTablesExist();
     const result = await populateBudgetTargets({ subsidiary, years, scenarioAdj });
