@@ -114,6 +114,19 @@ ensureBudgetTablesExist().catch(e => logger.error('ensureBudgetTablesExist faile
 //          month) using cumulative within-year HC delta / current headcount.
 // Idempotent: preserves user_override_* columns; deletes only rows that didn't
 // appear in this sync AND have no user override.
+// PR-F: dashboard-driven totals. The frontend POSTs the exact monthly bucket
+// figures it displays (after savings, after scenario adjustments, after bank-
+// classified overlay for closed months). For each (year-month), the backend
+// scales every GL account so the sum of payroll accounts equals dashboardTotals
+// .salary, the sum of non-payroll accounts equals dashboardTotals.vendors, and
+// an "OTHER" synthetic row carries dashboardTotals.other. Net effect: Targets
+// per-bucket totals = dashboard totals by construction.
+type DashboardBucketTotals = {
+  salary:  { eur: number; ils: number };
+  vendors: { eur: number; ils: number };
+  other:   { eur: number; ils: number };
+};
+
 async function populateBudgetTargets(opts: {
   subsidiary: number;
   years: number[];
@@ -124,6 +137,7 @@ async function populateBudgetTargets(opts: {
     headcountAdj?: Record<string, Record<string, number>>; // { "YYYY-MM": { dept: hcDelta } }
     deptHeadcount?: Record<string, { count?: number }>;    // { dept: { count } } — current headcount
   };
+  dashboardTotals?: Record<string, DashboardBucketTotals>; // { "YYYY-MM": { salary, vendors, other } }
 }) {
   const { subsidiary, years } = opts;
   const scenarioAdj = opts.scenarioAdj || {};
@@ -486,6 +500,78 @@ async function populateBudgetTargets(opts: {
   }
   await applyActualsForPastMonths();
 
+  // PR-F: scale each (year, month, bucket) so it sums to the dashboard's
+  // displayed figure. Bucket = "salary" for IS_PAYROLL rows, "vendors" for the
+  // rest. The "other" bucket has no Snowflake source, so we add a synthetic
+  // OTHER row carrying dashboardTotals.other directly. Result: Targets per-
+  // bucket sums = dashboard figures, every month.
+  if (opts.dashboardTotals && Object.keys(opts.dashboardTotals).length > 0) {
+    const ilsPerEur = 3.68;
+    for (const ym of Object.keys(opts.dashboardTotals)) {
+      const dt = opts.dashboardTotals[ym];
+      const [yrStr, mkey] = ym.split('-'); // "2026", "01"
+      const yr = Number(yrStr);
+      if (!yr || !mkey) continue;
+
+      // Compute current per-bucket totals from the existing groups for this month.
+      let curSalaryILS = 0, curVendorsILS = 0;
+      for (const g of groups.values()) {
+        if (g.FISCAL_YEAR !== yr) continue;
+        const v = g.monthly[mkey] || 0;
+        if (g.IS_PAYROLL) curSalaryILS += v;
+        else curVendorsILS += v;
+      }
+
+      const targetSalaryILS  = Number(dt.salary?.ils)  || (Number(dt.salary?.eur)  || 0) * ilsPerEur;
+      const targetVendorsILS = Number(dt.vendors?.ils) || (Number(dt.vendors?.eur) || 0) * ilsPerEur;
+      const targetOtherILS   = Number(dt.other?.ils)   || (Number(dt.other?.eur)   || 0) * ilsPerEur;
+
+      // Scaling factors. If the budget composition is empty for this month/bucket,
+      // skip scaling (would divide by zero) — those rows fall through unchanged.
+      const salaryScale  = curSalaryILS  > 0 && targetSalaryILS  > 0 ? targetSalaryILS  / curSalaryILS  : null;
+      const vendorsScale = curVendorsILS > 0 && targetVendorsILS > 0 ? targetVendorsILS / curVendorsILS : null;
+
+      for (const g of groups.values()) {
+        if (g.FISCAL_YEAR !== yr) continue;
+        const scale = g.IS_PAYROLL ? salaryScale : vendorsScale;
+        if (scale === null) continue;
+        const v = g.monthly[mkey] || 0;
+        const scaled = v * scale;
+        g.annual += scaled - v;
+        g.monthly[mkey] = scaled;
+      }
+
+      // OTHER bucket: synthetic row per year. Account number 'OTHER' is sentinel.
+      if (targetOtherILS !== 0) {
+        const otherKey = `${yr}|${subsidiary}|Unassigned|Unassigned|OTHER|ILS`;
+        let og = groups.get(otherKey);
+        if (!og) {
+          og = {
+            FISCAL_YEAR: yr,
+            SUBSIDIARY_ID: subsidiary,
+            DEPARTMENT: 'Unassigned',
+            LOCATION: 'Unassigned',
+            CURRENCY: 'ILS',
+            ACCOUNT_NUMBER: 'OTHER',
+            ACCOUNT_NAME: 'Other (tax, IC, bank fees — from dashboard)',
+            NETSUITE_INTERNAL_NUMBER: null,
+            CATEGORY: null,
+            IS_PAYROLL: false,
+            annual: 0,
+            monthly: {},
+            monthlyRaw: {},
+          };
+          groups.set(otherKey, og);
+        }
+        const prev = og.monthly[mkey] || 0;
+        og.monthly[mkey] = targetOtherILS;
+        og.monthlyRaw[mkey] = targetOtherILS;
+        og.annual += targetOtherILS - prev;
+      }
+    }
+    logger.info?.(`PR-F: scaled GL accounts to match dashboard totals across ${Object.keys(opts.dashboardTotals).length} months`);
+  }
+
   // Drop rows whose annual is effectively zero (matches the prior HAVING > 0 filter).
   let rowsToWrite = [...groups.values()].filter(g => Math.abs(g.annual) > 0);
   let fallbackUsedFromYear: number | null = null;
@@ -693,8 +779,12 @@ router.post('/sync-budget-targets', bankRole, async (req: any, res: Response) =>
       headcountAdj: body.headcountAdj && typeof body.headcountAdj === 'object' ? body.headcountAdj : undefined,
       deptHeadcount: body.deptHeadcount && typeof body.deptHeadcount === 'object' ? body.deptHeadcount : undefined,
     };
+    // PR-F: dashboard-driven scaling. Frontend sends exact bucket totals per month.
+    const dashboardTotals = body.dashboardTotals && typeof body.dashboardTotals === 'object'
+      ? body.dashboardTotals
+      : undefined;
     await ensureBudgetTablesExist();
-    const result = await populateBudgetTargets({ subsidiary, years, scenarioAdj });
+    const result = await populateBudgetTargets({ subsidiary, years, scenarioAdj, dashboardTotals });
     res.json({ ok: true, triggeredBy: email, ...result });
   } catch (e: any) {
     logger.error('sync-budget-targets failed', e);

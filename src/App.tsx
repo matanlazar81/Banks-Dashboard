@@ -4007,10 +4007,24 @@ useEffect(() => {
                   try {
                     // Layer 3: send the currently-loaded scenario's category/dept adjustments.
                     // Server applies them on top of FCT_BUDGET (Layer 1) + FCT_EXPENSE overrides (Layer 2).
+                    //
+                    // PR-F: also send the exact monthly bucket totals the dashboard displays,
+                    // so the backend can scale GL account lines to sum to those totals — making
+                    // Targets = dashboard by construction. Closed months use bank cash; open months
+                    // use budget + scenario adjustments. Both come straight from cashflowForecast.
+                    const dashboardTotals: Record<string, { salary: { eur: number; ils: number }; vendors: { eur: number; ils: number }; other: { eur: number; ils: number } }> = {};
+                    for (const r of cashflowForecast) {
+                      if (!r.mKey || !r.mKey.startsWith(String(yr))) continue;
+                      dashboardTotals[r.mKey] = {
+                        salary:  { eur: Math.round(r.salary),  ils: Math.round(r.salaryILS) },
+                        vendors: { eur: Math.round(r.vendors), ils: Math.round(r.vendorsILS) },
+                        other:   { eur: Math.round(Math.max(0, r.other)), ils: Math.round(Math.max(0, r.otherILS)) },
+                      };
+                    }
                     const resp = await fetch(`/api/sync-budget-targets?year=${yr}&subsidiary=${sub}`, {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ vendorCatAdj, salaryDeptAdj, salaryAdjPctByMonth, headcountAdj, deptHeadcount }),
+                      body: JSON.stringify({ vendorCatAdj, salaryDeptAdj, salaryAdjPctByMonth, headcountAdj, deptHeadcount, dashboardTotals }),
                     });
                     const result = await resp.json();
                     if (result.ok) {
