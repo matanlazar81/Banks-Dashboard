@@ -2657,16 +2657,18 @@ useEffect(() => {
         }
       }
 
-      // ── SALARY: SF actuals (past/current) → NS actuals (past) → SF budget / lastActual → NS budget → fallback ──
+      // ── SALARY: NS actuals (past/current — full 76xxx GL) → SF actuals → lastActual → SF/NS budget ──
+      // PR-Z: NS preferred for past/current months because Snowflake's FCT_EXPENSE mart is
+      // missing 760017 Bonus and 760019 Maternity (verified directly against Snowflake).
+      // NS GL has the complete payroll picture. SF kept as fallback when NS unavailable.
       let salary: number;
       let salaryBase: number; // base salary WITHOUT scenario adjustments (for delta display)
       const actualSalaryEntry = salaryData.find(s => s.month === mKey);
-      if ((isPastMonth || isCurMonth) && sfActualsSplit[mKey]?.salary > 0) {
-        salary = sfActualsSplit[mKey].salary;
-        salaryBase = salary;
-      } else if ((isPastMonth || isCurMonth) && actualSalaryEntry && actualSalaryEntry.amountEUR > 0) {
-        // NS actual salary data (used for non-SF subsidiaries like Statscore)
+      if ((isPastMonth || isCurMonth) && actualSalaryEntry && actualSalaryEntry.amountEUR > 0) {
         salary = actualSalaryEntry.amountEUR;
+        salaryBase = salary;
+      } else if ((isPastMonth || isCurMonth) && sfActualsSplit[mKey]?.salary > 0) {
+        salary = sfActualsSplit[mKey].salary;
         salaryBase = salary;
       } else if (useLastActual && !isPastMonth) {
         // "Last Actual" mode: project last actual month's recurring salary per dept
@@ -2882,12 +2884,14 @@ useEffect(() => {
       }
       const churnDeductionILS = Math.round(churnDeduction * eurIlsRatio);
       let net = collections - salary - vendors - other + pipelineWeighted - churnDeduction;
-      // PR-W: salaryILS sourced from SF actuals (per-month ILS from sfActualsSplit)
-      // for past/current months when available, else derived from salary × ratio.
-      // No longer pulls from bcm.salary.ils, which is bank-cash.
-      const salaryILS = ((isPastMonth || isCurMonth) && sfActualsSplit[mKey]?.salaryILS > 0)
-        ? sfActualsSplit[mKey].salaryILS
-        : Math.round(salary * eurIlsRatio);
+      // PR-Z: salaryILS prefers NS actuals (matches GL 76xxx total exactly) for
+      // past/current months. SF actualsSplit as fallback when NS unavailable.
+      // Else derive from salary × ratio.
+      const salaryILS = ((isPastMonth || isCurMonth) && actualSalaryEntry?.amountILS > 0)
+        ? actualSalaryEntry.amountILS
+        : ((isPastMonth || isCurMonth) && sfActualsSplit[mKey]?.salaryILS > 0)
+          ? sfActualsSplit[mKey].salaryILS
+          : Math.round(salary * eurIlsRatio);
       let vendorsILS = Math.round(vendors * eurIlsRatio); // vendors uses SF Actuals × ratio (matches modal)
       const collectionsILS = Math.round(collections * eurIlsRatio); // always derive from displayed collections × ratio
       if (bcm) otherILS = -bcm.other.ils - (collectionsILS - bcm.collections.ils);
@@ -6800,13 +6804,21 @@ useEffect(() => {
                             const adjPct = salaryAdjPctByMonth[i] || 0;
                             setForecastDrilldown({ type: 'salary', month: r.month, mKey: r.mKey, data: 'loading', adjPct });
                             if (companyConfig.hasSF) {
+                              // PR-Z: for past months, fetch actuals from NS (full 76xxx GL).
+                              // SF mart is missing 760017 Bonus / 760019 Maternity for past months.
+                              // Budget side stays on Snowflake (forecast lives there).
+                              const actualsUrl = r.isPast
+                                ? `/api/ns-salary-breakdown?month=${r.mKey}&subsidiary=${companyConfig.subsidiary}`
+                                : `/api/sf-salary-breakdown?month=${r.mKey}`;
                               Promise.all([
-                                fetch(`/api/sf-salary-breakdown?month=${r.mKey}`).then(res => res.json()),
+                                fetch(actualsUrl).then(res => res.json()),
                                 fetch(`/api/sf-salary-budget-breakdown?month=${r.mKey}`).then(res => res.json()),
                                 fetch(`/api/sf-headcount-events?month=${r.mKey}`).then(res => res.json()),
                                 fetch(`/api/sf-headcount-by-dept`).then(res => res.json()).catch(() => ({ data: [] })),
                               ]).then(([actRes, budRes, hcRes, hcDeptRes]) => {
-                                setForecastDrilldown(prev => prev ? { ...prev, data: { actuals: actRes.data || [], budget: budRes.data || [], headcount: hcRes.data || { events: [], cumulative: [], baseline: {} } } } : null);
+                                // ns-salary-breakdown returns { actuals: [...] }; sf-salary-breakdown returns { data: [...] }
+                                const actuals = actRes.actuals || actRes.data || [];
+                                setForecastDrilldown(prev => prev ? { ...prev, data: { actuals, budget: budRes.data || [], headcount: hcRes.data || { events: [], cumulative: [], baseline: {} } } } : null);
                                 // Cache department budgets for per-dept adjustments
                                 if (budRes.data && budRes.data.length > 0) {
                                   const byDept: Record<string, number> = {};
@@ -8626,7 +8638,7 @@ useEffect(() => {
                       )}
                       {hasActuals && (
                         <div>
-                          <p className="text-xs text-gray-400 mb-2">Actuals ({forecastDrilldown.data?.__nsMode ? 'NetSuite 76xx accounts' : 'Snowflake FCT_EXPENSE'}) — click row for bills</p>
+                          <p className="text-xs text-gray-400 mb-2">Actuals (NetSuite GL — 76xxx payroll accounts) — click row for bills</p>
                           <table className="w-full text-xs">
                             <thead><tr className="text-left text-gray-400 uppercase border-b">
                               <th className="pb-1 pr-2">Department</th><th className="pb-1 pr-2">Account #</th><th className="pb-1 pr-2">Name</th><th className="pb-1 pr-2 text-right">EUR</th><th className="pb-1 pr-2 text-right">ILS</th>

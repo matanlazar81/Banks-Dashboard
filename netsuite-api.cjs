@@ -1031,6 +1031,10 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
       const minMonth = monthsNeeded[0];
       console.log(`[NS API] Salary: querying ${monthsNeeded.length} months from ${minMonth} (${Object.keys(cached).length} cached)`);
 
+      // PR-Z: include ALL 76xxx payroll accounts — match NS GL trial balance exactly.
+      // Bonus (760017), Maternity (760019), and Military refund (760023) are not
+      // in Snowflake's FCT_EXPENSE mart for LSports past months; pulling them from
+      // NS directly is the workaround until data engineering backfills FCT_EXPENSE.
       const eurRows = await suiteqlAll(`
         SELECT TO_CHAR(t.trandate, 'YYYY-MM') AS month,
                SUM(tal.debit) - SUM(tal.credit) AS amount
@@ -1040,7 +1044,6 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
         WHERE t.subsidiary = ${subsidiaryId}
           AND tal.posting = 'T' AND tal.accountingbook = 1
           AND a.acctnumber LIKE '76%'
-          AND a.acctnumber NOT IN ('760038', '760023')
           AND t.trandate >= TO_DATE('${minMonth}-01', 'YYYY-MM-DD')
           AND t.trandate <= SYSDATE
         GROUP BY TO_CHAR(t.trandate, 'YYYY-MM')
@@ -1055,7 +1058,6 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
         WHERE t.subsidiary = ${subsidiaryId}
           AND tal.posting = 'T' AND tal.accountingbook = 2
           AND a.acctnumber LIKE '76%'
-          AND a.acctnumber NOT IN ('760038', '760023')
           AND t.trandate >= TO_DATE('${minMonth}-01', 'YYYY-MM-DD')
           AND t.trandate <= SYSDATE
         GROUP BY TO_CHAR(t.trandate, 'YYYY-MM')
@@ -1534,6 +1536,7 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
     const endDay = new Date(parseInt(month.split('-')[0]), parseInt(month.split('-')[1]), 0).getDate();
     const endDate = `${month}-${endDay}`;
 
+    // PR-Z: include ALL 76xxx payroll accounts.
     const [eurRows, ilsRows] = await Promise.all([
       suiteqlAll(`
         SELECT a.acctnumber, a.acctname,
@@ -1544,7 +1547,6 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
         WHERE t.subsidiary = ${subsidiaryId}
           AND tal.posting = 'T' AND tal.accountingbook = 1
           AND a.acctnumber LIKE '76%'
-          AND a.acctnumber NOT IN ('760038', '760023')
           AND t.trandate >= TO_DATE('${startDate}', 'YYYY-MM-DD')
           AND t.trandate <= TO_DATE('${endDate}', 'YYYY-MM-DD')
         GROUP BY a.acctnumber, a.acctname
@@ -1560,7 +1562,6 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
         WHERE t.subsidiary = ${subsidiaryId}
           AND tal.posting = 'T' AND tal.accountingbook = 2
           AND a.acctnumber LIKE '76%'
-          AND a.acctnumber NOT IN ('760038', '760023')
           AND t.trandate >= TO_DATE('${startDate}', 'YYYY-MM-DD')
           AND t.trandate <= TO_DATE('${endDate}', 'YYYY-MM-DD')
         GROUP BY a.acctnumber
