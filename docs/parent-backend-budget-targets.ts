@@ -438,19 +438,22 @@ async function populateBudgetTargets(opts: {
         WHERE e.SUBSIDIARY_ID = ${subsidiary}
           AND e.SOURCE NOT IN ('future_cost_override', 'future_cost_increment')
           AND e.CAL_MONTH_START_DATE IN (${dateList})
-          -- Same outflow-definition filters as the FCT_BUDGET query (PR-C),
-          -- with 800029 (Unrealized Gain/Loss) re-included as the reval line.
-          AND g.GL_ACCOUNT_TYPE = 'Expense'
-          AND (g.GL_ACCOUNT_NUMBER NOT LIKE '800%' OR g.GL_ACCOUNT_NUMBER = '800029')
+          -- PR-G: accrual view. Capture FULL payroll actuals (IS_PAYROLL) plus
+          -- vendor/opex actuals (Expense-typed, non-800x except 800029). Actual
+          -- payroll posts to GL accounts that are largely NOT typed 'Expense',
+          -- so the earlier GL_ACCOUNT_TYPE='Expense' filter silently dropped
+          -- ~80% of past-month payroll. Pulling payroll via IS_PAYROLL=TRUE
+          -- captures the true Snowflake P&L payroll actual (matches the salary
+          -- modal's "Actual (Snowflake)" figure), while the non-payroll branch
+          -- keeps the dashboard's outflow definition for vendors.
           AND g.GL_ACCOUNT_NUMBER NOT IN ('780502')
-          -- PR-E: exclude payroll from the actuals overlay. Actual payroll posts
-          -- to GL accounts largely NOT typed 'Expense', so the GL_ACCOUNT_TYPE
-          -- filter above silently drops ~80% of past-month payroll (~543K/mo
-          -- captured vs ~2.4M/mo real). FCT_BUDGET payroll (Layer 1, already in
-          -- g.monthly for every month) is complete and within ~1% of true
-          -- actuals, so keep budget for past-month payroll rather than
-          -- overwriting it with the truncated actuals figure.
-          AND g.IS_PAYROLL = FALSE
+          AND (
+            g.IS_PAYROLL = TRUE
+            OR (
+              g.GL_ACCOUNT_TYPE = 'Expense'
+              AND (g.GL_ACCOUNT_NUMBER NOT LIKE '800%' OR g.GL_ACCOUNT_NUMBER = '800029')
+            )
+          )
         GROUP BY
           EXTRACT(YEAR  FROM e.CAL_MONTH_START_DATE),
           EXTRACT(MONTH FROM e.CAL_MONTH_START_DATE),
@@ -499,78 +502,6 @@ async function populateBudgetTargets(opts: {
     }
   }
   await applyActualsForPastMonths();
-
-  // PR-F: scale each (year, month, bucket) so it sums to the dashboard's
-  // displayed figure. Bucket = "salary" for IS_PAYROLL rows, "vendors" for the
-  // rest. The "other" bucket has no Snowflake source, so we add a synthetic
-  // OTHER row carrying dashboardTotals.other directly. Result: Targets per-
-  // bucket sums = dashboard figures, every month.
-  if (opts.dashboardTotals && Object.keys(opts.dashboardTotals).length > 0) {
-    const ilsPerEur = 3.68;
-    for (const ym of Object.keys(opts.dashboardTotals)) {
-      const dt = opts.dashboardTotals[ym];
-      const [yrStr, mkey] = ym.split('-'); // "2026", "01"
-      const yr = Number(yrStr);
-      if (!yr || !mkey) continue;
-
-      // Compute current per-bucket totals from the existing groups for this month.
-      let curSalaryILS = 0, curVendorsILS = 0;
-      for (const g of groups.values()) {
-        if (g.FISCAL_YEAR !== yr) continue;
-        const v = g.monthly[mkey] || 0;
-        if (g.IS_PAYROLL) curSalaryILS += v;
-        else curVendorsILS += v;
-      }
-
-      const targetSalaryILS  = Number(dt.salary?.ils)  || (Number(dt.salary?.eur)  || 0) * ilsPerEur;
-      const targetVendorsILS = Number(dt.vendors?.ils) || (Number(dt.vendors?.eur) || 0) * ilsPerEur;
-      const targetOtherILS   = Number(dt.other?.ils)   || (Number(dt.other?.eur)   || 0) * ilsPerEur;
-
-      // Scaling factors. If the budget composition is empty for this month/bucket,
-      // skip scaling (would divide by zero) — those rows fall through unchanged.
-      const salaryScale  = curSalaryILS  > 0 && targetSalaryILS  > 0 ? targetSalaryILS  / curSalaryILS  : null;
-      const vendorsScale = curVendorsILS > 0 && targetVendorsILS > 0 ? targetVendorsILS / curVendorsILS : null;
-
-      for (const g of groups.values()) {
-        if (g.FISCAL_YEAR !== yr) continue;
-        const scale = g.IS_PAYROLL ? salaryScale : vendorsScale;
-        if (scale === null) continue;
-        const v = g.monthly[mkey] || 0;
-        const scaled = v * scale;
-        g.annual += scaled - v;
-        g.monthly[mkey] = scaled;
-      }
-
-      // OTHER bucket: synthetic row per year. Account number 'OTHER' is sentinel.
-      if (targetOtherILS !== 0) {
-        const otherKey = `${yr}|${subsidiary}|Unassigned|Unassigned|OTHER|ILS`;
-        let og = groups.get(otherKey);
-        if (!og) {
-          og = {
-            FISCAL_YEAR: yr,
-            SUBSIDIARY_ID: subsidiary,
-            DEPARTMENT: 'Unassigned',
-            LOCATION: 'Unassigned',
-            CURRENCY: 'ILS',
-            ACCOUNT_NUMBER: 'OTHER',
-            ACCOUNT_NAME: 'Other (tax, IC, bank fees — from dashboard)',
-            NETSUITE_INTERNAL_NUMBER: null,
-            CATEGORY: null,
-            IS_PAYROLL: false,
-            annual: 0,
-            monthly: {},
-            monthlyRaw: {},
-          };
-          groups.set(otherKey, og);
-        }
-        const prev = og.monthly[mkey] || 0;
-        og.monthly[mkey] = targetOtherILS;
-        og.monthlyRaw[mkey] = targetOtherILS;
-        og.annual += targetOtherILS - prev;
-      }
-    }
-    logger.info?.(`PR-F: scaled GL accounts to match dashboard totals across ${Object.keys(opts.dashboardTotals).length} months`);
-  }
 
   // Drop rows whose annual is effectively zero (matches the prior HAVING > 0 filter).
   let rowsToWrite = [...groups.values()].filter(g => Math.abs(g.annual) > 0);
