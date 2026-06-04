@@ -8169,7 +8169,7 @@ useEffect(() => {
                           </div>
                         );
                       })()}
-                      {hasBudget && (
+                      {hasBudget && !hasActuals && (
                         <div>
                           <p className="text-xs text-gray-400 mb-2">{forecastDrilldown.data?.__nsMode ? 'Budget Breakdown (NetSuite budgetsmachine)' : useLastActualInDrill ? `Budget Breakdown (Last Actual ${drillBasisMonth} — recurring payroll accounts only)${hasAnyAdjustment ? ` — showing original → adjusted` : ''}` : `Budget Breakdown (Snowflake FCT_BUDGET — levers, new hires, etc.)${hasAnyAdjustment ? ` — showing original → adjusted` : ''}${adj !== 0 ? ` (${adj > 0 ? '+' : ''}${adj}%)` : ''}${hasLeverOverrides ? ' + lever overrides' : ''}`}</p>
                           <table className="w-full text-xs">
