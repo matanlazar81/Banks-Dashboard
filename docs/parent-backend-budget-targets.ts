@@ -626,38 +626,31 @@ export async function populateBudgetTargets(opts: {
         }
       }
 
-      // Synthetic OTHER row per year carrying the dashboard's Other-bucket
-      // (tax / IC / bank fees) directly. No Snowflake source exists for these.
-      if (targetOtherILS !== 0 || targetOtherEUR !== 0) {
-        const otherKey = `${yr}|${subsidiary}|Unassigned|Unassigned|OTHER|ILS`;
-        let og = groups.get(otherKey);
-        if (!og) {
-          og = {
-            FISCAL_YEAR: yr,
-            SUBSIDIARY_ID: subsidiary,
-            DEPARTMENT: 'Unassigned',
-            LOCATION: 'Unassigned',
-            CURRENCY: 'ILS',
-            ACCOUNT_NUMBER: 'OTHER',
-            ACCOUNT_NAME: 'Other (tax, IC, bank fees - from dashboard)',
-            NETSUITE_INTERNAL_NUMBER: null,
-            CATEGORY: null,
-            IS_PAYROLL: false,
-            annual: 0,
-            monthly: {},
-            monthlyRaw: {},
-            monthlyEur: {},
-          };
-          groups.set(otherKey, og);
-        }
-        const prevIls = og.monthly[mkey] || 0;
-        og.monthly[mkey] = targetOtherILS;
-        og.monthlyRaw[mkey] = targetOtherILS;
-        og.monthlyEur[mkey] = targetOtherEUR;
-        og.annual += targetOtherILS - prevIls;
-      }
+      // PR-R: Targets is Salary + Vendors only. The synthetic OTHER row used to
+      // carry the dashboard's tax/IC/fees Other bucket; user has now requested
+      // that Targets be the clean Salary + Vendors sum so it matches the dashboard
+      // when those two columns are summed. No OTHER row is created here. Any
+      // pre-existing OTHER row from earlier syncs is removed in a separate cleanup
+      // pass below.
     }
     logger.info?.(`PR-O: scaled GL accounts to dashboard cash totals across ${Object.keys(opts.dashboardTotals).length} months`);
+  }
+
+  // PR-R: delete any pre-existing synthetic OTHER rows from previous syncs.
+  // The OTHER account is sentinel ('OTHER', not a real NS GL number) so this
+  // is a safe targeted delete that doesn't touch real GL accounts.
+  try {
+    const delRes = await pool.query(
+      `DELETE FROM budget_target_by_dept_acct
+       WHERE subsidiary_id = $1 AND fiscal_year = ANY($2::int[])
+         AND account_number = 'OTHER'`,
+      [subsidiary, years]
+    );
+    if ((delRes.rowCount || 0) > 0) {
+      logger.info?.(`PR-R: removed ${delRes.rowCount} stale synthetic OTHER row(s)`);
+    }
+  } catch (e: any) {
+    logger.warn?.(`PR-R: OTHER cleanup skipped: ${e?.message || e}`);
   }
 
   // Drop rows whose annual is effectively zero (matches the prior HAVING > 0 filter).
