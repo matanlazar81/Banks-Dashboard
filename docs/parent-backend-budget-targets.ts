@@ -200,10 +200,11 @@ async function populateBudgetTargets(opts: {
       AND EXTRACT(YEAR FROM b.BUDGET_MONTH_DATE) IN (${years.join(',')})
       -- Align with the dashboard's outflow definition (see snowflake-api.cjs
       -- fetchBudgetByCategory): only Expense GL accounts, exclude 800xxx
-      -- (currency defense / FX hedging — surfaced via Reval, not Outflow)
-      -- and the legacy account 780502 the dashboard hides.
+      -- (currency defense / FX hedging) except 800029 (Unrealized Gain/Loss)
+      -- which IS reported as the reval line in Targets, and the legacy
+      -- account 780502 the dashboard hides.
       AND g.GL_ACCOUNT_TYPE = 'Expense'
-      AND g.GL_ACCOUNT_NUMBER NOT LIKE '800%'
+      AND (g.GL_ACCOUNT_NUMBER NOT LIKE '800%' OR g.GL_ACCOUNT_NUMBER = '800029')
       AND g.GL_ACCOUNT_NUMBER NOT IN ('780502')
     GROUP BY
       EXTRACT(YEAR  FROM b.BUDGET_MONTH_DATE),
@@ -423,9 +424,10 @@ async function populateBudgetTargets(opts: {
         WHERE e.SUBSIDIARY_ID = ${subsidiary}
           AND e.SOURCE NOT IN ('future_cost_override', 'future_cost_increment')
           AND e.CAL_MONTH_START_DATE IN (${dateList})
-          -- Same outflow-definition filters as the FCT_BUDGET query (PR-C).
+          -- Same outflow-definition filters as the FCT_BUDGET query (PR-C),
+          -- with 800029 (Unrealized Gain/Loss) re-included as the reval line.
           AND g.GL_ACCOUNT_TYPE = 'Expense'
-          AND g.GL_ACCOUNT_NUMBER NOT LIKE '800%'
+          AND (g.GL_ACCOUNT_NUMBER NOT LIKE '800%' OR g.GL_ACCOUNT_NUMBER = '800029')
           AND g.GL_ACCOUNT_NUMBER NOT IN ('780502')
         GROUP BY
           EXTRACT(YEAR  FROM e.CAL_MONTH_START_DATE),
