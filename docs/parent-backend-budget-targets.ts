@@ -212,6 +212,17 @@ async function populateBudgetTargets(opts: {
   const t0 = Date.now();
   const monthRows: any[] = await sf.query(sfSql);
 
+  // "Past month" = a (year, month) the dashboard treats as closed (uses FCT_EXPENSE
+  // actuals over FCT_BUDGET plan). Computed against server `now` in UTC.
+  const _now = new Date();
+  const _currentYearInt = _now.getUTCFullYear();
+  const _currentMonthInt = _now.getUTCMonth() + 1; // 1-12
+  const isPastMonth = (yr: number, mNum: number): boolean => {
+    if (yr < _currentYearInt) return true;
+    if (yr === _currentYearInt && mNum < _currentMonthInt) return true;
+    return false;
+  };
+
   // Layer 2: FCT_EXPENSE overrides. Match on (year-month, department_id, account_number).
   // Defensive: any failure here (missing columns, query errors) skips overrides
   // so Sync still produces Layer 1 + Layer 3 figures rather than blowing up.
@@ -301,48 +312,158 @@ async function populateBudgetTargets(opts: {
     const mNum = Number(r.MONTH_NUM);
     const mkey = String(mNum).padStart(2, '0'); // "01" .. "12"
     const ymKey = `${r.FISCAL_YEAR}-${mkey}`;
+    const isPast = isPastMonth(Number(r.FISCAL_YEAR), mNum);
 
-    // Layer 2: FCT_EXPENSE override at (ym, dept_id, account).
-    const ovKey = `${ymKey}|${r.DEPARTMENT_ID}|${r.ACCOUNT_NUMBER}`;
-    const ov = overrideIndex.get(ovKey);
-    if (ov) {
-      amt = ov.mode === 'Override' ? ov.amount : amt + ov.amount;
-    }
+    // For PAST months we don't apply Layers 2-5 — actuals from FCT_EXPENSE will
+    // overwrite g.monthly[mkey] in the next pass.
+    if (!isPast) {
+      // Layer 2: FCT_EXPENSE override at (ym, dept_id, account).
+      const ovKey = `${ymKey}|${r.DEPARTMENT_ID}|${r.ACCOUNT_NUMBER}`;
+      const ov = overrideIndex.get(ovKey);
+      if (ov) {
+        amt = ov.mode === 'Override' ? ov.amount : amt + ov.amount;
+      }
 
-    // Layer 3: scenario adjustment. Percent of the post-override monthly amount.
-    //  - payroll rows  → salaryDeptAdj[ym][department_name]
-    //  - non-payroll  → vendorCatAdj[ym][category]
-    let scenarioPct = 0;
-    if (g.IS_PAYROLL) {
-      scenarioPct = salaryDeptAdj[ymKey]?.[g.DEPARTMENT] || 0;
-    } else if (g.CATEGORY) {
-      scenarioPct = vendorCatAdj[ymKey]?.[g.CATEGORY] || 0;
-    }
-    if (scenarioPct) amt = amt * (1 + scenarioPct / 100);
+      // Layer 3: scenario adjustment. Percent of the post-override monthly amount.
+      //  - payroll rows  → salaryDeptAdj[ym][department_name]
+      //  - non-payroll  → vendorCatAdj[ym][category]
+      let scenarioPct = 0;
+      if (g.IS_PAYROLL) {
+        scenarioPct = salaryDeptAdj[ymKey]?.[g.DEPARTMENT] || 0;
+      } else if (g.CATEGORY) {
+        scenarioPct = vendorCatAdj[ymKey]?.[g.CATEGORY] || 0;
+      }
+      if (scenarioPct) amt = amt * (1 + scenarioPct / 100);
 
-    // Layer 4: manual % per month (salaryAdjPctByMonth) — applies to ALL payroll
-    // rows for the matching month index. Frontend stores this per the active year.
-    if (g.IS_PAYROLL) {
-      const monthIdxKey = String(mNum - 1); // "0" for January
-      const manualPct = Number(salaryAdjPctByMonth[monthIdxKey]) || 0;
-      if (manualPct) amt = amt * (1 + manualPct / 100);
+      // Layer 4: manual % per month (salaryAdjPctByMonth) — applies to ALL payroll
+      // rows for the matching month index. Frontend stores this per the active year.
+      if (g.IS_PAYROLL) {
+        const monthIdxKey = String(mNum - 1); // "0" for January
+        const manualPct = Number(salaryAdjPctByMonth[monthIdxKey]) || 0;
+        if (manualPct) amt = amt * (1 + manualPct / 100);
     }
 
     // Layer 5: HC levers. Cumulative within-year HC delta divided by dept's
-    // current headcount = % impact on the dept's payroll for that month.
-    if (g.IS_PAYROLL) {
-      const cumDelta = cumulativeHc[ymKey]?.[g.DEPARTMENT] || 0;
-      const headcount = Number(deptHeadcount[g.DEPARTMENT]?.count) || 0;
-      if (cumDelta !== 0 && headcount > 0) {
-        const hcPct = (cumDelta / headcount) * 100;
-        amt = amt * (1 + hcPct / 100);
+      // current headcount = % impact on the dept's payroll for that month.
+      if (g.IS_PAYROLL) {
+        const cumDelta = cumulativeHc[ymKey]?.[g.DEPARTMENT] || 0;
+        const headcount = Number(deptHeadcount[g.DEPARTMENT]?.count) || 0;
+        if (cumDelta !== 0 && headcount > 0) {
+          const hcPct = (cumDelta / headcount) * 100;
+          amt = amt * (1 + hcPct / 100);
+        }
       }
-    }
+    } // end !isPast — past months use raw budget value as placeholder until actuals overwrite
 
     g.monthly[mkey] = (g.monthly[mkey] || 0) + amt;
     g.monthlyRaw[mkey] = (g.monthlyRaw[mkey] || 0) + rawAmt;
     g.annual += amt;
   }
+
+  // Pass 2: For PAST months, replace placeholder budget values with FCT_EXPENSE
+  // actuals (matches the dashboard's "actuals over budget for closed months" rule).
+  async function applyActualsForPastMonths(): Promise<void> {
+    // Build the list of (year, month) tuples that are in the past for any requested year.
+    const pastMonthDates: string[] = [];
+    for (const yr of years) {
+      for (let m = 1; m <= 12; m++) {
+        if (isPastMonth(yr, m)) pastMonthDates.push(`${yr}-${String(m).padStart(2, '0')}-01`);
+      }
+    }
+    if (pastMonthDates.length === 0) return; // nothing to do (e.g. 2027 sync from Jun 2026)
+
+    // Reuse the FCT_EXPENSE amount column detection from Layer 2 (handled in a try/catch
+    // there). Replicate the lightweight discovery here so we still proceed if FCT_EXPENSE
+    // is offline or shaped differently than expected.
+    try {
+      const expenseColsRows: any[] = await sf.query(`
+        SELECT COLUMN_NAME FROM DL_PRODUCTION.INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = 'FINANCE' AND TABLE_NAME = 'FCT_EXPENSE'
+      `);
+      const expenseCols = new Set<string>(expenseColsRows.map(r => r.COLUMN_NAME));
+      let amountExpr: string | null = null;
+      if (expenseCols.has('AMOUNT_ILS_CC'))      amountExpr = 'ROUND(SUM(e.AMOUNT_ILS_CC), 2)';
+      else if (expenseCols.has('AMOUNT_ILS'))    amountExpr = 'ROUND(SUM(e.AMOUNT_ILS), 2)';
+      else if (expenseCols.has('AMOUNT_EUR_CC')) amountExpr = 'ROUND(SUM(e.AMOUNT_EUR_CC) * 3.68, 2)';
+      else if (expenseCols.has('AMOUNT_EUR'))    amountExpr = 'ROUND(SUM(e.AMOUNT_EUR) * 3.68, 2)';
+      if (!amountExpr) {
+        logger.warn?.('PR-B: FCT_EXPENSE has no usable amount column; past-month actuals skipped.');
+        return;
+      }
+      const hasExpenseLoc = expenseCols.has('LOCATION_ID');
+      const hasExpenseCurr = expenseCols.has('CURRENCY_CODE');
+
+      const dateList = pastMonthDates.map(d => `'${d}'`).join(',');
+      const actualSql = `
+        SELECT
+          EXTRACT(YEAR  FROM e.CAL_MONTH_START_DATE) AS FISCAL_YEAR,
+          EXTRACT(MONTH FROM e.CAL_MONTH_START_DATE) AS MONTH_NUM,
+          e.DEPARTMENT_ID    AS DEPARTMENT_ID,
+          COALESCE(d.DEPARTMENT_NAME, 'Unassigned') AS DEPARTMENT,
+          ${hasExpenseLoc && hasDimLocation ? `COALESCE(l.LOCATION_NAME, 'Unassigned')` : `'Unassigned'`} AS LOCATION,
+          ${hasExpenseCurr ? `COALESCE(e.CURRENCY_CODE, 'ILS')` : `'ILS'`} AS CURRENCY,
+          g.GL_ACCOUNT_NUMBER AS ACCOUNT_NUMBER,
+          g.GL_ACCOUNT_NAME   AS ACCOUNT_NAME,
+          g.GL_ACCOUNT_ID     AS NETSUITE_INTERNAL_NUMBER,
+          g.PARENT_GL_ACCOUNT_NAME AS CATEGORY,
+          g.IS_PAYROLL        AS IS_PAYROLL,
+          ${amountExpr} AS MONTH_AMOUNT_ILS,
+          e.SUBSIDIARY_ID     AS SUBSIDIARY_ID
+        FROM DL_PRODUCTION.FINANCE.FCT_EXPENSE e
+        JOIN      DL_PRODUCTION.FINANCE.DIM_GL_ACCOUNT  g ON e.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
+        LEFT JOIN DL_PRODUCTION.FINANCE.DIM_DEPARTMENT  d ON e.DEPARTMENT_ID = d.DEPARTMENT_ID
+        ${hasExpenseLoc && hasDimLocation ? `LEFT JOIN DL_PRODUCTION.FINANCE.DIM_LOCATION l ON e.LOCATION_ID = l.LOCATION_ID` : ''}
+        WHERE e.SUBSIDIARY_ID = ${subsidiary}
+          AND e.SOURCE NOT IN ('future_cost_override', 'future_cost_increment')
+          AND e.CAL_MONTH_START_DATE IN (${dateList})
+        GROUP BY
+          EXTRACT(YEAR  FROM e.CAL_MONTH_START_DATE),
+          EXTRACT(MONTH FROM e.CAL_MONTH_START_DATE),
+          e.DEPARTMENT_ID, d.DEPARTMENT_NAME,
+          ${hasExpenseLoc && hasDimLocation ? 'l.LOCATION_NAME,' : ''}
+          ${hasExpenseCurr ? 'e.CURRENCY_CODE,' : ''}
+          g.GL_ACCOUNT_NUMBER, g.GL_ACCOUNT_NAME, g.GL_ACCOUNT_ID,
+          g.PARENT_GL_ACCOUNT_NAME, g.IS_PAYROLL,
+          e.SUBSIDIARY_ID
+      `;
+      const actualRows: any[] = await sf.query(actualSql);
+
+      // For each (year, sub, dept, loc, acct, curr) in actuals, overwrite the past month's
+      // value in the corresponding group. Create new groups for actuals rows that have no
+      // matching FCT_BUDGET row (e.g. an unbudgeted expense category in past months).
+      for (const r of actualRows) {
+        const key = `${r.FISCAL_YEAR}|${r.SUBSIDIARY_ID}|${r.DEPARTMENT}|${r.LOCATION}|${r.ACCOUNT_NUMBER}|${r.CURRENCY}`;
+        let g = groups.get(key);
+        if (!g) {
+          g = {
+            FISCAL_YEAR: Number(r.FISCAL_YEAR),
+            SUBSIDIARY_ID: Number(r.SUBSIDIARY_ID),
+            DEPARTMENT: r.DEPARTMENT || 'Unassigned',
+            LOCATION: r.LOCATION || 'Unassigned',
+            CURRENCY: r.CURRENCY || 'ILS',
+            ACCOUNT_NUMBER: String(r.ACCOUNT_NUMBER || ''),
+            ACCOUNT_NAME: r.ACCOUNT_NAME || null,
+            NETSUITE_INTERNAL_NUMBER: r.NETSUITE_INTERNAL_NUMBER != null ? Number(r.NETSUITE_INTERNAL_NUMBER) : null,
+            CATEGORY: r.CATEGORY || null,
+            IS_PAYROLL: r.IS_PAYROLL === true || r.IS_PAYROLL === 'true' || r.IS_PAYROLL === 1,
+            annual: 0,
+            monthly: {},
+            monthlyRaw: {},
+          };
+          groups.set(key, g);
+        }
+        const mkey = String(Number(r.MONTH_NUM)).padStart(2, '0');
+        const actualAmt = Number(r.MONTH_AMOUNT_ILS) || 0;
+        const oldVal = g.monthly[mkey] || 0;
+        g.monthly[mkey] = actualAmt;
+        g.monthlyRaw[mkey] = actualAmt; // actuals ARE the raw value for past months
+        g.annual = g.annual - oldVal + actualAmt;
+      }
+    } catch (actualsErr: any) {
+      logger.warn?.(`PR-B: past-month actuals overlay failed: ${actualsErr?.message || actualsErr}`);
+    }
+  }
+  await applyActualsForPastMonths();
 
   // Drop rows whose annual is effectively zero (matches the prior HAVING > 0 filter).
   let rowsToWrite = [...groups.values()].filter(g => Math.abs(g.annual) > 0);
