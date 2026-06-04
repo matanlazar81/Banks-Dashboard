@@ -4012,9 +4012,14 @@ useEffect(() => {
                     // so the backend can scale GL account lines to sum to those totals — making
                     // Targets = dashboard by construction. Closed months use bank cash; open months
                     // use budget + scenario adjustments. Both come straight from cashflowForecast.
+                    //
+                    // Send EVERY row in cashflowForecast (no year filter). The backend matches
+                    // by FISCAL_YEAR internally; an over-inclusive payload is harmless. The year
+                    // filter previously dropped any pre-year context rows that App's TOTAL row
+                    // sums but Targets needs to mirror.
                     const dashboardTotals: Record<string, { salary: { eur: number; ils: number }; vendors: { eur: number; ils: number }; other: { eur: number; ils: number } }> = {};
                     for (const r of cashflowForecast) {
-                      if (!r.mKey || !r.mKey.startsWith(String(yr))) continue;
+                      if (!r.mKey) continue;
                       dashboardTotals[r.mKey] = {
                         salary:  { eur: Math.round(r.salary),  ils: Math.round(r.salaryILS) },
                         vendors: { eur: Math.round(r.vendors), ils: Math.round(r.vendorsILS) },
