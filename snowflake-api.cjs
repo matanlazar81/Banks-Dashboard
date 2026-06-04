@@ -263,6 +263,11 @@ function createSnowflakeClient(env) {
   // ── Monthly actuals split by Salary / Vendors / Finance (from FCT_EXPENSE) ──
   async function fetchMonthlyActualsSplit() {
     console.log('[Snowflake] Fetching monthly actuals split...');
+    // PR-U: exclude the same non-recurring payroll accounts that
+    // fetchSalaryActualsByDept already filters out (military reserve refund,
+    // lieu of prior notice, car allowance, and other one-off employer-cost
+    // items). Keeps the cashflow Salary cell consistent with the modal's
+    // Last Actual basis and per-dept Budget Breakdown.
     const rows = await query(`
       SELECT DATE_TRUNC('month', e.CAL_MONTH_START_DATE)::VARCHAR AS MONTH_STR,
              CASE WHEN g.IS_PAYROLL THEN 'Salary'
@@ -275,6 +280,9 @@ function createSnowflakeClient(env) {
       WHERE e.SUBSIDIARY_ID = 3
         AND e.SOURCE = 'netsuite'
         AND e.CAL_MONTH_START_DATE >= '2025-01-01'
+        AND NOT (g.IS_PAYROLL = TRUE AND g.GL_ACCOUNT_NUMBER IN (
+          '760038','76003','760023','760020','760017','760029','760014','760015','760008'
+        ))
       GROUP BY DATE_TRUNC('month', e.CAL_MONTH_START_DATE)::VARCHAR,
                CASE WHEN g.IS_PAYROLL THEN 'Salary'
                     WHEN g.GL_ACCOUNT_NUMBER LIKE '800%' THEN 'Finance'
@@ -351,6 +359,7 @@ function createSnowflakeClient(env) {
       WHERE e.SUBSIDIARY_ID = 3
         AND e.SOURCE = 'netsuite'
         AND g.IS_PAYROLL = TRUE
+        AND g.GL_ACCOUNT_NUMBER NOT IN ('760038','76003','760023','760020','760017','760029','760014','760015','760008')
         AND DATE_TRUNC('month', e.CAL_MONTH_START_DATE) = TO_DATE('${startDate}')
       GROUP BY g.GL_ACCOUNT_NUMBER, g.GL_ACCOUNT_NAME
       HAVING ABS(SUM(e.AMOUNT_EUR)) > 10
