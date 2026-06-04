@@ -690,7 +690,11 @@ function BudgetTargetsDrawer({
   const rowNativeRate = (r: BudgetTargetRow): number => {
     const ilsTot = r.MONTHLY_SOURCE_ILS ? sumVals(r.MONTHLY_SOURCE_ILS) : (r.SOURCE_AMOUNT_ILS || 0);
     const eurTot = sumVals(r.MONTHLY_SOURCE_EUR);
-    return eurTot > 0 ? ilsTot / eurTot : ILS_PER_EUR;
+    // PR-Q: use abs() so negative-net rows (e.g. credit accounts, signed Other) still
+    // compute a native rate from stored EUR vs ILS. Previously a negative eurTot
+    // fell through to ILS_PER_EUR (3.68), which gave wrong Source/Final aggregates
+    // when the row's stored ILS was on a different scale than EUR.
+    return Math.abs(eurTot) > 0 ? ilsTot / eurTot : ILS_PER_EUR;
   };
   const toCcyRow = (r: BudgetTargetRow, ilsVal: number | null): number | null => {
     if (ilsVal == null) return null;
@@ -4110,13 +4114,16 @@ useEffect(() => {
                       dashboardTotals[r.mKey] = {
                         salary:  { eur: Math.round(r.salary),  ils: Math.round(r.salaryILS) },
                         vendors: { eur: Math.round(r.vendors), ils: Math.round(r.vendorsILS) },
-                        // PR-P: send the SIGNED dashboard Other value (positive months and
-                        // negative months alike), so the synthetic OTHER row in Targets sums
-                        // to the same yearly figure the dashboard displays in TOTAL AFTER
-                        // SAVINGS (signed net), making Targets grand total equal TOTAL
-                        // OUTFLOW AFTER SAVINGS exactly. Previously used max(0, …) which
-                        // matched the per-month outflow formula but inflated the annual.
-                        other:   { eur: Math.round(r.other), ils: Math.round(r.otherILS) },
+                        // PR-Q: revert to max(0, …) per month. The dashboard's TOTAL OUTFLOW
+                        // formula is salary + vendors + max(0, other) per month (negative
+                        // 'other' months contribute 0, not the negative value). Sending
+                        // signed values (PR-P) made Targets per-month totals fall short of
+                        // dashboard outflow on negative-other months. With max(0, …) every
+                        // per-month Targets total equals dashboard outflow per month, and
+                        // the grand total equals dashboard TOTAL OUTFLOW AFTER SAVINGS
+                        // exactly. The "annual Other = +€351,437" display in the dashboard's
+                        // TOTAL row is informational (signed net), not the outflow figure.
+                        other:   { eur: Math.round(Math.max(0, r.other)), ils: Math.round(Math.max(0, r.otherILS)) },
                       };
                     }
                     const resp = await fetch(`/api/sync-budget-targets?year=${yr}&subsidiary=${sub}`, {
