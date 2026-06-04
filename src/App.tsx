@@ -4188,6 +4188,30 @@ useEffect(() => {
                         };
                       }
                       salaryByDept[mKey] = perDept;
+
+                      // PR-T: rescale this month's per-dept output so its sum equals
+                      // dashboardTotals.salary[mKey] exactly. Closed months use
+                      // salaryActualsByDept (recurring-payroll subset) as the basis,
+                      // but the dashboard cashflow's salary cell comes from
+                      // sfActualsSplit (broader payroll bucket). Without this scale,
+                      // closed-month per-dept sums to a lower number and the Targets
+                      // monthly total drifts from Salary AFTER SAVINGS + Vendors
+                      // AFTER SAVINGS. Per-dept ratios stay modal-aligned; only the
+                      // absolute magnitude is anchored to the cashflow.
+                      const targetEUR = Math.round(dashboardTotals[mKey]?.salary?.eur || 0);
+                      const targetILS = Math.round(dashboardTotals[mKey]?.salary?.ils || 0);
+                      const sumEUR = Object.values(perDept).reduce((s, v) => s + v.eur, 0);
+                      const sumILS = Object.values(perDept).reduce((s, v) => s + v.ils, 0);
+                      if (targetEUR > 0 && sumEUR > 0 && Math.abs(sumEUR - targetEUR) > 1) {
+                        const scaleEUR = targetEUR / sumEUR;
+                        const scaleILS = sumILS > 0 && targetILS > 0 ? targetILS / sumILS : scaleEUR;
+                        for (const d of Object.keys(perDept)) {
+                          perDept[d] = {
+                            eur: Math.round(perDept[d].eur * scaleEUR),
+                            ils: Math.round(perDept[d].ils * scaleILS),
+                          };
+                        }
+                      }
                     }
                     const resp = await fetch(`/api/sync-budget-targets?year=${yr}&subsidiary=${sub}`, {
                       method: 'POST',
