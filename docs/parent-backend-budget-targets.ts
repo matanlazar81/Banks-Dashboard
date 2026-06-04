@@ -78,6 +78,10 @@ function ensureBudgetTablesExist(): Promise<void> {
       // Layer 1 raw values (pre-Layer 2 + 3) — used by the frontend to highlight cells
       // that were modified by an FCT_EXPENSE override or scenario adjustment.
       await pool.query(`ALTER TABLE budget_target_by_dept_acct ADD COLUMN IF NOT EXISTS monthly_raw_ils JSONB;`);
+      // PR-H: native EUR per month (Snowflake AMOUNT_EUR / AMOUNT_EUR_CC), so the
+      // EUR export equals the dashboard/modal EUR exactly rather than being derived
+      // from ILS / 3.68 (the dashboard's EUR uses Snowflake's own rate per row).
+      await pool.query(`ALTER TABLE budget_target_by_dept_acct ADD COLUMN IF NOT EXISTS monthly_source_eur JSONB;`);
       await pool.query(`
         CREATE TABLE IF NOT EXISTS budget_target_edit_log (
           id              BIGSERIAL PRIMARY KEY,
@@ -203,6 +207,7 @@ async function populateBudgetTargets(opts: {
       g.PARENT_GL_ACCOUNT_NAME AS CATEGORY,
       g.IS_PAYROLL        AS IS_PAYROLL,
       ROUND(SUM(b.AMOUNT_ILS_CC), 2) AS MONTH_AMOUNT_ILS,
+      ${budgetCols.has('AMOUNT_EUR_CC') ? 'ROUND(SUM(b.AMOUNT_EUR_CC), 2)' : (budgetCols.has('AMOUNT_EUR') ? 'ROUND(SUM(b.AMOUNT_EUR), 2)' : 'ROUND(SUM(b.AMOUNT_ILS_CC) / 3.68, 2)')} AS MONTH_AMOUNT_EUR,
       b.SUBSIDIARY_ID     AS SUBSIDIARY_ID
     FROM DL_PRODUCTION.FINANCE.FCT_BUDGET b
     JOIN      DL_PRODUCTION.FINANCE.DIM_GL_ACCOUNT  g ON b.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
@@ -304,8 +309,9 @@ async function populateBudgetTargets(opts: {
     NETSUITE_INTERNAL_NUMBER: number | null;
     CATEGORY: string | null; IS_PAYROLL: boolean;
     annual: number;
-    monthly: Record<string, number>;     // post-Layer-2+3 final values
+    monthly: Record<string, number>;     // post-Layer-2+3 final values (ILS)
     monthlyRaw: Record<string, number>;  // pre-Layer-2+3 raw values (for highlight delta)
+    monthlyEur: Record<string, number>;  // PR-H: native EUR per month (final, scaled like ILS)
   };
   const groups = new Map<string, Aggregated>();
   for (const r of monthRows) {
@@ -326,10 +332,12 @@ async function populateBudgetTargets(opts: {
         annual: 0,
         monthly: {},
         monthlyRaw: {},
+        monthlyEur: {},
       };
       groups.set(key, g);
     }
     const rawAmt = r.MONTH_AMOUNT_ILS != null ? Number(r.MONTH_AMOUNT_ILS) : 0;
+    const rawAmtEur = r.MONTH_AMOUNT_EUR != null ? Number(r.MONTH_AMOUNT_EUR) : 0;
     let amt = rawAmt;
     const mNum = Number(r.MONTH_NUM);
     const mkey = String(mNum).padStart(2, '0'); // "01" .. "12"
@@ -377,8 +385,13 @@ async function populateBudgetTargets(opts: {
       }
     } // end !isPast — past months use raw budget value as placeholder until actuals overwrite
 
+    // EUR mirrors the same proportional scenario adjustment applied to ILS,
+    // preserving Snowflake's native per-row EUR/ILS rate.
+    const amtEur = rawAmt !== 0 ? rawAmtEur * (amt / rawAmt) : rawAmtEur;
+
     g.monthly[mkey] = (g.monthly[mkey] || 0) + amt;
     g.monthlyRaw[mkey] = (g.monthlyRaw[mkey] || 0) + rawAmt;
+    g.monthlyEur[mkey] = (g.monthlyEur[mkey] || 0) + amtEur;
     g.annual += amt;
   }
 
@@ -412,6 +425,12 @@ async function populateBudgetTargets(opts: {
         logger.warn?.('PR-B: FCT_EXPENSE has no usable amount column; past-month actuals skipped.');
         return;
       }
+      // PR-H: native EUR expression (parallel to amountExpr). Falls back to ILS/3.68
+      // only if no EUR column exists, so EUR stays as close to Snowflake as possible.
+      let amountExprEur: string;
+      if (expenseCols.has('AMOUNT_EUR_CC'))      amountExprEur = 'ROUND(SUM(e.AMOUNT_EUR_CC), 2)';
+      else if (expenseCols.has('AMOUNT_EUR'))    amountExprEur = 'ROUND(SUM(e.AMOUNT_EUR), 2)';
+      else                                       amountExprEur = `ROUND((${amountExpr}) / 3.68, 2)`;
       const hasExpenseLoc = expenseCols.has('LOCATION_ID');
       const hasExpenseCurr = expenseCols.has('CURRENCY_CODE');
 
@@ -430,6 +449,7 @@ async function populateBudgetTargets(opts: {
           g.PARENT_GL_ACCOUNT_NAME AS CATEGORY,
           g.IS_PAYROLL        AS IS_PAYROLL,
           ${amountExpr} AS MONTH_AMOUNT_ILS,
+          ${amountExprEur} AS MONTH_AMOUNT_EUR,
           e.SUBSIDIARY_ID     AS SUBSIDIARY_ID
         FROM DL_PRODUCTION.FINANCE.FCT_EXPENSE e
         JOIN      DL_PRODUCTION.FINANCE.DIM_GL_ACCOUNT  g ON e.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
@@ -487,14 +507,17 @@ async function populateBudgetTargets(opts: {
             annual: 0,
             monthly: {},
             monthlyRaw: {},
+            monthlyEur: {},
           };
           groups.set(key, g);
         }
         const mkey = String(Number(r.MONTH_NUM)).padStart(2, '0');
         const actualAmt = Number(r.MONTH_AMOUNT_ILS) || 0;
+        const actualEur = Number(r.MONTH_AMOUNT_EUR) || 0;
         const oldVal = g.monthly[mkey] || 0;
         g.monthly[mkey] = actualAmt;
         g.monthlyRaw[mkey] = actualAmt; // actuals ARE the raw value for past months
+        g.monthlyEur[mkey] = actualEur; // native EUR actual for past months
         g.annual = g.annual - oldVal + actualAmt;
       }
     } catch (actualsErr: any) {
@@ -515,7 +538,7 @@ async function populateBudgetTargets(opts: {
     const sourceYear = targetYear - 1;
     const prev = await pool.query(
       `SELECT department, location, currency, account_number, account_name,
-              netsuite_internal_number, source_amount_ils, monthly_source_ils, subsidiary_id
+              netsuite_internal_number, source_amount_ils, monthly_source_ils, monthly_source_eur, subsidiary_id
        FROM budget_target_by_dept_acct
        WHERE fiscal_year = $1 AND subsidiary_id = $2`,
       [sourceYear, subsidiary]
@@ -554,11 +577,17 @@ async function populateBudgetTargets(opts: {
             || (typeof r.monthly_source_ils === 'string'
               ? (() => { try { return JSON.parse(r.monthly_source_ils); } catch { return {}; } })()
               : (r.monthly_source_ils || {})));
+      // PR-H: prior-year native EUR, scaled by the same factor as ILS.
+      const rawEurSource: Record<string, any> = typeof r.monthly_source_eur === 'string'
+        ? (() => { try { return JSON.parse(r.monthly_source_eur); } catch { return {}; } })()
+        : (r.monthly_source_eur || {});
       const adjustedMonthly: Record<string, number> = {};
       const monthlyRawCopy: Record<string, number> = {};
+      const adjustedMonthlyEur: Record<string, number> = {};
       let annual = 0;
       for (const mkey of MONTH_KEYS_LIST) {
         const raw = Number(rawSource[mkey]) || 0;
+        const rawEur = Number(rawEurSource[mkey]) || 0;
         let amt = raw;
         const ymKey = `${targetYear}-${mkey}`;
         const mNumLocal = parseInt(mkey, 10);
@@ -577,8 +606,10 @@ async function populateBudgetTargets(opts: {
             amt = amt * (1 + hcPct / 100);
           }
         }
+        const amtEur = raw !== 0 ? rawEur * (amt / raw) : rawEur;
         if (amt !== 0) adjustedMonthly[mkey] = amt;
         if (raw !== 0) monthlyRawCopy[mkey] = raw;
+        if (amtEur !== 0) adjustedMonthlyEur[mkey] = amtEur;
         annual += amt;
       }
       if (Math.abs(annual) === 0) continue;
@@ -596,6 +627,7 @@ async function populateBudgetTargets(opts: {
         annual,
         monthlyRaw: monthlyRawCopy,
         monthly: adjustedMonthly,
+        monthlyEur: adjustedMonthlyEur,
       });
     }
   }
@@ -609,8 +641,8 @@ async function populateBudgetTargets(opts: {
       await client.query(
         `INSERT INTO budget_target_by_dept_acct
          (fiscal_year, department, location, currency, account_number, account_name,
-          netsuite_internal_number, source_amount_ils, monthly_source_ils, monthly_raw_ils, subsidiary_id, source_synced_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11, $12)
+          netsuite_internal_number, source_amount_ils, monthly_source_ils, monthly_raw_ils, monthly_source_eur, subsidiary_id, source_synced_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11::jsonb, $12, $13)
          ON CONFLICT (fiscal_year, subsidiary_id, department, location, account_number, currency)
          DO UPDATE SET
            account_name = EXCLUDED.account_name,
@@ -618,6 +650,7 @@ async function populateBudgetTargets(opts: {
            source_amount_ils = EXCLUDED.source_amount_ils,
            monthly_source_ils = EXCLUDED.monthly_source_ils,
            monthly_raw_ils = EXCLUDED.monthly_raw_ils,
+           monthly_source_eur = EXCLUDED.monthly_source_eur,
            source_synced_at = EXCLUDED.source_synced_at`,
         [
           g.FISCAL_YEAR,
@@ -630,6 +663,7 @@ async function populateBudgetTargets(opts: {
           Math.round(g.annual * 100) / 100,
           JSON.stringify(g.monthly),
           JSON.stringify(g.monthlyRaw),
+          JSON.stringify(g.monthlyEur || {}),
           g.SUBSIDIARY_ID,
           syncStart,
         ]
@@ -736,6 +770,7 @@ router.get('/budget-targets', bankRole, async (req: any, res: Response) => {
               source_amount_ils AS "SOURCE_AMOUNT_ILS",
               monthly_source_ils AS "MONTHLY_SOURCE_ILS",
               monthly_raw_ils AS "MONTHLY_RAW_ILS",
+              monthly_source_eur AS "MONTHLY_SOURCE_EUR",
               user_override_amount_ils AS "USER_OVERRIDE_AMOUNT_ILS",
               user_override_pct AS "USER_OVERRIDE_PCT",
               annual_budget_target_amount AS "ANNUAL_BUDGET_TARGET_AMOUNT",
@@ -755,6 +790,7 @@ router.get('/budget-targets', bankRole, async (req: any, res: Response) => {
       SOURCE_AMOUNT_ILS: r.SOURCE_AMOUNT_ILS != null ? Number(r.SOURCE_AMOUNT_ILS) : null,
       MONTHLY_SOURCE_ILS: r.MONTHLY_SOURCE_ILS || null, // JSONB returns parsed object from node-postgres
       MONTHLY_RAW_ILS: r.MONTHLY_RAW_ILS || null,
+      MONTHLY_SOURCE_EUR: r.MONTHLY_SOURCE_EUR || null,
       USER_OVERRIDE_AMOUNT_ILS: r.USER_OVERRIDE_AMOUNT_ILS != null ? Number(r.USER_OVERRIDE_AMOUNT_ILS) : null,
       USER_OVERRIDE_PCT: r.USER_OVERRIDE_PCT != null ? Number(r.USER_OVERRIDE_PCT) : null,
       ANNUAL_BUDGET_TARGET_AMOUNT: r.ANNUAL_BUDGET_TARGET_AMOUNT != null ? Number(r.ANNUAL_BUDGET_TARGET_AMOUNT) : null,
