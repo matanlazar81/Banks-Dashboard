@@ -530,11 +530,31 @@ export async function populateBudgetTargets(opts: {
         const mkey = String(Number(r.MONTH_NUM)).padStart(2, '0');
         const actualAmt = Number(r.MONTH_AMOUNT_ILS) || 0;
         const actualEur = Number(r.MONTH_AMOUNT_EUR) || 0;
-        const oldVal = g.monthly[mkey] || 0;
-        g.monthly[mkey] = actualAmt;
-        g.monthlyRaw[mkey] = actualAmt; // actuals ARE the raw value for past months
-        g.monthlyEur[mkey] = actualEur; // native EUR actual for past months
-        g.annual = g.annual - oldVal + actualAmt;
+        // PR-M: actuals overlay must ACCUMULATE across actuals rows, not overwrite.
+        // Snowflake returns multiple rows per (DEPARTMENT_NAME, account, month) when
+        // distinct DEPARTMENT_IDs map to the same DEPARTMENT_NAME (the snippet
+        // groups by DEPARTMENT_ID, the JS aggregation keys by DEPARTMENT_NAME).
+        // Pre-PR-M `g.monthly[mkey] = actualAmt` kept only the LAST row per group,
+        // so past-month actuals were undercounted by a factor equal to the number
+        // of DEPARTMENT_ID variants per name (Playmakers: ~6).
+        //
+        // First-touch handling: clear Pass-1's BUDGET placeholder for this (group,
+        // month) so we replace it with the SUM of all actuals rows for that group.
+        // A WeakSet-style flag on the group records which months were already
+        // cleared this overlay run.
+        const cleared = (g as any).__overlayCleared || ((g as any).__overlayCleared = new Set<string>());
+        if (!cleared.has(mkey)) {
+          const oldVal = g.monthly[mkey] || 0;
+          g.annual -= oldVal;          // remove the budget placeholder from annual
+          g.monthly[mkey] = 0;
+          g.monthlyRaw[mkey] = 0;
+          g.monthlyEur[mkey] = 0;
+          cleared.add(mkey);
+        }
+        g.monthly[mkey] = (g.monthly[mkey] || 0) + actualAmt;
+        g.monthlyRaw[mkey] = (g.monthlyRaw[mkey] || 0) + actualAmt; // actuals ARE the raw value for past months
+        g.monthlyEur[mkey] = (g.monthlyEur[mkey] || 0) + actualEur; // native EUR actual for past months
+        g.annual += actualAmt;
       }
       return null; // success
     } catch (actualsErr: any) {
