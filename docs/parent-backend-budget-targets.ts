@@ -429,6 +429,14 @@ async function populateBudgetTargets(opts: {
           AND g.GL_ACCOUNT_TYPE = 'Expense'
           AND (g.GL_ACCOUNT_NUMBER NOT LIKE '800%' OR g.GL_ACCOUNT_NUMBER = '800029')
           AND g.GL_ACCOUNT_NUMBER NOT IN ('780502')
+          -- PR-E: exclude payroll from the actuals overlay. Actual payroll posts
+          -- to GL accounts largely NOT typed 'Expense', so the GL_ACCOUNT_TYPE
+          -- filter above silently drops ~80% of past-month payroll (~543K/mo
+          -- captured vs ~2.4M/mo real). FCT_BUDGET payroll (Layer 1, already in
+          -- g.monthly for every month) is complete and within ~1% of true
+          -- actuals, so keep budget for past-month payroll rather than
+          -- overwriting it with the truncated actuals figure.
+          AND g.IS_PAYROLL = FALSE
         GROUP BY
           EXTRACT(YEAR  FROM e.CAL_MONTH_START_DATE),
           EXTRACT(MONTH FROM e.CAL_MONTH_START_DATE),
