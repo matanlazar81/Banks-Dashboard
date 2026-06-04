@@ -4125,30 +4125,29 @@ useEffect(() => {
                       };
                     }
                     // PR-S: per-department salary breakdown. The salary modal shows
-                    // an "Adjusted EUR" column per department/account that sums per
-                    // dept to the basis × multiplier + per-dept % + dept share of
-                    // SF overrides + dept share of HC lever impact. Until now, the
-                    // backend only knew the per-month bucket total (PR-O) and
-                    // distributed it proportionally to FCT_BUDGET's per-dept shape,
-                    // which doesn't match what the modal displays once adjustments
-                    // are applied. Here we mirror the modal's per-dept computation
-                    // and ship the result alongside dashboardTotals. The backend
-                    // scales each (month × dept) payroll cluster to match.
+                    // a per-dept "Effective" view in the Department Adjustments
+                    // table = Actual + per-dept HC impact, and a per-row "Adjusted
+                    // EUR" in the Budget Breakdown = basis × multiplier + dept
+                    // share of SF overrides. Targets-per-dept here mirrors that
+                    // logic: basis (own actuals for closed months, lastActual
+                    // for future), apply multiplier and dept %, layer per-dept
+                    // HC impact and dept share of SF overrides. Sum across depts
+                    // equals dashboardTotals.salary by construction (lastActual
+                    // total × mult + overrideDelta + hcImpactTotal), so the
+                    // backend's per-dept scaling won't drift the bucket total.
                     const salaryByDept: Record<string, Record<string, { eur: number; ils: number }>> = {};
                     const laBasis = lastActualSalaryMonth ? salaryActualsByDept[lastActualSalaryMonth] : null;
                     for (const mKey of Object.keys(dashboardTotals)) {
                       const ownActuals = salaryActualsByDept[mKey];
-                      const basis = (ownActuals && Object.keys(ownActuals).length > 0) ? ownActuals : laBasis;
+                      const haveOwn = ownActuals && Object.keys(ownActuals).length > 0;
+                      const basis = haveOwn ? ownActuals : laBasis;
                       if (!basis) continue;
                       const [yStr, mStr] = mKey.split('-');
                       const mIdx = parseInt(mStr, 10) - 1; // 0..11 — salaryAdjPctByMonth keys
                       const monthPct = Number(salaryAdjPctByMonth[mIdx]) || 0;
                       const mult = 1 + monthPct / 100;
                       // Per-dept % cascades from earlier months in the same year
-                      // (matches cashflowForecast at line ~2638). The modal itself
-                      // uses only the current month's raw entry, but the cashflow
-                      // totals — which PR-O scales to — use the cascaded version,
-                      // so we use cascaded here to keep sum_per_dept == cashflow.
+                      // (matches cashflowForecast at line ~2638).
                       const effDeptAdj: Record<string, number> = {};
                       const adjMonths = Object.keys(salaryDeptAdj)
                         .filter(k => k <= mKey && k.slice(0, 4) === yStr).sort();
@@ -4159,16 +4158,20 @@ useEffect(() => {
                         }
                       }
                       // SF salary overrides (Google Sheets OVERIDE_TEMP) — distributed
-                      // proportionally to each dept's share of the basis
+                      // proportionally to each dept's share of the basis (no per-dept
+                      // attribution available from the source data).
                       let overrideDeltaEUR = 0;
                       for (const ov of sfSalaryOverrides.filter(o => o.mKey === mKey)) {
                         overrideDeltaEUR += ov.mode === 'Override' ? (ov.newVal - ov.oldVal) : ov.amountEUR;
                       }
-                      const hcImpactILS = monthlyHCImpact[mKey]?.running || 0;
+                      // HC lever impact — use per-dept attribution from monthlyHCImpact.byDept
+                      // (same source the modal's Department Adjustments table uses).
+                      // The cashflow row applies the running TOTAL HC impact for the month,
+                      // so summing per-dept HC equals the cashflow's HC adjustment.
+                      const hcByDeptILS = ((monthlyHCImpact as any)[mKey]?.byDept || {}) as Record<string, number>;
                       const basisSumEUR = Object.values(basis).reduce((s, v) => s + (v as { eur: number }).eur, 0);
                       const basisSumILS = Object.values(basis).reduce((s, v) => s + (v as { ils: number }).ils, 0);
                       const ilsPerEur = basisSumEUR > 0 ? basisSumILS / basisSumEUR : 3.68;
-                      const hcImpactEUR = ilsPerEur > 0 ? hcImpactILS / ilsPerEur : 0;
                       const perDept: Record<string, { eur: number; ils: number }> = {};
                       for (const [dept, v] of Object.entries(basis)) {
                         const baseEUR = (v as { eur: number }).eur;
@@ -4177,9 +4180,11 @@ useEffect(() => {
                         const deptPctILS = baseILS * ((effDeptAdj[dept] || 0) / 100);
                         const shareEUR = basisSumEUR > 0 ? baseEUR / basisSumEUR : 0;
                         const shareILS = basisSumILS > 0 ? baseILS / basisSumILS : 0;
+                        const deptHcILS = Number(hcByDeptILS[dept]) || 0;
+                        const deptHcEUR = ilsPerEur > 0 ? deptHcILS / ilsPerEur : 0;
                         perDept[dept] = {
-                          eur: Math.round(baseEUR * mult + deptPctEUR + overrideDeltaEUR * shareEUR + hcImpactEUR * shareEUR),
-                          ils: Math.round(baseILS * mult + deptPctILS + (overrideDeltaEUR * ilsPerEur) * shareILS + hcImpactILS * shareILS),
+                          eur: Math.round(baseEUR * mult + deptPctEUR + overrideDeltaEUR * shareEUR + deptHcEUR),
+                          ils: Math.round(baseILS * mult + deptPctILS + (overrideDeltaEUR * ilsPerEur) * shareILS + deptHcILS),
                         };
                       }
                       salaryByDept[mKey] = perDept;
