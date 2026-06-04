@@ -200,7 +200,15 @@ export async function populateBudgetTargets(opts: {
       b.DEPARTMENT_ID    AS DEPARTMENT_ID,
       COALESCE(d.DEPARTMENT_NAME, 'Unassigned') AS DEPARTMENT,
       ${hasLocationId && hasDimLocation ? `COALESCE(l.LOCATION_NAME, 'Unassigned')` : `'Unassigned'`} AS LOCATION,
-      ${hasCurrencyCode ? `COALESCE(b.CURRENCY_CODE, 'ILS')` : `'ILS'`} AS CURRENCY,
+      -- PR-L: pin CURRENCY to the literal 'ILS'. FCT_BUDGET.CURRENCY_CODE
+      -- returns 'NIS' for LSports, while FCT_EXPENSE has no CURRENCY_CODE
+      -- column at all (its overlay branch falls back to 'ILS'). That asymmetry
+      -- made the Pass-1 budget key carry 'NIS' and the Pass-2 actuals key
+      -- carry 'ILS', so the overlay's join (year,sub,dept,loc,acct,currency)
+      -- never matched and actuals appended as new rows instead of overwriting.
+      -- This subsidiary has a single source currency (ILS = NIS); literal
+      -- 'ILS' on both sides keeps the keys identical.
+      'ILS' AS CURRENCY,
       g.GL_ACCOUNT_NUMBER AS ACCOUNT_NUMBER,
       g.GL_ACCOUNT_NAME   AS ACCOUNT_NAME,
       g.GL_ACCOUNT_ID     AS NETSUITE_INTERNAL_NUMBER,
@@ -230,7 +238,7 @@ export async function populateBudgetTargets(opts: {
       EXTRACT(MONTH FROM b.BUDGET_MONTH_DATE),
       b.DEPARTMENT_ID, d.DEPARTMENT_NAME,
       ${hasLocationId && hasDimLocation ? 'l.LOCATION_NAME,' : ''}
-      ${hasCurrencyCode ? 'b.CURRENCY_CODE,' : ''}
+      -- PR-L: CURRENCY pinned to 'ILS' literal in SELECT; no GROUP BY needed.
       g.GL_ACCOUNT_NUMBER, g.GL_ACCOUNT_NAME, g.GL_ACCOUNT_ID,
       g.PARENT_GL_ACCOUNT_NAME, g.IS_PAYROLL,
       b.SUBSIDIARY_ID
@@ -450,7 +458,7 @@ export async function populateBudgetTargets(opts: {
           e.DEPARTMENT_ID    AS DEPARTMENT_ID,
           COALESCE(d.DEPARTMENT_NAME, 'Unassigned') AS DEPARTMENT,
           ${hasExpenseLoc && hasDimLocation ? `COALESCE(l.LOCATION_NAME, 'Unassigned')` : `'Unassigned'`} AS LOCATION,
-          ${hasExpenseCurr ? `COALESCE(e.CURRENCY_CODE, 'ILS')` : `'ILS'`} AS CURRENCY,
+          'ILS' AS CURRENCY,  -- PR-L: see Pass-1 comment; pinned so the overlay key matches
           g.GL_ACCOUNT_NUMBER AS ACCOUNT_NUMBER,
           g.GL_ACCOUNT_NAME   AS ACCOUNT_NAME,
           g.GL_ACCOUNT_ID     AS NETSUITE_INTERNAL_NUMBER,
@@ -487,7 +495,7 @@ export async function populateBudgetTargets(opts: {
           EXTRACT(MONTH FROM e.CAL_MONTH_START_DATE),
           e.DEPARTMENT_ID, d.DEPARTMENT_NAME,
           ${hasExpenseLoc && hasDimLocation ? 'l.LOCATION_NAME,' : ''}
-          ${hasExpenseCurr ? 'e.CURRENCY_CODE,' : ''}
+          -- PR-L: CURRENCY pinned to 'ILS' literal in SELECT; no GROUP BY needed.
           g.GL_ACCOUNT_NUMBER, g.GL_ACCOUNT_NAME, g.GL_ACCOUNT_ID,
           g.PARENT_GL_ACCOUNT_NAME, g.IS_PAYROLL,
           e.SUBSIDIARY_ID
