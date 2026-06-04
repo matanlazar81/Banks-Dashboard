@@ -260,13 +260,14 @@ async function populateBudgetTargets(opts: {
       WHERE TABLE_SCHEMA = 'FINANCE' AND TABLE_NAME = 'FCT_EXPENSE'
     `);
     const expenseCols = new Set<string>(expenseColsRows.map(r => r.COLUMN_NAME));
-    // Pick the best available amount column. FCT_EXPENSE column naming differs across
-    // environments — try the *_CC currency-converted ones first, then the plain names.
+    // PR-I: use the PLAIN AMOUNT_ILS / AMOUNT_EUR columns for FCT_EXPENSE, matching
+    // the dashboard (snowflake-api.cjs). The _CC (constant-currency) variants hold a
+    // different value on FCT_EXPENSE and undercount actuals by the FX ratio.
     let amountExpr: string | null = null;
-    if (expenseCols.has('AMOUNT_ILS_CC'))      amountExpr = 'ROUND(e.AMOUNT_ILS_CC, 2)';
-    else if (expenseCols.has('AMOUNT_ILS'))    amountExpr = 'ROUND(e.AMOUNT_ILS, 2)';
-    else if (expenseCols.has('AMOUNT_EUR_CC')) amountExpr = 'ROUND(e.AMOUNT_EUR_CC * 3.68, 2)';
+    if (expenseCols.has('AMOUNT_ILS'))         amountExpr = 'ROUND(e.AMOUNT_ILS, 2)';
+    else if (expenseCols.has('AMOUNT_ILS_CC')) amountExpr = 'ROUND(e.AMOUNT_ILS_CC, 2)';
     else if (expenseCols.has('AMOUNT_EUR'))    amountExpr = 'ROUND(e.AMOUNT_EUR * 3.68, 2)';
+    else if (expenseCols.has('AMOUNT_EUR_CC')) amountExpr = 'ROUND(e.AMOUNT_EUR_CC * 3.68, 2)';
 
     if (amountExpr) {
       const overrideRows: any[] = await sf.query(`
@@ -416,20 +417,27 @@ async function populateBudgetTargets(opts: {
         WHERE TABLE_SCHEMA = 'FINANCE' AND TABLE_NAME = 'FCT_EXPENSE'
       `);
       const expenseCols = new Set<string>(expenseColsRows.map(r => r.COLUMN_NAME));
+      // PR-I: match the dashboard's FCT_EXPENSE source exactly. snowflake-api.cjs
+      // (fetchVendorBreakdown / fetchExpense*) reads the PLAIN AMOUNT_ILS / AMOUNT_EUR
+      // columns for actuals. The "_CC" (constant-currency) variants on FCT_EXPENSE
+      // hold a different value — using them undercounted past-month actuals by the
+      // FX ratio (~3.69x). So prefer the non-CC columns here. (FCT_BUDGET is the
+      // opposite: its _CC columns are the real values, kept in the Layer-1 query.)
       let amountExpr: string | null = null;
-      if (expenseCols.has('AMOUNT_ILS_CC'))      amountExpr = 'ROUND(SUM(e.AMOUNT_ILS_CC), 2)';
-      else if (expenseCols.has('AMOUNT_ILS'))    amountExpr = 'ROUND(SUM(e.AMOUNT_ILS), 2)';
-      else if (expenseCols.has('AMOUNT_EUR_CC')) amountExpr = 'ROUND(SUM(e.AMOUNT_EUR_CC) * 3.68, 2)';
+      if (expenseCols.has('AMOUNT_ILS'))         amountExpr = 'ROUND(SUM(e.AMOUNT_ILS), 2)';
+      else if (expenseCols.has('AMOUNT_ILS_CC')) amountExpr = 'ROUND(SUM(e.AMOUNT_ILS_CC), 2)';
       else if (expenseCols.has('AMOUNT_EUR'))    amountExpr = 'ROUND(SUM(e.AMOUNT_EUR) * 3.68, 2)';
+      else if (expenseCols.has('AMOUNT_EUR_CC')) amountExpr = 'ROUND(SUM(e.AMOUNT_EUR_CC) * 3.68, 2)';
       if (!amountExpr) {
         logger.warn?.('PR-B: FCT_EXPENSE has no usable amount column; past-month actuals skipped.');
         return;
       }
-      // PR-H: native EUR expression (parallel to amountExpr). Falls back to ILS/3.68
-      // only if no EUR column exists, so EUR stays as close to Snowflake as possible.
+      // PR-H/PR-I: native EUR expression. Prefer plain AMOUNT_EUR (what the
+      // dashboard uses for FCT_EXPENSE actuals); the _CC variant is constant-
+      // currency and undercounts. Fall back to ILS/3.68 only if no EUR column.
       let amountExprEur: string;
-      if (expenseCols.has('AMOUNT_EUR_CC'))      amountExprEur = 'ROUND(SUM(e.AMOUNT_EUR_CC), 2)';
-      else if (expenseCols.has('AMOUNT_EUR'))    amountExprEur = 'ROUND(SUM(e.AMOUNT_EUR), 2)';
+      if (expenseCols.has('AMOUNT_EUR'))         amountExprEur = 'ROUND(SUM(e.AMOUNT_EUR), 2)';
+      else if (expenseCols.has('AMOUNT_EUR_CC')) amountExprEur = 'ROUND(SUM(e.AMOUNT_EUR_CC), 2)';
       else                                       amountExprEur = `ROUND((${amountExpr}) / 3.68, 2)`;
       const hasExpenseLoc = expenseCols.has('LOCATION_ID');
       const hasExpenseCurr = expenseCols.has('CURRENCY_CODE');
