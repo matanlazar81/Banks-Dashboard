@@ -617,6 +617,7 @@ type BudgetTargetRow = {
   SOURCE_AMOUNT_ILS: number | null;
   MONTHLY_SOURCE_ILS: Record<string, number> | null;
   MONTHLY_RAW_ILS: Record<string, number> | null;
+  MONTHLY_SOURCE_EUR: Record<string, number> | null;
   USER_OVERRIDE_AMOUNT_ILS: number | null;
   USER_OVERRIDE_PCT: number | null;
   ANNUAL_BUDGET_TARGET_AMOUNT: number | null;
@@ -679,11 +680,31 @@ function BudgetTargetsDrawer({
   const visible = filter
     ? rows.filter(r => (r.DEPARTMENT + ' ' + r.ACCOUNT_NUMBER + ' ' + (r.ACCOUNT_NAME || '')).toLowerCase().includes(filter.toLowerCase()))
     : rows;
-  const toCcy = (ilsVal: number | null): number | null => {
-    if (ilsVal == null) return null;
-    return drawerCurrency === 'EUR' ? ilsVal / ILS_PER_EUR : ilsVal;
-  };
   const fmtMoney = (v: number | null) => v == null ? '—' : Math.round(v).toLocaleString('en-GB');
+  // PR-H: native EUR. Monthly EUR cells use Snowflake's stored EUR directly so they
+  // equal the dashboard/modal EUR exactly. ILS-denominated columns (source/annual/
+  // override) convert via the row's own native ILS/EUR rate (derived from the stored
+  // EUR vs ILS totals) so they stay consistent with the monthly EUR rather than a flat 3.68.
+  const sumVals = (o: Record<string, number> | null | undefined): number =>
+    o ? Object.values(o).reduce((s, v) => s + (Number(v) || 0), 0) : 0;
+  const rowNativeRate = (r: BudgetTargetRow): number => {
+    const ilsTot = r.MONTHLY_SOURCE_ILS ? sumVals(r.MONTHLY_SOURCE_ILS) : (r.SOURCE_AMOUNT_ILS || 0);
+    const eurTot = sumVals(r.MONTHLY_SOURCE_EUR);
+    return eurTot > 0 ? ilsTot / eurTot : ILS_PER_EUR;
+  };
+  const toCcyRow = (r: BudgetTargetRow, ilsVal: number | null): number | null => {
+    if (ilsVal == null) return null;
+    return drawerCurrency === 'EUR' ? ilsVal / rowNativeRate(r) : ilsVal;
+  };
+  const monthCcy = (r: BudgetTargetRow, mk: string): number | null => {
+    if (drawerCurrency === 'EUR') {
+      const eur = r.MONTHLY_SOURCE_EUR ? r.MONTHLY_SOURCE_EUR[mk] : null;
+      if (eur != null) return eur;
+      const ils = r.MONTHLY_SOURCE_ILS ? r.MONTHLY_SOURCE_ILS[mk] : null;
+      return ils == null ? null : ils / rowNativeRate(r);
+    }
+    return r.MONTHLY_SOURCE_ILS ? r.MONTHLY_SOURCE_ILS[mk] : null;
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
@@ -709,12 +730,27 @@ function BudgetTargetsDrawer({
             {(['ILS', 'EUR'] as const).map(ccy => (
               <button key={ccy}
                 onClick={() => {
-                  const convert = (ilsVal: number | null): number | null => {
-                    if (ilsVal == null) return null;
-                    return ccy === 'EUR' ? Math.round(ilsVal / ILS_PER_EUR) : Math.round(ilsVal);
-                  };
+                  // PR-H: native EUR export. Monthly EUR cells = Snowflake's stored EUR;
+                  // ILS columns convert via each row's native rate (stored EUR vs ILS totals).
                   const exportRows = (filter ? visible : rows).map(r => {
                     const monthly = r.MONTHLY_SOURCE_ILS || {};
+                    const monthlyEur = r.MONTHLY_SOURCE_EUR || {};
+                    const ilsTot = sumVals(r.MONTHLY_SOURCE_ILS) || (r.SOURCE_AMOUNT_ILS || 0);
+                    const eurTot = sumVals(r.MONTHLY_SOURCE_EUR);
+                    const rate = eurTot > 0 ? ilsTot / eurTot : ILS_PER_EUR;
+                    const convRow = (ilsVal: number | null): number | null => {
+                      if (ilsVal == null) return null;
+                      return ccy === 'EUR' ? Math.round(ilsVal / rate) : Math.round(ilsVal);
+                    };
+                    const convMonth = (mk: string): number => {
+                      if (ccy === 'EUR') {
+                        const e = monthlyEur[mk];
+                        if (e != null) return Math.round(e);
+                        const i = monthly[mk];
+                        return i == null ? 0 : Math.round(i / rate);
+                      }
+                      return Math.round(monthly[mk] ?? 0);
+                    };
                     const out: Record<string, any> = {
                       Department: r.DEPARTMENT,
                       Location: r.LOCATION,
@@ -722,14 +758,14 @@ function BudgetTargetsDrawer({
                       'Account Number': r.ACCOUNT_NUMBER,
                       'Account Name': r.ACCOUNT_NAME || '',
                       'NetSuite Internal ID': r.NETSUITE_INTERNAL_NUMBER ?? '',
-                      [`Annual Source ${ccy}`]: convert(r.SOURCE_AMOUNT_ILS) ?? 0,
+                      [`Annual Source ${ccy}`]: convRow(r.SOURCE_AMOUNT_ILS) ?? 0,
                     };
                     MONTH_LABELS.forEach((label, i) => {
-                      out[`${label} ${ccy}`] = convert(monthly[MONTH_KEYS[i]] ?? null) ?? 0;
+                      out[`${label} ${ccy}`] = convMonth(MONTH_KEYS[i]);
                     });
-                    out[`Override Amount ${ccy}`] = convert(r.USER_OVERRIDE_AMOUNT_ILS) ?? '';
+                    out[`Override Amount ${ccy}`] = convRow(r.USER_OVERRIDE_AMOUNT_ILS) ?? '';
                     out['Override %'] = r.USER_OVERRIDE_PCT ?? '';
-                    out[`Annual Budget Target ${ccy}`] = convert(r.ANNUAL_BUDGET_TARGET_AMOUNT) ?? 0;
+                    out[`Annual Budget Target ${ccy}`] = convRow(r.ANNUAL_BUDGET_TARGET_AMOUNT) ?? 0;
                     out['Last Edited By'] = r.USER_EDITED_BY || '';
                     out['Last Edited At'] = r.USER_EDITED_AT || '';
                     return out;
@@ -787,11 +823,11 @@ function BudgetTargetsDrawer({
                         <div className="font-mono text-[10px] text-gray-700">{r.ACCOUNT_NUMBER}</div>
                         <div className="text-[9px] text-gray-500 truncate max-w-[150px]" title={r.ACCOUNT_NAME || ''}>{r.ACCOUNT_NAME || ''}</div>
                       </td>
-                      <td className="px-2 py-1 text-right font-mono text-[10px]">{fmtMoney(toCcy(r.SOURCE_AMOUNT_ILS))}</td>
+                      <td className="px-2 py-1 text-right font-mono text-[10px]">{fmtMoney(toCcyRow(r, r.SOURCE_AMOUNT_ILS))}</td>
                       {MONTH_KEYS.map(mk => {
                         const finalIls = r.MONTHLY_SOURCE_ILS ? r.MONTHLY_SOURCE_ILS[mk] : null;
                         const rawIls   = r.MONTHLY_RAW_ILS    ? r.MONTHLY_RAW_ILS[mk]    : null;
-                        const fv = finalIls == null || finalIls === 0 ? null : (drawerCurrency === 'EUR' ? finalIls / ILS_PER_EUR : finalIls);
+                        const fv = finalIls == null || finalIls === 0 ? null : monthCcy(r, mk);
                         // A cell is "adjusted" when the final post-Layer-2/3 value materially differs from
                         // the raw FCT_BUDGET value. Tolerance 0.5 = ignore floating-point noise.
                         const isAdjusted = rawIls != null && finalIls != null && Math.abs(finalIls - rawIls) > 0.5;
@@ -834,7 +870,7 @@ function BudgetTargetsDrawer({
                       </td>
                       <td title={editedTitle}
                           className={`px-2 py-1 text-right font-mono font-semibold text-[10px] ${hasOverride ? 'text-amber-700' : 'text-gray-700'}`}>
-                        {fmtMoney(toCcy(r.ANNUAL_BUDGET_TARGET_AMOUNT))}
+                        {fmtMoney(toCcyRow(r, r.ANNUAL_BUDGET_TARGET_AMOUNT))}
                       </td>
                     </tr>
                   );
