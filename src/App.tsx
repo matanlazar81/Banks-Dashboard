@@ -4072,9 +4072,17 @@ useEffect(() => {
                       const s = (result.summary || [])[0];
                       const rows = s ? s.rowCount : 0;
                       const fb = result.fallbackFromYear;
-                      setBudgetSyncStatus('success');
-                      setBudgetSyncMsg(fb ? `Synced ${rows} rows for ${yr} (from ${fb})` : `Synced ${rows} rows for ${yr}`);
-                      setTimeout(() => setBudgetSyncStatus('idle'), 4000);
+                      // PR-J: if the past-month actuals overlay failed, it's no longer silent —
+                      // surface it so closed-month figures aren't quietly left at budget values.
+                      if (result.overlayError) {
+                        setBudgetSyncStatus('error');
+                        setBudgetSyncMsg(`Synced ${rows} rows, but actuals overlay FAILED: ${String(result.overlayError).slice(0, 200)}`);
+                        setTimeout(() => setBudgetSyncStatus('idle'), 12000);
+                      } else {
+                        setBudgetSyncStatus('success');
+                        setBudgetSyncMsg(fb ? `Synced ${rows} rows for ${yr} (from ${fb})` : `Synced ${rows} rows for ${yr}`);
+                        setTimeout(() => setBudgetSyncStatus('idle'), 4000);
+                      }
                     } else {
                       setBudgetSyncStatus('error');
                       setBudgetSyncMsg(result.error || 'Sync failed');

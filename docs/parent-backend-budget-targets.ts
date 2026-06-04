@@ -398,7 +398,7 @@ async function populateBudgetTargets(opts: {
 
   // Pass 2: For PAST months, replace placeholder budget values with FCT_EXPENSE
   // actuals (matches the dashboard's "actuals over budget for closed months" rule).
-  async function applyActualsForPastMonths(): Promise<void> {
+  async function applyActualsForPastMonths(): Promise<string | null> {
     // Build the list of (year, month) tuples that are in the past for any requested year.
     const pastMonthDates: string[] = [];
     for (const yr of years) {
@@ -406,7 +406,7 @@ async function populateBudgetTargets(opts: {
         if (isPastMonth(yr, m)) pastMonthDates.push(`${yr}-${String(m).padStart(2, '0')}-01`);
       }
     }
-    if (pastMonthDates.length === 0) return; // nothing to do (e.g. 2027 sync from Jun 2026)
+    if (pastMonthDates.length === 0) return null; // nothing to do (e.g. 2027 sync from Jun 2026)
 
     // Reuse the FCT_EXPENSE amount column detection from Layer 2 (handled in a try/catch
     // there). Replicate the lightweight discovery here so we still proceed if FCT_EXPENSE
@@ -430,7 +430,7 @@ async function populateBudgetTargets(opts: {
       else if (expenseCols.has('AMOUNT_EUR_CC')) amountExpr = 'ROUND(SUM(e.AMOUNT_EUR_CC) * 3.68, 2)';
       if (!amountExpr) {
         logger.warn?.('PR-B: FCT_EXPENSE has no usable amount column; past-month actuals skipped.');
-        return;
+        return 'FCT_EXPENSE has no usable amount column';
       }
       // PR-H/PR-I: native EUR expression. Prefer plain AMOUNT_EUR (what the
       // dashboard uses for FCT_EXPENSE actuals); the _CC variant is constant-
@@ -528,11 +528,14 @@ async function populateBudgetTargets(opts: {
         g.monthlyEur[mkey] = actualEur; // native EUR actual for past months
         g.annual = g.annual - oldVal + actualAmt;
       }
+      return null; // success
     } catch (actualsErr: any) {
-      logger.warn?.(`PR-B: past-month actuals overlay failed: ${actualsErr?.message || actualsErr}`);
+      const msg = actualsErr?.message || String(actualsErr);
+      logger.error?.(`PR-B: past-month actuals overlay FAILED: ${msg}`);
+      return msg; // surfaced in the sync response so it isn't silently swallowed
     }
   }
-  await applyActualsForPastMonths();
+  const overlayError = await applyActualsForPastMonths();
 
   // Drop rows whose annual is effectively zero (matches the prior HAVING > 0 filter).
   let rowsToWrite = [...groups.values()].filter(g => Math.abs(g.annual) > 0);
@@ -714,6 +717,8 @@ async function populateBudgetTargets(opts: {
     elapsedMs,
     deletedOrphans,
     fallbackFromYear: fallbackUsedFromYear,
+    overlayError, // null on success; the FCT_EXPENSE actuals-overlay error message otherwise
+    pastMonthsApplied: overlayError == null,
     summary: summary.rows.map((s: any) => ({
       fiscalYear: Number(s.fiscal_year),
       rowCount: Number(s.row_count),
