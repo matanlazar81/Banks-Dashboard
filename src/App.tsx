@@ -2849,7 +2849,13 @@ useEffect(() => {
       let other = 0;
       let otherILS = 0;
       if (bcm) {
-        salary = Math.max(0, -bcm.salary.eur);
+        // PR-W: salary intentionally NOT overridden by bank-classified for past
+        // months anymore. The user wants the cashflow Salary column to reflect
+        // SF accrued (what was booked as payroll expense, matching the modal's
+        // Last Actual basis) rather than bank cash (which mixes in payroll
+        // taxes/pension paid in the current month but accrued earlier). salary
+        // stays as set by sfActualsSplit (or NS actuals fallback) above.
+        //
         // vendors stays as-is from the existing SF Actuals source (FCT_EXPENSE accrual) so the
         // grid matches the Vendor Expenses modal's 'Snowflake Actual (this month)' line.
         // Past-month closing is accrual-based and will not perfectly equal NS month-end bank
@@ -2876,7 +2882,12 @@ useEffect(() => {
       }
       const churnDeductionILS = Math.round(churnDeduction * eurIlsRatio);
       let net = collections - salary - vendors - other + pipelineWeighted - churnDeduction;
-      const salaryILS = bcm ? Math.max(0, -bcm.salary.ils) : Math.round(salary * eurIlsRatio);
+      // PR-W: salaryILS sourced from SF actuals (per-month ILS from sfActualsSplit)
+      // for past/current months when available, else derived from salary × ratio.
+      // No longer pulls from bcm.salary.ils, which is bank-cash.
+      const salaryILS = ((isPastMonth || isCurMonth) && sfActualsSplit[mKey]?.salaryILS > 0)
+        ? sfActualsSplit[mKey].salaryILS
+        : Math.round(salary * eurIlsRatio);
       let vendorsILS = Math.round(vendors * eurIlsRatio); // vendors uses SF Actuals × ratio (matches modal)
       const collectionsILS = Math.round(collections * eurIlsRatio); // always derive from displayed collections × ratio
       if (bcm) otherILS = -bcm.other.ils - (collectionsILS - bcm.collections.ils);
