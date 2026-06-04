@@ -1031,10 +1031,7 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
       const minMonth = monthsNeeded[0];
       console.log(`[NS API] Salary: querying ${monthsNeeded.length} months from ${minMonth} (${Object.keys(cached).length} cached)`);
 
-      // PR-Z: include ALL 76xxx payroll accounts — match NS GL trial balance exactly.
-      // Bonus (760017), Maternity (760019), and Military refund (760023) are not
-      // in Snowflake's FCT_EXPENSE mart for LSports past months; pulling them from
-      // NS directly is the workaround until data engineering backfills FCT_EXPENSE.
+      // Include all 76xxx payroll accounts — matches NS GL trial balance.
       const eurRows = await suiteqlAll(`
         SELECT TO_CHAR(t.trandate, 'YYYY-MM') AS month,
                SUM(tal.debit) - SUM(tal.credit) AS amount
@@ -1536,7 +1533,6 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
     const endDay = new Date(parseInt(month.split('-')[0]), parseInt(month.split('-')[1]), 0).getDate();
     const endDate = `${month}-${endDay}`;
 
-    // PR-Z: include ALL 76xxx payroll accounts.
     const [eurRows, ilsRows] = await Promise.all([
       suiteqlAll(`
         SELECT a.acctnumber, a.acctname,

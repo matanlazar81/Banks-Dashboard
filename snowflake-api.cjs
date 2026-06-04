@@ -263,11 +263,6 @@ function createSnowflakeClient(env) {
   // ── Monthly actuals split by Salary / Vendors / Finance (from FCT_EXPENSE) ──
   async function fetchMonthlyActualsSplit() {
     console.log('[Snowflake] Fetching monthly actuals split...');
-    // PR-U: exclude the same non-recurring payroll accounts that
-    // fetchSalaryActualsByDept already filters out (military reserve refund,
-    // lieu of prior notice, car allowance, and other one-off employer-cost
-    // items). Keeps the cashflow Salary cell consistent with the modal's
-    // Last Actual basis and per-dept Budget Breakdown.
     const rows = await query(`
       SELECT DATE_TRUNC('month', e.CAL_MONTH_START_DATE)::VARCHAR AS MONTH_STR,
              CASE WHEN g.IS_PAYROLL THEN 'Salary'

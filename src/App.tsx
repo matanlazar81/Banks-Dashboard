@@ -2618,6 +2618,7 @@ useEffect(() => {
       const label = `${monthNames[d.getMonth()]} ${d.getFullYear()}`;
       const isCurMonth = forecastYear === now.getFullYear() && mi === now.getMonth();
       const isPastMonth = forecastYear < now.getFullYear() || (forecastYear === now.getFullYear() && mi < now.getMonth());
+      const isClosed = isPastMonth || isCurMonth;
       // Anchor current month to actual previous month-end bank balance (includes FxReval)
       // Only in live mode — in historical (asOfDate) mode, let running balance flow from opening
       if (isCurMonth && prevMonthEndBalance && !asOfDate) {
@@ -2658,16 +2659,15 @@ useEffect(() => {
       }
 
       // ── SALARY: NS actuals (past/current — full 76xxx GL) → SF actuals → lastActual → SF/NS budget ──
-      // PR-Z: NS preferred for past/current months because Snowflake's FCT_EXPENSE mart is
-      // missing 760017 Bonus and 760019 Maternity (verified directly against Snowflake).
-      // NS GL has the complete payroll picture. SF kept as fallback when NS unavailable.
+      // NS preferred over Snowflake FCT_EXPENSE because the mart is missing some
+      // non-recurring payroll accounts (760017 Bonus, 760019 Maternity).
       let salary: number;
       let salaryBase: number; // base salary WITHOUT scenario adjustments (for delta display)
       const actualSalaryEntry = salaryData.find(s => s.month === mKey);
-      if ((isPastMonth || isCurMonth) && actualSalaryEntry && actualSalaryEntry.amountEUR > 0) {
+      if (isClosed && actualSalaryEntry && actualSalaryEntry.amountEUR > 0) {
         salary = actualSalaryEntry.amountEUR;
         salaryBase = salary;
-      } else if ((isPastMonth || isCurMonth) && sfActualsSplit[mKey]?.salary > 0) {
+      } else if (isClosed && sfActualsSplit[mKey]?.salary > 0) {
         salary = sfActualsSplit[mKey].salary;
         salaryBase = salary;
       } else if (useLastActual && !isPastMonth) {
@@ -2848,26 +2848,15 @@ useEffect(() => {
       // between that and the bank-side collections bucket (interest journals, AR-adjustments
       // that the modal classifies separately) is absorbed into 'other' so the closing balance
       // still reconciles to the actual NS bank delta.
+      // Past-month override: salary/vendors/collections stay as already computed
+      // (NS actuals for salary, SF accrual for vendors, NS collections); the
+      // bank-line residual is classified into 'other' so closing balance still
+      // reconciles to the NS month-end bank delta.
       let other = 0;
       let otherILS = 0;
       if (bcm) {
-        // PR-W: salary intentionally NOT overridden by bank-classified for past
-        // months anymore. The user wants the cashflow Salary column to reflect
-        // SF accrued (what was booked as payroll expense, matching the modal's
-        // Last Actual basis) rather than bank cash (which mixes in payroll
-        // taxes/pension paid in the current month but accrued earlier). salary
-        // stays as set by sfActualsSplit (or NS actuals fallback) above.
-        //
-        // vendors stays as-is from the existing SF Actuals source (FCT_EXPENSE accrual) so the
-        // grid matches the Vendor Expenses modal's 'Snowflake Actual (this month)' line.
-        // Past-month closing is accrual-based and will not perfectly equal NS month-end bank
-        // balance -- the gap reflects timing differences between expense recognition and cash out.
-        // collections stays as-is from the NS collection-data source so it matches the Revenue
-        // Forecast modal. Shift only the collections bank-vs-NS gap into 'other'.
         other = -bcm.other.eur - (collections - bcm.collections.eur);
         otherILS = -bcm.other.ils;
-        vendorsBase = vendors;
-        salaryBase = salary;
       }
       let totalOutflow = salary + vendors + Math.max(0, other);
       // Cumulative churn: every customer that churned in earlier forecast months is still gone,
@@ -2884,14 +2873,12 @@ useEffect(() => {
       }
       const churnDeductionILS = Math.round(churnDeduction * eurIlsRatio);
       let net = collections - salary - vendors - other + pipelineWeighted - churnDeduction;
-      // PR-Z: salaryILS prefers NS actuals (matches GL 76xxx total exactly) for
-      // past/current months. SF actualsSplit as fallback when NS unavailable.
-      // Else derive from salary × ratio.
-      const salaryILS = ((isPastMonth || isCurMonth) && actualSalaryEntry?.amountILS > 0)
-        ? actualSalaryEntry.amountILS
-        : ((isPastMonth || isCurMonth) && sfActualsSplit[mKey]?.salaryILS > 0)
-          ? sfActualsSplit[mKey].salaryILS
-          : Math.round(salary * eurIlsRatio);
+      // salaryILS picks the same source priority as the salary EUR above
+      // (NS actuals → SF actualsSplit) for closed months, else derives.
+      let salaryILS: number;
+      if (isClosed && actualSalaryEntry?.amountILS > 0) salaryILS = actualSalaryEntry.amountILS;
+      else if (isClosed && sfActualsSplit[mKey]?.salaryILS > 0) salaryILS = sfActualsSplit[mKey].salaryILS;
+      else salaryILS = Math.round(salary * eurIlsRatio);
       let vendorsILS = Math.round(vendors * eurIlsRatio); // vendors uses SF Actuals × ratio (matches modal)
       const collectionsILS = Math.round(collections * eurIlsRatio); // always derive from displayed collections × ratio
       if (bcm) otherILS = -bcm.other.ils - (collectionsILS - bcm.collections.ils);
@@ -4111,32 +4098,17 @@ useEffect(() => {
                   setBudgetSyncStatus('syncing');
                   setBudgetSyncMsg('');
                   try {
-                    // Layer 3: send the currently-loaded scenario's category/dept adjustments.
-                    // Server applies them on top of FCT_BUDGET (Layer 1) + FCT_EXPENSE overrides (Layer 2).
-                    //
-                    // PR-F: also send the exact monthly bucket totals the dashboard displays,
-                    // so the backend can scale GL account lines to sum to those totals — making
-                    // Targets = dashboard by construction. Closed months use bank cash; open months
-                    // use budget + scenario adjustments. Both come straight from cashflowForecast.
-                    //
-                    // Send EVERY row in cashflowForecast (no year filter). The backend matches
-                    // by FISCAL_YEAR internally; an over-inclusive payload is harmless. The year
-                    // filter previously dropped any pre-year context rows that App's TOTAL row
-                    // sums but Targets needs to mirror.
-                    // PR-R: Targets holds Salary + Vendors only (no OTHER row).
-                    // User wants the Excel grand total to equal the dashboard's
-                    // (Salary + Vendors) line sum exactly, with no tax/IC/fees
-                    // row mixed in. The dashboard's "Other" column is informational
-                    // and varies in sign per month; excluding it makes the
-                    // comparison clean: dashboard Salary AFTER SAVINGS + Vendors
-                    // AFTER SAVINGS == Targets grand total.
+                    // Send the active scenario's adjustments plus the per-month bucket totals
+                    // from cashflowForecast. Backend scales GL account lines so Targets bucket
+                    // totals = dashboard by construction. `other` is intentionally zero — the
+                    // Excel grand total must equal Salary AFTER SAVINGS + Vendors AFTER SAVINGS.
                     const dashboardTotals: Record<string, { salary: { eur: number; ils: number }; vendors: { eur: number; ils: number }; other: { eur: number; ils: number } }> = {};
                     for (const r of cashflowForecast) {
                       if (!r.mKey) continue;
                       dashboardTotals[r.mKey] = {
                         salary:  { eur: Math.round(r.salary),  ils: Math.round(r.salaryILS) },
                         vendors: { eur: Math.round(r.vendors), ils: Math.round(r.vendorsILS) },
-                        other:   { eur: 0, ils: 0 }, // intentionally excluded — see comment above
+                        other:   { eur: 0, ils: 0 },
                       };
                     }
                     // PR-S: per-department salary breakdown. The salary modal shows
@@ -4184,8 +4156,11 @@ useEffect(() => {
                       // The cashflow row applies the running TOTAL HC impact for the month,
                       // so summing per-dept HC equals the cashflow's HC adjustment.
                       const hcByDeptILS = ((monthlyHCImpact as any)[mKey]?.byDept || {}) as Record<string, number>;
-                      const basisSumEUR = Object.values(basis).reduce((s, v) => s + (v as { eur: number }).eur, 0);
-                      const basisSumILS = Object.values(basis).reduce((s, v) => s + (v as { ils: number }).ils, 0);
+                      let basisSumEUR = 0, basisSumILS = 0;
+                      for (const v of Object.values(basis)) {
+                        basisSumEUR += (v as { eur: number }).eur;
+                        basisSumILS += (v as { ils: number }).ils;
+                      }
                       const ilsPerEur = basisSumEUR > 0 ? basisSumILS / basisSumEUR : 3.68;
                       const perDept: Record<string, { eur: number; ils: number }> = {};
                       for (const [dept, v] of Object.entries(basis)) {
