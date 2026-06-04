@@ -4108,22 +4108,20 @@ useEffect(() => {
                     // by FISCAL_YEAR internally; an over-inclusive payload is harmless. The year
                     // filter previously dropped any pre-year context rows that App's TOTAL row
                     // sums but Targets needs to mirror.
+                    // PR-R: Targets holds Salary + Vendors only (no OTHER row).
+                    // User wants the Excel grand total to equal the dashboard's
+                    // (Salary + Vendors) line sum exactly, with no tax/IC/fees
+                    // row mixed in. The dashboard's "Other" column is informational
+                    // and varies in sign per month; excluding it makes the
+                    // comparison clean: dashboard Salary AFTER SAVINGS + Vendors
+                    // AFTER SAVINGS == Targets grand total.
                     const dashboardTotals: Record<string, { salary: { eur: number; ils: number }; vendors: { eur: number; ils: number }; other: { eur: number; ils: number } }> = {};
                     for (const r of cashflowForecast) {
                       if (!r.mKey) continue;
                       dashboardTotals[r.mKey] = {
                         salary:  { eur: Math.round(r.salary),  ils: Math.round(r.salaryILS) },
                         vendors: { eur: Math.round(r.vendors), ils: Math.round(r.vendorsILS) },
-                        // PR-Q: revert to max(0, …) per month. The dashboard's TOTAL OUTFLOW
-                        // formula is salary + vendors + max(0, other) per month (negative
-                        // 'other' months contribute 0, not the negative value). Sending
-                        // signed values (PR-P) made Targets per-month totals fall short of
-                        // dashboard outflow on negative-other months. With max(0, …) every
-                        // per-month Targets total equals dashboard outflow per month, and
-                        // the grand total equals dashboard TOTAL OUTFLOW AFTER SAVINGS
-                        // exactly. The "annual Other = +€351,437" display in the dashboard's
-                        // TOTAL row is informational (signed net), not the outflow figure.
-                        other:   { eur: Math.round(Math.max(0, r.other)), ils: Math.round(Math.max(0, r.otherILS)) },
+                        other:   { eur: 0, ils: 0 }, // intentionally excluded — see comment above
                       };
                     }
                     const resp = await fetch(`/api/sync-budget-targets?year=${yr}&subsidiary=${sub}`, {
