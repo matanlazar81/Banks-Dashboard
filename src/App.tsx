@@ -901,6 +901,32 @@ function BudgetTargetsDrawer({
                   );
                 })}
               </tbody>
+              {/* PR-P: TOTALS row at the bottom of the drawer table. Sums each
+                  visible row's Source, monthly cells, and Final, in the active
+                  drawer currency. Excludes account 800029 reval (matches the
+                  Excel export's exclusion per PR-N) so the visible TOTAL line
+                  equals the dashboard's TOTAL OUTFLOW AFTER SAVINGS exactly. */}
+              <tfoot className="bg-gray-100 sticky bottom-0 z-10 border-t-2 border-gray-400">
+                {(() => {
+                  const totalRows = visible.filter(r => r.ACCOUNT_NUMBER !== '800029');
+                  const sumSource = totalRows.reduce((s, r) => s + (toCcyRow(r, r.SOURCE_AMOUNT_ILS) || 0), 0);
+                  const sumFinal  = totalRows.reduce((s, r) => s + (toCcyRow(r, r.ANNUAL_BUDGET_TARGET_AMOUNT) || 0), 0);
+                  const monthSums = MONTH_KEYS.map(mk => totalRows.reduce((s, r) => s + (monthCcy(r, mk) || 0), 0));
+                  return (
+                    <tr className="text-gray-800 font-bold text-[11px]">
+                      <td className="px-2 py-1.5">TOTAL</td>
+                      <td className="px-2 py-1.5 text-[10px] text-gray-500">{totalRows.length} rows</td>
+                      <td className="px-2 py-1.5 text-right font-mono">{fmtMoney(sumSource)}</td>
+                      {monthSums.map((s, i) => (
+                        <td key={MONTH_KEYS[i]} className="px-1 py-1.5 text-right font-mono text-[10px]">{fmtMoney(s)}</td>
+                      ))}
+                      <td className="px-1 py-1.5"></td>
+                      <td className="px-1 py-1.5"></td>
+                      <td className="px-2 py-1.5 text-right font-mono">{fmtMoney(sumFinal)}</td>
+                    </tr>
+                  );
+                })()}
+              </tfoot>
             </table>
           )}
         </div>
@@ -4084,7 +4110,13 @@ useEffect(() => {
                       dashboardTotals[r.mKey] = {
                         salary:  { eur: Math.round(r.salary),  ils: Math.round(r.salaryILS) },
                         vendors: { eur: Math.round(r.vendors), ils: Math.round(r.vendorsILS) },
-                        other:   { eur: Math.round(Math.max(0, r.other)), ils: Math.round(Math.max(0, r.otherILS)) },
+                        // PR-P: send the SIGNED dashboard Other value (positive months and
+                        // negative months alike), so the synthetic OTHER row in Targets sums
+                        // to the same yearly figure the dashboard displays in TOTAL AFTER
+                        // SAVINGS (signed net), making Targets grand total equal TOTAL
+                        // OUTFLOW AFTER SAVINGS exactly. Previously used max(0, …) which
+                        // matched the per-month outflow formula but inflated the annual.
+                        other:   { eur: Math.round(r.other), ils: Math.round(r.otherILS) },
                       };
                     }
                     const resp = await fetch(`/api/sync-budget-targets?year=${yr}&subsidiary=${sub}`, {
