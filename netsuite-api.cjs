@@ -18,16 +18,33 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
   function genAuth(method, url) {
     const ts = Math.floor(Date.now() / 1000).toString();
     const nonce = crypto.randomBytes(16).toString('hex');
-    const params = {
+    const oauthParams = {
       oauth_consumer_key: CONSUMER_KEY, oauth_token: TOKEN_ID,
       oauth_nonce: nonce, oauth_timestamp: ts,
       oauth_signature_method: 'HMAC-SHA256', oauth_version: '1.0',
     };
-    const ps = Object.keys(params).sort().map(k => encodeURIComponent(k) + '=' + encodeURIComponent(params[k])).join('&');
-    const bs = [method.toUpperCase(), encodeURIComponent(url), encodeURIComponent(ps)].join('&');
+    // Per OAuth 1.0a: query params from the URL are folded into the signature
+    // parameter set, and the base URL used in the signature base string omits
+    // the query string. Without this, signed requests to ?limit=N&offset=M
+    // are rejected by NS as invalid signature.
+    const qIdx = url.indexOf('?');
+    const baseUrl = qIdx >= 0 ? url.slice(0, qIdx) : url;
+    const queryParams = {};
+    if (qIdx >= 0) {
+      for (const pair of url.slice(qIdx + 1).split('&')) {
+        if (!pair) continue;
+        const eq = pair.indexOf('=');
+        const k = decodeURIComponent(eq >= 0 ? pair.slice(0, eq) : pair);
+        const v = decodeURIComponent(eq >= 0 ? pair.slice(eq + 1) : '');
+        queryParams[k] = v;
+      }
+    }
+    const allParams = { ...oauthParams, ...queryParams };
+    const ps = Object.keys(allParams).sort().map(k => encodeURIComponent(k) + '=' + encodeURIComponent(allParams[k])).join('&');
+    const bs = [method.toUpperCase(), encodeURIComponent(baseUrl), encodeURIComponent(ps)].join('&');
     const sk = encodeURIComponent(CONSUMER_SECRET) + '&' + encodeURIComponent(TOKEN_SECRET);
-    params.oauth_signature = crypto.createHmac('sha256', sk).update(bs).digest('base64');
-    return 'OAuth realm="' + ACCOUNT_ID + '", ' + Object.keys(params).sort().map(k => k + '="' + encodeURIComponent(params[k]) + '"').join(', ');
+    oauthParams.oauth_signature = crypto.createHmac('sha256', sk).update(bs).digest('base64');
+    return 'OAuth realm="' + ACCOUNT_ID + '", ' + Object.keys(oauthParams).sort().map(k => k + '="' + encodeURIComponent(oauthParams[k]) + '"').join(', ');
   }
 
   async function suiteql(query, timeoutMs = 60000) {
@@ -48,28 +65,39 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
     return resp.json();
   }
 
-  // Paginated SuiteQL — fetches all results
+  // Paginated SuiteQL — fetches all results using NS REST URL pagination.
+  // NS REST API caps each response at 1000 rows by default; pagination is
+  // controlled via ?limit=N&offset=M URL params, NOT via SQL OFFSET/FETCH
+  // (SQL-level OFFSET on aggregated queries returns unstable / duplicate
+  // pages on this NS instance).
   async function suiteqlAll(query, pageSize = 1000) {
     let allItems = [];
     let offset = 0;
-    let hasMore = true;
 
-    while (hasMore) {
-      const pagedQuery = query.replace(/FETCH FIRST \d+ ROWS ONLY/i, '') + ` OFFSET ${offset} ROWS FETCH NEXT ${pageSize} ROWS ONLY`;
-      const auth = genAuth('POST', BASE_URL);
-      const resp = await fetch(BASE_URL, {
+    // Strip any trailing FETCH FIRST clause callers may have added; we'll
+    // page using URL params instead.
+    const cleanQuery = query.replace(/\s+FETCH FIRST \d+ ROWS ONLY\s*$/i, '');
+
+    while (true) {
+      const url = `${BASE_URL}?limit=${pageSize}&offset=${offset}`;
+      const auth = genAuth('POST', url);
+      const resp = await fetch(url, {
         method: 'POST',
         headers: { 'Authorization': auth, 'Content-Type': 'application/json', 'Prefer': 'transient' },
-        body: JSON.stringify({ q: pagedQuery }),
+        body: JSON.stringify({ q: cleanQuery }),
       });
       if (!resp.ok) {
         const err = await resp.text();
         throw new Error(`SuiteQL ${resp.status}: ${err.substring(0, 300)}`);
       }
       const result = await resp.json();
-      allItems = allItems.concat(result.items || []);
-      hasMore = result.hasMore === true;
+      const items = result.items || [];
+      allItems = allItems.concat(items);
+      if (result.hasMore !== true) break;
       offset += pageSize;
+      if (offset > 500000) {
+        throw new Error(`suiteqlAll: safety break at offset ${offset}, accumulated ${allItems.length} rows`);
+      }
     }
     return allItems;
   }
