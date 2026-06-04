@@ -4189,27 +4189,33 @@ useEffect(() => {
                       }
                       salaryByDept[mKey] = perDept;
 
-                      // PR-T: rescale this month's per-dept output so its sum equals
-                      // dashboardTotals.salary[mKey] exactly. Closed months use
-                      // salaryActualsByDept (recurring-payroll subset) as the basis,
-                      // but the dashboard cashflow's salary cell comes from
-                      // sfActualsSplit (broader payroll bucket). Without this scale,
-                      // closed-month per-dept sums to a lower number and the Targets
-                      // monthly total drifts from Salary AFTER SAVINGS + Vendors
-                      // AFTER SAVINGS. Per-dept ratios stay modal-aligned; only the
-                      // absolute magnitude is anchored to the cashflow.
-                      const targetEUR = Math.round(dashboardTotals[mKey]?.salary?.eur || 0);
-                      const targetILS = Math.round(dashboardTotals[mKey]?.salary?.ils || 0);
-                      const sumEUR = Object.values(perDept).reduce((s, v) => s + v.eur, 0);
-                      const sumILS = Object.values(perDept).reduce((s, v) => s + v.ils, 0);
-                      if (targetEUR > 0 && sumEUR > 0 && Math.abs(sumEUR - targetEUR) > 1) {
-                        const scaleEUR = targetEUR / sumEUR;
-                        const scaleILS = sumILS > 0 && targetILS > 0 ? targetILS / sumILS : scaleEUR;
-                        for (const d of Object.keys(perDept)) {
-                          perDept[d] = {
-                            eur: Math.round(perDept[d].eur * scaleEUR),
-                            ils: Math.round(perDept[d].ils * scaleILS),
-                          };
+                      // PR-V: only anchor per-dept sum to dashboardTotals.salary[mKey]
+                      // for FUTURE months. Closed months have own SF accrued actuals
+                      // (salaryActualsByDept[mKey]) and the user explicitly wants
+                      // Targets to reflect SF accrued, not bank-cash. The dashboard
+                      // cashflow grid for past months pulls from bank-classified
+                      // (cash that actually left the bank); accrual figures are what
+                      // the modal "Last Actual" basis shows and what makes sense for
+                      // budget reconciliation. PR-T's scaling pushed past months UP
+                      // to the bank-cash number (e.g. Feb €2.4M → €2.8M), which is
+                      // not what we want here. For future months the basis sum
+                      // already equals the cashflow projection (same lastActual ×
+                      // mult + override + HC formula on both sides), so this scaling
+                      // is just a rounding safety net.
+                      if (!haveOwn) {
+                        const targetEUR = Math.round(dashboardTotals[mKey]?.salary?.eur || 0);
+                        const targetILS = Math.round(dashboardTotals[mKey]?.salary?.ils || 0);
+                        const sumEUR = Object.values(perDept).reduce((s, v) => s + v.eur, 0);
+                        const sumILS = Object.values(perDept).reduce((s, v) => s + v.ils, 0);
+                        if (targetEUR > 0 && sumEUR > 0 && Math.abs(sumEUR - targetEUR) > 1) {
+                          const scaleEUR = targetEUR / sumEUR;
+                          const scaleILS = sumILS > 0 && targetILS > 0 ? targetILS / sumILS : scaleEUR;
+                          for (const d of Object.keys(perDept)) {
+                            perDept[d] = {
+                              eur: Math.round(perDept[d].eur * scaleEUR),
+                              ils: Math.round(perDept[d].ils * scaleILS),
+                            };
+                          }
                         }
                       }
                     }
