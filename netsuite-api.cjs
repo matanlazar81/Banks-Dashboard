@@ -1028,44 +1028,34 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
     }
 
     if (monthsNeeded.length > 0) {
-      const minMonth = monthsNeeded[0];
-      console.log(`[NS API] Salary: querying ${monthsNeeded.length} months from ${minMonth} (${Object.keys(cached).length} cached)`);
+      console.log(`[NS API] Salary: querying ${monthsNeeded.length} months (${Object.keys(cached).length} cached)`);
 
-      // Include all 76xxx payroll accounts — matches NS GL trial balance.
-      const eurRows = await suiteqlAll(`
-        SELECT TO_CHAR(t.trandate, 'YYYY-MM') AS month,
-               SUM(tal.debit) - SUM(tal.credit) AS amount
-        FROM transactionaccountingline tal
-        JOIN transaction t ON tal.transaction = t.id
-        JOIN account a ON tal.account = a.id
-        WHERE t.subsidiary = ${subsidiaryId}
-          AND tal.posting = 'T' AND tal.accountingbook = 1
-          AND a.acctnumber LIKE '76%'
-          AND t.trandate >= TO_DATE('${minMonth}-01', 'YYYY-MM-DD')
-          AND t.trandate <= SYSDATE
-        GROUP BY TO_CHAR(t.trandate, 'YYYY-MM')
-        ORDER BY month
-      `);
-      const ilsRows = await suiteqlAll(`
-        SELECT TO_CHAR(t.trandate, 'YYYY-MM') AS month,
-               SUM(tal.debit) - SUM(tal.credit) AS amount
-        FROM transactionaccountingline tal
-        JOIN transaction t ON tal.transaction = t.id
-        JOIN account a ON tal.account = a.id
-        WHERE t.subsidiary = ${subsidiaryId}
-          AND tal.posting = 'T' AND tal.accountingbook = 2
-          AND a.acctnumber LIKE '76%'
-          AND t.trandate >= TO_DATE('${minMonth}-01', 'YYYY-MM-DD')
-          AND t.trandate <= SYSDATE
-        GROUP BY TO_CHAR(t.trandate, 'YYYY-MM')
-        ORDER BY month
-      `);
-      const ilsMap = {};
-      for (const r of ilsRows) ilsMap[r.month] = Math.round(parseFloat(r.amount) || 0);
-      for (const r of eurRows) {
-        if (r.amount != null) {
-          cached[r.month] = { amountEUR: Math.round(parseFloat(r.amount) || 0), amountILS: ilsMap[r.month] || 0 };
-        }
+      // Query each month separately in parallel. The 18-month aggregated query
+      // exceeds NS SuiteQL timeouts when including the full 76xxx set (760023
+      // military refund alone has thousands of transactions). Per-month queries
+      // are each fast and parallelize cleanly.
+      const monthQuery = (book, mKey) => {
+        const [yr, mo] = mKey.split('-');
+        const endDay = new Date(parseInt(yr), parseInt(mo), 0).getDate();
+        return suiteqlAll(`
+          SELECT SUM(tal.debit) - SUM(tal.credit) AS amount
+          FROM transactionaccountingline tal
+          JOIN transaction t ON tal.transaction = t.id
+          JOIN account a ON tal.account = a.id
+          WHERE t.subsidiary = ${subsidiaryId}
+            AND tal.posting = 'T' AND tal.accountingbook = ${book}
+            AND a.acctnumber LIKE '76%'
+            AND t.trandate >= TO_DATE('${mKey}-01', 'YYYY-MM-DD')
+            AND t.trandate <= TO_DATE('${yr}-${mo}-${endDay}', 'YYYY-MM-DD')
+        `).then(rows => rows[0]?.amount);
+      };
+
+      const results = await Promise.all(monthsNeeded.map(async mKey => {
+        const [eur, ils] = await Promise.all([monthQuery(1, mKey), monthQuery(2, mKey)]);
+        return { mKey, eur: Math.round(parseFloat(eur) || 0), ils: Math.round(parseFloat(ils) || 0) };
+      }));
+      for (const r of results) {
+        cached[r.mKey] = { amountEUR: r.eur, amountILS: r.ils };
       }
 
       // Save cache
