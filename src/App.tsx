@@ -1078,6 +1078,15 @@ export default function App() {
   const [sfPipeline, setSfPipeline] = useState<{ name: string; stage: string; amount: number; probability: number; weighted: number; currency: string; closeDate: string; type: string; feedType: string; owner: string }[]>([]);
   const [pipelineMinProb, setPipelineMinProb] = useState(100); // min probability filter for pipeline
   const [sfConversion, setSfConversion] = useState<{ yearly: { year: number; won: number; lost: number; winRate: number; avgWonDays: number }[]; stages: any[]; customers: any[]; projection: any[] }>({ yearly: [], stages: [], customers: [], projection: [] });
+  // Column B — pipeline revenue projection methodology (stage-weighted + calibration).
+  type PipelineMonth = { state: 'past' | 'current' | 'future'; actualMRR: number; sfContribution: number; projectedMrr: number; monthsRemaining: number; closedSoFar?: number; projected?: number; columnB: number; columnD: number };
+  const [pipelineMethodology, setPipelineMethodology] = useState<{ year: number; calibrationFactor: number; calibrationSource: string; quarterWeighted: Record<string, number>; byMonth: Record<string, PipelineMonth>; footerTotal: number; columnDTotal: number } | null>(null);
+  // Revenue projection mode: 'legacy' (historical win-rate pipeline) or 'pipeline' (Column B methodology).
+  const [revenueMethodology, setRevenueMethodology] = useState<'legacy' | 'pipeline'>(() => {
+    try { return (localStorage.getItem('banks-revenue-methodology') as 'legacy' | 'pipeline') || 'legacy'; } catch { return 'legacy'; }
+  });
+  useEffect(() => { try { localStorage.setItem('banks-revenue-methodology', revenueMethodology); } catch {} }, [revenueMethodology]);
+  const [pipelineMethodOpen, setPipelineMethodOpen] = useState(false);
   const [monthlyReval, setMonthlyReval] = useState<{ byMonth: Record<string, { eur: number; ils: number; hasBothEnds?: boolean }>; preYear: { eur: number; ils: number } }>({ byMonth: {}, preYear: { eur: 0, ils: 0 } });
   const [sfSalaryBudget, setSfSalaryBudget] = useState<Record<string, { eur: number; ils: number }>>({});
   const [sfFinanceBudget, setSfFinanceBudget] = useState<Record<string, { eur: number; ils: number }>>({});
@@ -1948,6 +1957,7 @@ useEffect(() => {
     setSfSalaryBudget(c.sfSalaryBudget); setSfSalaryOverrides(c.sfSalaryOverrides); setSfFinanceBudget(c.sfFinanceBudget || {});
     if (c.arrData) setArrData(c.arrData);
     setSfRevenuePaid(c.sfRevenuePaid); setSfPipeline(c.sfPipeline); setSfConversion(c.sfConversion);
+    setPipelineMethodology(c.pipelineMethodology || null);
     setChurnData(c.churnData); setChurnMonthlyAvg(c.churnMonthlyAvg);
     setYoyRevenue(c.yoyRevenue); setPrevMonthEndBalance(c.prevMonthEndBalance);
     setSalaryDeptBudgets(c.salaryDeptBudgets);
@@ -1995,12 +2005,14 @@ useEffect(() => {
       } else {
         cache.nsBudget = { byMonth: {} };
         // Fire all SF calls in parallel
-        const [budR, revR, splitR, salBudR, revPaidR, pipeR, convR, churnR, yoyR, finBudR, arrR, salActDeptR] = await Promise.all([
+        const [budR, revR, splitR, salBudR, revPaidR, pipeR, convR, churnR, yoyR, finBudR, arrR, salActDeptR, pipeMethR] = await Promise.all([
           safe('/api/sf-budget'), safe('/api/sf-revenue'), safe('/api/sf-actuals-split'),
           safe('/api/sf-salary-budget'), safe('/api/sf-revenue-paid'), safe('/api/sf-pipeline'),
           safe('/api/sf-conversion'), safe('/api/sf-churn-analysis'), safe('/api/sf-yoy-revenue'),
           safe('/api/sf-finance-budget'), safe('/api/arr-current'), safe('/api/sf-salary-actuals-by-dept'),
+          safe(`/api/sf-pipeline-methodology?year=${year}`),
         ]);
+        if (pipeMethR?.data) cache.pipelineMethodology = pipeMethR.data;
         if (budR?.data) { cache.sfBudget = budR.data; if (budR.data.financeBudget) cache.sfFinanceBudget = budR.data.financeBudget; }
         if (revR?.data) cache.sfRevenue = revR.data;
         if (splitR?.data) cache.sfActualsSplit = splitR.data;
@@ -2040,6 +2052,7 @@ useEffect(() => {
       cache.sfFinanceBudget = cache.sfFinanceBudget || {};
       cache.sfRevenuePaid = cache.sfRevenuePaid || {};
       cache.sfPipeline = cache.sfPipeline || [];
+      cache.pipelineMethodology = cache.pipelineMethodology || null;
       cache.sfConversion = cache.sfConversion || { yearly: [], stages: [], customers: [], projection: [] };
       cache.churnData = cache.churnData || [];
       cache.churnMonthlyAvg = cache.churnMonthlyAvg || 0;
@@ -2804,7 +2817,15 @@ useEffect(() => {
       // so adding them again here would double-count.
       let collectionsUnpaidCarry = 0;
       const collectionsUnpaidCarryMonth = '';
-      const collectionsPipeline = (!isPastMonth && !isCurMonth) ? (pipelineByMonth[mKey] || 0) : 0;
+      // Pipeline contribution to inflows for future months. Two methodologies:
+      //   'legacy'   → historical win-rate weighted pipeline (pipelineByMonth)
+      //   'pipeline' → Column B methodology: stage-weighted quarterly pipeline ÷
+      //                open months × months-remaining × calibration factor (columnD)
+      const collectionsPipeline = (!isPastMonth && !isCurMonth)
+        ? (revenueMethodology === 'pipeline'
+            ? Math.round(pipelineMethodology?.byMonth?.[mKey]?.columnD || 0)
+            : (pipelineByMonth[mKey] || 0))
+        : 0;
       const customers = revPaid?.customers || 0;
       // NS GL accrual for revenue (4xxx) — matches P&L "Total - 400000 - REVENUES".
       const nsRevenueActualGL = (isPastMonth || isCurMonth) ? (revenueActuals.find(v => v.month === mKey)?.amountEUR || 0) : 0;
@@ -2952,7 +2973,7 @@ useEffect(() => {
       rows.push({ month: label, mKey, openingBalance, openingBalanceILS, salary, salaryBase, salaryILS, vendors, vendorsBase, vendorsILS, other, otherILS, otherDetails: bcm?.details || [], totalOutflow, totalOutflowILS, collections, collectionsILS, collectionsActual, collectionsRemaining, collectionsForecast, collectionsRevenue, collectionsUnpaidCarry, collectionsUnpaidCarryMonth, collectionsPipeline, customers, pipelineWeighted, pipelineWeightedILS, pipelineTotal, pipelineCount, pipelineOpps, pipelineHistWinRate, pipelineDelayMonths, churnDeduction, churnDeductionILS, net, netILS, revalImpact, revalImpactILS, revalHasBothEnds, closingBalance: runningBalance, closingBalanceILS: runningBalanceILS, wcDelta, wcDeltaILS, isCurrent: isCurMonth, isPast: isPastMonth });
     }
     return rows;
-  }, [vendorBills, arForecast, salaryData, vendorActuals, revenueActuals, vendorHistory, expenseCategories, book, bookLocal, actualCollections, sfBudget, sfRevenue, sfActualsSplit, nsPaidVendors, nsBankClassified, salaryAdjPctByMonth, collPctByMonth, monthlyReval, sfSalaryBudget, sfRevenuePaid, sfPipeline, pipelineMinProb, sfConversion, salaryDeptAdj, salaryDeptBudgets, vendorCatAdj, vendorDetailAdj, prevMonthEndBalance, yearStartBalance, monthEndBalances, churnMonthlyAvg, churnData, sfChurnQuarterly, churnOverride, asOfDate, nsBudget, activeYear, sfFinanceBudget, currencyDefensePct, currencyDefensePctByMonth, pipelineAdjPctByMonth, salaryProjectionMode, salaryActualsByDept, lastActualSalaryMonth, monthlyHCImpact, salaryManualILS]);
+  }, [vendorBills, arForecast, salaryData, vendorActuals, revenueActuals, vendorHistory, expenseCategories, book, bookLocal, actualCollections, sfBudget, sfRevenue, sfActualsSplit, nsPaidVendors, nsBankClassified, salaryAdjPctByMonth, collPctByMonth, monthlyReval, sfSalaryBudget, sfRevenuePaid, sfPipeline, pipelineMinProb, sfConversion, salaryDeptAdj, salaryDeptBudgets, vendorCatAdj, vendorDetailAdj, prevMonthEndBalance, yearStartBalance, monthEndBalances, churnMonthlyAvg, churnData, sfChurnQuarterly, churnOverride, asOfDate, nsBudget, activeYear, sfFinanceBudget, currencyDefensePct, currencyDefensePctByMonth, pipelineAdjPctByMonth, salaryProjectionMode, salaryActualsByDept, lastActualSalaryMonth, monthlyHCImpact, salaryManualILS, revenueMethodology, pipelineMethodology]);
 
   // ── Capture current-year cashflow for propagation to next year ──
   useEffect(() => {
@@ -3880,6 +3901,67 @@ useEffect(() => {
         subsidiary={COMPANY_CONFIG[activeCompany]?.subsidiary || 3}
         year={activeYears[activeCompany] || currentYear}
       />
+
+      {/* ── Pipeline Methodology (Column B) breakdown ── */}
+      {pipelineMethodOpen && pipelineMethodology && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setPipelineMethodOpen(false)}>
+          <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[85vh] overflow-auto" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-3 border-b sticky top-0 bg-white">
+              <div>
+                <h3 className="font-bold text-gray-800">Revenue Pipeline Methodology — Column B</h3>
+                <p className="text-[11px] text-gray-500">
+                  Calibration factor <span className="font-semibold text-emerald-600">×{pipelineMethodology.calibrationFactor.toFixed(4)}</span> ({pipelineMethodology.calibrationSource}) ·
+                  stage-weighted quarterly pipeline ÷ open months × months-remaining × factor
+                </p>
+              </div>
+              <button onClick={() => setPipelineMethodOpen(false)} className="text-gray-400 hover:text-gray-700 text-lg leading-none">✕</button>
+            </div>
+            <div className="p-5">
+              <table className="w-full text-xs">
+                <thead><tr className="text-left text-gray-400 uppercase border-b">
+                  <th className="pb-1 pr-2">Month</th>
+                  <th className="pb-1 pr-2">State</th>
+                  <th className="pb-1 pr-2 text-right">Actual MRR</th>
+                  <th className="pb-1 pr-2 text-right">SF Contribution</th>
+                  <th className="pb-1 pr-2 text-right">Projected MRR</th>
+                  <th className="pb-1 pr-2 text-right">Months Rem.</th>
+                  <th className="pb-1 pr-2 text-right">Column B</th>
+                  <th className="pb-1 pr-2 text-right" title="Feeds the cashflow inflows">Column D →</th>
+                </tr></thead>
+                <tbody>
+                  {Object.entries(pipelineMethodology.byMonth).sort(([a],[b]) => a.localeCompare(b)).map(([mk, m]) => (
+                    <tr key={mk} className="border-b border-gray-50">
+                      <td className="py-1.5 pr-2 font-medium text-gray-700">{mk}</td>
+                      <td className="py-1.5 pr-2">
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded ${m.state === 'past' ? 'bg-gray-100 text-gray-500' : m.state === 'current' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>{m.state}</span>
+                      </td>
+                      <td className="py-1.5 pr-2 text-right text-gray-500">{m.actualMRR ? fmt(m.actualMRR) : '—'}</td>
+                      <td className="py-1.5 pr-2 text-right text-blue-600">{m.sfContribution ? fmt(m.sfContribution) : '—'}</td>
+                      <td className="py-1.5 pr-2 text-right text-gray-600">{m.projectedMrr ? fmt(m.projectedMrr) : '—'}</td>
+                      <td className="py-1.5 pr-2 text-right text-gray-400">{m.state === 'past' ? '—' : m.monthsRemaining}</td>
+                      <td className="py-1.5 pr-2 text-right font-medium text-gray-800">{fmt(m.columnB)}</td>
+                      <td className="py-1.5 pr-2 text-right font-medium text-emerald-700">{m.columnD ? fmt(m.columnD) : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot><tr className="border-t-2 font-bold">
+                  <td className="py-2" colSpan={6}>Total</td>
+                  <td className="py-2 pr-2 text-right text-gray-900">{fmt(pipelineMethodology.footerTotal)}</td>
+                  <td className="py-2 pr-2 text-right text-emerald-800">{fmt(pipelineMethodology.columnDTotal)}</td>
+                </tr></tfoot>
+              </table>
+              <div className="mt-4 text-[11px] text-gray-500 space-y-1">
+                <p><span className="font-semibold text-gray-700">Past months</span> — real SF Monthly_Revenue contribution from deals closed that month (Closed Won, not churned/zero/integration). Not re-projected.</p>
+                <p><span className="font-semibold text-gray-700">Current month</span> — SF actual-so-far + (projected MRR × months remaining × factor). Only the projected part feeds Column D.</p>
+                <p><span className="font-semibold text-gray-700">Future months</span> — quarterly open weighted pipeline ÷ open months × months-remaining × {pipelineMethodology.calibrationFactor.toFixed(4)}.</p>
+                <p className="pt-1"><span className="font-semibold text-gray-700">Quarter weighted pipeline:</span> {Object.entries(pipelineMethodology.quarterWeighted).map(([q, v]) => `Q${q} ${fmt(Math.round(Number(v)))}`).join(' · ')}</p>
+                <p><span className="font-semibold text-gray-700">Stage weights:</span> New/Qualified 12% · Test 17% · Negotiation 45% · Contract Sent 60% · Best Case 90%</p>
+                <p className="text-emerald-600"><span className="font-semibold">Column D</span> is what feeds the cashflow inflows (projected portion, current month onward — past actuals already live in Existing MR).</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Scenario-edit Notification Banner ── */}
       {_visibleScenarioNotifs.length > 0 && (
@@ -6011,6 +6093,28 @@ useEffect(() => {
                       className={`px-1.5 py-0.5 rounded ${salaryProjectionMode === 'lastActual' ? 'bg-amber-600 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
                       onClick={() => setSalaryProjectionMode('lastActual')}
                     >Actual ({lastActualSalaryMonth.slice(5)})</button>
+                  </div>
+                )}
+                {companyConfig.hasSF && (
+                  <div className="flex items-center gap-1.5 text-[11px] mr-2">
+                    <span className="text-gray-400">Revenue:</span>
+                    <button
+                      className={`px-1.5 py-0.5 rounded ${revenueMethodology === 'legacy' ? 'bg-violet-600 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
+                      onClick={() => setRevenueMethodology('legacy')}
+                      title="Historical win-rate weighted pipeline"
+                    >Win-rate</button>
+                    <button
+                      className={`px-1.5 py-0.5 rounded ${revenueMethodology === 'pipeline' ? 'bg-emerald-600 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
+                      onClick={() => setRevenueMethodology('pipeline')}
+                      title="Stage-weighted quarterly pipeline × calibration factor (Column B methodology)"
+                    >Pipeline{pipelineMethodology ? ` (×${pipelineMethodology.calibrationFactor.toFixed(2)})` : ''}</button>
+                    {pipelineMethodology && (
+                      <button
+                        className="px-1 py-0.5 rounded text-gray-400 hover:text-emerald-600 hover:bg-emerald-50"
+                        onClick={() => setPipelineMethodOpen(true)}
+                        title="View Column B methodology breakdown"
+                      >ⓘ</button>
+                    )}
                   </div>
                 )}
                 {(Object.values(salaryAdjPctByMonth).some(v => v !== 0) || Object.keys(collPctByMonth).length > 0 || Object.keys(salaryDeptAdj).length > 0) && (() => {
