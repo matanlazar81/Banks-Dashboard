@@ -1053,16 +1053,11 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
         `).then(rows => Math.round(parseFloat(rows[0]?.amount) || 0));
       };
 
-      const CONCURRENCY = 3;
-      for (let i = 0; i < monthsNeeded.length; i += CONCURRENCY) {
-        const batch = monthsNeeded.slice(i, i + CONCURRENCY);
-        const batchResults = await Promise.all(batch.map(async mKey => {
-          const [eur, ils] = await Promise.all([monthQuery(1, mKey), monthQuery(2, mKey)]);
-          return { mKey, eur, ils };
-        }));
-        for (const { mKey, eur, ils } of batchResults) {
-          cached[mKey] = { amountEUR: eur, amountILS: ils };
-        }
+      // Sequential per month, EUR+ILS in parallel within a month (max 2 concurrent).
+      // NS's concurrency cap on this integration is tighter than 6.
+      for (const mKey of monthsNeeded) {
+        const [eur, ils] = await Promise.all([monthQuery(1, mKey), monthQuery(2, mKey)]);
+        cached[mKey] = { amountEUR: eur, amountILS: ils };
       }
 
       // Save cache
