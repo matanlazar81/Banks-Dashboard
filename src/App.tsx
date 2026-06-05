@@ -2855,7 +2855,7 @@ useEffect(() => {
       let other = 0;
       let otherILS = 0;
       if (bcm) {
-        other = -bcm.other.eur - (collections - bcm.collections.eur);
+        other = -bcm.other.eur;
         otherILS = -bcm.other.ils;
       }
       let totalOutflow = salary + vendors + Math.max(0, other);
@@ -2881,7 +2881,7 @@ useEffect(() => {
       else salaryILS = Math.round(salary * eurIlsRatio);
       let vendorsILS = Math.round(vendors * eurIlsRatio); // vendors uses SF Actuals × ratio (matches modal)
       const collectionsILS = Math.round(collections * eurIlsRatio); // always derive from displayed collections × ratio
-      if (bcm) otherILS = -bcm.other.ils - (collectionsILS - bcm.collections.ils);
+      // otherILS already set from bcm.other.ils above; no collections-gap adjustment.
       let totalOutflowILS = salaryILS + vendorsILS + Math.max(0, otherILS);
       let netILS = collectionsILS - salaryILS - vendorsILS - otherILS + pipelineWeightedILS - churnDeductionILS;
       runningBalance += net;
