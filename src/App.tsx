@@ -8282,8 +8282,8 @@ useEffect(() => {
                           </table>
                         </div>
                       )}
-                      {/* Headcount events (HiBob levers) — hidden when shown in summary above */}
-                      {hc && (hc.events?.length > 0 || hc.cumulative?.length > 0) && !monthlyHCImpact[forecastDrilldown.mKey]?.categories?.length && (
+                      {/* Headcount events (HiBob levers) — only relevant for future-month projection; hide once actuals exist. */}
+                      {!hasActuals && hc && (hc.events?.length > 0 || hc.cumulative?.length > 0) && !monthlyHCImpact[forecastDrilldown.mKey]?.categories?.length && (
                         <div>
                           <p id="hc-levers-section" className="text-xs text-gray-400 mb-2">Salary Projection Levers (HiBob → Snowflake)</p>
                           {/* Cumulative impact summary */}
