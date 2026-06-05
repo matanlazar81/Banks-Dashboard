@@ -2935,16 +2935,20 @@ useEffect(() => {
       runningBalance += revalImpact;
       runningBalanceILS += revalImpactILS;
 
-      // Past-month closing is computed from line items (cash-basis vendors + salary + collections + reval).
-      // No bank-pin: divergence from NS month-end is visible rather than absorbed into Vendors.
-
       const openingBalanceILS = runningBalanceILS - netILS - revalImpactILS;
-      // Working-capital delta: difference between accrual-derived closing and the
-      // actual NS month-end bank balance. Visible per past month so the cash-vs-accrual
-      // gap (AR/AP timing) is explicit rather than absorbed into other columns.
+      // Working-capital delta + bank-accurate closing (past months).
+      // Columns are accrual (NS P&L). The actual NS month-end bank balance differs
+      // by working-capital movement (AR/AP timing: expenses accrued but not yet
+      // paid, etc.). Per user choice: pin past-month CLOSING to the actual bank
+      // balance so it reconciles to NS, and expose the per-month gap as wcDelta.
+      // Re-anchoring also makes next month's opening = prior actual bank close.
       const bankClose = isPastMonth ? monthEndBalances[mKey] : undefined;
       const wcDelta = bankClose ? (bankClose.eur - runningBalance) : 0;
       const wcDeltaILS = bankClose ? (bankClose.ils - runningBalanceILS) : 0;
+      if (bankClose) {
+        runningBalance = bankClose.eur;
+        runningBalanceILS = bankClose.ils;
+      }
       rows.push({ month: label, mKey, openingBalance, openingBalanceILS, salary, salaryBase, salaryILS, vendors, vendorsBase, vendorsILS, other, otherILS, otherDetails: bcm?.details || [], totalOutflow, totalOutflowILS, collections, collectionsILS, collectionsActual, collectionsRemaining, collectionsForecast, collectionsRevenue, collectionsUnpaidCarry, collectionsUnpaidCarryMonth, collectionsPipeline, customers, pipelineWeighted, pipelineWeightedILS, pipelineTotal, pipelineCount, pipelineOpps, pipelineHistWinRate, pipelineDelayMonths, churnDeduction, churnDeductionILS, net, netILS, revalImpact, revalImpactILS, revalHasBothEnds, closingBalance: runningBalance, closingBalanceILS: runningBalanceILS, wcDelta, wcDeltaILS, isCurrent: isCurMonth, isPast: isPastMonth });
     }
     return rows;
@@ -6933,6 +6937,11 @@ useEffect(() => {
                       </td>
                       <td className={`py-2.5 px-0.5 text-right font-bold whitespace-nowrap ${r.closingBalance >= 0 ? 'text-blue-700' : 'text-red-600'}`}>
                         {fmtCFull(r.closingBalance, r.closingBalanceILS)}
+                        {r.isPast && Math.abs(r.wcDelta || 0) > 100 && (
+                          <span className="block text-[9px] font-normal text-gray-400" title="Working-capital movement: actual bank balance minus accrual-derived close (AR/AP timing). Closing is pinned to the actual NS bank balance.">
+                            WC {r.wcDelta > 0 ? '+' : ''}{fmt(r.wcDelta)}
+                          </span>
+                        )}
                         {compareCashflow && compareCashflow[i] && (() => {
                           const delta = r.closingBalance - compareCashflow[i].closingBalance;
                           if (Math.abs(delta) < 100) return null;
