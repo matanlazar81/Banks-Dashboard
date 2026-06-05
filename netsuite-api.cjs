@@ -1030,32 +1030,41 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
     if (monthsNeeded.length > 0) {
       console.log(`[NS API] Salary: querying ${monthsNeeded.length} months (${Object.keys(cached).length} cached)`);
 
-      // Query each month separately in parallel. The 18-month aggregated query
-      // exceeds NS SuiteQL timeouts when including the full 76xxx set (760023
-      // military refund alone has thousands of transactions). Per-month queries
-      // are each fast and parallelize cleanly.
-      const monthQuery = (book, mKey) => {
+      // Per-month queries (the full 18-month aggregated query timed out when
+      // we widened the account filter; per-month each completes in <1s).
+      // EUR + ILS combined into a single query per month via CASE on book.
+      // Capped at 4 concurrent to stay under NS's 429 concurrency limit.
+      const monthQuery = (mKey) => {
         const [yr, mo] = mKey.split('-');
         const endDay = new Date(parseInt(yr), parseInt(mo), 0).getDate();
         return suiteqlAll(`
-          SELECT SUM(tal.debit) - SUM(tal.credit) AS amount
+          SELECT
+            SUM(CASE WHEN tal.accountingbook = 1 THEN tal.debit - tal.credit ELSE 0 END) AS eur,
+            SUM(CASE WHEN tal.accountingbook = 2 THEN tal.debit - tal.credit ELSE 0 END) AS ils
           FROM transactionaccountingline tal
           JOIN transaction t ON tal.transaction = t.id
           JOIN account a ON tal.account = a.id
           WHERE t.subsidiary = ${subsidiaryId}
-            AND tal.posting = 'T' AND tal.accountingbook = ${book}
+            AND tal.posting = 'T' AND tal.accountingbook IN (1, 2)
             AND a.acctnumber LIKE '76%'
             AND t.trandate >= TO_DATE('${mKey}-01', 'YYYY-MM-DD')
             AND t.trandate <= TO_DATE('${yr}-${mo}-${endDay}', 'YYYY-MM-DD')
-        `).then(rows => rows[0]?.amount);
+        `).then(rows => rows[0] || { eur: 0, ils: 0 });
       };
 
-      const results = await Promise.all(monthsNeeded.map(async mKey => {
-        const [eur, ils] = await Promise.all([monthQuery(1, mKey), monthQuery(2, mKey)]);
-        return { mKey, eur: Math.round(parseFloat(eur) || 0), ils: Math.round(parseFloat(ils) || 0) };
-      }));
-      for (const r of results) {
-        cached[r.mKey] = { amountEUR: r.eur, amountILS: r.ils };
+      const CONCURRENCY = 4;
+      for (let i = 0; i < monthsNeeded.length; i += CONCURRENCY) {
+        const batch = monthsNeeded.slice(i, i + CONCURRENCY);
+        const batchResults = await Promise.all(batch.map(async mKey => ({
+          mKey,
+          row: await monthQuery(mKey),
+        })));
+        for (const { mKey, row } of batchResults) {
+          cached[mKey] = {
+            amountEUR: Math.round(parseFloat(row.eur) || 0),
+            amountILS: Math.round(parseFloat(row.ils) || 0),
+          };
+        }
       }
 
       // Save cache
