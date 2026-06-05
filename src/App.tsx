@@ -1041,6 +1041,10 @@ export default function App() {
   const [vendorBills, setVendorBills] = useState<VendorBill[]>([]);
   const [arForecast, setARForecast] = useState<ARForecastItem[]>([]);
   const [salaryData, setSalaryData] = useState<SalaryMonth[]>([]);
+  // NS GL actuals per month for vendors (6%/7% ex 76%) and revenue (4%) — past months,
+  // sourced directly from NetSuite to match the P&L line-for-line.
+  const [vendorActuals, setVendorActuals] = useState<{ month: string; amountEUR: number; amountILS: number }[]>([]);
+  const [revenueActuals, setRevenueActuals] = useState<{ month: string; amountEUR: number; amountILS: number }[]>([]);
   const [vendorHistory, setVendorHistory] = useState<VendorHistoryRecord[]>([]);
   const [expenseCategories, setExpenseCategories] = useState<{ byMonth: Record<string, Record<string, number>>; categories: string[] }>({ byMonth: {}, categories: [] });
   const [actualCollections, setActualCollections] = useState<Record<string, number>>({});
@@ -1937,6 +1941,7 @@ useEffect(() => {
     if (!c) return false;
     setBankData(c.bankData); setBankAccounts(c.bankAccounts); setVendorBills(c.vendorBills);
     setARForecast(c.arForecast); setSalaryData(c.salaryData); setVendorHistory(c.vendorHistory);
+    setVendorActuals(c.vendorActuals || []); setRevenueActuals(c.revenueActuals || []);
     setExpenseCategories(c.expenseCategories); setActualCollections(c.actualCollections);
     setMonthlyReval(c.monthlyReval); setNsBudget(c.nsBudget); setNsAccountId(c.nsAccountId);
     setSfBudget(c.sfBudget); if (c.sfBudget?.financeBudget) setSfFinanceBudget(c.sfBudget.financeBudget); setSfRevenue(c.sfRevenue); setSfActualsSplit(c.sfActualsSplit);
@@ -1962,10 +1967,11 @@ useEffect(() => {
       const cache: any = {};
       const safe = async (url: string) => { try { const r = await fetch(url); if (r.ok) return await r.json(); } catch {} return null; };
       // Fire all NS calls in parallel (server queues them anyway)
-      const [bankR, acctR, billsR, arR, salR, vhR, expR, collR, revalR] = await Promise.all([
+      const [bankR, acctR, billsR, arR, salR, vhR, expR, collR, revalR, venActR, revActR] = await Promise.all([
         safe(`/api/bank-balance${subQ}`), safe(`/api/bank-accounts${subQ}`), safe(`/api/vendor-bills${subQ}`),
         safe(`/api/ar-forecast${subQ}`), safe(`/api/salary-data${subQ}`), safe(`/api/vendor-history${subQ}`),
         safe(`/api/expense-categories${subQ}`), safe(`/api/banks-collection-data${subQ}`), safe(`/api/monthly-reval${subQ}`),
+        safe(`/api/ns-vendor-actuals${subQ}`), safe(`/api/ns-revenue-actuals${subQ}`),
       ]);
       if (bankR?.dailyBalances) cache.bankData = bankR;
       if (acctR?.data) cache.bankAccounts = acctR.data;
@@ -1976,6 +1982,8 @@ useEffect(() => {
       if (expR?.data) cache.expenseCategories = expR.data;
       if (collR?.data) cache.actualCollections = collR.data;
       if (revalR?.data) cache.monthlyReval = revalR.data;
+      if (venActR?.data) cache.vendorActuals = venActR.data;
+      if (revActR?.data) cache.revenueActuals = revActR.data;
       if (!hasSF) {
         const nsBudR = await safe(`/api/ns-budget${subQ}`);
         if (nsBudR) cache.nsBudget = nsBudR;
@@ -2718,9 +2726,13 @@ useEffect(() => {
       // fallback for subsidiaries / months without SF coverage.
       // Current month: use budget, not partial actuals (bills post throughout the month).
       let vendors: number;
+      // NS GL accrual for vendors (6xxx+7xxx ex 76xxx) — matches P&L "Total Overheads − Payroll".
+      const nsVendorActualGL = isPastMonth ? (vendorActuals.find(v => v.month === mKey)?.amountEUR || 0) : 0;
       const nsPaidByMonth = isPastMonth ? (nsPaidVendors.byMonth[mKey] || 0) : 0;
       const nsVendorActual = isPastMonth ? vendorHistory.filter(v => v.paidDate.startsWith(mKey)).reduce((s, v) => s + v.amountEUR, 0) : 0;
-      if (isPastMonth && sfActualsSplit[mKey]?.vendors > 0) {
+      if (isPastMonth && nsVendorActualGL > 0) {
+        vendors = nsVendorActualGL;
+      } else if (isPastMonth && sfActualsSplit[mKey]?.vendors > 0) {
         vendors = sfActualsSplit[mKey].vendors;
       } else if (isPastMonth && nsPaidByMonth > 0) {
         vendors = nsPaidByMonth;
@@ -2794,8 +2806,14 @@ useEffect(() => {
       const collectionsUnpaidCarryMonth = '';
       const collectionsPipeline = (!isPastMonth && !isCurMonth) ? (pipelineByMonth[mKey] || 0) : 0;
       const customers = revPaid?.customers || 0;
-      if (isPastMonth && actualColl > 0) {
-        // Past: NS actual collections (cash received, incl I/C)
+      // NS GL accrual for revenue (4xxx) — matches P&L "Total - 400000 - REVENUES".
+      const nsRevenueActualGL = (isPastMonth || isCurMonth) ? (revenueActuals.find(v => v.month === mKey)?.amountEUR || 0) : 0;
+      if (isPastMonth && nsRevenueActualGL > 0) {
+        // Past: NS GL revenue (accrual basis, matches P&L)
+        collections = nsRevenueActualGL;
+        collectionsActual = nsRevenueActualGL;
+      } else if (isPastMonth && actualColl > 0) {
+        // Past fallback: NS actual collections (cash received, incl I/C)
         collections = actualColl;
         collectionsActual = actualColl;
       } else if (isCurMonth && actualColl > 0) {
@@ -2921,10 +2939,16 @@ useEffect(() => {
       // No bank-pin: divergence from NS month-end is visible rather than absorbed into Vendors.
 
       const openingBalanceILS = runningBalanceILS - netILS - revalImpactILS;
-      rows.push({ month: label, mKey, openingBalance, openingBalanceILS, salary, salaryBase, salaryILS, vendors, vendorsBase, vendorsILS, other, otherILS, otherDetails: bcm?.details || [], totalOutflow, totalOutflowILS, collections, collectionsILS, collectionsActual, collectionsRemaining, collectionsForecast, collectionsRevenue, collectionsUnpaidCarry, collectionsUnpaidCarryMonth, collectionsPipeline, customers, pipelineWeighted, pipelineWeightedILS, pipelineTotal, pipelineCount, pipelineOpps, pipelineHistWinRate, pipelineDelayMonths, churnDeduction, churnDeductionILS, net, netILS, revalImpact, revalImpactILS, revalHasBothEnds, closingBalance: runningBalance, closingBalanceILS: runningBalanceILS, isCurrent: isCurMonth, isPast: isPastMonth });
+      // Working-capital delta: difference between accrual-derived closing and the
+      // actual NS month-end bank balance. Visible per past month so the cash-vs-accrual
+      // gap (AR/AP timing) is explicit rather than absorbed into other columns.
+      const bankClose = isPastMonth ? monthEndBalances[mKey] : undefined;
+      const wcDelta = bankClose ? (bankClose.eur - runningBalance) : 0;
+      const wcDeltaILS = bankClose ? (bankClose.ils - runningBalanceILS) : 0;
+      rows.push({ month: label, mKey, openingBalance, openingBalanceILS, salary, salaryBase, salaryILS, vendors, vendorsBase, vendorsILS, other, otherILS, otherDetails: bcm?.details || [], totalOutflow, totalOutflowILS, collections, collectionsILS, collectionsActual, collectionsRemaining, collectionsForecast, collectionsRevenue, collectionsUnpaidCarry, collectionsUnpaidCarryMonth, collectionsPipeline, customers, pipelineWeighted, pipelineWeightedILS, pipelineTotal, pipelineCount, pipelineOpps, pipelineHistWinRate, pipelineDelayMonths, churnDeduction, churnDeductionILS, net, netILS, revalImpact, revalImpactILS, revalHasBothEnds, closingBalance: runningBalance, closingBalanceILS: runningBalanceILS, wcDelta, wcDeltaILS, isCurrent: isCurMonth, isPast: isPastMonth });
     }
     return rows;
-  }, [vendorBills, arForecast, salaryData, vendorHistory, expenseCategories, book, bookLocal, actualCollections, sfBudget, sfRevenue, sfActualsSplit, nsPaidVendors, nsBankClassified, salaryAdjPctByMonth, collPctByMonth, monthlyReval, sfSalaryBudget, sfRevenuePaid, sfPipeline, pipelineMinProb, sfConversion, salaryDeptAdj, salaryDeptBudgets, vendorCatAdj, vendorDetailAdj, prevMonthEndBalance, yearStartBalance, monthEndBalances, churnMonthlyAvg, churnData, sfChurnQuarterly, churnOverride, asOfDate, nsBudget, activeYear, sfFinanceBudget, currencyDefensePct, currencyDefensePctByMonth, pipelineAdjPctByMonth, salaryProjectionMode, salaryActualsByDept, lastActualSalaryMonth, monthlyHCImpact, salaryManualILS]);
+  }, [vendorBills, arForecast, salaryData, vendorActuals, revenueActuals, vendorHistory, expenseCategories, book, bookLocal, actualCollections, sfBudget, sfRevenue, sfActualsSplit, nsPaidVendors, nsBankClassified, salaryAdjPctByMonth, collPctByMonth, monthlyReval, sfSalaryBudget, sfRevenuePaid, sfPipeline, pipelineMinProb, sfConversion, salaryDeptAdj, salaryDeptBudgets, vendorCatAdj, vendorDetailAdj, prevMonthEndBalance, yearStartBalance, monthEndBalances, churnMonthlyAvg, churnData, sfChurnQuarterly, churnOverride, asOfDate, nsBudget, activeYear, sfFinanceBudget, currencyDefensePct, currencyDefensePctByMonth, pipelineAdjPctByMonth, salaryProjectionMode, salaryActualsByDept, lastActualSalaryMonth, monthlyHCImpact, salaryManualILS]);
 
   // ── Capture current-year cashflow for propagation to next year ──
   useEffect(() => {
