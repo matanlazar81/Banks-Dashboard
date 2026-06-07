@@ -1011,23 +1011,35 @@ function createSnowflakeClient(env) {
     const yr = year || new Date().getFullYear();
     console.log(`[Snowflake] Fetching pipeline methodology for ${yr}...`);
 
-    // Probe MR table columns so we can map the documented SF fields to whatever
-    // the warehouse actually calls them (Churned_opp__c / IsZero__c / etc.).
-    const mrCols = new Set((await query(`
+    // Probe both MR tables. Prefer FCT_MONTHLY_REVENUE__SUBSET_PAID when it has
+    // OPPORTUNITY_ID + REVENUE_AMOUNT_EUR — that's the curated, EUR-converted,
+    // deduped semantic layer (no currency or fanout surprises). Fall back to
+    // raw FCT_MONTHLY_REVENUE (MR_AMOUNT in raw currency, multi-currency rows).
+    const probeCols = async (table) => new Set((await query(`
       SELECT COLUMN_NAME FROM DL_PRODUCTION.INFORMATION_SCHEMA.COLUMNS
-      WHERE TABLE_SCHEMA = 'FINANCE' AND TABLE_NAME = 'FCT_MONTHLY_REVENUE'
+      WHERE TABLE_SCHEMA = 'FINANCE' AND TABLE_NAME = '${table}'
     `).catch(() => [])).map(r => r.COLUMN_NAME));
-    const has = (c) => mrCols.has(c);
-    const pick = (...cands) => cands.find(c => mrCols.has(c)) || null;
+    const subsetCols = await probeCols('FCT_MONTHLY_REVENUE__SUBSET_PAID');
+    const rawCols    = await probeCols('FCT_MONTHLY_REVENUE');
 
-    const MR_MONTH   = pick('CAL_MONTH_START_DATE', 'REVENUE_MONTH', 'MONTH_START_DATE');
-    const MR_OPP     = pick('OPPORTUNITY_ID', 'SRC_OPPORTUNITY_ID');
-    const MR_AMOUNT  = pick('MR_AMOUNT', 'REVENUE_AMOUNT_EUR', 'MONTHLY_REVENUE_EUR', 'AMOUNT_EUR', 'REVENUE_EUR');
-    const MR_CHURNED = pick('IS_CHURNED_OPP', 'CHURNED_OPP', 'IS_CHURNED');
-    // No IS_ZERO flag in FCT_MONTHLY_REVENUE — equivalent semantics: MR_AMOUNT <> 0.
-    const MR_ZERO    = pick('IS_ZERO', 'ISZERO');
-    const MR_INTEG   = pick('IS_INTEGRATION_MONTH', 'INTEGRATION_MONTH');
-    const MR_CCY     = pick('CURRENCY');
+    let MR_TABLE, MR_MONTH, MR_OPP, MR_AMOUNT, MR_CHURNED, MR_ZERO, MR_INTEG, MR_CCY;
+    if (subsetCols.has('REVENUE_AMOUNT_EUR') && (subsetCols.has('OPPORTUNITY_ID') || subsetCols.has('SRC_OPPORTUNITY_ID'))) {
+      MR_TABLE  = 'FCT_MONTHLY_REVENUE__SUBSET_PAID';
+      MR_MONTH  = 'CAL_MONTH_START_DATE';
+      MR_OPP    = subsetCols.has('OPPORTUNITY_ID') ? 'OPPORTUNITY_ID' : 'SRC_OPPORTUNITY_ID';
+      MR_AMOUNT = 'REVENUE_AMOUNT_EUR';
+      MR_CHURNED = null; MR_ZERO = null; MR_INTEG = null; MR_CCY = null;
+    } else {
+      const pick = (...cands) => cands.find(c => rawCols.has(c)) || null;
+      MR_TABLE   = 'FCT_MONTHLY_REVENUE';
+      MR_MONTH   = pick('CAL_MONTH_START_DATE', 'REVENUE_MONTH', 'MONTH_START_DATE');
+      MR_OPP     = pick('OPPORTUNITY_ID', 'SRC_OPPORTUNITY_ID');
+      MR_AMOUNT  = pick('MR_AMOUNT', 'REVENUE_AMOUNT_EUR', 'MONTHLY_REVENUE_EUR', 'AMOUNT_EUR', 'REVENUE_EUR');
+      MR_CHURNED = pick('IS_CHURNED_OPP', 'CHURNED_OPP', 'IS_CHURNED');
+      MR_ZERO    = pick('IS_ZERO', 'ISZERO');
+      MR_INTEG   = pick('IS_INTEGRATION_MONTH', 'INTEGRATION_MONTH');
+      MR_CCY     = pick('CURRENCY');
+    }
     const mrFilters = [
       MR_CHURNED ? `COALESCE(mr.${MR_CHURNED}, FALSE) = FALSE` : null,
       MR_ZERO    ? `COALESCE(mr.${MR_ZERO}, FALSE) = FALSE`    : `COALESCE(mr.${MR_AMOUNT}, 0) <> 0`,
@@ -1036,44 +1048,70 @@ function createSnowflakeClient(env) {
     ].filter(Boolean).join('\n        AND ');
     const mrWhere = mrFilters ? `AND ${mrFilters}` : '';
     const mrUsable = MR_MONTH && MR_OPP && MR_AMOUNT;
+    console.log(`[Snowflake] Pipeline: using ${MR_TABLE} (amount=${MR_AMOUNT}, opp=${MR_OPP})`);
 
     // ── Calibration factor (computed from prior-year closed-won) ──────────────
     // factor = Σ(actual MR collected for prior-year closed-won deals)
     //          ÷ Σ(opp amount × months_remaining_at_close)
     // Exclusions (factor only): IS_OPPORTUNITY_REVENUE_SHARED, IS_PRICE_UPDATE.
+    // Dedupe DIM_OPPORTUNITY via a CTE — defensive against any SCD-2 fanout
+    // (multiple rows per OPPORTUNITY_ID would multiply numerator on join).
     let calibrationFactor = PIPELINE_FALLBACK_FACTOR;
     let calibrationSource = 'fallback';
+    let calibrationRaw = null;
     try {
       const priorYr = yr - 1;
-      // denominator: Σ amount × (12 − close_month_idx)
       const denomRows = await query(`
-        SELECT SUM(ROUND(OPPORTUNITY_AMOUNT) * (12 - (EXTRACT(MONTH FROM CLOSED_WON_DATE) - 1))) AS DENOM
-        FROM DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY
-        WHERE IS_OPPORTUNITY_WON = TRUE
-          AND EXTRACT(YEAR FROM CLOSED_WON_DATE) = ${priorYr}
-          AND OPPORTUNITY_AMOUNT > 0
-          AND COALESCE(IS_OPPORTUNITY_REVENUE_SHARED, FALSE) = FALSE
-          AND COALESCE(IS_PRICE_UPDATE, FALSE) = FALSE
+        WITH opp AS (
+          SELECT OPPORTUNITY_ID,
+                 ANY_VALUE(ROUND(OPPORTUNITY_AMOUNT)) AS AMT,
+                 ANY_VALUE(EXTRACT(MONTH FROM CLOSED_WON_DATE)) AS MO
+          FROM DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY
+          WHERE IS_OPPORTUNITY_WON = TRUE
+            AND EXTRACT(YEAR FROM CLOSED_WON_DATE) = ${priorYr}
+            AND OPPORTUNITY_AMOUNT > 0
+            AND COALESCE(IS_OPPORTUNITY_REVENUE_SHARED, FALSE) = FALSE
+            AND COALESCE(IS_PRICE_UPDATE, FALSE) = FALSE
+          GROUP BY OPPORTUNITY_ID
+        )
+        SELECT SUM(AMT * (12 - (MO - 1))) AS DENOM, COUNT(*) AS N_OPPS
+        FROM opp
       `);
       const denom = Number(denomRows[0]?.DENOM) || 0;
       let numer = 0;
       if (mrUsable) {
         const numRows = await query(`
+          WITH opp AS (
+            SELECT OPPORTUNITY_ID FROM DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY
+            WHERE IS_OPPORTUNITY_WON = TRUE
+              AND EXTRACT(YEAR FROM CLOSED_WON_DATE) = ${priorYr}
+              AND OPPORTUNITY_AMOUNT > 0
+              AND COALESCE(IS_OPPORTUNITY_REVENUE_SHARED, FALSE) = FALSE
+              AND COALESCE(IS_PRICE_UPDATE, FALSE) = FALSE
+            GROUP BY OPPORTUNITY_ID
+          )
           SELECT SUM(ROUND(mr.${MR_AMOUNT})) AS NUMER
-          FROM DL_PRODUCTION.FINANCE.FCT_MONTHLY_REVENUE mr
-          JOIN DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY o ON mr.${MR_OPP} = o.OPPORTUNITY_ID
+          FROM DL_PRODUCTION.FINANCE.${MR_TABLE} mr
           WHERE EXTRACT(YEAR FROM mr.${MR_MONTH}) = ${priorYr}
-            AND o.IS_OPPORTUNITY_WON = TRUE
-            AND EXTRACT(YEAR FROM o.CLOSED_WON_DATE) = ${priorYr}
-            AND COALESCE(o.IS_OPPORTUNITY_REVENUE_SHARED, FALSE) = FALSE
-            AND COALESCE(o.IS_PRICE_UPDATE, FALSE) = FALSE
+            AND mr.${MR_OPP} IN (SELECT OPPORTUNITY_ID FROM opp)
             ${mrWhere}
         `);
         numer = Number(numRows[0]?.NUMER) || 0;
       }
       if (denom > 0 && numer > 0) {
-        calibrationFactor = numer / denom;
-        calibrationSource = 'computed';
+        const raw = numer / denom;
+        calibrationRaw = raw;
+        // Sanity clamp: a calibration factor should land in [0.3, 2.0].
+        // Anything outside means the source data is shaped differently than
+        // the spec assumes (e.g., OPPORTUNITY_AMOUNT in different units, or
+        // MR records fanout). Fall back to 0.8381 and surface a warning.
+        if (raw >= 0.3 && raw <= 2.0) {
+          calibrationFactor = raw;
+          calibrationSource = 'computed';
+        } else {
+          calibrationSource = `fallback (raw=${raw.toFixed(4)} outside [0.3, 2.0])`;
+          console.log(`[Snowflake] Pipeline calibration raw=${raw.toFixed(4)} is implausible — using fallback ${PIPELINE_FALLBACK_FACTOR}. numer=${numer}, denom=${denom}`);
+        }
       }
     } catch (e) {
       console.log(`[Snowflake] pipeline calibration factor fell back: ${e.message}`);
@@ -1100,16 +1138,24 @@ function createSnowflakeClient(env) {
 
     // ── Past + current SF actual MR contribution per month ────────────────────
     // contribution(M) = Σ current-year MR for opps that closed-won in month M.
+    // Dedupe DIM_OPPORTUNITY (one row per OPPORTUNITY_ID with its close month)
+    // so any SCD-2 fanout cannot multiply the MR sum.
     const sfContribByMonth = {}; // 'YYYY-MM' → eur
     if (mrUsable) {
       const contribRows = await query(`
-        SELECT TO_VARCHAR(o.CLOSED_WON_DATE, 'YYYY-MM') AS CLOSE_MONTH,
+        WITH opp AS (
+          SELECT OPPORTUNITY_ID,
+                 ANY_VALUE(TO_VARCHAR(CLOSED_WON_DATE, 'YYYY-MM')) AS CLOSE_MONTH
+          FROM DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY
+          WHERE IS_OPPORTUNITY_WON = TRUE
+            AND EXTRACT(YEAR FROM CLOSED_WON_DATE) = ${yr}
+          GROUP BY OPPORTUNITY_ID
+        )
+        SELECT opp.CLOSE_MONTH AS CLOSE_MONTH,
                SUM(ROUND(mr.${MR_AMOUNT})) AS CONTRIB
-        FROM DL_PRODUCTION.FINANCE.FCT_MONTHLY_REVENUE mr
-        JOIN DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY o ON mr.${MR_OPP} = o.OPPORTUNITY_ID
+        FROM DL_PRODUCTION.FINANCE.${MR_TABLE} mr
+        JOIN opp ON mr.${MR_OPP} = opp.OPPORTUNITY_ID
         WHERE EXTRACT(YEAR FROM mr.${MR_MONTH}) = ${yr}
-          AND o.IS_OPPORTUNITY_WON = TRUE
-          AND EXTRACT(YEAR FROM o.CLOSED_WON_DATE) = ${yr}
           ${mrWhere}
         GROUP BY 1
       `).catch((e) => { console.log(`[Snowflake] pipeline MR contrib failed: ${e.message}`); return []; });
@@ -1131,8 +1177,9 @@ function createSnowflakeClient(env) {
       yr, refDate: new Date(), openOpps: openOppsNorm, sfContribByMonth, actualMrrByMonth,
       calibrationFactor, calibrationSource,
     });
-    result.mrColumnsResolved = { month: MR_MONTH, opp: MR_OPP, amount: MR_AMOUNT, churned: MR_CHURNED, zero: MR_ZERO || `${MR_AMOUNT}<>0 (inferred)`, integration: MR_INTEG, currency: MR_CCY };
-    console.log(`[Snowflake] Pipeline methodology: factor=${calibrationFactor.toFixed(4)} (${calibrationSource}), footer=${result.footerTotal}, columnD=${result.columnDTotal}`);
+    result.mrColumnsResolved = { table: MR_TABLE, month: MR_MONTH, opp: MR_OPP, amount: MR_AMOUNT, churned: MR_CHURNED, zero: MR_ZERO || (MR_TABLE === 'FCT_MONTHLY_REVENUE' ? `${MR_AMOUNT}<>0 (inferred)` : 'n/a'), integration: MR_INTEG, currency: MR_CCY };
+    result.calibrationRaw = calibrationRaw;
+    console.log(`[Snowflake] Pipeline methodology: factor=${calibrationFactor.toFixed(4)} (${calibrationSource})${calibrationRaw != null ? `, raw=${calibrationRaw.toFixed(4)}` : ''}, footer=${result.footerTotal}, columnD=${result.columnDTotal}`);
     return result;
   }
 
