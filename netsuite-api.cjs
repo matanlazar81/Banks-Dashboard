@@ -1048,6 +1048,7 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
           WHERE t.subsidiary = ${subsidiaryId}
             AND tal.posting = 'T' AND tal.accountingbook = ${book}
             AND a.acctnumber LIKE '76%'
+            AND a.acctnumber NOT IN ('760038', '760023')
             AND t.trandate >= TO_DATE('${mKey}-01', 'YYYY-MM-DD')
             AND t.trandate <= TO_DATE('${yr}-${mo}-${endDay}', 'YYYY-MM-DD')
         `).then(rows => Math.round(parseFloat(rows[0]?.amount) || 0));

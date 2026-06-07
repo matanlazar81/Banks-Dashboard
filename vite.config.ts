@@ -1112,15 +1112,16 @@ function banksPlugin(): Plugin {
           const startDate = `${y}-${m}-01`;
           const endDay = new Date(parseInt(y), parseInt(m), 0).getDate();
           const endDate = `${y}-${m}-${String(endDay).padStart(2, '0')}`;
-          // Actuals: salary by account for the month
-          const actRows = await queueNsCall(() => ns.suiteqlAll(`
+          // Actuals: salary by account for the month — fetch EUR (book=1) and ILS (book=2)
+          // in parallel, then zip on acctnumber so the modal can render both columns.
+          const accountQuery = (book: number) => queueNsCall(() => ns.suiteqlAll(`
             SELECT a.acctnumber, a.acctname,
-                   SUM(COALESCE(tal.debit,0)) - SUM(COALESCE(tal.credit,0)) AS amount_eur
+                   SUM(COALESCE(tal.debit,0)) - SUM(COALESCE(tal.credit,0)) AS amount
             FROM transactionaccountingline tal
             JOIN transaction t ON tal.transaction = t.id
             JOIN account a ON tal.account = a.id
             WHERE t.subsidiary = ${sub}
-              AND tal.posting = 'T' AND tal.accountingbook = 1
+              AND tal.posting = 'T' AND tal.accountingbook = ${book}
               AND a.acctnumber LIKE '76%'
               AND a.acctnumber NOT IN ('760038', '760023')
               AND t.trandate >= TO_DATE('${startDate}', 'YYYY-MM-DD')
@@ -1129,10 +1130,16 @@ function banksPlugin(): Plugin {
             HAVING SUM(COALESCE(tal.debit,0)) - SUM(COALESCE(tal.credit,0)) <> 0
             ORDER BY a.acctnumber
           `));
-          const actuals = actRows.map((r: any) => ({
+          const [eurRows, ilsRows] = await Promise.all([accountQuery(1), accountQuery(2)]);
+          const ilsByAccount: Record<string, number> = {};
+          for (const r of ilsRows as any[]) {
+            if (r.acctnumber) ilsByAccount[r.acctnumber] = Math.round(parseFloat(r.amount) || 0);
+          }
+          const actuals = (eurRows as any[]).map((r: any) => ({
             account: r.acctnumber || '',
             name: r.acctname || '',
-            amountEUR: Math.round(parseFloat(r.amount_eur) || 0),
+            amountEUR: Math.round(parseFloat(r.amount) || 0),
+            amountILS: ilsByAccount[r.acctnumber] || 0,
           }));
           // Budget: salary accounts from budgetsmachine for this period
           const budRows = await queueNsCall(() => ns.suiteqlAll(`
