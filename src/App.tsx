@@ -2842,16 +2842,12 @@ useEffect(() => {
       // so adding them again here would double-count.
       let collectionsUnpaidCarry = 0;
       const collectionsUnpaidCarryMonth = '';
-      // Pipeline contribution to inflows for future months. Two methodologies:
-      //   'legacy'   → historical win-rate weighted pipeline (pipelineByMonth)
-      //   'pipeline' → Column B methodology, monthly slice: stage-weighted quarterly
-      //                pipeline ÷ open months × calibration factor (monthlyContribution).
-      //                NOT × monthsRemaining — that would be the annual roll-forward
-      //                from columnD, which doubles up the cashflow per month.
+      // Pipeline contribution to inflows: ALWAYS legacy win-rate pipeline
+      // (pipelineByMonth), independent of the revenueMethodology toggle. The
+      // toggle drives the displayed Pipeline column (pipelineWeighted) only, so
+      // Inflows (AR) stays stable when switching Win-rate <-> Pipeline.
       const collectionsPipeline = (!isPastMonth && !isCurMonth)
-        ? (revenueMethodology === 'pipeline'
-            ? Math.round(pipelineMethodology?.byMonth?.[mKey]?.monthlyContribution || 0)
-            : (pipelineByMonth[mKey] || 0))
+        ? (pipelineByMonth[mKey] || 0)
         : 0;
       const customers = revPaid?.customers || 0;
       // NS GL accrual for revenue (4xxx) — matches P&L "Total - 400000 - REVENUES".
@@ -2894,8 +2890,15 @@ useEffect(() => {
       }
       // Low-conf pipeline for this month (not added to collections — shown separately)
       const pipelineLow = pipelineLowByMonth[mKey] || { weighted: 0, total: 0, count: 0, opps: [] as typeof lowConfPipeline };
-      const pipelineBaseWeighted = pipelineLow.weighted;
       const pipelineAdjPct = pipelineAdjPctByMonth[i] ?? 100; // default 100% = full pipeline, 0% = zero
+      // The displayed Pipeline column reflects the revenueMethodology toggle:
+      //   'legacy'   → historical low-confidence win-rate weighted pipeline
+      //   'pipeline' → Column B methodology monthly slice (projectedMrr × factor),
+      //                future months only. Drives the column AND its Net contribution.
+      //                Inflows (AR) is unaffected (collectionsPipeline stays legacy).
+      const pipelineBaseWeighted = revenueMethodology === 'pipeline'
+        ? ((!isPastMonth && !isCurMonth) ? Math.round(pipelineMethodology?.byMonth?.[mKey]?.monthlyContribution || 0) : 0)
+        : pipelineLow.weighted;
       const pipelineWeighted = Math.round(pipelineBaseWeighted * pipelineAdjPct / 100);
       const pipelineWeightedILS = Math.round(pipelineWeighted * eurIlsRatio);
       const pipelineTotal = pipelineLow.total;
@@ -6826,7 +6829,9 @@ useEffect(() => {
                           <>
                             <span>+{fmtC(r.pipelineWeighted, r.pipelineWeightedILS)}</span>
                             <div className="text-[10px] text-gray-400">
-                              {fmt(r.pipelineTotal)} total • {r.pipelineCount} opp{r.pipelineCount !== 1 ? 's' : ''}
+                              {revenueMethodology === 'pipeline'
+                                ? `stage-weighted × ${(pipelineMethodology?.calibrationFactor ?? 0.8381).toFixed(4)}`
+                                : `${fmt(r.pipelineTotal)} total • ${r.pipelineCount} opp${r.pipelineCount !== 1 ? 's' : ''}`}
                             </div>
                           </>
                         ) : '-'}
