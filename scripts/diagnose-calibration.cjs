@@ -11,8 +11,25 @@
 //   - MR records per (opportunity, month) — fanout check
 //   - Sample 10 closed-won opps showing OPPORTUNITY_AMOUNT vs Σ MR_AMOUNT
 
+const path = require('path');
+const fs = require('fs');
 const { createSnowflakeClient } = require('../snowflake-api.cjs');
-require('dotenv').config();
+
+// Find an .env file by walking up the tree (parent finance-it/.env is the
+// usual location when bank-dashboard sits under extra-apps/).
+function loadEnv() {
+  let dir = __dirname;
+  for (let i = 0; i < 6; i++) {
+    for (const name of ['.env', 'backend/.env']) {
+      const p = path.join(dir, name);
+      if (fs.existsSync(p)) { require('dotenv').config({ path: p }); return p; }
+    }
+    dir = path.dirname(dir);
+  }
+  return null;
+}
+const envPath = loadEnv();
+console.log(`[diag] env loaded from: ${envPath || '(none found)'}`);
 
 (async () => {
   const sf = createSnowflakeClient(process.env);
