@@ -2365,6 +2365,11 @@ useEffect(() => {
         const lastAct2 = salActDeptR2?.lastActualMonth || '';
         const hcImpactR2 = await safe(`/api/sf-monthly-hc-impact${lastAct2 ? `?lastActual=${lastAct2}` : ''}`);
         if (hcImpactR2 && !hcImpactR2.error) setMonthlyHCImpact(hcImpactR2);
+        // Column B pipeline methodology — fetch in the MAIN load path too. It was
+        // previously only in the prefetch path, so a direct load left
+        // pipelineMethodology null and the Pipeline-mode column read columnD as 0.
+        const pipeMethR2 = await safe(`/api/sf-pipeline-methodology?year=${activeYear}`);
+        setPipelineMethodology(pipeMethR2?.data || null);
       } else {
         const [nsBudR] = sfResults;
         if (nsBudR) setNsBudget(nsBudR);
@@ -2372,7 +2377,7 @@ useEffect(() => {
         setSfSalaryBudget({}); setSfSalaryOverrides([]); setSfRevenuePaid({});
         setSfPipeline([]); setSfConversion({ yearly: [], stages: [], customers: [], projection: [] });
         setChurnData([]); setChurnMonthlyAvg(0); setYoyRevenue(null); setSalaryDeptBudgets({});
-        setSalaryActualsByDept({}); setLastActualSalaryMonth(''); setMonthlyHCImpact({});
+        setSalaryActualsByDept({}); setLastActualSalaryMonth(''); setMonthlyHCImpact({}); setPipelineMethodology(null);
       }
       setLastRefreshed(new Date().toLocaleDateString('en-GB') + ' ' + new Date().toLocaleTimeString('en-GB'));
     } catch (e: any) {
@@ -2634,6 +2639,11 @@ useEffect(() => {
     const rows: { month: string; mKey: string; openingBalance: number; openingBalanceILS: number; salary: number; salaryILS: number; vendors: number; vendorsILS: number; other: number; otherILS: number; otherDetails: { label: string; bucket: string; eur: number; ils: number }[]; totalOutflow: number; totalOutflowILS: number; collections: number; collectionsILS: number; collectionsActual: number; collectionsRemaining: number; collectionsForecast: number; collectionsRevenue: number; collectionsUnpaidCarry: number; collectionsUnpaidCarryMonth: string; collectionsPipeline: number; customers: number; pipelineWeighted: number; pipelineWeightedILS: number; pipelineTotal: number; pipelineCount: number; pipelineOpps: typeof lowConfPipeline; pipelineHistWinRate: number; pipelineDelayMonths: number; net: number; netILS: number; revalImpact: number; revalImpactILS: number; revalHasBothEnds: boolean; closingBalance: number; closingBalanceILS: number; isCurrent: boolean; isPast: boolean }[] = [];
     let prevMonthSalary = 0;
     let prevMonthUnpaid = 0; // unpaid from previous month rolls forward
+    // Pipeline-methodology cumulative: monthly MRR (projectedMrr × factor) accumulates
+    // forward — a deal closing in July keeps contributing Aug…Dec, so each future month
+    // carries all prior future cohorts plus its own. Pyramids up to match cash timing,
+    // unlike Column D which front-loads each cohort's full annual total into one month.
+    let pipelineMethodCum = 0;
 
     // Monthly churn run-rate: latest completed quarter / 3, else current-year monthlyImpact, else 6m avg.
     // Each forecast month deducts rate × (forecast-month index), so the cumulative MRR-lost grows
@@ -2893,12 +2903,17 @@ useEffect(() => {
       const pipelineAdjPct = pipelineAdjPctByMonth[i] ?? 100; // default 100% = full pipeline, 0% = zero
       // The displayed Pipeline column reflects the revenueMethodology toggle:
       //   'legacy'   → historical low-confidence win-rate weighted pipeline
-      //   'pipeline' → Column B methodology Column D = projectedMrr × months-remaining
-      //                × factor (per the methodology doc's "Future Months" formula),
-      //                future months only. Drives the column AND its Net contribution.
-      //                Inflows (AR) is unaffected (collectionsPipeline stays legacy).
+      //   'pipeline' → Column B methodology, CUMULATIVE monthly MRR: each future month
+      //                adds projectedMrr × factor (the new MRR coming online) to the
+      //                running total of prior future cohorts. Pyramids up to match cash
+      //                timing; annual total equals Σ Column D. Future months only.
+      //                Drives the column AND its Net contribution. Inflows (AR) is
+      //                unaffected (collectionsPipeline stays legacy).
+      if (revenueMethodology === 'pipeline' && !isPastMonth && !isCurMonth) {
+        pipelineMethodCum += Math.round(pipelineMethodology?.byMonth?.[mKey]?.monthlyContribution || 0);
+      }
       const pipelineBaseWeighted = revenueMethodology === 'pipeline'
-        ? ((!isPastMonth && !isCurMonth) ? Math.round(pipelineMethodology?.byMonth?.[mKey]?.columnD || 0) : 0)
+        ? ((!isPastMonth && !isCurMonth) ? pipelineMethodCum : 0)
         : pipelineLow.weighted;
       const pipelineWeighted = Math.round(pipelineBaseWeighted * pipelineAdjPct / 100);
       const pipelineWeightedILS = Math.round(pipelineWeighted * eurIlsRatio);
@@ -4322,20 +4337,16 @@ useEffect(() => {
                       }
                       salaryByDept[mKey] = perDept;
 
-                      // PR-V: only anchor per-dept sum to dashboardTotals.salary[mKey]
-                      // for FUTURE months. Closed months have own SF accrued actuals
-                      // (salaryActualsByDept[mKey]) and the user explicitly wants
-                      // Targets to reflect SF accrued, not bank-cash. The dashboard
-                      // cashflow grid for past months pulls from bank-classified
-                      // (cash that actually left the bank); accrual figures are what
-                      // the modal "Last Actual" basis shows and what makes sense for
-                      // budget reconciliation. PR-T's scaling pushed past months UP
-                      // to the bank-cash number (e.g. Feb €2.4M → €2.8M), which is
-                      // not what we want here. For future months the basis sum
-                      // already equals the cashflow projection (same lastActual ×
-                      // mult + override + HC formula on both sides), so this scaling
-                      // is just a rounding safety net.
-                      if (!haveOwn) {
+                      // PR-X: anchor per-dept salary sum to dashboardTotals.salary[mKey]
+                      // for ALL months (past + future). The dashboard salary cell is
+                      // NS GL 76xxx for closed months (incl. 760017 bonus, 760019
+                      // maternity, 760023 military refund) and the lastActual projection
+                      // for future months. The FCT_EXPENSE per-dept basis drops the
+                      // one-time accounts, so without this the Targets salary fell ~€310K
+                      // short (concentrated in the Jan/May bonus months). Scaling here
+                      // distributes the difference proportionally across depts so the
+                      // Targets salary total ties to the dashboard = NS P&L.
+                      {
                         const targetEUR = Math.round(dashboardTotals[mKey]?.salary?.eur || 0);
                         const targetILS = Math.round(dashboardTotals[mKey]?.salary?.ils || 0);
                         const sumEUR = Object.values(perDept).reduce((s, v) => s + v.eur, 0);
@@ -6831,7 +6842,7 @@ useEffect(() => {
                             <span>+{fmtC(r.pipelineWeighted, r.pipelineWeightedILS)}</span>
                             <div className="text-[10px] text-gray-400">
                               {revenueMethodology === 'pipeline'
-                                ? `stage-weighted × ${(pipelineMethodology?.calibrationFactor ?? 0.8381).toFixed(4)}`
+                                ? `cumulative MRR × ${(pipelineMethodology?.calibrationFactor ?? 0.8381).toFixed(4)}`
                                 : `${fmt(r.pipelineTotal)} total • ${r.pipelineCount} opp${r.pipelineCount !== 1 ? 's' : ''}`}
                             </div>
                           </>
