@@ -847,14 +847,17 @@ export async function populateBudgetTargets(opts: {
       const monthlyRawCopy: Record<string, number> = {};
       const adjustedMonthlyEur: Record<string, number> = {};
       let annual = 0;
-      // Year-1 fallback uses the prior year's Q4 (Oct/Nov/Dec) average per account
-      // as the steady run-rate for EVERY month of the target year — not a verbatim
-      // month-by-month copy. This projects the year-end run-rate (after the prior
-      // year's ramp) into the new year, per account, per month.
+      // Year-1 fallback projects a per-account run-rate into EVERY month of the target
+      // year (not a verbatim copy). Basis differs by account type:
+      //   payroll (salary)  → prior-year Q4 (Oct/Nov/Dec) average (year-end run-rate)
+      //   vendors / other   → prior-year full-year (12-month) average — vendors are
+      //                       lumpy month-to-month, so a 12m average is steadier.
       const q4Avg = (src: Record<string, any>) =>
         ((Number(src['10']) || 0) + (Number(src['11']) || 0) + (Number(src['12']) || 0)) / 3;
-      const avgRawIls = q4Avg(rawSource);
-      const avgRawEur = q4Avg(rawEurSource);
+      const fullYearAvg = (src: Record<string, any>) =>
+        MONTH_KEYS_LIST.reduce((s, k) => s + (Number(src[k]) || 0), 0) / 12;
+      const avgRawIls = meta.isPayroll ? q4Avg(rawSource) : fullYearAvg(rawSource);
+      const avgRawEur = meta.isPayroll ? q4Avg(rawEurSource) : fullYearAvg(rawEurSource);
       for (const mkey of MONTH_KEYS_LIST) {
         const raw = avgRawIls;
         const rawEur = avgRawEur;
