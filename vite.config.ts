@@ -1123,7 +1123,6 @@ function banksPlugin(): Plugin {
             WHERE t.subsidiary = ${sub}
               AND tal.posting = 'T' AND tal.accountingbook = ${book}
               AND a.acctnumber LIKE '76%'
-              AND a.acctnumber NOT IN ('760038', '760023')
               AND t.trandate >= TO_DATE('${startDate}', 'YYYY-MM-DD')
               AND t.trandate <= TO_DATE('${endDate}', 'YYYY-MM-DD')
             GROUP BY a.acctnumber, a.acctname
@@ -1586,7 +1585,6 @@ function banksPlugin(): Plugin {
               WHERE t.subsidiary = ${sub}
                 AND tal.posting = 'T' AND tal.accountingbook = 1
                 AND a.acctnumber LIKE '76%'
-                AND a.acctnumber NOT IN ('760038', '760023')
                 AND t.trandate >= TO_DATE('${startDate}', 'YYYY-MM-DD')
                 AND t.trandate <= TO_DATE('${endDate}', 'YYYY-MM-DD')
               GROUP BY a.acctnumber, a.acctname
