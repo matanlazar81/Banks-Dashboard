@@ -2893,11 +2893,12 @@ useEffect(() => {
       const pipelineAdjPct = pipelineAdjPctByMonth[i] ?? 100; // default 100% = full pipeline, 0% = zero
       // The displayed Pipeline column reflects the revenueMethodology toggle:
       //   'legacy'   → historical low-confidence win-rate weighted pipeline
-      //   'pipeline' → Column B methodology monthly slice (projectedMrr × factor),
+      //   'pipeline' → Column B methodology Column D = projectedMrr × months-remaining
+      //                × factor (per the methodology doc's "Future Months" formula),
       //                future months only. Drives the column AND its Net contribution.
       //                Inflows (AR) is unaffected (collectionsPipeline stays legacy).
       const pipelineBaseWeighted = revenueMethodology === 'pipeline'
-        ? ((!isPastMonth && !isCurMonth) ? Math.round(pipelineMethodology?.byMonth?.[mKey]?.monthlyContribution || 0) : 0)
+        ? ((!isPastMonth && !isCurMonth) ? Math.round(pipelineMethodology?.byMonth?.[mKey]?.columnD || 0) : 0)
         : pipelineLow.weighted;
       const pipelineWeighted = Math.round(pipelineBaseWeighted * pipelineAdjPct / 100);
       const pipelineWeightedILS = Math.round(pipelineWeighted * eurIlsRatio);
