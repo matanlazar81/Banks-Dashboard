@@ -2982,18 +2982,30 @@ useEffect(() => {
       runningBalanceILS += revalImpactILS;
 
       const openingBalanceILS = runningBalanceILS - netILS - revalImpactILS;
-      // Working-capital delta + bank-accurate closing (past months).
-      // Columns are accrual (NS P&L). The actual NS month-end bank balance differs
-      // by working-capital movement (AR/AP timing: expenses accrued but not yet
-      // paid, etc.). Per user choice: pin past-month CLOSING to the actual bank
-      // balance so it reconciles to NS, and expose the per-month gap as wcDelta.
-      // Re-anchoring also makes next month's opening = prior actual bank close.
+      // Past months: anchor closing balance to actual NS bank balance, and fold the
+      // model-vs-bank reconciliation gap into "Other" so row math sums cleanly:
+      //   Opening + (Inflows + Reval) - (Salary + Vendors + Other) = Closing
+      // The Other column absorbs both bank-classifier 'other' AND the residual
+      // between accrual numbers and actual bank movement (AR/AP timing, IC, fees).
       const bankClose = isPastMonth ? monthEndBalances[mKey] : undefined;
-      const wcDelta = bankClose ? (bankClose.eur - runningBalance) : 0;
-      const wcDeltaILS = bankClose ? (bankClose.ils - runningBalanceILS) : 0;
+      let wcDelta = 0, wcDeltaILS = 0;
       if (bankClose) {
+        wcDelta = bankClose.eur - runningBalance;
+        wcDeltaILS = bankClose.ils - runningBalanceILS;
+        // Fold the gap into Other. To make net increase by wcDelta,
+        // decrease other by wcDelta (since net = ... - other).
+        other = other - wcDelta;
+        otherILS = otherILS - wcDeltaILS;
+        // Re-derive display values so row math matches anchored closing.
+        totalOutflow = salary + vendors + Math.max(0, other);
+        totalOutflowILS = salaryILS + vendorsILS + Math.max(0, otherILS);
+        net = collections - salary - vendors - other + pipelineWeighted - churnDeduction;
+        netILS = collectionsILS - salaryILS - vendorsILS - otherILS + pipelineWeightedILS - churnDeductionILS;
         runningBalance = bankClose.eur;
         runningBalanceILS = bankClose.ils;
+        // wcDelta absorbed into Other — zero it so the annotation doesn't appear.
+        wcDelta = 0;
+        wcDeltaILS = 0;
       }
       rows.push({ month: label, mKey, openingBalance, openingBalanceILS, salary, salaryBase, salaryILS, vendors, vendorsBase, vendorsILS, other, otherILS, otherDetails: bcm?.details || [], totalOutflow, totalOutflowILS, collections, collectionsILS, collectionsActual, collectionsRemaining, collectionsForecast, collectionsRevenue, collectionsUnpaidCarry, collectionsUnpaidCarryMonth, collectionsPipeline, customers, pipelineWeighted, pipelineWeightedILS, pipelineTotal, pipelineCount, pipelineOpps, pipelineHistWinRate, pipelineDelayMonths, churnDeduction, churnDeductionILS, net, netILS, revalImpact, revalImpactILS, revalHasBothEnds, closingBalance: runningBalance, closingBalanceILS: runningBalanceILS, wcDelta, wcDeltaILS, isCurrent: isCurMonth, isPast: isPastMonth });
     }
