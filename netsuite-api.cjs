@@ -1028,45 +1028,36 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
     }
 
     if (monthsNeeded.length > 0) {
-      const minMonth = monthsNeeded[0];
-      console.log(`[NS API] Salary: querying ${monthsNeeded.length} months from ${minMonth} (${Object.keys(cached).length} cached)`);
+      console.log(`[NS API] Salary: querying ${monthsNeeded.length} months (${Object.keys(cached).length} cached)`);
 
-      const eurRows = await suiteqlAll(`
-        SELECT TO_CHAR(t.trandate, 'YYYY-MM') AS month,
-               SUM(tal.debit) - SUM(tal.credit) AS amount
-        FROM transactionaccountingline tal
-        JOIN transaction t ON tal.transaction = t.id
-        JOIN account a ON tal.account = a.id
-        WHERE t.subsidiary = ${subsidiaryId}
-          AND tal.posting = 'T' AND tal.accountingbook = 1
-          AND a.acctnumber LIKE '76%'
-          AND a.acctnumber NOT IN ('760038', '760023')
-          AND t.trandate >= TO_DATE('${minMonth}-01', 'YYYY-MM-DD')
-          AND t.trandate <= SYSDATE
-        GROUP BY TO_CHAR(t.trandate, 'YYYY-MM')
-        ORDER BY month
-      `);
-      const ilsRows = await suiteqlAll(`
-        SELECT TO_CHAR(t.trandate, 'YYYY-MM') AS month,
-               SUM(tal.debit) - SUM(tal.credit) AS amount
-        FROM transactionaccountingline tal
-        JOIN transaction t ON tal.transaction = t.id
-        JOIN account a ON tal.account = a.id
-        WHERE t.subsidiary = ${subsidiaryId}
-          AND tal.posting = 'T' AND tal.accountingbook = 2
-          AND a.acctnumber LIKE '76%'
-          AND a.acctnumber NOT IN ('760038', '760023')
-          AND t.trandate >= TO_DATE('${minMonth}-01', 'YYYY-MM-DD')
-          AND t.trandate <= SYSDATE
-        GROUP BY TO_CHAR(t.trandate, 'YYYY-MM')
-        ORDER BY month
-      `);
-      const ilsMap = {};
-      for (const r of ilsRows) ilsMap[r.month] = Math.round(parseFloat(r.amount) || 0);
-      for (const r of eurRows) {
-        if (r.amount != null) {
-          cached[r.month] = { amountEUR: Math.round(parseFloat(r.amount) || 0), amountILS: ilsMap[r.month] || 0 };
-        }
+      // Per-month queries (the full 18-month aggregated query timed out when
+      // we widened the account filter; per-month each completes in <1s).
+      // EUR + ILS combined into a single query per month via CASE on book.
+      // Capped at 4 concurrent to stay under NS's 429 concurrency limit.
+      // Two queries per month (one per accounting book). 36 small queries
+      // total but with concurrency cap. Each completes in <1s — total time
+      // limited by NS rate limit, not by query speed.
+      const monthQuery = (book, mKey) => {
+        const [yr, mo] = mKey.split('-');
+        const endDay = new Date(parseInt(yr), parseInt(mo), 0).getDate();
+        return suiteqlAll(`
+          SELECT SUM(tal.debit) - SUM(tal.credit) AS amount
+          FROM transactionaccountingline tal
+          JOIN transaction t ON tal.transaction = t.id
+          JOIN account a ON tal.account = a.id
+          WHERE t.subsidiary = ${subsidiaryId}
+            AND tal.posting = 'T' AND tal.accountingbook = ${book}
+            AND a.acctnumber LIKE '76%'
+            AND t.trandate >= TO_DATE('${mKey}-01', 'YYYY-MM-DD')
+            AND t.trandate <= TO_DATE('${yr}-${mo}-${endDay}', 'YYYY-MM-DD')
+        `).then(rows => Math.round(parseFloat(rows[0]?.amount) || 0));
+      };
+
+      // Sequential per month, EUR+ILS in parallel within a month (max 2 concurrent).
+      // NS's concurrency cap on this integration is tighter than 6.
+      for (const mKey of monthsNeeded) {
+        const [eur, ils] = await Promise.all([monthQuery(1, mKey), monthQuery(2, mKey)]);
+        cached[mKey] = { amountEUR: eur, amountILS: ils };
       }
 
       // Save cache
@@ -1092,6 +1083,187 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
   // Uses net-per-transaction approach: for each transaction, compute the net
   // impact on bank accounts. If debit ≈ credit (inter-bank transfer), it's
   // excluded by the HAVING clause. Only genuine external flows remain.
+  // Per-month NS vendor totals (6xxxx + 7xxxx excluding 76xxx payroll). Matches the
+  // P&L "Total - Overheads" minus "Total - 760000 - Payroll". Both books, sequential
+  // per month to stay under NS concurrency cap.
+  async function fetchVendorActuals() {
+    const fs = require('fs');
+    const pathMod = require('path');
+    const now = new Date();
+    const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const prevYear = now.getFullYear() - 1;
+
+    const cachePath = pathMod.join(__dirname, 'data', `vendor-actuals-sub${subsidiaryId}.json`);
+    let cached = {};
+    try { if (fs.existsSync(cachePath)) cached = JSON.parse(fs.readFileSync(cachePath, 'utf-8')); } catch {}
+
+    const monthsNeeded = [];
+    for (let y = prevYear; y <= now.getFullYear(); y++) {
+      const maxM = y === now.getFullYear() ? now.getMonth() + 1 : 12;
+      for (let m = 1; m <= maxM; m++) {
+        const key = `${y}-${String(m).padStart(2, '0')}`;
+        if (key === currentMonth || !cached[key]) monthsNeeded.push(key);
+      }
+    }
+
+    if (monthsNeeded.length > 0) {
+      console.log(`[NS API] Vendor actuals: querying ${monthsNeeded.length} months (${Object.keys(cached).length} cached)`);
+      const monthQuery = (book, mKey) => {
+        const [yr, mo] = mKey.split('-');
+        const endDay = new Date(parseInt(yr), parseInt(mo), 0).getDate();
+        return suiteqlAll(`
+          SELECT SUM(tal.debit) - SUM(tal.credit) AS amount
+          FROM transactionaccountingline tal
+          JOIN transaction t ON tal.transaction = t.id
+          JOIN account a ON tal.account = a.id
+          WHERE t.subsidiary = ${subsidiaryId}
+            AND tal.posting = 'T' AND tal.accountingbook = ${book}
+            AND (a.acctnumber LIKE '6%' OR a.acctnumber LIKE '7%')
+            AND a.acctnumber NOT LIKE '76%'
+            AND t.trandate >= TO_DATE('${mKey}-01', 'YYYY-MM-DD')
+            AND t.trandate <= TO_DATE('${yr}-${mo}-${endDay}', 'YYYY-MM-DD')
+        `).then(rows => Math.round(parseFloat(rows[0]?.amount) || 0));
+      };
+      for (const mKey of monthsNeeded) {
+        const [eur, ils] = await Promise.all([monthQuery(1, mKey), monthQuery(2, mKey)]);
+        cached[mKey] = { amountEUR: eur, amountILS: ils };
+      }
+      try {
+        const dir = pathMod.join(__dirname, 'data');
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(cachePath, JSON.stringify(cached, null, 2));
+      } catch {}
+    } else {
+      console.log(`[NS API] Vendor actuals: all ${Object.keys(cached).length} months from cache`);
+    }
+
+    const data = Object.entries(cached)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([month, v]) => ({ month, amountEUR: v.amountEUR, amountILS: v.amountILS }));
+    console.log(`[NS API] Vendor actuals: ${data.length} months`);
+    return data;
+  }
+
+  // Per-month NS revenue totals (4xxxx). Matches the P&L "Total - 400000 - REVENUES".
+  async function fetchRevenueActuals() {
+    const fs = require('fs');
+    const pathMod = require('path');
+    const now = new Date();
+    const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const prevYear = now.getFullYear() - 1;
+
+    const cachePath = pathMod.join(__dirname, 'data', `revenue-actuals-sub${subsidiaryId}.json`);
+    let cached = {};
+    try { if (fs.existsSync(cachePath)) cached = JSON.parse(fs.readFileSync(cachePath, 'utf-8')); } catch {}
+
+    const monthsNeeded = [];
+    for (let y = prevYear; y <= now.getFullYear(); y++) {
+      const maxM = y === now.getFullYear() ? now.getMonth() + 1 : 12;
+      for (let m = 1; m <= maxM; m++) {
+        const key = `${y}-${String(m).padStart(2, '0')}`;
+        if (key === currentMonth || !cached[key]) monthsNeeded.push(key);
+      }
+    }
+
+    if (monthsNeeded.length > 0) {
+      console.log(`[NS API] Revenue actuals: querying ${monthsNeeded.length} months (${Object.keys(cached).length} cached)`);
+      // Revenue is credit-positive in NS GL — negate to display as inflow.
+      const monthQuery = (book, mKey) => {
+        const [yr, mo] = mKey.split('-');
+        const endDay = new Date(parseInt(yr), parseInt(mo), 0).getDate();
+        return suiteqlAll(`
+          SELECT SUM(tal.credit) - SUM(tal.debit) AS amount
+          FROM transactionaccountingline tal
+          JOIN transaction t ON tal.transaction = t.id
+          JOIN account a ON tal.account = a.id
+          WHERE t.subsidiary = ${subsidiaryId}
+            AND tal.posting = 'T' AND tal.accountingbook = ${book}
+            AND a.acctnumber LIKE '4%'
+            AND t.trandate >= TO_DATE('${mKey}-01', 'YYYY-MM-DD')
+            AND t.trandate <= TO_DATE('${yr}-${mo}-${endDay}', 'YYYY-MM-DD')
+        `).then(rows => Math.round(parseFloat(rows[0]?.amount) || 0));
+      };
+      for (const mKey of monthsNeeded) {
+        const [eur, ils] = await Promise.all([monthQuery(1, mKey), monthQuery(2, mKey)]);
+        cached[mKey] = { amountEUR: eur, amountILS: ils };
+      }
+      try {
+        const dir = pathMod.join(__dirname, 'data');
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(cachePath, JSON.stringify(cached, null, 2));
+      } catch {}
+    } else {
+      console.log(`[NS API] Revenue actuals: all ${Object.keys(cached).length} months from cache`);
+    }
+
+    const data = Object.entries(cached)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([month, v]) => ({ month, amountEUR: v.amountEUR, amountILS: v.amountILS }));
+    console.log(`[NS API] Revenue actuals: ${data.length} months`);
+    return data;
+  }
+
+  // Per-month customer cash receipts (real bank deposits from customers). Matches a
+  // bank statement filtered to customer money: Customer Payments (CustPymt) +
+  // Cash Sales (CashSale) hitting Bank-type accounts. Includes AR catch-up from
+  // prior periods (e.g. Dec invoice paid in Jan lands here in Jan). Excludes
+  // refunds, IC transfers, vendor activity, FX revals.
+  async function fetchCustomerCashReceipts() {
+    const fs = require('fs');
+    const pathMod = require('path');
+    const now = new Date();
+    const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const prevYear = now.getFullYear() - 1;
+
+    const cachePath = pathMod.join(__dirname, 'data', `customer-receipts-sub${subsidiaryId}.json`);
+    let cached = {};
+    try { if (fs.existsSync(cachePath)) cached = JSON.parse(fs.readFileSync(cachePath, 'utf-8')); } catch {}
+
+    const monthsNeeded = [];
+    for (let y = prevYear; y <= now.getFullYear(); y++) {
+      const maxM = y === now.getFullYear() ? now.getMonth() + 1 : 12;
+      for (let m = 1; m <= maxM; m++) {
+        const key = `${y}-${String(m).padStart(2, '0')}`;
+        if (key === currentMonth || !cached[key]) monthsNeeded.push(key);
+      }
+    }
+
+    if (monthsNeeded.length > 0) {
+      console.log(`[NS API] Customer receipts: querying ${monthsNeeded.length} months (${Object.keys(cached).length} cached)`);
+      const monthQuery = (mKey) => {
+        const [yr, mo] = mKey.split('-');
+        const endDay = new Date(parseInt(yr), parseInt(mo), 0).getDate();
+        return suiteqlAll(`
+          SELECT SUM(COALESCE(tal.debit, 0)) - SUM(COALESCE(tal.credit, 0)) AS amount
+          FROM transactionaccountingline tal
+          JOIN transaction t ON tal.transaction = t.id
+          JOIN account a ON tal.account = a.id
+          WHERE t.subsidiary = ${subsidiaryId}
+            AND a.accttype = 'Bank'
+            AND tal.posting = 'T' AND tal.accountingbook = 1
+            AND t.type IN ('CustPymt', 'CashSale')
+            AND t.trandate >= TO_DATE('${mKey}-01', 'YYYY-MM-DD')
+            AND t.trandate <= TO_DATE('${yr}-${mo}-${endDay}', 'YYYY-MM-DD')
+        `).then(rows => Math.round(parseFloat(rows[0]?.amount) || 0));
+      };
+      for (const mKey of monthsNeeded) {
+        cached[mKey] = { amountEUR: await monthQuery(mKey) };
+      }
+      try {
+        const dir = pathMod.join(__dirname, 'data');
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(cachePath, JSON.stringify(cached, null, 2));
+      } catch {}
+    } else {
+      console.log(`[NS API] Customer receipts: all ${Object.keys(cached).length} months from cache`);
+    }
+
+    const byMonth = {};
+    for (const [mk, v] of Object.entries(cached)) byMonth[mk] = v.amountEUR;
+    console.log(`[NS API] Customer receipts: ${Object.keys(byMonth).length} months`);
+    return byMonth;
+  }
+
   async function fetchCashflowHistory() {
     console.log('[NS API] Fetching cashflow history...');
     const prevYear = new Date().getFullYear() - 1;
@@ -1544,7 +1716,6 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
         WHERE t.subsidiary = ${subsidiaryId}
           AND tal.posting = 'T' AND tal.accountingbook = 1
           AND a.acctnumber LIKE '76%'
-          AND a.acctnumber NOT IN ('760038', '760023')
           AND t.trandate >= TO_DATE('${startDate}', 'YYYY-MM-DD')
           AND t.trandate <= TO_DATE('${endDate}', 'YYYY-MM-DD')
         GROUP BY a.acctnumber, a.acctname
@@ -1560,7 +1731,6 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
         WHERE t.subsidiary = ${subsidiaryId}
           AND tal.posting = 'T' AND tal.accountingbook = 2
           AND a.acctnumber LIKE '76%'
-          AND a.acctnumber NOT IN ('760038', '760023')
           AND t.trandate >= TO_DATE('${startDate}', 'YYYY-MM-DD')
           AND t.trandate <= TO_DATE('${endDate}', 'YYYY-MM-DD')
         GROUP BY a.acctnumber
@@ -2254,7 +2424,7 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
     return { byMonth };
   }
 
-  return { suiteql, suiteqlAll, fetchAgingData, fetchCollectionData, buildCollectionJson, fetchClientAnomalies, fetchAllSOsByBillingPeriod, fetchRevenueData, fetchMRRData, fetchBankBalance, fetchVendorBills, fetchVendorPaymentHistory, fetchBankAccountList, fetchBankAccountListAsOf, fetchSalaryData, fetchCashflowHistory, fetchExpenseCategoryData, fetchPaymentsByCategory, fetchCashflowBreakdown, fetchCashflowTransactions, fetchExpenseTransactions, fetchSalaryBreakdown, fetchInvoiceBasedProjection, fetchMonthlyRevaluation, fetchVendorBillsByAccount, fetchNSBudget, fetchCurrencyDefenseBudget, fetchPaidVendorsYearly, fetchBankClassifiedYearly };
+  return { suiteql, suiteqlAll, fetchAgingData, fetchCollectionData, buildCollectionJson, fetchClientAnomalies, fetchAllSOsByBillingPeriod, fetchRevenueData, fetchMRRData, fetchBankBalance, fetchVendorBills, fetchVendorPaymentHistory, fetchBankAccountList, fetchBankAccountListAsOf, fetchSalaryData, fetchVendorActuals, fetchRevenueActuals, fetchCustomerCashReceipts, fetchCashflowHistory, fetchExpenseCategoryData, fetchPaymentsByCategory, fetchCashflowBreakdown, fetchCashflowTransactions, fetchExpenseTransactions, fetchSalaryBreakdown, fetchInvoiceBasedProjection, fetchMonthlyRevaluation, fetchVendorBillsByAccount, fetchNSBudget, fetchCurrencyDefenseBudget, fetchPaidVendorsYearly, fetchBankClassifiedYearly };
 }
 
 

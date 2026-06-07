@@ -7,6 +7,109 @@ const snowflake = require('snowflake-sdk');
 const fs = require('fs');
 const crypto = require('crypto');
 
+// ── Column B pipeline methodology — pure helpers (module scope, testable) ────
+// Stage weights for open-pipeline contribution.
+const PIPELINE_STAGE_WEIGHTS = [
+  { match: /best\s*case/i,        weight: 0.90 },
+  { match: /contract\s*sent/i,    weight: 0.60 },
+  { match: /negotiat/i,           weight: 0.45 },
+  { match: /test/i,               weight: 0.17 },
+  { match: /new|qualif/i,         weight: 0.12 },
+];
+const PIPELINE_FALLBACK_FACTOR = 0.8381;
+function pipelineStageWeight(stage) {
+  const s = String(stage || '');
+  for (const w of PIPELINE_STAGE_WEIGHTS) if (w.match.test(s)) return w.weight;
+  return 0; // unknown / early stages contribute nothing
+}
+
+// Pure assembly of the per-month Column B / Column D structure from already-
+// gathered inputs. Kept side-effect-free so it can be unit-tested without a
+// live Snowflake connection. Inputs:
+//   yr               target fiscal year
+//   refDate          "as of" date (drives past/current/future classification)
+//   openOpps         [{ stage, amount, closeDate 'YYYY-MM-DD' }]  open pipeline
+//   sfContribByMonth { 'YYYY-MM': eur }  real SF MR contribution per close-month
+//   actualMrrByMonth { 'YYYY-MM': eur }  opp amounts closed each month (info)
+//   calibrationFactor number
+//   calibrationSource string
+function assemblePipelineMethodology({ yr, refDate, openOpps, sfContribByMonth, actualMrrByMonth, calibrationFactor, calibrationSource }) {
+  const ref = refDate ? new Date(refDate) : new Date();
+  const curYear = ref.getFullYear();
+  const curMonthIdx = ref.getMonth(); // 0-based
+  const monthState = (mIdx) => {
+    if (yr < curYear) return 'past';
+    if (yr > curYear) return 'future';
+    if (mIdx < curMonthIdx) return 'past';
+    if (mIdx === curMonthIdx) return 'current';
+    return 'future';
+  };
+
+  // Quarterly open weighted pipeline (stage-weighted).
+  const quarterWeighted = { 1: 0, 2: 0, 3: 0, 4: 0 };
+  for (const o of (openOpps || [])) {
+    const m = parseInt(String(o.closeDate || '').substring(5, 7), 10);
+    if (!m) continue;
+    const q = Math.ceil(m / 3);
+    quarterWeighted[q] += (Number(o.amount) || 0) * pipelineStageWeight(o.stage);
+  }
+  const openMonthsInQuarter = (q) => {
+    const months = [q * 3 - 2, q * 3 - 1, q * 3];
+    return months.filter(m => monthState(m - 1) !== 'past').length;
+  };
+  const projectedMrrForMonth = (mIdx) => {
+    const q = Math.ceil((mIdx + 1) / 3);
+    const openMo = openMonthsInQuarter(q);
+    return openMo > 0 ? Math.round(quarterWeighted[q] / openMo) : 0;
+  };
+
+  const byMonth = {};
+  let footerTotal = 0;
+  let columnDTotal = 0;
+  let monthlyContribTotal = 0;
+  for (let mIdx = 0; mIdx < 12; mIdx++) {
+    const mKey = `${yr}-${String(mIdx + 1).padStart(2, '0')}`;
+    const state = monthState(mIdx);
+    const monthsRemaining = 12 - mIdx; // Jan=12 … Dec=1 (June idx5 → 7, Dec idx11 → 1)
+    const projectedMrr = projectedMrrForMonth(mIdx);
+    const sfContribution = Math.round((sfContribByMonth || {})[mKey] || 0);
+    const actualMRR = Math.round((actualMrrByMonth || {})[mKey] || 0);
+    // Per-month cashflow contribution from open pipeline (vs columnD's annual roll-forward).
+    // = expected MRR closing this month from pipeline, calibrated for churn/integration drag.
+    const monthlyContribution = state === 'past' ? 0 : Math.round(projectedMrr * calibrationFactor);
+
+    if (state === 'past') {
+      byMonth[mKey] = { state, actualMRR, sfContribution, projectedMrr: 0, monthsRemaining, monthlyContribution: 0, columnB: sfContribution, columnD: 0 };
+      footerTotal += sfContribution;
+    } else if (state === 'current') {
+      const projected = Math.round(projectedMrr * monthsRemaining * calibrationFactor);
+      const columnB = sfContribution + projected;
+      byMonth[mKey] = { state, actualMRR, sfContribution, projectedMrr, monthsRemaining, closedSoFar: actualMRR, projected, monthlyContribution, columnB, columnD: projected };
+      footerTotal += columnB;
+      columnDTotal += projected;
+      monthlyContribTotal += monthlyContribution;
+    } else {
+      const projected = Math.round(projectedMrr * monthsRemaining * calibrationFactor);
+      byMonth[mKey] = { state, actualMRR: 0, sfContribution: 0, projectedMrr, monthsRemaining, projected, monthlyContribution, columnB: projected, columnD: projected };
+      footerTotal += projected;
+      columnDTotal += projected;
+      monthlyContribTotal += monthlyContribution;
+    }
+  }
+
+  return {
+    year: yr,
+    calibrationFactor,
+    calibrationSource: calibrationSource || 'fallback',
+    stageWeights: PIPELINE_STAGE_WEIGHTS.map(w => ({ pattern: String(w.match), weight: w.weight })),
+    quarterWeighted,
+    byMonth,
+    footerTotal: Math.round(footerTotal),
+    columnDTotal: Math.round(columnDTotal),
+    monthlyContribTotal: Math.round(monthlyContribTotal),
+  };
+}
+
 function createSnowflakeClient(env) {
   const account = env.SNOWFLAKE_ACCOUNT;
   const username = env.SNOWFLAKE_USER;
@@ -902,6 +1005,194 @@ function createSnowflakeClient(env) {
     };
   }
 
+  // ── Column B — Pipeline revenue projection methodology ──────────────────────
+  // Gathers warehouse data, then delegates to the pure assemblePipelineMethodology
+  // (module scope) so the projection math is unit-testable without a live SF conn.
+  //   Past months   → real SF Monthly_Revenue contribution (deals closed that month).
+  //   Current month → SF actual-so-far + calibrated projection of the rest.
+  //   Future months → quarterly open weighted pipeline / open months × months
+  //                    remaining to Dec × calibration factor.
+  // Column D (what feeds the cashflow) = the calibrated PROJECTED portion only,
+  // from the current month onward — past actuals already live in Existing MR.
+  async function fetchPipelineMethodology(year) {
+    const yr = year || new Date().getFullYear();
+    console.log(`[Snowflake] Fetching pipeline methodology for ${yr}...`);
+
+    // Probe both MR tables. Prefer FCT_MONTHLY_REVENUE__SUBSET_PAID when it has
+    // OPPORTUNITY_ID + REVENUE_AMOUNT_EUR — that's the curated, EUR-converted,
+    // deduped semantic layer (no currency or fanout surprises). Fall back to
+    // raw FCT_MONTHLY_REVENUE (MR_AMOUNT in raw currency, multi-currency rows).
+    const probeCols = async (table) => new Set((await query(`
+      SELECT COLUMN_NAME FROM DL_PRODUCTION.INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = 'FINANCE' AND TABLE_NAME = '${table}'
+    `).catch(() => [])).map(r => r.COLUMN_NAME));
+    const subsetCols = await probeCols('FCT_MONTHLY_REVENUE__SUBSET_PAID');
+    const rawCols    = await probeCols('FCT_MONTHLY_REVENUE');
+
+    let MR_TABLE, MR_MONTH, MR_OPP, MR_AMOUNT, MR_CHURNED, MR_ZERO, MR_INTEG, MR_CCY;
+    if (subsetCols.has('REVENUE_AMOUNT_EUR') && (subsetCols.has('OPPORTUNITY_ID') || subsetCols.has('SRC_OPPORTUNITY_ID'))) {
+      MR_TABLE  = 'FCT_MONTHLY_REVENUE__SUBSET_PAID';
+      MR_MONTH  = 'CAL_MONTH_START_DATE';
+      MR_OPP    = subsetCols.has('OPPORTUNITY_ID') ? 'OPPORTUNITY_ID' : 'SRC_OPPORTUNITY_ID';
+      MR_AMOUNT = 'REVENUE_AMOUNT_EUR';
+      MR_CHURNED = null; // SUBSET_PAID has CUSTOMER_STATUS but no CHURNED_OPP — skip
+      MR_ZERO    = null; // falls back to REVENUE_AMOUNT_EUR <> 0 via mrFilters logic
+      MR_INTEG   = subsetCols.has('IS_INTEGRATION_MONTH') ? 'IS_INTEGRATION_MONTH' : null;
+      MR_CCY     = null; // REVENUE_AMOUNT_EUR is already EUR-converted
+    } else {
+      const pick = (...cands) => cands.find(c => rawCols.has(c)) || null;
+      MR_TABLE   = 'FCT_MONTHLY_REVENUE';
+      MR_MONTH   = pick('CAL_MONTH_START_DATE', 'REVENUE_MONTH', 'MONTH_START_DATE');
+      MR_OPP     = pick('OPPORTUNITY_ID', 'SRC_OPPORTUNITY_ID');
+      MR_AMOUNT  = pick('MR_AMOUNT', 'REVENUE_AMOUNT_EUR', 'MONTHLY_REVENUE_EUR', 'AMOUNT_EUR', 'REVENUE_EUR');
+      MR_CHURNED = pick('IS_CHURNED_OPP', 'CHURNED_OPP', 'IS_CHURNED');
+      MR_ZERO    = pick('IS_ZERO', 'ISZERO');
+      MR_INTEG   = pick('IS_INTEGRATION_MONTH', 'INTEGRATION_MONTH');
+      MR_CCY     = pick('CURRENCY');
+    }
+    const mrFilters = [
+      MR_CHURNED ? `COALESCE(mr.${MR_CHURNED}, FALSE) = FALSE` : null,
+      MR_ZERO    ? `COALESCE(mr.${MR_ZERO}, FALSE) = FALSE`    : `COALESCE(mr.${MR_AMOUNT}, 0) <> 0`,
+      MR_INTEG   ? `COALESCE(mr.${MR_INTEG}, FALSE) = FALSE`   : null,
+      MR_CCY     ? `mr.${MR_CCY} = 'EUR'`                     : null,
+    ].filter(Boolean).join('\n        AND ');
+    const mrWhere = mrFilters ? `AND ${mrFilters}` : '';
+    const mrUsable = MR_MONTH && MR_OPP && MR_AMOUNT;
+    console.log(`[Snowflake] Pipeline: using ${MR_TABLE} (amount=${MR_AMOUNT}, opp=${MR_OPP})`);
+
+    // ── Calibration factor (computed from prior-year closed-won) ──────────────
+    // factor = Σ(actual MR collected for prior-year closed-won deals)
+    //          ÷ Σ(opp amount × months_remaining_at_close)
+    // Exclusions (factor only): IS_OPPORTUNITY_REVENUE_SHARED, IS_PRICE_UPDATE.
+    // Dedupe DIM_OPPORTUNITY via a CTE — defensive against any SCD-2 fanout
+    // (multiple rows per OPPORTUNITY_ID would multiply numerator on join).
+    let calibrationFactor = PIPELINE_FALLBACK_FACTOR;
+    let calibrationSource = 'fallback';
+    let calibrationRaw = null;
+    try {
+      const priorYr = yr - 1;
+      const denomRows = await query(`
+        WITH opp AS (
+          SELECT OPPORTUNITY_ID,
+                 ANY_VALUE(ROUND(OPPORTUNITY_AMOUNT)) AS AMT,
+                 ANY_VALUE(EXTRACT(MONTH FROM CLOSED_WON_DATE)) AS MO
+          FROM DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY
+          WHERE IS_OPPORTUNITY_WON = TRUE
+            AND EXTRACT(YEAR FROM CLOSED_WON_DATE) = ${priorYr}
+            AND OPPORTUNITY_AMOUNT > 0
+            AND COALESCE(IS_OPPORTUNITY_REVENUE_SHARED, FALSE) = FALSE
+            AND COALESCE(IS_PRICE_UPDATE, FALSE) = FALSE
+          GROUP BY OPPORTUNITY_ID
+        )
+        SELECT SUM(AMT * (12 - (MO - 1))) AS DENOM, COUNT(*) AS N_OPPS
+        FROM opp
+      `);
+      const denom = Number(denomRows[0]?.DENOM) || 0;
+      let numer = 0;
+      if (mrUsable) {
+        const numRows = await query(`
+          WITH opp AS (
+            SELECT OPPORTUNITY_ID FROM DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY
+            WHERE IS_OPPORTUNITY_WON = TRUE
+              AND EXTRACT(YEAR FROM CLOSED_WON_DATE) = ${priorYr}
+              AND OPPORTUNITY_AMOUNT > 0
+              AND COALESCE(IS_OPPORTUNITY_REVENUE_SHARED, FALSE) = FALSE
+              AND COALESCE(IS_PRICE_UPDATE, FALSE) = FALSE
+            GROUP BY OPPORTUNITY_ID
+          )
+          SELECT SUM(ROUND(mr.${MR_AMOUNT})) AS NUMER
+          FROM DL_PRODUCTION.FINANCE.${MR_TABLE} mr
+          WHERE EXTRACT(YEAR FROM mr.${MR_MONTH}) = ${priorYr}
+            AND mr.${MR_OPP} IN (SELECT OPPORTUNITY_ID FROM opp)
+            ${mrWhere}
+        `);
+        numer = Number(numRows[0]?.NUMER) || 0;
+      }
+      if (denom > 0 && numer > 0) {
+        const raw = numer / denom;
+        calibrationRaw = raw;
+        // Sanity clamp: a calibration factor should land in [0.3, 2.0].
+        // Anything outside means the source data is shaped differently than
+        // the spec assumes (e.g., OPPORTUNITY_AMOUNT in different units, or
+        // MR records fanout). Fall back to 0.8381 and surface a warning.
+        if (raw >= 0.3 && raw <= 2.0) {
+          calibrationFactor = raw;
+          calibrationSource = 'computed';
+        } else {
+          calibrationSource = `fallback (raw=${raw.toFixed(4)} outside [0.3, 2.0])`;
+          console.log(`[Snowflake] Pipeline calibration raw=${raw.toFixed(4)} is implausible — using fallback ${PIPELINE_FALLBACK_FACTOR}. numer=${numer}, denom=${denom}`);
+        }
+      }
+    } catch (e) {
+      console.log(`[Snowflake] pipeline calibration factor fell back: ${e.message}`);
+    }
+
+    // ── Open weighted pipeline by quarter (stage-weighted) ────────────────────
+    // Pull open opps with a close date in the target year, apply stage weights,
+    // group into quarters. "Open months in quarter" = quarter months that are
+    // not yet past (>= current month in the live year; all 3 for future years).
+    const openOpps = await query(`
+      SELECT OPPORTUNITY_STAGE AS STAGE,
+             ROUND(OPPORTUNITY_AMOUNT) AS AMOUNT,
+             SRC_CLOSE_DATE::VARCHAR AS CLOSE_DATE
+      FROM DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY
+      WHERE IS_OPPORTUNITY_CLOSED = FALSE
+        AND OPPORTUNITY_AMOUNT > 0
+        AND COALESCE(IS_OPPORTUNITY_REVENUE_SHARED, FALSE) = FALSE
+        AND EXTRACT(YEAR FROM SRC_CLOSE_DATE) = ${yr}
+    `).catch(() => []);
+
+    const openOppsNorm = (openOpps || []).map(o => ({
+      stage: o.STAGE, amount: Number(o.AMOUNT) || 0, closeDate: (o.CLOSE_DATE || '').substring(0, 10),
+    }));
+
+    // ── Past + current SF actual MR contribution per month ────────────────────
+    // contribution(M) = Σ current-year MR for opps that closed-won in month M.
+    // Dedupe DIM_OPPORTUNITY (one row per OPPORTUNITY_ID with its close month)
+    // so any SCD-2 fanout cannot multiply the MR sum.
+    const sfContribByMonth = {}; // 'YYYY-MM' → eur
+    if (mrUsable) {
+      const contribRows = await query(`
+        WITH opp AS (
+          SELECT OPPORTUNITY_ID,
+                 ANY_VALUE(TO_VARCHAR(CLOSED_WON_DATE, 'YYYY-MM')) AS CLOSE_MONTH
+          FROM DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY
+          WHERE IS_OPPORTUNITY_WON = TRUE
+            AND EXTRACT(YEAR FROM CLOSED_WON_DATE) = ${yr}
+          GROUP BY OPPORTUNITY_ID
+        )
+        SELECT opp.CLOSE_MONTH AS CLOSE_MONTH,
+               SUM(ROUND(mr.${MR_AMOUNT})) AS CONTRIB
+        FROM DL_PRODUCTION.FINANCE.${MR_TABLE} mr
+        JOIN opp ON mr.${MR_OPP} = opp.OPPORTUNITY_ID
+        WHERE EXTRACT(YEAR FROM mr.${MR_MONTH}) = ${yr}
+          ${mrWhere}
+        GROUP BY 1
+      `).catch((e) => { console.log(`[Snowflake] pipeline MR contrib failed: ${e.message}`); return []; });
+      for (const r of contribRows) sfContribByMonth[(r.CLOSE_MONTH || '').substring(0, 7)] = Number(r.CONTRIB) || 0;
+    }
+
+    // Actual MRR (opp amounts closed each month) — informational.
+    const actualMrrByMonth = {};
+    const wonRows = await query(`
+      SELECT TO_VARCHAR(CLOSED_WON_DATE, 'YYYY-MM') AS M, SUM(ROUND(OPPORTUNITY_AMOUNT)) AS AMT
+      FROM DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY
+      WHERE IS_OPPORTUNITY_WON = TRUE
+        AND EXTRACT(YEAR FROM CLOSED_WON_DATE) = ${yr}
+      GROUP BY 1
+    `).catch(() => []);
+    for (const r of wonRows) actualMrrByMonth[(r.M || '').substring(0, 7)] = Number(r.AMT) || 0;
+
+    const result = assemblePipelineMethodology({
+      yr, refDate: new Date(), openOpps: openOppsNorm, sfContribByMonth, actualMrrByMonth,
+      calibrationFactor, calibrationSource,
+    });
+    result.mrColumnsResolved = { table: MR_TABLE, month: MR_MONTH, opp: MR_OPP, amount: MR_AMOUNT, churned: MR_CHURNED, zero: MR_ZERO || (MR_TABLE === 'FCT_MONTHLY_REVENUE' ? `${MR_AMOUNT}<>0 (inferred)` : 'n/a'), integration: MR_INTEG, currency: MR_CCY };
+    result.calibrationRaw = calibrationRaw;
+    console.log(`[Snowflake] Pipeline methodology: factor=${calibrationFactor.toFixed(4)} (${calibrationSource})${calibrationRaw != null ? `, raw=${calibrationRaw.toFixed(4)}` : ''}, footer=${result.footerTotal}, columnD=${result.columnDTotal}`);
+    return result;
+  }
+
   // ── Monthly revenue from FCT_MONTHLY_REVENUE__SUBSET_PAID (fresh semantic layer) ──
   async function fetchMonthlyRevenuePaid(year) {
     const yr = year || 2026;
@@ -1323,7 +1614,7 @@ function createSnowflakeClient(env) {
       WHERE e.SUBSIDIARY_ID = 3
         AND e.SOURCE = 'netsuite'
         AND g.IS_PAYROLL = TRUE
-        AND g.GL_ACCOUNT_NUMBER NOT IN ('760038','76003','760023','760020','760017','760029','760014','760015','760008')
+        AND g.GL_ACCOUNT_NUMBER NOT IN ('760017', '760019', '760023', '760029')
         AND e.CAL_MONTH_START_DATE >= '${yr}-01-01'
         AND e.CAL_MONTH_START_DATE <= '${yr}-12-31'
       GROUP BY d.DEPARTMENT_NAME, DATE_TRUNC('month', e.CAL_MONTH_START_DATE)::VARCHAR
@@ -1447,6 +1738,7 @@ function createSnowflakeClient(env) {
     fetchMonthlyRevenuePaid,
     fetchRevenueBreakdown,
     fetchOpenPipeline,
+    fetchPipelineMethodology,
     fetchConversionAnalysis,
     fetchWonOpportunitiesDetail,
     fetchHeadcountEvents,
@@ -1464,4 +1756,4 @@ function createSnowflakeClient(env) {
   };
 }
 
-module.exports = { createSnowflakeClient };
+module.exports = { createSnowflakeClient, assemblePipelineMethodology, pipelineStageWeight, PIPELINE_STAGE_WEIGHTS, PIPELINE_FALLBACK_FACTOR };

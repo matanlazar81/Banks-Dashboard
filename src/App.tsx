@@ -1041,6 +1041,13 @@ export default function App() {
   const [vendorBills, setVendorBills] = useState<VendorBill[]>([]);
   const [arForecast, setARForecast] = useState<ARForecastItem[]>([]);
   const [salaryData, setSalaryData] = useState<SalaryMonth[]>([]);
+  // NS GL actuals per month for vendors (6%/7% ex 76%) and revenue (4%) — past months,
+  // sourced directly from NetSuite to match the P&L line-for-line.
+  const [vendorActuals, setVendorActuals] = useState<{ month: string; amountEUR: number; amountILS: number }[]>([]);
+  const [revenueActuals, setRevenueActuals] = useState<{ month: string; amountEUR: number; amountILS: number }[]>([]);
+  // Customer cash receipts per month (CustPymt + CashSale bank debits).
+  // Keyed by YYYY-MM. Preferred source for past-month Inflows when populated.
+  const [customerReceipts, setCustomerReceipts] = useState<Record<string, number>>({});
   const [vendorHistory, setVendorHistory] = useState<VendorHistoryRecord[]>([]);
   const [expenseCategories, setExpenseCategories] = useState<{ byMonth: Record<string, Record<string, number>>; categories: string[] }>({ byMonth: {}, categories: [] });
   const [actualCollections, setActualCollections] = useState<Record<string, number>>({});
@@ -1074,6 +1081,15 @@ export default function App() {
   const [sfPipeline, setSfPipeline] = useState<{ name: string; stage: string; amount: number; probability: number; weighted: number; currency: string; closeDate: string; type: string; feedType: string; owner: string }[]>([]);
   const [pipelineMinProb, setPipelineMinProb] = useState(100); // min probability filter for pipeline
   const [sfConversion, setSfConversion] = useState<{ yearly: { year: number; won: number; lost: number; winRate: number; avgWonDays: number }[]; stages: any[]; customers: any[]; projection: any[] }>({ yearly: [], stages: [], customers: [], projection: [] });
+  // Column B — pipeline revenue projection methodology (stage-weighted + calibration).
+  type PipelineMonth = { state: 'past' | 'current' | 'future'; actualMRR: number; sfContribution: number; projectedMrr: number; monthsRemaining: number; closedSoFar?: number; projected?: number; monthlyContribution: number; columnB: number; columnD: number };
+  const [pipelineMethodology, setPipelineMethodology] = useState<{ year: number; calibrationFactor: number; calibrationSource: string; quarterWeighted: Record<string, number>; byMonth: Record<string, PipelineMonth>; footerTotal: number; columnDTotal: number } | null>(null);
+  // Revenue projection mode: 'legacy' (historical win-rate pipeline) or 'pipeline' (Column B methodology).
+  const [revenueMethodology, setRevenueMethodology] = useState<'legacy' | 'pipeline'>(() => {
+    try { return (localStorage.getItem('banks-revenue-methodology') as 'legacy' | 'pipeline') || 'legacy'; } catch { return 'legacy'; }
+  });
+  useEffect(() => { try { localStorage.setItem('banks-revenue-methodology', revenueMethodology); } catch {} }, [revenueMethodology]);
+  const [pipelineMethodOpen, setPipelineMethodOpen] = useState(false);
   const [monthlyReval, setMonthlyReval] = useState<{ byMonth: Record<string, { eur: number; ils: number; hasBothEnds?: boolean }>; preYear: { eur: number; ils: number } }>({ byMonth: {}, preYear: { eur: 0, ils: 0 } });
   const [sfSalaryBudget, setSfSalaryBudget] = useState<Record<string, { eur: number; ils: number }>>({});
   const [sfFinanceBudget, setSfFinanceBudget] = useState<Record<string, { eur: number; ils: number }>>({});
@@ -1937,12 +1953,15 @@ useEffect(() => {
     if (!c) return false;
     setBankData(c.bankData); setBankAccounts(c.bankAccounts); setVendorBills(c.vendorBills);
     setARForecast(c.arForecast); setSalaryData(c.salaryData); setVendorHistory(c.vendorHistory);
+    setVendorActuals(c.vendorActuals || []); setRevenueActuals(c.revenueActuals || []);
+    setCustomerReceipts(c.customerReceipts || {});
     setExpenseCategories(c.expenseCategories); setActualCollections(c.actualCollections);
     setMonthlyReval(c.monthlyReval); setNsBudget(c.nsBudget); setNsAccountId(c.nsAccountId);
     setSfBudget(c.sfBudget); if (c.sfBudget?.financeBudget) setSfFinanceBudget(c.sfBudget.financeBudget); setSfRevenue(c.sfRevenue); setSfActualsSplit(c.sfActualsSplit);
     setSfSalaryBudget(c.sfSalaryBudget); setSfSalaryOverrides(c.sfSalaryOverrides); setSfFinanceBudget(c.sfFinanceBudget || {});
     if (c.arrData) setArrData(c.arrData);
     setSfRevenuePaid(c.sfRevenuePaid); setSfPipeline(c.sfPipeline); setSfConversion(c.sfConversion);
+    setPipelineMethodology(c.pipelineMethodology || null);
     setChurnData(c.churnData); setChurnMonthlyAvg(c.churnMonthlyAvg);
     setYoyRevenue(c.yoyRevenue); setPrevMonthEndBalance(c.prevMonthEndBalance);
     setSalaryDeptBudgets(c.salaryDeptBudgets);
@@ -1962,10 +1981,11 @@ useEffect(() => {
       const cache: any = {};
       const safe = async (url: string) => { try { const r = await fetch(url); if (r.ok) return await r.json(); } catch {} return null; };
       // Fire all NS calls in parallel (server queues them anyway)
-      const [bankR, acctR, billsR, arR, salR, vhR, expR, collR, revalR] = await Promise.all([
+      const [bankR, acctR, billsR, arR, salR, vhR, expR, collR, revalR, venActR, revActR, custRcptR] = await Promise.all([
         safe(`/api/bank-balance${subQ}`), safe(`/api/bank-accounts${subQ}`), safe(`/api/vendor-bills${subQ}`),
         safe(`/api/ar-forecast${subQ}`), safe(`/api/salary-data${subQ}`), safe(`/api/vendor-history${subQ}`),
         safe(`/api/expense-categories${subQ}`), safe(`/api/banks-collection-data${subQ}`), safe(`/api/monthly-reval${subQ}`),
+        safe(`/api/ns-vendor-actuals${subQ}`), safe(`/api/ns-revenue-actuals${subQ}`), safe(`/api/ns-customer-receipts${subQ}`),
       ]);
       if (bankR?.dailyBalances) cache.bankData = bankR;
       if (acctR?.data) cache.bankAccounts = acctR.data;
@@ -1976,6 +1996,9 @@ useEffect(() => {
       if (expR?.data) cache.expenseCategories = expR.data;
       if (collR?.data) cache.actualCollections = collR.data;
       if (revalR?.data) cache.monthlyReval = revalR.data;
+      if (venActR?.data) cache.vendorActuals = venActR.data;
+      if (revActR?.data) cache.revenueActuals = revActR.data;
+      if (custRcptR?.data) cache.customerReceipts = custRcptR.data;
       if (!hasSF) {
         const nsBudR = await safe(`/api/ns-budget${subQ}`);
         if (nsBudR) cache.nsBudget = nsBudR;
@@ -1987,12 +2010,14 @@ useEffect(() => {
       } else {
         cache.nsBudget = { byMonth: {} };
         // Fire all SF calls in parallel
-        const [budR, revR, splitR, salBudR, revPaidR, pipeR, convR, churnR, yoyR, finBudR, arrR, salActDeptR] = await Promise.all([
+        const [budR, revR, splitR, salBudR, revPaidR, pipeR, convR, churnR, yoyR, finBudR, arrR, salActDeptR, pipeMethR] = await Promise.all([
           safe('/api/sf-budget'), safe('/api/sf-revenue'), safe('/api/sf-actuals-split'),
           safe('/api/sf-salary-budget'), safe('/api/sf-revenue-paid'), safe('/api/sf-pipeline'),
           safe('/api/sf-conversion'), safe('/api/sf-churn-analysis'), safe('/api/sf-yoy-revenue'),
           safe('/api/sf-finance-budget'), safe('/api/arr-current'), safe('/api/sf-salary-actuals-by-dept'),
+          safe(`/api/sf-pipeline-methodology?year=${year}`),
         ]);
+        if (pipeMethR?.data) cache.pipelineMethodology = pipeMethR.data;
         if (budR?.data) { cache.sfBudget = budR.data; if (budR.data.financeBudget) cache.sfFinanceBudget = budR.data.financeBudget; }
         if (revR?.data) cache.sfRevenue = revR.data;
         if (splitR?.data) cache.sfActualsSplit = splitR.data;
@@ -2032,6 +2057,7 @@ useEffect(() => {
       cache.sfFinanceBudget = cache.sfFinanceBudget || {};
       cache.sfRevenuePaid = cache.sfRevenuePaid || {};
       cache.sfPipeline = cache.sfPipeline || [];
+      cache.pipelineMethodology = cache.pipelineMethodology || null;
       cache.sfConversion = cache.sfConversion || { yearly: [], stages: [], customers: [], projection: [] };
       cache.churnData = cache.churnData || [];
       cache.churnMonthlyAvg = cache.churnMonthlyAvg || 0;
@@ -2220,6 +2246,7 @@ useEffect(() => {
         `/api/vendor-history${subQ}`, `/api/expense-categories${subQ}`,
         `/api/banks-collection-data${subQ}`, `/api/monthly-reval${subQ}`,
         `/api/ns-paid-vendors-yearly${subQ}`, `/api/ns-bank-classified-yearly${subQ}`,
+        `/api/ns-vendor-actuals${subQ}`, `/api/ns-revenue-actuals${subQ}`, `/api/ns-customer-receipts${subQ}`,
       ];
       const sfUrls = hasSF ? [
         '/api/sf-budget', '/api/sf-revenue', '/api/sf-actuals-split', '/api/sf-salary-budget',
@@ -2228,7 +2255,7 @@ useEffect(() => {
       ] : !hasSF ? [`/api/ns-budget${subQ}`] : [];
 
       const allResults = await Promise.all([...nsUrls, ...sfUrls].map(u => safe(u)));
-      const [cfgR, bankR, acctR, billsR, arR, salR, vhR, expR, collR, revalR, paidVR, bankClR, ...sfResults] = allResults;
+      const [cfgR, bankR, acctR, billsR, arR, salR, vhR, expR, collR, revalR, paidVR, bankClR, venActR, revActR, custRcptR, ...sfResults] = allResults;
       // Prefer live data when populated. Otherwise fall back to the bundled LSports 2026 seed
       // (src/seeds/bank-classified-lsports-2026.json) so the Other column renders even when the
       // parent finance-it server doesn't route /api/ns-bank-classified-yearly to bank-dashboard.
@@ -2265,6 +2292,9 @@ useEffect(() => {
       if (expR?.data) setExpenseCategories(expR.data);
       if (collR?.data) setActualCollections(collR.data);
       if (revalR?.data) setMonthlyReval(revalR.data);
+      if (venActR?.data) setVendorActuals(venActR.data);
+      if (revActR?.data) setRevenueActuals(revActR.data);
+      if (custRcptR?.data) setCustomerReceipts(custRcptR.data);
 
       // Fetch previous month-end bank balances for cashflow anchoring (non-blocking)
       try {
@@ -2420,7 +2450,6 @@ useEffect(() => {
     const refMonth = ref.getMonth(); // 0-indexed
     const lastMonth = activeYear < refYear ? 11 : activeYear === refYear ? refMonth - 1 : -1;
     if (lastMonth < 0) { setMonthEndBalances({}); return; }
-    const ccKeywords = ['AMEX', 'MasterCard', 'Isracard', 'Visa'];
     let cancelled = false;
     const fetches: Promise<{ mKey: string; eur: number; ils: number } | null>[] = [];
     for (let mi = 0; mi <= lastMonth; mi++) {
@@ -2432,10 +2461,11 @@ useEffect(() => {
           .then(r => r.ok ? r.json() : null)
           .then(j => {
             if (!j?.data?.length) return null;
-            const bankOnly = (j.data as BankAccount[]).filter((a: BankAccount) => !ccKeywords.some(k => a.name.includes(k)));
-            if (bankOnly.length === 0) return null;
-            const eur = bankOnly.reduce((s, a) => s + a.primaryBalance, 0);
-            const ils = bankOnly.reduce((s, a) => s + a.localBalance, 0);
+            // Include all CASH&CASH EQUIVALENTS NEW accounts (banks + crypto + paypal +
+            // deposits + credit cards) so closing matches the NS Balance Sheet.
+            // Credit card balances are negative liabilities that reduce available cash.
+            const eur = (j.data as BankAccount[]).reduce((s, a) => s + a.primaryBalance, 0);
+            const ils = (j.data as BankAccount[]).reduce((s, a) => s + a.localBalance, 0);
             return { mKey, eur, ils };
           })
           .catch(() => null)
@@ -2457,7 +2487,6 @@ useEffect(() => {
     const ref = asOfDate ? new Date(asOfDate + 'T12:00:00') : new Date();
     const refYear = ref.getFullYear();
     const refMonth = ref.getMonth();
-    const ccKeywords = ['AMEX', 'MasterCard', 'Isracard', 'Visa'];
     let cancelled = false;
     const entries = Object.entries(COMPANY_CONFIG) as Array<[string, { subsidiary: number }]>;
     const subYearMap: Record<string, number> = {
@@ -2479,7 +2508,8 @@ useEffect(() => {
             .then(r => r.ok ? r.json() : null)
             .then(j => {
               if (!j?.data?.length) return null;
-              const bankOnly = (j.data as BankAccount[]).filter((a: BankAccount) => !ccKeywords.some(k => a.name.includes(k)));
+              // Include all cash equivalent accounts (incl. credit cards) to match NS Balance Sheet.
+              const bankOnly = j.data as BankAccount[];
               if (bankOnly.length === 0) return null;
               const eur = bankOnly.reduce((s, a) => s + a.primaryBalance, 0);
               const ils = bankOnly.reduce((s, a) => s + a.localBalance, 0);
@@ -2515,10 +2545,10 @@ useEffect(() => {
     const prevStr = `${prevEnd.getFullYear()}-${String(prevEnd.getMonth()+1).padStart(2,'0')}-${String(prevEnd.getDate()).padStart(2,'0')}`;
     fetch(`/api/ns-bank-accounts-asof?date=${prevStr}`).then(r => r.json()).then(j => {
       if (j.data && j.data.length > 0) {
-        const ccKeywords = ['AMEX', 'MasterCard', 'Isracard', 'Visa'];
-        const bankOnly = (j.data as BankAccount[]).filter((a: BankAccount) => !ccKeywords.some(k => a.name.includes(k)));
-        const eur = bankOnly.reduce((s: number, a: BankAccount) => s + a.primaryBalance, 0);
-        const ils = bankOnly.reduce((s: number, a: BankAccount) => s + a.localBalance, 0);
+        // Include all cash equivalent accounts (incl. credit cards) to match NS Balance Sheet.
+        const accts = j.data as BankAccount[];
+        const eur = accts.reduce((s: number, a: BankAccount) => s + a.primaryBalance, 0);
+        const ils = accts.reduce((s: number, a: BankAccount) => s + a.localBalance, 0);
         setPrevMonthEndBalance({ eur, ils });
       }
     }).catch(() => {});
@@ -2618,6 +2648,7 @@ useEffect(() => {
       const label = `${monthNames[d.getMonth()]} ${d.getFullYear()}`;
       const isCurMonth = forecastYear === now.getFullYear() && mi === now.getMonth();
       const isPastMonth = forecastYear < now.getFullYear() || (forecastYear === now.getFullYear() && mi < now.getMonth());
+      const isClosed = isPastMonth || isCurMonth;
       // Anchor current month to actual previous month-end bank balance (includes FxReval)
       // Only in live mode — in historical (asOfDate) mode, let running balance flow from opening
       if (isCurMonth && prevMonthEndBalance && !asOfDate) {
@@ -2657,16 +2688,20 @@ useEffect(() => {
         }
       }
 
-      // ── SALARY: SF actuals (past/current) → NS actuals (past) → SF budget / lastActual → NS budget → fallback ──
+      // ── SALARY: NS actuals (past/current — full 76xxx GL) → SF actuals → lastActual → SF/NS budget ──
+      // NS preferred over Snowflake FCT_EXPENSE because the mart is missing some
+      // non-recurring payroll accounts (760017 Bonus, 760019 Maternity).
       let salary: number;
       let salaryBase: number; // base salary WITHOUT scenario adjustments (for delta display)
       const actualSalaryEntry = salaryData.find(s => s.month === mKey);
-      if ((isPastMonth || isCurMonth) && sfActualsSplit[mKey]?.salary > 0) {
-        salary = sfActualsSplit[mKey].salary;
-        salaryBase = salary;
-      } else if ((isPastMonth || isCurMonth) && actualSalaryEntry && actualSalaryEntry.amountEUR > 0) {
-        // NS actual salary data (used for non-SF subsidiaries like Statscore)
+      // NS GL 76xxx direct query (salaryData) is preferred — Snowflake FCT_EXPENSE
+      // is missing some non-recurring payroll accounts (760017 Bonus, 760019
+      // Maternity). For Jan 2026 that's a €441K bonus that would be dropped.
+      if (isClosed && actualSalaryEntry && actualSalaryEntry.amountEUR > 0) {
         salary = actualSalaryEntry.amountEUR;
+        salaryBase = salary;
+      } else if (isClosed && sfActualsSplit[mKey]?.salary > 0) {
+        salary = sfActualsSplit[mKey].salary;
         salaryBase = salary;
       } else if (useLastActual && !isPastMonth) {
         // "Last Actual" mode: project last actual month's recurring salary per dept
@@ -2716,10 +2751,18 @@ useEffect(() => {
       // fallback for subsidiaries / months without SF coverage.
       // Current month: use budget, not partial actuals (bills post throughout the month).
       let vendors: number;
+      // Snowflake Actual (FCT_EXPENSE accrual, cleaned) — preferred for past months on SF-covered subsidiaries.
+      // Matches "Snowflake Actual (this month)" in the Vendor modal.
+      // NS GL accrual (6xxx+7xxx ex 76xxx) — fallback for subs without SF coverage,
+      // matches P&L "Total Overheads − Payroll". Tends to run higher than SF Actual
+      // because it includes I/C charges and other line items SF filters out.
+      const nsVendorActualGL = isPastMonth ? (vendorActuals.find(v => v.month === mKey)?.amountEUR || 0) : 0;
       const nsPaidByMonth = isPastMonth ? (nsPaidVendors.byMonth[mKey] || 0) : 0;
       const nsVendorActual = isPastMonth ? vendorHistory.filter(v => v.paidDate.startsWith(mKey)).reduce((s, v) => s + v.amountEUR, 0) : 0;
       if (isPastMonth && sfActualsSplit[mKey]?.vendors > 0) {
         vendors = sfActualsSplit[mKey].vendors;
+      } else if (isPastMonth && nsVendorActualGL > 0) {
+        vendors = nsVendorActualGL;
       } else if (isPastMonth && nsPaidByMonth > 0) {
         vendors = nsPaidByMonth;
       } else if (isPastMonth && nsVendorActual > 0) {
@@ -2790,10 +2833,33 @@ useEffect(() => {
       // so adding them again here would double-count.
       let collectionsUnpaidCarry = 0;
       const collectionsUnpaidCarryMonth = '';
-      const collectionsPipeline = (!isPastMonth && !isCurMonth) ? (pipelineByMonth[mKey] || 0) : 0;
+      // Pipeline contribution to inflows for future months. Two methodologies:
+      //   'legacy'   → historical win-rate weighted pipeline (pipelineByMonth)
+      //   'pipeline' → Column B methodology, monthly slice: stage-weighted quarterly
+      //                pipeline ÷ open months × calibration factor (monthlyContribution).
+      //                NOT × monthsRemaining — that would be the annual roll-forward
+      //                from columnD, which doubles up the cashflow per month.
+      const collectionsPipeline = (!isPastMonth && !isCurMonth)
+        ? (revenueMethodology === 'pipeline'
+            ? Math.round(pipelineMethodology?.byMonth?.[mKey]?.monthlyContribution || 0)
+            : (pipelineByMonth[mKey] || 0))
+        : 0;
       const customers = revPaid?.customers || 0;
-      if (isPastMonth && actualColl > 0) {
-        // Past: NS actual collections (cash received, incl I/C)
+      // NS GL accrual for revenue (4xxx) — matches P&L "Total - 400000 - REVENUES".
+      const nsRevenueActualGL = (isPastMonth || isCurMonth) ? (revenueActuals.find(v => v.month === mKey)?.amountEUR || 0) : 0;
+      // Customer cash receipts (CustPymt + CashSale bank debits) — matches bank statement
+      // filtered to customer money. Includes AR catch-up from prior periods.
+      const nsCustomerReceipts = (isPastMonth || isCurMonth) ? (customerReceipts[mKey] || 0) : 0;
+      if (isPastMonth && nsCustomerReceipts > 0) {
+        // Past (preferred): real bank deposits from customers
+        collections = nsCustomerReceipts;
+        collectionsActual = nsCustomerReceipts;
+      } else if (isPastMonth && nsRevenueActualGL > 0) {
+        // Past fallback: NS GL revenue (accrual basis, matches P&L)
+        collections = nsRevenueActualGL;
+        collectionsActual = nsRevenueActualGL;
+      } else if (isPastMonth && actualColl > 0) {
+        // Past last-resort: NS Income credits on cash-basis (incl I/C)
         collections = actualColl;
         collectionsActual = actualColl;
       } else if (isCurMonth && actualColl > 0) {
@@ -2846,20 +2912,15 @@ useEffect(() => {
       // between that and the bank-side collections bucket (interest journals, AR-adjustments
       // that the modal classifies separately) is absorbed into 'other' so the closing balance
       // still reconciles to the actual NS bank delta.
+      // Past-month override: salary/vendors/collections stay as already computed
+      // (NS actuals for salary, SF accrual for vendors, NS collections); the
+      // bank-line residual is classified into 'other' so closing balance still
+      // reconciles to the NS month-end bank delta.
       let other = 0;
       let otherILS = 0;
       if (bcm) {
-        salary = Math.max(0, -bcm.salary.eur);
-        // vendors stays as-is from the existing SF Actuals source (FCT_EXPENSE accrual) so the
-        // grid matches the Vendor Expenses modal's 'Snowflake Actual (this month)' line.
-        // Past-month closing is accrual-based and will not perfectly equal NS month-end bank
-        // balance -- the gap reflects timing differences between expense recognition and cash out.
-        // collections stays as-is from the NS collection-data source so it matches the Revenue
-        // Forecast modal. Shift only the collections bank-vs-NS gap into 'other'.
-        other = -bcm.other.eur - (collections - bcm.collections.eur);
+        other = -bcm.other.eur;
         otherILS = -bcm.other.ils;
-        vendorsBase = vendors;
-        salaryBase = salary;
       }
       let totalOutflow = salary + vendors + Math.max(0, other);
       // Cumulative churn: every customer that churned in earlier forecast months is still gone,
@@ -2876,10 +2937,15 @@ useEffect(() => {
       }
       const churnDeductionILS = Math.round(churnDeduction * eurIlsRatio);
       let net = collections - salary - vendors - other + pipelineWeighted - churnDeduction;
-      const salaryILS = bcm ? Math.max(0, -bcm.salary.ils) : Math.round(salary * eurIlsRatio);
+      // salaryILS picks the same source priority as the salary EUR above
+      // (NS actuals → SF actualsSplit) for closed months, else derives.
+      let salaryILS: number;
+      if (isClosed && actualSalaryEntry?.amountILS > 0) salaryILS = actualSalaryEntry.amountILS;
+      else if (isClosed && sfActualsSplit[mKey]?.salaryILS > 0) salaryILS = sfActualsSplit[mKey].salaryILS;
+      else salaryILS = Math.round(salary * eurIlsRatio);
       let vendorsILS = Math.round(vendors * eurIlsRatio); // vendors uses SF Actuals × ratio (matches modal)
       const collectionsILS = Math.round(collections * eurIlsRatio); // always derive from displayed collections × ratio
-      if (bcm) otherILS = -bcm.other.ils - (collectionsILS - bcm.collections.ils);
+      // otherILS already set from bcm.other.ils above; no collections-gap adjustment.
       let totalOutflowILS = salaryILS + vendorsILS + Math.max(0, otherILS);
       let netILS = collectionsILS - salaryILS - vendorsILS - otherILS + pipelineWeightedILS - churnDeductionILS;
       runningBalance += net;
@@ -2915,14 +2981,16 @@ useEffect(() => {
       runningBalance += revalImpact;
       runningBalanceILS += revalImpactILS;
 
-      // Past-month closing is computed from line items (cash-basis vendors + salary + collections + reval).
-      // No bank-pin: divergence from NS month-end is visible rather than absorbed into Vendors.
-
       const openingBalanceILS = runningBalanceILS - netILS - revalImpactILS;
-      rows.push({ month: label, mKey, openingBalance, openingBalanceILS, salary, salaryBase, salaryILS, vendors, vendorsBase, vendorsILS, other, otherILS, otherDetails: bcm?.details || [], totalOutflow, totalOutflowILS, collections, collectionsILS, collectionsActual, collectionsRemaining, collectionsForecast, collectionsRevenue, collectionsUnpaidCarry, collectionsUnpaidCarryMonth, collectionsPipeline, customers, pipelineWeighted, pipelineWeightedILS, pipelineTotal, pipelineCount, pipelineOpps, pipelineHistWinRate, pipelineDelayMonths, churnDeduction, churnDeductionILS, net, netILS, revalImpact, revalImpactILS, revalHasBothEnds, closingBalance: runningBalance, closingBalanceILS: runningBalanceILS, isCurrent: isCurMonth, isPast: isPastMonth });
+      // Mode 3: each column independent, Closing = Opening + Inflows - Outflows + Reval
+      // (pure row math). No anchor to NS bank balance — Closing may diverge from the
+      // NS Balance Sheet by AR/AP timing, but every column reads its own raw source.
+      const wcDelta = 0;
+      const wcDeltaILS = 0;
+      rows.push({ month: label, mKey, openingBalance, openingBalanceILS, salary, salaryBase, salaryILS, vendors, vendorsBase, vendorsILS, other, otherILS, otherDetails: bcm?.details || [], totalOutflow, totalOutflowILS, collections, collectionsILS, collectionsActual, collectionsRemaining, collectionsForecast, collectionsRevenue, collectionsUnpaidCarry, collectionsUnpaidCarryMonth, collectionsPipeline, customers, pipelineWeighted, pipelineWeightedILS, pipelineTotal, pipelineCount, pipelineOpps, pipelineHistWinRate, pipelineDelayMonths, churnDeduction, churnDeductionILS, net, netILS, revalImpact, revalImpactILS, revalHasBothEnds, closingBalance: runningBalance, closingBalanceILS: runningBalanceILS, wcDelta, wcDeltaILS, isCurrent: isCurMonth, isPast: isPastMonth });
     }
     return rows;
-  }, [vendorBills, arForecast, salaryData, vendorHistory, expenseCategories, book, bookLocal, actualCollections, sfBudget, sfRevenue, sfActualsSplit, nsPaidVendors, nsBankClassified, salaryAdjPctByMonth, collPctByMonth, monthlyReval, sfSalaryBudget, sfRevenuePaid, sfPipeline, pipelineMinProb, sfConversion, salaryDeptAdj, salaryDeptBudgets, vendorCatAdj, vendorDetailAdj, prevMonthEndBalance, yearStartBalance, monthEndBalances, churnMonthlyAvg, churnData, sfChurnQuarterly, churnOverride, asOfDate, nsBudget, activeYear, sfFinanceBudget, currencyDefensePct, currencyDefensePctByMonth, pipelineAdjPctByMonth, salaryProjectionMode, salaryActualsByDept, lastActualSalaryMonth, monthlyHCImpact, salaryManualILS]);
+  }, [vendorBills, arForecast, salaryData, vendorActuals, revenueActuals, vendorHistory, expenseCategories, book, bookLocal, actualCollections, sfBudget, sfRevenue, sfActualsSplit, nsPaidVendors, nsBankClassified, salaryAdjPctByMonth, collPctByMonth, monthlyReval, sfSalaryBudget, sfRevenuePaid, sfPipeline, pipelineMinProb, sfConversion, salaryDeptAdj, salaryDeptBudgets, vendorCatAdj, vendorDetailAdj, prevMonthEndBalance, yearStartBalance, monthEndBalances, churnMonthlyAvg, churnData, sfChurnQuarterly, churnOverride, asOfDate, nsBudget, activeYear, sfFinanceBudget, currencyDefensePct, currencyDefensePctByMonth, pipelineAdjPctByMonth, salaryProjectionMode, salaryActualsByDept, lastActualSalaryMonth, monthlyHCImpact, salaryManualILS, revenueMethodology, pipelineMethodology]);
 
   // ── Capture current-year cashflow for propagation to next year ──
   useEffect(() => {
@@ -3851,6 +3919,70 @@ useEffect(() => {
         year={activeYears[activeCompany] || currentYear}
       />
 
+      {/* ── Pipeline Methodology (Column B) breakdown ── */}
+      {pipelineMethodOpen && pipelineMethodology && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setPipelineMethodOpen(false)}>
+          <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[85vh] overflow-auto" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-3 border-b sticky top-0 bg-white">
+              <div>
+                <h3 className="font-bold text-gray-800">Revenue Pipeline Methodology — Column B</h3>
+                <p className="text-[11px] text-gray-500">
+                  Calibration factor <span className="font-semibold text-emerald-600">×{pipelineMethodology.calibrationFactor.toFixed(4)}</span> ({pipelineMethodology.calibrationSource}) ·
+                  monthly slice feeds cashflow, annual roll-forward is Column D
+                </p>
+              </div>
+              <button onClick={() => setPipelineMethodOpen(false)} className="text-gray-400 hover:text-gray-700 text-lg leading-none">✕</button>
+            </div>
+            <div className="p-5">
+              <table className="w-full text-xs">
+                <thead><tr className="text-left text-gray-400 uppercase border-b">
+                  <th className="pb-1 pr-2">Month</th>
+                  <th className="pb-1 pr-2">State</th>
+                  <th className="pb-1 pr-2 text-right">Actual MRR</th>
+                  <th className="pb-1 pr-2 text-right">SF Contribution</th>
+                  <th className="pb-1 pr-2 text-right">Projected MRR</th>
+                  <th className="pb-1 pr-2 text-right">Months Rem.</th>
+                  <th className="pb-1 pr-2 text-right" title="Per-month cashflow Pipeline value: projectedMrr × factor">Monthly →</th>
+                  <th className="pb-1 pr-2 text-right">Column B</th>
+                  <th className="pb-1 pr-2 text-right" title="Annual roll-forward (× months-remaining × factor)">Column D</th>
+                </tr></thead>
+                <tbody>
+                  {Object.entries(pipelineMethodology.byMonth).sort(([a],[b]) => a.localeCompare(b)).map(([mk, m]) => (
+                    <tr key={mk} className="border-b border-gray-50">
+                      <td className="py-1.5 pr-2 font-medium text-gray-700">{mk}</td>
+                      <td className="py-1.5 pr-2">
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded ${m.state === 'past' ? 'bg-gray-100 text-gray-500' : m.state === 'current' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>{m.state}</span>
+                      </td>
+                      <td className="py-1.5 pr-2 text-right text-gray-500">{m.actualMRR ? fmt(m.actualMRR) : '—'}</td>
+                      <td className="py-1.5 pr-2 text-right text-blue-600">{m.sfContribution ? fmt(m.sfContribution) : '—'}</td>
+                      <td className="py-1.5 pr-2 text-right text-gray-600">{m.projectedMrr ? fmt(m.projectedMrr) : '—'}</td>
+                      <td className="py-1.5 pr-2 text-right text-gray-400">{m.state === 'past' ? '—' : m.monthsRemaining}</td>
+                      <td className="py-1.5 pr-2 text-right font-medium text-emerald-700">{m.monthlyContribution ? fmt(m.monthlyContribution) : '—'}</td>
+                      <td className="py-1.5 pr-2 text-right font-medium text-gray-800">{fmt(m.columnB)}</td>
+                      <td className="py-1.5 pr-2 text-right text-gray-500">{m.columnD ? fmt(m.columnD) : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot><tr className="border-t-2 font-bold">
+                  <td className="py-2" colSpan={6}>Total</td>
+                  <td className="py-2 pr-2 text-right text-emerald-800">{fmt(pipelineMethodology.monthlyContribTotal || 0)}</td>
+                  <td className="py-2 pr-2 text-right text-gray-900">{fmt(pipelineMethodology.footerTotal)}</td>
+                  <td className="py-2 pr-2 text-right text-gray-600">{fmt(pipelineMethodology.columnDTotal)}</td>
+                </tr></tfoot>
+              </table>
+              <div className="mt-4 text-[11px] text-gray-500 space-y-1">
+                <p><span className="font-semibold text-gray-700">Past months</span> — real SF Monthly_Revenue contribution from deals closed that month (Closed Won, not churned/zero/integration). Not re-projected.</p>
+                <p><span className="font-semibold text-gray-700">Current month</span> — SF actual-so-far + (projected MRR × months remaining × factor). Monthly slice = projectedMrr × factor.</p>
+                <p><span className="font-semibold text-gray-700">Future months</span> — quarterly open weighted pipeline ÷ open months × factor (monthly), or × months-remaining × factor (annual roll-forward = Column D).</p>
+                <p className="pt-1"><span className="font-semibold text-gray-700">Quarter weighted pipeline:</span> {Object.entries(pipelineMethodology.quarterWeighted).map(([q, v]) => `Q${q} ${fmt(Math.round(Number(v)))}`).join(' · ')}</p>
+                <p><span className="font-semibold text-gray-700">Stage weights:</span> New/Qualified 12% · Test 17% · Negotiation 45% · Contract Sent 60% · Best Case 90%</p>
+                <p className="text-emerald-600"><span className="font-semibold">Monthly →</span> what feeds the cashflow Pipeline column (per-month additional MR from new closings). <span className="font-semibold text-gray-700">Column D</span> is the annual roll-forward of the same opportunities through year-end.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Scenario-edit Notification Banner ── */}
       {_visibleScenarioNotifs.length > 0 && (
         <div className="fixed top-0 left-0 right-0 z-50" style={{ pointerEvents: 'none' }}>
@@ -4096,32 +4228,17 @@ useEffect(() => {
                   setBudgetSyncStatus('syncing');
                   setBudgetSyncMsg('');
                   try {
-                    // Layer 3: send the currently-loaded scenario's category/dept adjustments.
-                    // Server applies them on top of FCT_BUDGET (Layer 1) + FCT_EXPENSE overrides (Layer 2).
-                    //
-                    // PR-F: also send the exact monthly bucket totals the dashboard displays,
-                    // so the backend can scale GL account lines to sum to those totals — making
-                    // Targets = dashboard by construction. Closed months use bank cash; open months
-                    // use budget + scenario adjustments. Both come straight from cashflowForecast.
-                    //
-                    // Send EVERY row in cashflowForecast (no year filter). The backend matches
-                    // by FISCAL_YEAR internally; an over-inclusive payload is harmless. The year
-                    // filter previously dropped any pre-year context rows that App's TOTAL row
-                    // sums but Targets needs to mirror.
-                    // PR-R: Targets holds Salary + Vendors only (no OTHER row).
-                    // User wants the Excel grand total to equal the dashboard's
-                    // (Salary + Vendors) line sum exactly, with no tax/IC/fees
-                    // row mixed in. The dashboard's "Other" column is informational
-                    // and varies in sign per month; excluding it makes the
-                    // comparison clean: dashboard Salary AFTER SAVINGS + Vendors
-                    // AFTER SAVINGS == Targets grand total.
+                    // Send the active scenario's adjustments plus the per-month bucket totals
+                    // from cashflowForecast. Backend scales GL account lines so Targets bucket
+                    // totals = dashboard by construction. `other` is intentionally zero — the
+                    // Excel grand total must equal Salary AFTER SAVINGS + Vendors AFTER SAVINGS.
                     const dashboardTotals: Record<string, { salary: { eur: number; ils: number }; vendors: { eur: number; ils: number }; other: { eur: number; ils: number } }> = {};
                     for (const r of cashflowForecast) {
                       if (!r.mKey) continue;
                       dashboardTotals[r.mKey] = {
                         salary:  { eur: Math.round(r.salary),  ils: Math.round(r.salaryILS) },
                         vendors: { eur: Math.round(r.vendors), ils: Math.round(r.vendorsILS) },
-                        other:   { eur: 0, ils: 0 }, // intentionally excluded — see comment above
+                        other:   { eur: 0, ils: 0 },
                       };
                     }
                     // PR-S: per-department salary breakdown. The salary modal shows
@@ -4169,8 +4286,11 @@ useEffect(() => {
                       // The cashflow row applies the running TOTAL HC impact for the month,
                       // so summing per-dept HC equals the cashflow's HC adjustment.
                       const hcByDeptILS = ((monthlyHCImpact as any)[mKey]?.byDept || {}) as Record<string, number>;
-                      const basisSumEUR = Object.values(basis).reduce((s, v) => s + (v as { eur: number }).eur, 0);
-                      const basisSumILS = Object.values(basis).reduce((s, v) => s + (v as { ils: number }).ils, 0);
+                      let basisSumEUR = 0, basisSumILS = 0;
+                      for (const v of Object.values(basis)) {
+                        basisSumEUR += (v as { eur: number }).eur;
+                        basisSumILS += (v as { ils: number }).ils;
+                      }
                       const ilsPerEur = basisSumEUR > 0 ? basisSumILS / basisSumEUR : 3.68;
                       const perDept: Record<string, { eur: number; ils: number }> = {};
                       for (const [dept, v] of Object.entries(basis)) {
@@ -4188,6 +4308,36 @@ useEffect(() => {
                         };
                       }
                       salaryByDept[mKey] = perDept;
+
+                      // PR-V: only anchor per-dept sum to dashboardTotals.salary[mKey]
+                      // for FUTURE months. Closed months have own SF accrued actuals
+                      // (salaryActualsByDept[mKey]) and the user explicitly wants
+                      // Targets to reflect SF accrued, not bank-cash. The dashboard
+                      // cashflow grid for past months pulls from bank-classified
+                      // (cash that actually left the bank); accrual figures are what
+                      // the modal "Last Actual" basis shows and what makes sense for
+                      // budget reconciliation. PR-T's scaling pushed past months UP
+                      // to the bank-cash number (e.g. Feb €2.4M → €2.8M), which is
+                      // not what we want here. For future months the basis sum
+                      // already equals the cashflow projection (same lastActual ×
+                      // mult + override + HC formula on both sides), so this scaling
+                      // is just a rounding safety net.
+                      if (!haveOwn) {
+                        const targetEUR = Math.round(dashboardTotals[mKey]?.salary?.eur || 0);
+                        const targetILS = Math.round(dashboardTotals[mKey]?.salary?.ils || 0);
+                        const sumEUR = Object.values(perDept).reduce((s, v) => s + v.eur, 0);
+                        const sumILS = Object.values(perDept).reduce((s, v) => s + v.ils, 0);
+                        if (targetEUR > 0 && sumEUR > 0 && Math.abs(sumEUR - targetEUR) > 1) {
+                          const scaleEUR = targetEUR / sumEUR;
+                          const scaleILS = sumILS > 0 && targetILS > 0 ? targetILS / sumILS : scaleEUR;
+                          for (const d of Object.keys(perDept)) {
+                            perDept[d] = {
+                              eur: Math.round(perDept[d].eur * scaleEUR),
+                              ils: Math.round(perDept[d].ils * scaleILS),
+                            };
+                          }
+                        }
+                      }
                     }
                     const resp = await fetch(`/api/sync-budget-targets?year=${yr}&subsidiary=${sub}`, {
                       method: 'POST',
@@ -5965,6 +6115,28 @@ useEffect(() => {
                     >Actual ({lastActualSalaryMonth.slice(5)})</button>
                   </div>
                 )}
+                {companyConfig.hasSF && (
+                  <div className="flex items-center gap-1.5 text-[11px] mr-2">
+                    <span className="text-gray-400">Revenue:</span>
+                    <button
+                      className={`px-1.5 py-0.5 rounded ${revenueMethodology === 'legacy' ? 'bg-violet-600 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
+                      onClick={() => setRevenueMethodology('legacy')}
+                      title="Historical win-rate weighted pipeline"
+                    >Win-rate</button>
+                    <button
+                      className={`px-1.5 py-0.5 rounded ${revenueMethodology === 'pipeline' ? 'bg-emerald-600 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
+                      onClick={() => setRevenueMethodology('pipeline')}
+                      title="Stage-weighted quarterly pipeline × calibration factor (Column B methodology)"
+                    >Pipeline{pipelineMethodology ? ` (×${pipelineMethodology.calibrationFactor.toFixed(2)})` : ''}</button>
+                    {pipelineMethodology && (
+                      <button
+                        className="px-1 py-0.5 rounded text-gray-400 hover:text-emerald-600 hover:bg-emerald-50"
+                        onClick={() => setPipelineMethodOpen(true)}
+                        title="View Column B methodology breakdown"
+                      >ⓘ</button>
+                    )}
+                  </div>
+                )}
                 {(Object.values(salaryAdjPctByMonth).some(v => v !== 0) || Object.keys(collPctByMonth).length > 0 || Object.keys(salaryDeptAdj).length > 0) && (() => {
                   const hasSalary = Object.values(salaryAdjPctByMonth).some(v => v !== 0);
                   const hasInflows = Object.keys(collPctByMonth).length > 0;
@@ -6759,13 +6931,21 @@ useEffect(() => {
                             const adjPct = salaryAdjPctByMonth[i] || 0;
                             setForecastDrilldown({ type: 'salary', month: r.month, mKey: r.mKey, data: 'loading', adjPct });
                             if (companyConfig.hasSF) {
+                              // PR-Z: for past months, fetch actuals from NS (full 76xxx GL).
+                              // SF mart is missing 760017 Bonus / 760019 Maternity for past months.
+                              // Budget side stays on Snowflake (forecast lives there).
+                              const actualsUrl = r.isPast
+                                ? `/api/ns-salary-breakdown?month=${r.mKey}&subsidiary=${companyConfig.subsidiary}`
+                                : `/api/sf-salary-breakdown?month=${r.mKey}`;
                               Promise.all([
-                                fetch(`/api/sf-salary-breakdown?month=${r.mKey}`).then(res => res.json()),
+                                fetch(actualsUrl).then(res => res.json()),
                                 fetch(`/api/sf-salary-budget-breakdown?month=${r.mKey}`).then(res => res.json()),
                                 fetch(`/api/sf-headcount-events?month=${r.mKey}`).then(res => res.json()),
                                 fetch(`/api/sf-headcount-by-dept`).then(res => res.json()).catch(() => ({ data: [] })),
                               ]).then(([actRes, budRes, hcRes, hcDeptRes]) => {
-                                setForecastDrilldown(prev => prev ? { ...prev, data: { actuals: actRes.data || [], budget: budRes.data || [], headcount: hcRes.data || { events: [], cumulative: [], baseline: {} } } } : null);
+                                // ns-salary-breakdown returns { actuals: [...] }; sf-salary-breakdown returns { data: [...] }
+                                const actuals = actRes.actuals || actRes.data || [];
+                                setForecastDrilldown(prev => prev ? { ...prev, data: { actuals, budget: budRes.data || [], headcount: hcRes.data || { events: [], cumulative: [], baseline: {} } } } : null);
                                 // Cache department budgets for per-dept adjustments
                                 if (budRes.data && budRes.data.length > 0) {
                                   const byDept: Record<string, number> = {};
@@ -6881,6 +7061,11 @@ useEffect(() => {
                       </td>
                       <td className={`py-2.5 px-0.5 text-right font-bold whitespace-nowrap ${r.closingBalance >= 0 ? 'text-blue-700' : 'text-red-600'}`}>
                         {fmtCFull(r.closingBalance, r.closingBalanceILS)}
+                        {r.isPast && Math.abs(r.wcDelta || 0) > 100 && (
+                          <span className="block text-[9px] font-normal text-gray-400" title="Working-capital movement: actual bank balance minus accrual-derived close (AR/AP timing). Closing is pinned to the actual NS bank balance.">
+                            WC {r.wcDelta > 0 ? '+' : ''}{fmt(r.wcDelta)}
+                          </span>
+                        )}
                         {compareCashflow && compareCashflow[i] && (() => {
                           const delta = r.closingBalance - compareCashflow[i].closingBalance;
                           if (Math.abs(delta) < 100) return null;
@@ -8128,7 +8313,7 @@ useEffect(() => {
                           </div>
                         );
                       })()}
-                      {hasBudget && (
+                      {hasBudget && !hasActuals && (
                         <div>
                           <p className="text-xs text-gray-400 mb-2">{forecastDrilldown.data?.__nsMode ? 'Budget Breakdown (NetSuite budgetsmachine)' : useLastActualInDrill ? `Budget Breakdown (Last Actual ${drillBasisMonth} — recurring payroll accounts only)${hasAnyAdjustment ? ` — showing original → adjusted` : ''}` : `Budget Breakdown (Snowflake FCT_BUDGET — levers, new hires, etc.)${hasAnyAdjustment ? ` — showing original → adjusted` : ''}${adj !== 0 ? ` (${adj > 0 ? '+' : ''}${adj}%)` : ''}${hasLeverOverrides ? ' + lever overrides' : ''}`}</p>
                           <table className="w-full text-xs">
@@ -8254,8 +8439,8 @@ useEffect(() => {
                           </table>
                         </div>
                       )}
-                      {/* Headcount events (HiBob levers) — hidden when shown in summary above */}
-                      {hc && (hc.events?.length > 0 || hc.cumulative?.length > 0) && !monthlyHCImpact[forecastDrilldown.mKey]?.categories?.length && (
+                      {/* Headcount events (HiBob levers) — only relevant for future-month projection; hide once actuals exist. */}
+                      {!hasActuals && hc && (hc.events?.length > 0 || hc.cumulative?.length > 0) && !monthlyHCImpact[forecastDrilldown.mKey]?.categories?.length && (
                         <div>
                           <p id="hc-levers-section" className="text-xs text-gray-400 mb-2">Salary Projection Levers (HiBob → Snowflake)</p>
                           {/* Cumulative impact summary */}
@@ -8585,7 +8770,7 @@ useEffect(() => {
                       )}
                       {hasActuals && (
                         <div>
-                          <p className="text-xs text-gray-400 mb-2">Actuals ({forecastDrilldown.data?.__nsMode ? 'NetSuite 76xx accounts' : 'Snowflake FCT_EXPENSE'}) — click row for bills</p>
+                          <p className="text-xs text-gray-400 mb-2">Actuals (NetSuite GL — 76xxx payroll accounts) — click row for bills</p>
                           <table className="w-full text-xs">
                             <thead><tr className="text-left text-gray-400 uppercase border-b">
                               <th className="pb-1 pr-2">Department</th><th className="pb-1 pr-2">Account #</th><th className="pb-1 pr-2">Name</th><th className="pb-1 pr-2 text-right">EUR</th><th className="pb-1 pr-2 text-right">ILS</th>
