@@ -2195,8 +2195,27 @@ useEffect(() => {
               for (let m = 1; m <= 12; m++) {
                 liveVendorTotal[`${coYear}-${String(m).padStart(2, '0')}`] = { eur: avgVendors, ils: 0 };
               }
-              // Keep byMonth categories from snapshot for category adjustments, override totals
-              setSfBudget({ byMonth: snap.sfBudget?.byMonth || {}, totalByMonth: liveVendorTotal });
+              // Scale the snapshot's per-category breakdown so each month's vendor
+              // categories sum to the averaged vendor forecast (liveVendorTotal). Without
+              // this the Vendor modal shows the raw prior-year category amounts (~€3.2M)
+              // while the dashboard/forecast uses the averaged run-rate (~€1.76M). The
+              // 'Other (800)' finance/reval bucket is left untouched (it feeds the reval
+              // line, not the vendor total).
+              const rawByMonth: Record<string, any> = snap.sfBudget?.byMonth || {};
+              const scaledByMonth: Record<string, Record<string, number>> = {};
+              for (const mk of Object.keys(rawByMonth)) {
+                const cats = rawByMonth[mk] || {};
+                let vendCatSum = 0;
+                for (const [c, v] of Object.entries(cats)) { if (c !== 'Other (800)') vendCatSum += Number(v) || 0; }
+                const target = liveVendorTotal[mk]?.eur || 0;
+                const scale = vendCatSum > 0 && target > 0 ? target / vendCatSum : 1;
+                const scaledCats: Record<string, number> = {};
+                for (const [c, v] of Object.entries(cats)) {
+                  scaledCats[c] = c === 'Other (800)' ? (Number(v) || 0) : Math.round((Number(v) || 0) * scale);
+                }
+                scaledByMonth[mk] = scaledCats;
+              }
+              setSfBudget({ byMonth: scaledByMonth, totalByMonth: liveVendorTotal });
               // Finance budget (800% GL = currency defense) — from sfBudget.financeBudget or snapshot
               if (snap.sfBudget?.financeBudget) setSfFinanceBudget(snap.sfBudget.financeBudget);
               else if (snap.sfFinanceBudget) setSfFinanceBudget(snap.sfFinanceBudget);
