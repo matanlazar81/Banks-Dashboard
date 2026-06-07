@@ -2365,6 +2365,11 @@ useEffect(() => {
         const lastAct2 = salActDeptR2?.lastActualMonth || '';
         const hcImpactR2 = await safe(`/api/sf-monthly-hc-impact${lastAct2 ? `?lastActual=${lastAct2}` : ''}`);
         if (hcImpactR2 && !hcImpactR2.error) setMonthlyHCImpact(hcImpactR2);
+        // Column B pipeline methodology — fetch in the MAIN load path too. It was
+        // previously only in the prefetch path, so a direct load left
+        // pipelineMethodology null and the Pipeline-mode column read columnD as 0.
+        const pipeMethR2 = await safe(`/api/sf-pipeline-methodology?year=${activeYear}`);
+        setPipelineMethodology(pipeMethR2?.data || null);
       } else {
         const [nsBudR] = sfResults;
         if (nsBudR) setNsBudget(nsBudR);
@@ -2372,7 +2377,7 @@ useEffect(() => {
         setSfSalaryBudget({}); setSfSalaryOverrides([]); setSfRevenuePaid({});
         setSfPipeline([]); setSfConversion({ yearly: [], stages: [], customers: [], projection: [] });
         setChurnData([]); setChurnMonthlyAvg(0); setYoyRevenue(null); setSalaryDeptBudgets({});
-        setSalaryActualsByDept({}); setLastActualSalaryMonth(''); setMonthlyHCImpact({});
+        setSalaryActualsByDept({}); setLastActualSalaryMonth(''); setMonthlyHCImpact({}); setPipelineMethodology(null);
       }
       setLastRefreshed(new Date().toLocaleDateString('en-GB') + ' ' + new Date().toLocaleTimeString('en-GB'));
     } catch (e: any) {
