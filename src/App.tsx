@@ -709,6 +709,26 @@ function BudgetTargetsDrawer({
     }
     return r.MONTHLY_SOURCE_ILS ? r.MONTHLY_SOURCE_ILS[mk] : null;
   };
+  // Annual source in the display currency = SUM of the monthly cells, NOT the stored
+  // SOURCE_AMOUNT_ILS converted at a blended rate. After Sync scales monthly EUR and
+  // ILS by independent factors, converting the ILS annual drifts from Σ(monthly EUR);
+  // summing the monthly cells keeps the annual tied to the columns (and the dashboard).
+  const annualSourceCcy = (r: BudgetTargetRow): number => {
+    if (drawerCurrency === 'EUR') {
+      const eur = sumVals(r.MONTHLY_SOURCE_EUR);
+      return Math.abs(eur) > 0 ? eur : (r.SOURCE_AMOUNT_ILS || 0) / rowNativeRate(r);
+    }
+    return r.MONTHLY_SOURCE_ILS ? sumVals(r.MONTHLY_SOURCE_ILS) : (r.SOURCE_AMOUNT_ILS || 0);
+  };
+  // Final (override-adjusted) annual in display currency: scale the summed-monthly
+  // annual by the override ratio (ANNUAL_BUDGET_TARGET / SOURCE in ILS). Ratio = 1
+  // when no override, so Final == annualSourceCcy and still ties to the monthly sum.
+  const annualFinalCcy = (r: BudgetTargetRow): number => {
+    const src = r.SOURCE_AMOUNT_ILS || 0;
+    const fin = r.ANNUAL_BUDGET_TARGET_AMOUNT ?? src;
+    const ratio = src !== 0 ? fin / src : 1;
+    return annualSourceCcy(r) * ratio;
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
@@ -759,6 +779,14 @@ function BudgetTargetsDrawer({
                       }
                       return Math.round(monthly[mk] ?? 0);
                     };
+                    // Annual = Σ of the (rounded) monthly cells so it ties to the month
+                    // columns and the dashboard, rather than converting the stored ILS
+                    // annual at a blended rate (which drifts after Sync's independent
+                    // EUR/ILS scaling). Budget Target = annual × the override ratio.
+                    const annualSrc = MONTH_KEYS.reduce((s, mk) => s + convMonth(mk), 0);
+                    const srcIls = r.SOURCE_AMOUNT_ILS || 0;
+                    const finIls = r.ANNUAL_BUDGET_TARGET_AMOUNT ?? srcIls;
+                    const ovrRatio = srcIls !== 0 ? finIls / srcIls : 1;
                     const out: Record<string, any> = {
                       Department: r.DEPARTMENT,
                       Location: r.LOCATION,
@@ -766,14 +794,14 @@ function BudgetTargetsDrawer({
                       'Account Number': r.ACCOUNT_NUMBER,
                       'Account Name': r.ACCOUNT_NAME || '',
                       'NetSuite Internal ID': r.NETSUITE_INTERNAL_NUMBER ?? '',
-                      [`Annual Source ${ccy}`]: convRow(r.SOURCE_AMOUNT_ILS) ?? 0,
+                      [`Annual Source ${ccy}`]: annualSrc,
                     };
                     MONTH_LABELS.forEach((label, i) => {
                       out[`${label} ${ccy}`] = convMonth(MONTH_KEYS[i]);
                     });
                     out[`Override Amount ${ccy}`] = convRow(r.USER_OVERRIDE_AMOUNT_ILS) ?? '';
                     out['Override %'] = r.USER_OVERRIDE_PCT ?? '';
-                    out[`Annual Budget Target ${ccy}`] = convRow(r.ANNUAL_BUDGET_TARGET_AMOUNT) ?? 0;
+                    out[`Annual Budget Target ${ccy}`] = Math.round(annualSrc * ovrRatio);
                     out['Last Edited By'] = r.USER_EDITED_BY || '';
                     out['Last Edited At'] = r.USER_EDITED_AT || '';
                     return out;
@@ -852,7 +880,7 @@ function BudgetTargetsDrawer({
                         <div className="font-mono text-[10px] text-gray-700">{r.ACCOUNT_NUMBER}</div>
                         <div className="text-[9px] text-gray-500 truncate max-w-[150px]" title={r.ACCOUNT_NAME || ''}>{r.ACCOUNT_NAME || ''}</div>
                       </td>
-                      <td className="px-2 py-1 text-right font-mono text-[10px]">{fmtMoney(toCcyRow(r, r.SOURCE_AMOUNT_ILS))}</td>
+                      <td className="px-2 py-1 text-right font-mono text-[10px]">{fmtMoney(annualSourceCcy(r))}</td>
                       {MONTH_KEYS.map(mk => {
                         const finalIls = r.MONTHLY_SOURCE_ILS ? r.MONTHLY_SOURCE_ILS[mk] : null;
                         const rawIls   = r.MONTHLY_RAW_ILS    ? r.MONTHLY_RAW_ILS[mk]    : null;
@@ -899,7 +927,7 @@ function BudgetTargetsDrawer({
                       </td>
                       <td title={editedTitle}
                           className={`px-2 py-1 text-right font-mono font-semibold text-[10px] ${hasOverride ? 'text-amber-700' : 'text-gray-700'}`}>
-                        {fmtMoney(toCcyRow(r, r.ANNUAL_BUDGET_TARGET_AMOUNT))}
+                        {fmtMoney(annualFinalCcy(r))}
                       </td>
                     </tr>
                   );
@@ -913,8 +941,8 @@ function BudgetTargetsDrawer({
               <tfoot className="bg-gray-100 sticky bottom-0 z-10 border-t-2 border-gray-400">
                 {(() => {
                   const totalRows = visible.filter(r => r.ACCOUNT_NUMBER !== '800029');
-                  const sumSource = totalRows.reduce((s, r) => s + (toCcyRow(r, r.SOURCE_AMOUNT_ILS) || 0), 0);
-                  const sumFinal  = totalRows.reduce((s, r) => s + (toCcyRow(r, r.ANNUAL_BUDGET_TARGET_AMOUNT) || 0), 0);
+                  const sumSource = totalRows.reduce((s, r) => s + annualSourceCcy(r), 0);
+                  const sumFinal  = totalRows.reduce((s, r) => s + annualFinalCcy(r), 0);
                   const monthSums = MONTH_KEYS.map(mk => totalRows.reduce((s, r) => s + (monthCcy(r, mk) || 0), 0));
                   return (
                     <tr className="text-gray-800 font-bold text-[11px]">
