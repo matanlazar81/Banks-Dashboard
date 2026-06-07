@@ -4322,20 +4322,16 @@ useEffect(() => {
                       }
                       salaryByDept[mKey] = perDept;
 
-                      // PR-V: only anchor per-dept sum to dashboardTotals.salary[mKey]
-                      // for FUTURE months. Closed months have own SF accrued actuals
-                      // (salaryActualsByDept[mKey]) and the user explicitly wants
-                      // Targets to reflect SF accrued, not bank-cash. The dashboard
-                      // cashflow grid for past months pulls from bank-classified
-                      // (cash that actually left the bank); accrual figures are what
-                      // the modal "Last Actual" basis shows and what makes sense for
-                      // budget reconciliation. PR-T's scaling pushed past months UP
-                      // to the bank-cash number (e.g. Feb €2.4M → €2.8M), which is
-                      // not what we want here. For future months the basis sum
-                      // already equals the cashflow projection (same lastActual ×
-                      // mult + override + HC formula on both sides), so this scaling
-                      // is just a rounding safety net.
-                      if (!haveOwn) {
+                      // PR-X: anchor per-dept salary sum to dashboardTotals.salary[mKey]
+                      // for ALL months (past + future). The dashboard salary cell is
+                      // NS GL 76xxx for closed months (incl. 760017 bonus, 760019
+                      // maternity, 760023 military refund) and the lastActual projection
+                      // for future months. The FCT_EXPENSE per-dept basis drops the
+                      // one-time accounts, so without this the Targets salary fell ~€310K
+                      // short (concentrated in the Jan/May bonus months). Scaling here
+                      // distributes the difference proportionally across depts so the
+                      // Targets salary total ties to the dashboard = NS P&L.
+                      {
                         const targetEUR = Math.round(dashboardTotals[mKey]?.salary?.eur || 0);
                         const targetILS = Math.round(dashboardTotals[mKey]?.salary?.ils || 0);
                         const sumEUR = Object.values(perDept).reduce((s, v) => s + v.eur, 0);
