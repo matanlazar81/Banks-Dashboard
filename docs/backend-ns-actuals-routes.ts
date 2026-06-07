@@ -2,10 +2,13 @@
 // Splice into finance-it/backend/src/routes/bankDashboardApi.ts just before
 // the final `export default router;`.
 //
-// Two new endpoints expose per-month NS GL totals so the cashflow Vendors
-// and Inflows columns can reconcile to the NS P&L for past months:
-//   GET /api/ns-vendor-actuals     — 6xxxx + 7xxxx ex 76xxx, per month
-//   GET /api/ns-revenue-actuals    — 4xxxx, per month (credit-positive)
+// Three new endpoints expose per-month NS GL totals so the cashflow Vendors
+// and Inflows columns can reconcile to NS for past months:
+//   GET /api/ns-vendor-actuals      — 6xxxx + 7xxxx ex 76xxx, per month (P&L)
+//   GET /api/ns-revenue-actuals     — 4xxxx, per month (P&L, credit-positive)
+//   GET /api/ns-customer-receipts   — Bank debits on CustPymt + CashSale
+//                                     (actual cash deposits from customers,
+//                                     includes prior-period AR catch-up)
 //
 // Both forward to functions added in bank-dashboard/netsuite-api.cjs
 // (fetchVendorActuals and fetchRevenueActuals). The bank-dashboard module
@@ -75,5 +78,24 @@ router.get('/ns-revenue-actuals', bankRole, async (req: Request, res: Response) 
   } catch (e: any) {
     logger.error(`[NS API] Revenue actuals failed: ${e.message}`);
     res.json({ data: [], error: e.message });
+  }
+});
+
+// ── GET /api/ns-customer-receipts — bank cash deposits from customers per month ──
+// CustPymt + CashSale debits on Bank-type accounts. Includes AR catch-up from
+// prior periods (e.g. a Dec invoice paid in Jan lands here in Jan).
+router.get('/ns-customer-receipts', bankRole, async (req: Request, res: Response) => {
+  try {
+    const sub = parseInt(req.query.subsidiary as string || '3') || 3;
+    const ns = await netsuiteService.getSubsidiaryClient(sub);
+    if (!ns.fetchCustomerCashReceipts) {
+      res.json({ data: {}, error: 'fetchCustomerCashReceipts not available on NS client' });
+      return;
+    }
+    const data = await ns.fetchCustomerCashReceipts();
+    res.json({ data });
+  } catch (e: any) {
+    logger.error(`[NS API] Customer receipts failed: ${e.message}`);
+    res.json({ data: {}, error: e.message });
   }
 });

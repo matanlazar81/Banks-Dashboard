@@ -1045,6 +1045,9 @@ export default function App() {
   // sourced directly from NetSuite to match the P&L line-for-line.
   const [vendorActuals, setVendorActuals] = useState<{ month: string; amountEUR: number; amountILS: number }[]>([]);
   const [revenueActuals, setRevenueActuals] = useState<{ month: string; amountEUR: number; amountILS: number }[]>([]);
+  // Customer cash receipts per month (CustPymt + CashSale bank debits).
+  // Keyed by YYYY-MM. Preferred source for past-month Inflows when populated.
+  const [customerReceipts, setCustomerReceipts] = useState<Record<string, number>>({});
   const [vendorHistory, setVendorHistory] = useState<VendorHistoryRecord[]>([]);
   const [expenseCategories, setExpenseCategories] = useState<{ byMonth: Record<string, Record<string, number>>; categories: string[] }>({ byMonth: {}, categories: [] });
   const [actualCollections, setActualCollections] = useState<Record<string, number>>({});
@@ -1951,6 +1954,7 @@ useEffect(() => {
     setBankData(c.bankData); setBankAccounts(c.bankAccounts); setVendorBills(c.vendorBills);
     setARForecast(c.arForecast); setSalaryData(c.salaryData); setVendorHistory(c.vendorHistory);
     setVendorActuals(c.vendorActuals || []); setRevenueActuals(c.revenueActuals || []);
+    setCustomerReceipts(c.customerReceipts || {});
     setExpenseCategories(c.expenseCategories); setActualCollections(c.actualCollections);
     setMonthlyReval(c.monthlyReval); setNsBudget(c.nsBudget); setNsAccountId(c.nsAccountId);
     setSfBudget(c.sfBudget); if (c.sfBudget?.financeBudget) setSfFinanceBudget(c.sfBudget.financeBudget); setSfRevenue(c.sfRevenue); setSfActualsSplit(c.sfActualsSplit);
@@ -1977,11 +1981,11 @@ useEffect(() => {
       const cache: any = {};
       const safe = async (url: string) => { try { const r = await fetch(url); if (r.ok) return await r.json(); } catch {} return null; };
       // Fire all NS calls in parallel (server queues them anyway)
-      const [bankR, acctR, billsR, arR, salR, vhR, expR, collR, revalR, venActR, revActR] = await Promise.all([
+      const [bankR, acctR, billsR, arR, salR, vhR, expR, collR, revalR, venActR, revActR, custRcptR] = await Promise.all([
         safe(`/api/bank-balance${subQ}`), safe(`/api/bank-accounts${subQ}`), safe(`/api/vendor-bills${subQ}`),
         safe(`/api/ar-forecast${subQ}`), safe(`/api/salary-data${subQ}`), safe(`/api/vendor-history${subQ}`),
         safe(`/api/expense-categories${subQ}`), safe(`/api/banks-collection-data${subQ}`), safe(`/api/monthly-reval${subQ}`),
-        safe(`/api/ns-vendor-actuals${subQ}`), safe(`/api/ns-revenue-actuals${subQ}`),
+        safe(`/api/ns-vendor-actuals${subQ}`), safe(`/api/ns-revenue-actuals${subQ}`), safe(`/api/ns-customer-receipts${subQ}`),
       ]);
       if (bankR?.dailyBalances) cache.bankData = bankR;
       if (acctR?.data) cache.bankAccounts = acctR.data;
@@ -1994,6 +1998,7 @@ useEffect(() => {
       if (revalR?.data) cache.monthlyReval = revalR.data;
       if (venActR?.data) cache.vendorActuals = venActR.data;
       if (revActR?.data) cache.revenueActuals = revActR.data;
+      if (custRcptR?.data) cache.customerReceipts = custRcptR.data;
       if (!hasSF) {
         const nsBudR = await safe(`/api/ns-budget${subQ}`);
         if (nsBudR) cache.nsBudget = nsBudR;
@@ -2241,6 +2246,7 @@ useEffect(() => {
         `/api/vendor-history${subQ}`, `/api/expense-categories${subQ}`,
         `/api/banks-collection-data${subQ}`, `/api/monthly-reval${subQ}`,
         `/api/ns-paid-vendors-yearly${subQ}`, `/api/ns-bank-classified-yearly${subQ}`,
+        `/api/ns-vendor-actuals${subQ}`, `/api/ns-revenue-actuals${subQ}`, `/api/ns-customer-receipts${subQ}`,
       ];
       const sfUrls = hasSF ? [
         '/api/sf-budget', '/api/sf-revenue', '/api/sf-actuals-split', '/api/sf-salary-budget',
@@ -2249,7 +2255,7 @@ useEffect(() => {
       ] : !hasSF ? [`/api/ns-budget${subQ}`] : [];
 
       const allResults = await Promise.all([...nsUrls, ...sfUrls].map(u => safe(u)));
-      const [cfgR, bankR, acctR, billsR, arR, salR, vhR, expR, collR, revalR, paidVR, bankClR, ...sfResults] = allResults;
+      const [cfgR, bankR, acctR, billsR, arR, salR, vhR, expR, collR, revalR, paidVR, bankClR, venActR, revActR, custRcptR, ...sfResults] = allResults;
       // Prefer live data when populated. Otherwise fall back to the bundled LSports 2026 seed
       // (src/seeds/bank-classified-lsports-2026.json) so the Other column renders even when the
       // parent finance-it server doesn't route /api/ns-bank-classified-yearly to bank-dashboard.
@@ -2286,6 +2292,9 @@ useEffect(() => {
       if (expR?.data) setExpenseCategories(expR.data);
       if (collR?.data) setActualCollections(collR.data);
       if (revalR?.data) setMonthlyReval(revalR.data);
+      if (venActR?.data) setVendorActuals(venActR.data);
+      if (revActR?.data) setRevenueActuals(revActR.data);
+      if (custRcptR?.data) setCustomerReceipts(custRcptR.data);
 
       // Fetch previous month-end bank balances for cashflow anchoring (non-blocking)
       try {
@@ -2831,12 +2840,19 @@ useEffect(() => {
       const customers = revPaid?.customers || 0;
       // NS GL accrual for revenue (4xxx) — matches P&L "Total - 400000 - REVENUES".
       const nsRevenueActualGL = (isPastMonth || isCurMonth) ? (revenueActuals.find(v => v.month === mKey)?.amountEUR || 0) : 0;
-      if (isPastMonth && nsRevenueActualGL > 0) {
-        // Past: NS GL revenue (accrual basis, matches P&L)
+      // Customer cash receipts (CustPymt + CashSale bank debits) — matches bank statement
+      // filtered to customer money. Includes AR catch-up from prior periods.
+      const nsCustomerReceipts = (isPastMonth || isCurMonth) ? (customerReceipts[mKey] || 0) : 0;
+      if (isPastMonth && nsCustomerReceipts > 0) {
+        // Past (preferred): real bank deposits from customers
+        collections = nsCustomerReceipts;
+        collectionsActual = nsCustomerReceipts;
+      } else if (isPastMonth && nsRevenueActualGL > 0) {
+        // Past fallback: NS GL revenue (accrual basis, matches P&L)
         collections = nsRevenueActualGL;
         collectionsActual = nsRevenueActualGL;
       } else if (isPastMonth && actualColl > 0) {
-        // Past fallback: NS actual collections (cash received, incl I/C)
+        // Past last-resort: NS Income credits on cash-basis (incl I/C)
         collections = actualColl;
         collectionsActual = actualColl;
       } else if (isCurMonth && actualColl > 0) {

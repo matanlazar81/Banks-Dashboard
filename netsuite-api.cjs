@@ -1203,6 +1203,67 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
     return data;
   }
 
+  // Per-month customer cash receipts (real bank deposits from customers). Matches a
+  // bank statement filtered to customer money: Customer Payments (CustPymt) +
+  // Cash Sales (CashSale) hitting Bank-type accounts. Includes AR catch-up from
+  // prior periods (e.g. Dec invoice paid in Jan lands here in Jan). Excludes
+  // refunds, IC transfers, vendor activity, FX revals.
+  async function fetchCustomerCashReceipts() {
+    const fs = require('fs');
+    const pathMod = require('path');
+    const now = new Date();
+    const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const prevYear = now.getFullYear() - 1;
+
+    const cachePath = pathMod.join(__dirname, 'data', `customer-receipts-sub${subsidiaryId}.json`);
+    let cached = {};
+    try { if (fs.existsSync(cachePath)) cached = JSON.parse(fs.readFileSync(cachePath, 'utf-8')); } catch {}
+
+    const monthsNeeded = [];
+    for (let y = prevYear; y <= now.getFullYear(); y++) {
+      const maxM = y === now.getFullYear() ? now.getMonth() + 1 : 12;
+      for (let m = 1; m <= maxM; m++) {
+        const key = `${y}-${String(m).padStart(2, '0')}`;
+        if (key === currentMonth || !cached[key]) monthsNeeded.push(key);
+      }
+    }
+
+    if (monthsNeeded.length > 0) {
+      console.log(`[NS API] Customer receipts: querying ${monthsNeeded.length} months (${Object.keys(cached).length} cached)`);
+      const monthQuery = (mKey) => {
+        const [yr, mo] = mKey.split('-');
+        const endDay = new Date(parseInt(yr), parseInt(mo), 0).getDate();
+        return suiteqlAll(`
+          SELECT SUM(COALESCE(tal.debit, 0)) - SUM(COALESCE(tal.credit, 0)) AS amount
+          FROM transactionaccountingline tal
+          JOIN transaction t ON tal.transaction = t.id
+          JOIN account a ON tal.account = a.id
+          WHERE t.subsidiary = ${subsidiaryId}
+            AND a.accttype = 'Bank'
+            AND tal.posting = 'T' AND tal.accountingbook = 1
+            AND t.type IN ('CustPymt', 'CashSale')
+            AND t.trandate >= TO_DATE('${mKey}-01', 'YYYY-MM-DD')
+            AND t.trandate <= TO_DATE('${yr}-${mo}-${endDay}', 'YYYY-MM-DD')
+        `).then(rows => Math.round(parseFloat(rows[0]?.amount) || 0));
+      };
+      for (const mKey of monthsNeeded) {
+        cached[mKey] = { amountEUR: await monthQuery(mKey) };
+      }
+      try {
+        const dir = pathMod.join(__dirname, 'data');
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(cachePath, JSON.stringify(cached, null, 2));
+      } catch {}
+    } else {
+      console.log(`[NS API] Customer receipts: all ${Object.keys(cached).length} months from cache`);
+    }
+
+    const byMonth = {};
+    for (const [mk, v] of Object.entries(cached)) byMonth[mk] = v.amountEUR;
+    console.log(`[NS API] Customer receipts: ${Object.keys(byMonth).length} months`);
+    return byMonth;
+  }
+
   async function fetchCashflowHistory() {
     console.log('[NS API] Fetching cashflow history...');
     const prevYear = new Date().getFullYear() - 1;
@@ -2363,7 +2424,7 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
     return { byMonth };
   }
 
-  return { suiteql, suiteqlAll, fetchAgingData, fetchCollectionData, buildCollectionJson, fetchClientAnomalies, fetchAllSOsByBillingPeriod, fetchRevenueData, fetchMRRData, fetchBankBalance, fetchVendorBills, fetchVendorPaymentHistory, fetchBankAccountList, fetchBankAccountListAsOf, fetchSalaryData, fetchVendorActuals, fetchRevenueActuals, fetchCashflowHistory, fetchExpenseCategoryData, fetchPaymentsByCategory, fetchCashflowBreakdown, fetchCashflowTransactions, fetchExpenseTransactions, fetchSalaryBreakdown, fetchInvoiceBasedProjection, fetchMonthlyRevaluation, fetchVendorBillsByAccount, fetchNSBudget, fetchCurrencyDefenseBudget, fetchPaidVendorsYearly, fetchBankClassifiedYearly };
+  return { suiteql, suiteqlAll, fetchAgingData, fetchCollectionData, buildCollectionJson, fetchClientAnomalies, fetchAllSOsByBillingPeriod, fetchRevenueData, fetchMRRData, fetchBankBalance, fetchVendorBills, fetchVendorPaymentHistory, fetchBankAccountList, fetchBankAccountListAsOf, fetchSalaryData, fetchVendorActuals, fetchRevenueActuals, fetchCustomerCashReceipts, fetchCashflowHistory, fetchExpenseCategoryData, fetchPaymentsByCategory, fetchCashflowBreakdown, fetchCashflowTransactions, fetchExpenseTransactions, fetchSalaryBreakdown, fetchInvoiceBasedProjection, fetchMonthlyRevaluation, fetchVendorBillsByAccount, fetchNSBudget, fetchCurrencyDefenseBudget, fetchPaidVendorsYearly, fetchBankClassifiedYearly };
 }
 
 
