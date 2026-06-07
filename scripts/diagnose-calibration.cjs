@@ -15,21 +15,32 @@ const path = require('path');
 const fs = require('fs');
 const { createSnowflakeClient } = require('../snowflake-api.cjs');
 
-// Find an .env file by walking up the tree (parent finance-it/.env is the
-// usual location when bank-dashboard sits under extra-apps/).
+// Walk up the tree collecting candidate .env files, then pick whichever one
+// actually contains SNOWFLAKE_ACCOUNT. bank-dashboard sits under extra-apps/
+// in the finance-it tree and the Snowflake creds live in backend/.env, while
+// the repo root carries a different .env with only a few keys.
 function loadEnv() {
+  const candidates = [];
   let dir = __dirname;
   for (let i = 0; i < 6; i++) {
-    for (const name of ['.env', 'backend/.env']) {
+    for (const name of ['backend/.env', '.env']) {
       const p = path.join(dir, name);
-      if (fs.existsSync(p)) { require('dotenv').config({ path: p }); return p; }
+      if (fs.existsSync(p)) candidates.push(p);
     }
     dir = path.dirname(dir);
   }
+  for (const p of candidates) {
+    const txt = fs.readFileSync(p, 'utf-8');
+    if (/^\s*SNOWFLAKE_ACCOUNT\s*=/m.test(txt)) {
+      require('dotenv').config({ path: p, override: true });
+      return { path: p, hasSnowflake: true };
+    }
+  }
+  if (candidates.length) { require('dotenv').config({ path: candidates[0], override: true }); return { path: candidates[0], hasSnowflake: false }; }
   return null;
 }
-const envPath = loadEnv();
-console.log(`[diag] env loaded from: ${envPath || '(none found)'}`);
+const env = loadEnv();
+console.log(`[diag] env loaded from: ${env ? env.path : '(none found)'} (snowflake=${env?.hasSnowflake ? 'yes' : 'no'})`);
 
 (async () => {
   const sf = createSnowflakeClient(process.env);
