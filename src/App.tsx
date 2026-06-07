@@ -2694,11 +2694,15 @@ useEffect(() => {
       let salary: number;
       let salaryBase: number; // base salary WITHOUT scenario adjustments (for delta display)
       const actualSalaryEntry = salaryData.find(s => s.month === mKey);
-      if (isClosed && actualSalaryEntry && actualSalaryEntry.amountEUR > 0) {
-        salary = actualSalaryEntry.amountEUR;
-        salaryBase = salary;
-      } else if (isClosed && sfActualsSplit[mKey]?.salary > 0) {
+      // Snowflake Actual (FCT_EXPENSE salary slice) — preferred for past months on SF-covered subs.
+      // Matches "Actual (Snowflake)" in the Salary modal and the NS GL 76xxx breakdown.
+      // salaryData (direct NS GL 76xxx query, cached) — fallback for non-SF subs and
+      // when SF coverage is missing for a month.
+      if (isClosed && sfActualsSplit[mKey]?.salary > 0) {
         salary = sfActualsSplit[mKey].salary;
+        salaryBase = salary;
+      } else if (isClosed && actualSalaryEntry && actualSalaryEntry.amountEUR > 0) {
+        salary = actualSalaryEntry.amountEUR;
         salaryBase = salary;
       } else if (useLastActual && !isPastMonth) {
         // "Last Actual" mode: project last actual month's recurring salary per dept
