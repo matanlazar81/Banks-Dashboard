@@ -2639,6 +2639,11 @@ useEffect(() => {
     const rows: { month: string; mKey: string; openingBalance: number; openingBalanceILS: number; salary: number; salaryILS: number; vendors: number; vendorsILS: number; other: number; otherILS: number; otherDetails: { label: string; bucket: string; eur: number; ils: number }[]; totalOutflow: number; totalOutflowILS: number; collections: number; collectionsILS: number; collectionsActual: number; collectionsRemaining: number; collectionsForecast: number; collectionsRevenue: number; collectionsUnpaidCarry: number; collectionsUnpaidCarryMonth: string; collectionsPipeline: number; customers: number; pipelineWeighted: number; pipelineWeightedILS: number; pipelineTotal: number; pipelineCount: number; pipelineOpps: typeof lowConfPipeline; pipelineHistWinRate: number; pipelineDelayMonths: number; net: number; netILS: number; revalImpact: number; revalImpactILS: number; revalHasBothEnds: boolean; closingBalance: number; closingBalanceILS: number; isCurrent: boolean; isPast: boolean }[] = [];
     let prevMonthSalary = 0;
     let prevMonthUnpaid = 0; // unpaid from previous month rolls forward
+    // Pipeline-methodology cumulative: monthly MRR (projectedMrr × factor) accumulates
+    // forward — a deal closing in July keeps contributing Aug…Dec, so each future month
+    // carries all prior future cohorts plus its own. Pyramids up to match cash timing,
+    // unlike Column D which front-loads each cohort's full annual total into one month.
+    let pipelineMethodCum = 0;
 
     // Monthly churn run-rate: latest completed quarter / 3, else current-year monthlyImpact, else 6m avg.
     // Each forecast month deducts rate × (forecast-month index), so the cumulative MRR-lost grows
@@ -2898,12 +2903,17 @@ useEffect(() => {
       const pipelineAdjPct = pipelineAdjPctByMonth[i] ?? 100; // default 100% = full pipeline, 0% = zero
       // The displayed Pipeline column reflects the revenueMethodology toggle:
       //   'legacy'   → historical low-confidence win-rate weighted pipeline
-      //   'pipeline' → Column B methodology Column D = projectedMrr × months-remaining
-      //                × factor (per the methodology doc's "Future Months" formula),
-      //                future months only. Drives the column AND its Net contribution.
-      //                Inflows (AR) is unaffected (collectionsPipeline stays legacy).
+      //   'pipeline' → Column B methodology, CUMULATIVE monthly MRR: each future month
+      //                adds projectedMrr × factor (the new MRR coming online) to the
+      //                running total of prior future cohorts. Pyramids up to match cash
+      //                timing; annual total equals Σ Column D. Future months only.
+      //                Drives the column AND its Net contribution. Inflows (AR) is
+      //                unaffected (collectionsPipeline stays legacy).
+      if (revenueMethodology === 'pipeline' && !isPastMonth && !isCurMonth) {
+        pipelineMethodCum += Math.round(pipelineMethodology?.byMonth?.[mKey]?.monthlyContribution || 0);
+      }
       const pipelineBaseWeighted = revenueMethodology === 'pipeline'
-        ? ((!isPastMonth && !isCurMonth) ? Math.round(pipelineMethodology?.byMonth?.[mKey]?.columnD || 0) : 0)
+        ? ((!isPastMonth && !isCurMonth) ? pipelineMethodCum : 0)
         : pipelineLow.weighted;
       const pipelineWeighted = Math.round(pipelineBaseWeighted * pipelineAdjPct / 100);
       const pipelineWeightedILS = Math.round(pipelineWeighted * eurIlsRatio);
@@ -6832,7 +6842,7 @@ useEffect(() => {
                             <span>+{fmtC(r.pipelineWeighted, r.pipelineWeightedILS)}</span>
                             <div className="text-[10px] text-gray-400">
                               {revenueMethodology === 'pipeline'
-                                ? `stage-weighted × ${(pipelineMethodology?.calibrationFactor ?? 0.8381).toFixed(4)}`
+                                ? `cumulative MRR × ${(pipelineMethodology?.calibrationFactor ?? 0.8381).toFixed(4)}`
                                 : `${fmt(r.pipelineTotal)} total • ${r.pipelineCount} opp${r.pipelineCount !== 1 ? 's' : ''}`}
                             </div>
                           </>
