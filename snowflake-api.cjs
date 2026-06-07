@@ -1022,14 +1022,17 @@ function createSnowflakeClient(env) {
 
     const MR_MONTH   = pick('CAL_MONTH_START_DATE', 'REVENUE_MONTH', 'MONTH_START_DATE');
     const MR_OPP     = pick('OPPORTUNITY_ID', 'SRC_OPPORTUNITY_ID');
-    const MR_AMOUNT  = pick('REVENUE_AMOUNT_EUR', 'MONTHLY_REVENUE_EUR', 'AMOUNT_EUR', 'REVENUE_EUR');
+    const MR_AMOUNT  = pick('MR_AMOUNT', 'REVENUE_AMOUNT_EUR', 'MONTHLY_REVENUE_EUR', 'AMOUNT_EUR', 'REVENUE_EUR');
     const MR_CHURNED = pick('IS_CHURNED_OPP', 'CHURNED_OPP', 'IS_CHURNED');
+    // No IS_ZERO flag in FCT_MONTHLY_REVENUE — equivalent semantics: MR_AMOUNT <> 0.
     const MR_ZERO    = pick('IS_ZERO', 'ISZERO');
     const MR_INTEG   = pick('IS_INTEGRATION_MONTH', 'INTEGRATION_MONTH');
+    const MR_CCY     = pick('CURRENCY');
     const mrFilters = [
       MR_CHURNED ? `COALESCE(mr.${MR_CHURNED}, FALSE) = FALSE` : null,
-      MR_ZERO    ? `COALESCE(mr.${MR_ZERO}, FALSE) = FALSE`    : null,
+      MR_ZERO    ? `COALESCE(mr.${MR_ZERO}, FALSE) = FALSE`    : `COALESCE(mr.${MR_AMOUNT}, 0) <> 0`,
       MR_INTEG   ? `COALESCE(mr.${MR_INTEG}, FALSE) = FALSE`   : null,
+      MR_CCY     ? `mr.${MR_CCY} = 'EUR'`                     : null,
     ].filter(Boolean).join('\n        AND ');
     const mrWhere = mrFilters ? `AND ${mrFilters}` : '';
     const mrUsable = MR_MONTH && MR_OPP && MR_AMOUNT;
@@ -1128,7 +1131,7 @@ function createSnowflakeClient(env) {
       yr, refDate: new Date(), openOpps: openOppsNorm, sfContribByMonth, actualMrrByMonth,
       calibrationFactor, calibrationSource,
     });
-    result.mrColumnsResolved = { month: MR_MONTH, opp: MR_OPP, amount: MR_AMOUNT, churned: MR_CHURNED, zero: MR_ZERO, integration: MR_INTEG };
+    result.mrColumnsResolved = { month: MR_MONTH, opp: MR_OPP, amount: MR_AMOUNT, churned: MR_CHURNED, zero: MR_ZERO || `${MR_AMOUNT}<>0 (inferred)`, integration: MR_INTEG, currency: MR_CCY };
     console.log(`[Snowflake] Pipeline methodology: factor=${calibrationFactor.toFixed(4)} (${calibrationSource}), footer=${result.footerTotal}, columnD=${result.columnDTotal}`);
     return result;
   }
