@@ -66,6 +66,7 @@ function assemblePipelineMethodology({ yr, refDate, openOpps, sfContribByMonth, 
   const byMonth = {};
   let footerTotal = 0;
   let columnDTotal = 0;
+  let monthlyContribTotal = 0;
   for (let mIdx = 0; mIdx < 12; mIdx++) {
     const mKey = `${yr}-${String(mIdx + 1).padStart(2, '0')}`;
     const state = monthState(mIdx);
@@ -73,21 +74,26 @@ function assemblePipelineMethodology({ yr, refDate, openOpps, sfContribByMonth, 
     const projectedMrr = projectedMrrForMonth(mIdx);
     const sfContribution = Math.round((sfContribByMonth || {})[mKey] || 0);
     const actualMRR = Math.round((actualMrrByMonth || {})[mKey] || 0);
+    // Per-month cashflow contribution from open pipeline (vs columnD's annual roll-forward).
+    // = expected MRR closing this month from pipeline, calibrated for churn/integration drag.
+    const monthlyContribution = state === 'past' ? 0 : Math.round(projectedMrr * calibrationFactor);
 
     if (state === 'past') {
-      byMonth[mKey] = { state, actualMRR, sfContribution, projectedMrr: 0, monthsRemaining, columnB: sfContribution, columnD: 0 };
+      byMonth[mKey] = { state, actualMRR, sfContribution, projectedMrr: 0, monthsRemaining, monthlyContribution: 0, columnB: sfContribution, columnD: 0 };
       footerTotal += sfContribution;
     } else if (state === 'current') {
       const projected = Math.round(projectedMrr * monthsRemaining * calibrationFactor);
       const columnB = sfContribution + projected;
-      byMonth[mKey] = { state, actualMRR, sfContribution, projectedMrr, monthsRemaining, closedSoFar: actualMRR, projected, columnB, columnD: projected };
+      byMonth[mKey] = { state, actualMRR, sfContribution, projectedMrr, monthsRemaining, closedSoFar: actualMRR, projected, monthlyContribution, columnB, columnD: projected };
       footerTotal += columnB;
       columnDTotal += projected;
+      monthlyContribTotal += monthlyContribution;
     } else {
       const projected = Math.round(projectedMrr * monthsRemaining * calibrationFactor);
-      byMonth[mKey] = { state, actualMRR: 0, sfContribution: 0, projectedMrr, monthsRemaining, projected, columnB: projected, columnD: projected };
+      byMonth[mKey] = { state, actualMRR: 0, sfContribution: 0, projectedMrr, monthsRemaining, projected, monthlyContribution, columnB: projected, columnD: projected };
       footerTotal += projected;
       columnDTotal += projected;
+      monthlyContribTotal += monthlyContribution;
     }
   }
 
@@ -100,6 +106,7 @@ function assemblePipelineMethodology({ yr, refDate, openOpps, sfContribByMonth, 
     byMonth,
     footerTotal: Math.round(footerTotal),
     columnDTotal: Math.round(columnDTotal),
+    monthlyContribTotal: Math.round(monthlyContribTotal),
   };
 }
 

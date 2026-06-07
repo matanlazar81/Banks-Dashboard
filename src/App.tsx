@@ -1079,7 +1079,7 @@ export default function App() {
   const [pipelineMinProb, setPipelineMinProb] = useState(100); // min probability filter for pipeline
   const [sfConversion, setSfConversion] = useState<{ yearly: { year: number; won: number; lost: number; winRate: number; avgWonDays: number }[]; stages: any[]; customers: any[]; projection: any[] }>({ yearly: [], stages: [], customers: [], projection: [] });
   // Column B — pipeline revenue projection methodology (stage-weighted + calibration).
-  type PipelineMonth = { state: 'past' | 'current' | 'future'; actualMRR: number; sfContribution: number; projectedMrr: number; monthsRemaining: number; closedSoFar?: number; projected?: number; columnB: number; columnD: number };
+  type PipelineMonth = { state: 'past' | 'current' | 'future'; actualMRR: number; sfContribution: number; projectedMrr: number; monthsRemaining: number; closedSoFar?: number; projected?: number; monthlyContribution: number; columnB: number; columnD: number };
   const [pipelineMethodology, setPipelineMethodology] = useState<{ year: number; calibrationFactor: number; calibrationSource: string; quarterWeighted: Record<string, number>; byMonth: Record<string, PipelineMonth>; footerTotal: number; columnDTotal: number } | null>(null);
   // Revenue projection mode: 'legacy' (historical win-rate pipeline) or 'pipeline' (Column B methodology).
   const [revenueMethodology, setRevenueMethodology] = useState<'legacy' | 'pipeline'>(() => {
@@ -2819,11 +2819,13 @@ useEffect(() => {
       const collectionsUnpaidCarryMonth = '';
       // Pipeline contribution to inflows for future months. Two methodologies:
       //   'legacy'   → historical win-rate weighted pipeline (pipelineByMonth)
-      //   'pipeline' → Column B methodology: stage-weighted quarterly pipeline ÷
-      //                open months × months-remaining × calibration factor (columnD)
+      //   'pipeline' → Column B methodology, monthly slice: stage-weighted quarterly
+      //                pipeline ÷ open months × calibration factor (monthlyContribution).
+      //                NOT × monthsRemaining — that would be the annual roll-forward
+      //                from columnD, which doubles up the cashflow per month.
       const collectionsPipeline = (!isPastMonth && !isCurMonth)
         ? (revenueMethodology === 'pipeline'
-            ? Math.round(pipelineMethodology?.byMonth?.[mKey]?.columnD || 0)
+            ? Math.round(pipelineMethodology?.byMonth?.[mKey]?.monthlyContribution || 0)
             : (pipelineByMonth[mKey] || 0))
         : 0;
       const customers = revPaid?.customers || 0;
@@ -3911,7 +3913,7 @@ useEffect(() => {
                 <h3 className="font-bold text-gray-800">Revenue Pipeline Methodology — Column B</h3>
                 <p className="text-[11px] text-gray-500">
                   Calibration factor <span className="font-semibold text-emerald-600">×{pipelineMethodology.calibrationFactor.toFixed(4)}</span> ({pipelineMethodology.calibrationSource}) ·
-                  stage-weighted quarterly pipeline ÷ open months × months-remaining × factor
+                  monthly slice feeds cashflow, annual roll-forward is Column D
                 </p>
               </div>
               <button onClick={() => setPipelineMethodOpen(false)} className="text-gray-400 hover:text-gray-700 text-lg leading-none">✕</button>
@@ -3925,8 +3927,9 @@ useEffect(() => {
                   <th className="pb-1 pr-2 text-right">SF Contribution</th>
                   <th className="pb-1 pr-2 text-right">Projected MRR</th>
                   <th className="pb-1 pr-2 text-right">Months Rem.</th>
+                  <th className="pb-1 pr-2 text-right" title="Per-month cashflow Pipeline value: projectedMrr × factor">Monthly →</th>
                   <th className="pb-1 pr-2 text-right">Column B</th>
-                  <th className="pb-1 pr-2 text-right" title="Feeds the cashflow inflows">Column D →</th>
+                  <th className="pb-1 pr-2 text-right" title="Annual roll-forward (× months-remaining × factor)">Column D</th>
                 </tr></thead>
                 <tbody>
                   {Object.entries(pipelineMethodology.byMonth).sort(([a],[b]) => a.localeCompare(b)).map(([mk, m]) => (
@@ -3939,24 +3942,26 @@ useEffect(() => {
                       <td className="py-1.5 pr-2 text-right text-blue-600">{m.sfContribution ? fmt(m.sfContribution) : '—'}</td>
                       <td className="py-1.5 pr-2 text-right text-gray-600">{m.projectedMrr ? fmt(m.projectedMrr) : '—'}</td>
                       <td className="py-1.5 pr-2 text-right text-gray-400">{m.state === 'past' ? '—' : m.monthsRemaining}</td>
+                      <td className="py-1.5 pr-2 text-right font-medium text-emerald-700">{m.monthlyContribution ? fmt(m.monthlyContribution) : '—'}</td>
                       <td className="py-1.5 pr-2 text-right font-medium text-gray-800">{fmt(m.columnB)}</td>
-                      <td className="py-1.5 pr-2 text-right font-medium text-emerald-700">{m.columnD ? fmt(m.columnD) : '—'}</td>
+                      <td className="py-1.5 pr-2 text-right text-gray-500">{m.columnD ? fmt(m.columnD) : '—'}</td>
                     </tr>
                   ))}
                 </tbody>
                 <tfoot><tr className="border-t-2 font-bold">
                   <td className="py-2" colSpan={6}>Total</td>
+                  <td className="py-2 pr-2 text-right text-emerald-800">{fmt(pipelineMethodology.monthlyContribTotal || 0)}</td>
                   <td className="py-2 pr-2 text-right text-gray-900">{fmt(pipelineMethodology.footerTotal)}</td>
-                  <td className="py-2 pr-2 text-right text-emerald-800">{fmt(pipelineMethodology.columnDTotal)}</td>
+                  <td className="py-2 pr-2 text-right text-gray-600">{fmt(pipelineMethodology.columnDTotal)}</td>
                 </tr></tfoot>
               </table>
               <div className="mt-4 text-[11px] text-gray-500 space-y-1">
                 <p><span className="font-semibold text-gray-700">Past months</span> — real SF Monthly_Revenue contribution from deals closed that month (Closed Won, not churned/zero/integration). Not re-projected.</p>
-                <p><span className="font-semibold text-gray-700">Current month</span> — SF actual-so-far + (projected MRR × months remaining × factor). Only the projected part feeds Column D.</p>
-                <p><span className="font-semibold text-gray-700">Future months</span> — quarterly open weighted pipeline ÷ open months × months-remaining × {pipelineMethodology.calibrationFactor.toFixed(4)}.</p>
+                <p><span className="font-semibold text-gray-700">Current month</span> — SF actual-so-far + (projected MRR × months remaining × factor). Monthly slice = projectedMrr × factor.</p>
+                <p><span className="font-semibold text-gray-700">Future months</span> — quarterly open weighted pipeline ÷ open months × factor (monthly), or × months-remaining × factor (annual roll-forward = Column D).</p>
                 <p className="pt-1"><span className="font-semibold text-gray-700">Quarter weighted pipeline:</span> {Object.entries(pipelineMethodology.quarterWeighted).map(([q, v]) => `Q${q} ${fmt(Math.round(Number(v)))}`).join(' · ')}</p>
                 <p><span className="font-semibold text-gray-700">Stage weights:</span> New/Qualified 12% · Test 17% · Negotiation 45% · Contract Sent 60% · Best Case 90%</p>
-                <p className="text-emerald-600"><span className="font-semibold">Column D</span> is what feeds the cashflow inflows (projected portion, current month onward — past actuals already live in Existing MR).</p>
+                <p className="text-emerald-600"><span className="font-semibold">Monthly →</span> what feeds the cashflow Pipeline column (per-month additional MR from new closings). <span className="font-semibold text-gray-700">Column D</span> is the annual roll-forward of the same opportunities through year-end.</p>
               </div>
             </div>
           </div>

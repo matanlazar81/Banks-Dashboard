@@ -114,6 +114,20 @@ for (const mk of ['2026-06','2026-07','2026-08','2026-09','2026-10','2026-11','2
 check('columnD total = May projected + future columnD (excludes past + actuals)', () => assert.strictEqual(r.columnDTotal, Math.round(expectedColumnD)));
 check('columnD total excludes the 10,000 of past SF contribution', () => assert.ok(r.columnDTotal < r.footerTotal));
 
+// Monthly contribution = projectedMrr × factor (no × monthsRemaining).
+// This is what feeds the cashflow Pipeline column.
+check('May monthly = projectedMrr × factor', () => assert.strictEqual(r.byMonth['2026-05'].monthlyContribution, Math.round(22500 * F)));
+check('Aug monthly = 90000 × factor', () => assert.strictEqual(r.byMonth['2026-08'].monthlyContribution, Math.round(90000 * F)));
+check('Dec monthly = 40000 × factor', () => assert.strictEqual(r.byMonth['2026-12'].monthlyContribution, Math.round(40000 * F)));
+check('past months have monthlyContribution = 0', () => {
+  for (const mk of ['2026-01','2026-02','2026-03','2026-04']) assert.strictEqual(r.byMonth[mk].monthlyContribution, 0);
+});
+check('monthlyContribTotal = Σ monthly across all months', () => {
+  let s = 0; for (const mk of Object.keys(r.byMonth)) s += r.byMonth[mk].monthlyContribution;
+  assert.strictEqual(r.monthlyContribTotal, Math.round(s));
+});
+check('monthlyContribTotal < columnDTotal (monthly slice < annual roll-forward)', () => assert.ok(r.monthlyContribTotal < r.columnDTotal));
+
 // Historical year: every month "past"
 const hist = assemblePipelineMethodology({
   yr: 2025, refDate: new Date('2026-05-15T12:00:00'),
