@@ -2186,9 +2186,11 @@ useEffect(() => {
               }
               setSfSalaryBudget(liveSalaryBudget);
               console.info(`[Snapshot] ${co} ${coYear} salary baseline: avg(Oct/Nov/Dec) = €${avgSalary.toLocaleString()}`);
-              // Vendor baseline: avg of last 3 months (Oct, Nov, Dec) from live current-year
-              // cashflow — the year-end run-rate, matching the salary baseline above.
-              const avgVendors = Math.round((liveCf[9].vendors + liveCf[10].vendors + liveCf[11].vendors) / 3);
+              // Vendor baseline: avg of the FULL year (12 months) from the live current-year
+              // cashflow. Vendors are lumpy month-to-month (one-off projects, annual licenses),
+              // so a 12-month average is a steadier basis than the Oct-Dec run-rate used for
+              // salary and inflows.
+              const avgVendors = Math.round(liveCf.reduce((s: number, r: any) => s + r.vendors, 0) / 12);
               const liveVendorTotal: Record<string, { eur: number; ils: number }> = {};
               for (let m = 1; m <= 12; m++) {
                 liveVendorTotal[`${coYear}-${String(m).padStart(2, '0')}`] = { eur: avgVendors, ils: 0 };
