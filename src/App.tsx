@@ -2214,6 +2214,16 @@ useEffect(() => {
                 if (snap.nsBudget) setNsBudget(snap.nsBudget);
                 else setNsBudget({ byMonth: {} });
               }
+              // Inflows baseline: avg of Oct/Nov/Dec collections from the live current-year
+              // cashflow, applied to every target-year month (run-rate carry, matching the
+              // salary/vendor baselines). Set here so the snapshot revenue doesn't override it.
+              const avgColl = Math.round((liveCf[9].collections + liveCf[10].collections + liveCf[11].collections) / 3);
+              const liveRevPaid: Record<string, { revenue: number; customers: number; paid: number; unpaid: number }> = {};
+              for (let m = 1; m <= 12; m++) {
+                liveRevPaid[`${coYear}-${String(m).padStart(2, '0')}`] = { revenue: avgColl, customers: liveCf[11].customers || 0, paid: avgColl, unpaid: 0 };
+              }
+              setSfRevenuePaid(liveRevPaid);
+              console.info(`[Snapshot] ${co} ${coYear} inflows baseline: avg(Oct/Nov/Dec) = €${avgColl.toLocaleString()}`);
             } else {
               if (snap.sfBudget) { setSfBudget(snap.sfBudget); if (snap.sfBudget.financeBudget) setSfFinanceBudget(snap.sfBudget.financeBudget); }
               else setSfBudget({ totalByMonth: {} });
@@ -2246,8 +2256,12 @@ useEffect(() => {
               .then(r => r.ok ? r.json() : null)
               .then(j => { if (j?.byMonth) setNsBankClassified({ byMonth: j.byMonth }); })
               .catch(() => {});
-            if (snap.sfRevenuePaid) setSfRevenuePaid(snap.sfRevenuePaid);
-            else setSfRevenuePaid({});
+            if (!hasLiveCf) {
+              // When liveCf is present, sfRevenuePaid is already set to the Oct-Dec
+              // inflows baseline above; don't overwrite it with the snapshot revenue.
+              if (snap.sfRevenuePaid) setSfRevenuePaid(snap.sfRevenuePaid);
+              else setSfRevenuePaid({});
+            }
             if (snap.sfPipeline) setSfPipeline(snap.sfPipeline);
             else setSfPipeline([]);
             if (snap.sfConversion) setSfConversion(snap.sfConversion);
