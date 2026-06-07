@@ -966,7 +966,16 @@ export default function App() {
   useEffect(() => {
     fetch('/api/whoami')
       .then(r => r.json())
-      .then(d => { setCanSyncBudget(!!d.canSync); setBudgetViewerEmail((d.email || '').toLowerCase()); })
+      // Accept both whoami shapes: the budget-targets route ({email, canSync})
+      // and the app's generic auth route ({user, displayName, isAdmin}). The
+      // generic one wins in production, so derive canSync from isAdmin and
+      // email from user when the budget-targets fields are absent.
+      .then(d => {
+        const email = (d.email || d.user || '').toLowerCase();
+        const canSync = d.canSync ?? d.isAdmin ?? false;
+        setCanSyncBudget(!!canSync);
+        setBudgetViewerEmail(email);
+      })
       .catch(() => setCanSyncBudget(false));
   }, []);
   const [targetsDrawerOpen, setTargetsDrawerOpen] = useState(false);
