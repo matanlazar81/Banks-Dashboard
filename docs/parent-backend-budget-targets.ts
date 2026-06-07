@@ -2,12 +2,19 @@
 // Paste this whole block into finance-it/backend/src/routes/bankDashboardApi.ts
 // just BEFORE the final `export default router;` line.
 //
-// It adds five endpoints backed by PostgreSQL (the parent backend's `pool`):
-//   GET  /api/whoami                   — current user + canSync flag
+// It adds endpoints backed by PostgreSQL (the parent backend's `pool`):
 //   POST /api/sync-budget-targets      — Snowflake → Postgres refresh (gated)
 //   GET  /api/budget-targets           — list rows for a (year, subsidiary)
 //   PUT  /api/budget-targets           — set USER_OVERRIDE_AMOUNT_ILS / _PCT
 //   GET  /api/budget-target-edits      — audit log polling for notifications
+//   GET  /api/whoami-budget            — OPTIONAL diagnostic ({email, canSync})
+//
+// IMPORTANT — /api/whoami collision:
+//   finance-it ALREADY serves /api/whoami ({ user, displayName, isAdmin }).
+//   This module does NOT register /api/whoami (it would shadow the app's auth
+//   route). The frontend reads canSync from the existing route's isAdmin flag
+//   (see App.tsx whoami consumer). Sync is gated server-side via canSyncReq()
+//   = allowlisted email OR isAdmin, so admins can sync without the allowlist.
 //
 // All endpoints reuse the existing `bankRole` middleware and `snowflakeService.getClient()`.
 // Tables are created on module load via `ensureBudgetTablesExist()` (idempotent).
@@ -15,8 +22,8 @@
 // After pasting:
 //   1. npm run build      (tsc)
 //   2. restart the backend (pm2 / systemctl, however you run it)
-//   3. curl -isk 'https://finance-it.lsports.eu/business-tools/bank-dashboard/api/whoami'
-//      → JSON like {"email":"matan.l@lsports.eu","canSync":true}
+//   3. curl -isk '.../api/budget-target-edits?since=2026-01-01T00:00:00Z'
+//      → 200 with JSON (not 404) confirms the routes are registered
 // ============================================================================
 
 // ── helpers ────────────────────────────────────────────────────────────────
@@ -29,14 +36,26 @@ function getSyncAllowlist(): string[] {
 }
 
 // Adjust this if your auth middleware puts the email under a different key.
+// finance-it's session exposes the email under `req.user.user` (the existing
+// /api/whoami returns { user: 'Matan.L@lsports.eu', displayName, isAdmin }),
+// so `user` is included in the fallback chain. isAdmin also grants sync.
 function getCallerEmail(req: any): string {
-  return (req.user?.email || req.user?.preferred_username || req.user?.upn || '')
-    .toString().trim().toLowerCase();
+  const u = req.user || {};
+  const raw = (typeof u === 'string' ? u
+    : u.email || u.preferred_username || u.upn || u.user || u.username || u.name || '');
+  return raw.toString().trim().toLowerCase();
+}
+function isAdminCaller(req: any): boolean {
+  return !!(req.user && (req.user.isAdmin === true || req.user.is_admin === true));
 }
 
 function canUserSync(email: string): boolean {
   if (!email) return false;
   return getSyncAllowlist().includes(email);
+}
+// Combined gate used by the routes: allowlisted email OR an admin session.
+function canSyncReq(req: any): boolean {
+  return canUserSync(getCallerEmail(req)) || isAdminCaller(req);
 }
 
 // Create the tables on first use (idempotent). Kicks off at module load so the
@@ -569,6 +588,58 @@ export async function populateBudgetTargets(opts: {
   }
   const overlayError = await applyActualsForPastMonths();
 
+  // PR-W: project RECURRING employer-cost payroll into future months.
+  // FCT_BUDGET only plans Gross Salaries (760001) forward; the employer burden
+  // (National Insurance, Gemel, Severance, Zkufut debit/credit, Education fund,
+  // Disability, employer tax, gross-up) has no future budget rows, so without
+  // this they read 0 for projected months and Targets understate H2 payroll by
+  // ~25%. Derive each as its trailing ratio to the dept's Gross Salaries over
+  // the available actual months, then apply that ratio to the projected Gross
+  // Salaries. One-off / irregular accounts (bonus, maternity, military reserve
+  // refund, reserve pay, lieu of prior notice) are intentionally NOT projected.
+  // Runs AFTER the actuals overlay (past months are real) and BEFORE PR-O/PR-S
+  // so the scaling passes see a complete, fully-loaded payroll shape.
+  {
+    const ONE_OFF_PAYROLL = new Set(['760017', '760019', '760023', '760025', '760029']);
+    const grossByDeptYear = new Map<string, Aggregated>();
+    for (const g of groups.values()) {
+      if (g.ACCOUNT_NUMBER === '760001') grossByDeptYear.set(`${g.FISCAL_YEAR}|${g.DEPARTMENT}`, g);
+    }
+    let projectedCells = 0;
+    for (const g of groups.values()) {
+      if (!g.IS_PAYROLL) continue;
+      if (g.ACCOUNT_NUMBER === '760001' || g.ACCOUNT_NUMBER === '800029') continue;
+      if (ONE_OFF_PAYROLL.has(g.ACCOUNT_NUMBER)) continue;
+      const gross = grossByDeptYear.get(`${g.FISCAL_YEAR}|${g.DEPARTMENT}`);
+      if (!gross) continue;
+      // Trailing ratio of this account to Gross Salaries over PAST months.
+      let acctPast = 0, grossPast = 0, acctPastEur = 0, grossPastEur = 0;
+      for (const mk of MONTH_KEYS_LIST) {
+        if (!isPastMonth(g.FISCAL_YEAR, Number(mk))) continue;
+        const gr = gross.monthly[mk] || 0;
+        if (gr !== 0) { acctPast += (g.monthly[mk] || 0); grossPast += gr; }
+        const gre = gross.monthlyEur[mk] || 0;
+        if (gre !== 0) { acctPastEur += (g.monthlyEur[mk] || 0); grossPastEur += gre; }
+      }
+      const ratioILS = grossPast !== 0 ? acctPast / grossPast : null;
+      const ratioEUR = grossPastEur !== 0 ? acctPastEur / grossPastEur : null;
+      if (ratioILS === null && ratioEUR === null) continue;
+      for (const mk of MONTH_KEYS_LIST) {
+        if (isPastMonth(g.FISCAL_YEAR, Number(mk))) continue;   // only fill future months
+        if (Math.abs(g.monthly[mk] || 0) > 0.005) continue;     // don't overwrite a real budgeted value
+        if (ratioILS !== null) {
+          const v = Math.round((gross.monthly[mk] || 0) * ratioILS * 100) / 100;
+          if (v !== 0) { g.monthly[mk] = v; g.monthlyRaw[mk] = v; g.annual += v; }
+        }
+        if (ratioEUR !== null) {
+          g.monthlyEur[mk] = Math.round((gross.monthlyEur[mk] || 0) * ratioEUR * 100) / 100;
+        }
+        projectedCells++;
+      }
+    }
+    logger.info?.(`PR-W: projected recurring employer-cost payroll into ${projectedCells} future cells`);
+  }
+
   // PR-O: rescale account amounts so per-month bucket totals match the
   // dashboard's cash-view figures exactly. User wants Targets file = dashboard
   // (TOTAL OUTFLOW per month, by SALARY / VENDORS / OTHER) including all
@@ -910,14 +981,19 @@ export async function populateBudgetTargets(opts: {
 
 // ── routes ─────────────────────────────────────────────────────────────────
 
-router.get('/whoami', bankRole, (req: any, res: Response) => {
+// NOTE: finance-it ALREADY defines /api/whoami (returns { user, displayName,
+// isAdmin }). Do NOT splice this duplicate — Express would keep the first
+// registered handler and this becomes dead code, or worse, shadows the app's
+// auth response. The frontend derives canSync from the existing route's
+// isAdmin flag. This block is kept only for standalone/dev use.
+router.get('/whoami-budget', bankRole, (req: any, res: Response) => {
   const email = getCallerEmail(req);
-  res.json({ email, canSync: canUserSync(email) });
+  res.json({ email, canSync: canSyncReq(req) });
 });
 
 router.post('/sync-budget-targets', bankRole, async (req: any, res: Response) => {
   const email = getCallerEmail(req);
-  if (!canUserSync(email)) {
+  if (!canSyncReq(req)) {
     return res.status(403).json({ ok: false, error: 'Not authorized to sync. Contact the dashboard owner.' });
   }
   try {
