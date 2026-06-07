@@ -2450,7 +2450,6 @@ useEffect(() => {
     const refMonth = ref.getMonth(); // 0-indexed
     const lastMonth = activeYear < refYear ? 11 : activeYear === refYear ? refMonth - 1 : -1;
     if (lastMonth < 0) { setMonthEndBalances({}); return; }
-    const ccKeywords = ['AMEX', 'MasterCard', 'Isracard', 'Visa'];
     let cancelled = false;
     const fetches: Promise<{ mKey: string; eur: number; ils: number } | null>[] = [];
     for (let mi = 0; mi <= lastMonth; mi++) {
@@ -2462,10 +2461,11 @@ useEffect(() => {
           .then(r => r.ok ? r.json() : null)
           .then(j => {
             if (!j?.data?.length) return null;
-            const bankOnly = (j.data as BankAccount[]).filter((a: BankAccount) => !ccKeywords.some(k => a.name.includes(k)));
-            if (bankOnly.length === 0) return null;
-            const eur = bankOnly.reduce((s, a) => s + a.primaryBalance, 0);
-            const ils = bankOnly.reduce((s, a) => s + a.localBalance, 0);
+            // Include all CASH&CASH EQUIVALENTS NEW accounts (banks + crypto + paypal +
+            // deposits + credit cards) so closing matches the NS Balance Sheet.
+            // Credit card balances are negative liabilities that reduce available cash.
+            const eur = (j.data as BankAccount[]).reduce((s, a) => s + a.primaryBalance, 0);
+            const ils = (j.data as BankAccount[]).reduce((s, a) => s + a.localBalance, 0);
             return { mKey, eur, ils };
           })
           .catch(() => null)
@@ -2487,7 +2487,6 @@ useEffect(() => {
     const ref = asOfDate ? new Date(asOfDate + 'T12:00:00') : new Date();
     const refYear = ref.getFullYear();
     const refMonth = ref.getMonth();
-    const ccKeywords = ['AMEX', 'MasterCard', 'Isracard', 'Visa'];
     let cancelled = false;
     const entries = Object.entries(COMPANY_CONFIG) as Array<[string, { subsidiary: number }]>;
     const subYearMap: Record<string, number> = {
@@ -2509,7 +2508,8 @@ useEffect(() => {
             .then(r => r.ok ? r.json() : null)
             .then(j => {
               if (!j?.data?.length) return null;
-              const bankOnly = (j.data as BankAccount[]).filter((a: BankAccount) => !ccKeywords.some(k => a.name.includes(k)));
+              // Include all cash equivalent accounts (incl. credit cards) to match NS Balance Sheet.
+              const bankOnly = j.data as BankAccount[];
               if (bankOnly.length === 0) return null;
               const eur = bankOnly.reduce((s, a) => s + a.primaryBalance, 0);
               const ils = bankOnly.reduce((s, a) => s + a.localBalance, 0);
@@ -2545,10 +2545,10 @@ useEffect(() => {
     const prevStr = `${prevEnd.getFullYear()}-${String(prevEnd.getMonth()+1).padStart(2,'0')}-${String(prevEnd.getDate()).padStart(2,'0')}`;
     fetch(`/api/ns-bank-accounts-asof?date=${prevStr}`).then(r => r.json()).then(j => {
       if (j.data && j.data.length > 0) {
-        const ccKeywords = ['AMEX', 'MasterCard', 'Isracard', 'Visa'];
-        const bankOnly = (j.data as BankAccount[]).filter((a: BankAccount) => !ccKeywords.some(k => a.name.includes(k)));
-        const eur = bankOnly.reduce((s: number, a: BankAccount) => s + a.primaryBalance, 0);
-        const ils = bankOnly.reduce((s: number, a: BankAccount) => s + a.localBalance, 0);
+        // Include all cash equivalent accounts (incl. credit cards) to match NS Balance Sheet.
+        const accts = j.data as BankAccount[];
+        const eur = accts.reduce((s: number, a: BankAccount) => s + a.primaryBalance, 0);
+        const ils = accts.reduce((s: number, a: BankAccount) => s + a.localBalance, 0);
         setPrevMonthEndBalance({ eur, ils });
       }
     }).catch(() => {});
