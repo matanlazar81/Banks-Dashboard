@@ -1028,7 +1028,10 @@ function createSnowflakeClient(env) {
       MR_MONTH  = 'CAL_MONTH_START_DATE';
       MR_OPP    = subsetCols.has('OPPORTUNITY_ID') ? 'OPPORTUNITY_ID' : 'SRC_OPPORTUNITY_ID';
       MR_AMOUNT = 'REVENUE_AMOUNT_EUR';
-      MR_CHURNED = null; MR_ZERO = null; MR_INTEG = null; MR_CCY = null;
+      MR_CHURNED = null; // SUBSET_PAID has CUSTOMER_STATUS but no CHURNED_OPP — skip
+      MR_ZERO    = null; // falls back to REVENUE_AMOUNT_EUR <> 0 via mrFilters logic
+      MR_INTEG   = subsetCols.has('IS_INTEGRATION_MONTH') ? 'IS_INTEGRATION_MONTH' : null;
+      MR_CCY     = null; // REVENUE_AMOUNT_EUR is already EUR-converted
     } else {
       const pick = (...cands) => cands.find(c => rawCols.has(c)) || null;
       MR_TABLE   = 'FCT_MONTHLY_REVENUE';
