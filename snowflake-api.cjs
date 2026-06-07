@@ -1014,8 +1014,8 @@ function createSnowflakeClient(env) {
     // Probe MR table columns so we can map the documented SF fields to whatever
     // the warehouse actually calls them (Churned_opp__c / IsZero__c / etc.).
     const mrCols = new Set((await query(`
-      SELECT COLUMN_NAME FROM DL_PRODUCTION.FINANCE.INFORMATION_SCHEMA.COLUMNS
-      WHERE TABLE_NAME = 'FCT_MONTHLY_REVENUE'
+      SELECT COLUMN_NAME FROM DL_PRODUCTION.INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = 'FINANCE' AND TABLE_NAME = 'FCT_MONTHLY_REVENUE'
     `).catch(() => [])).map(r => r.COLUMN_NAME));
     const has = (c) => mrCols.has(c);
     const pick = (...cands) => cands.find(c => mrCols.has(c)) || null;
