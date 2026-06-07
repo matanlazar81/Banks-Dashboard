@@ -2748,14 +2748,18 @@ useEffect(() => {
       // fallback for subsidiaries / months without SF coverage.
       // Current month: use budget, not partial actuals (bills post throughout the month).
       let vendors: number;
-      // NS GL accrual for vendors (6xxx+7xxx ex 76xxx) — matches P&L "Total Overheads − Payroll".
+      // Snowflake Actual (FCT_EXPENSE accrual, cleaned) — preferred for past months on SF-covered subsidiaries.
+      // Matches "Snowflake Actual (this month)" in the Vendor modal.
+      // NS GL accrual (6xxx+7xxx ex 76xxx) — fallback for subs without SF coverage,
+      // matches P&L "Total Overheads − Payroll". Tends to run higher than SF Actual
+      // because it includes I/C charges and other line items SF filters out.
       const nsVendorActualGL = isPastMonth ? (vendorActuals.find(v => v.month === mKey)?.amountEUR || 0) : 0;
       const nsPaidByMonth = isPastMonth ? (nsPaidVendors.byMonth[mKey] || 0) : 0;
       const nsVendorActual = isPastMonth ? vendorHistory.filter(v => v.paidDate.startsWith(mKey)).reduce((s, v) => s + v.amountEUR, 0) : 0;
-      if (isPastMonth && nsVendorActualGL > 0) {
-        vendors = nsVendorActualGL;
-      } else if (isPastMonth && sfActualsSplit[mKey]?.vendors > 0) {
+      if (isPastMonth && sfActualsSplit[mKey]?.vendors > 0) {
         vendors = sfActualsSplit[mKey].vendors;
+      } else if (isPastMonth && nsVendorActualGL > 0) {
+        vendors = nsVendorActualGL;
       } else if (isPastMonth && nsPaidByMonth > 0) {
         vendors = nsPaidByMonth;
       } else if (isPastMonth && nsVendorActual > 0) {
