@@ -1862,6 +1862,28 @@ function banksPlugin(): Plugin {
                   sf ? sf.fetchOpenPipeline(sourceYear).catch(() => []) : [],
                   sf ? sf.fetchConversionAnalysis().catch(() => ({ yearly: [], stages: [], customers: [], projection: [] })) : { yearly: [], stages: [], customers: [], projection: [] },
                 ]);
+                // Bake the per-account salary breakdown = average of the last 3 source-year
+                // months (Oct-Dec) so the projection-year salary modal renders the same detail the
+                // dashboard total is built from, with no live Snowflake query (the projection year
+                // has no SF rows). The dashboard salary baseline (sfSalaryBudget below) is set to
+                // this breakdown's sum so the modal total ties to the dashboard exactly.
+                let sfSalaryBreakdown: any[] = [];
+                try {
+                  if (sf && sf.fetchSalaryBudgetBreakdown) {
+                    const brkMonths = [10, 11, 12].map(m => `${sourceYear}-${String(m).padStart(2, '0')}`);
+                    const brks = await Promise.all(brkMonths.map((mm: string) => sf.fetchSalaryBudgetBreakdown(mm).catch(() => [])));
+                    const acc: Record<string, any> = {};
+                    for (const rows of brks) for (const row of (rows || [])) {
+                      const key = row.account || row.name;
+                      if (!acc[key]) acc[key] = { department: row.department, account: row.account, accountId: row.accountId, name: row.name, amountEUR: 0, amountILS: 0 };
+                      acc[key].amountEUR += (row.amountEUR || 0);
+                      acc[key].amountILS += (row.amountILS || 0);
+                    }
+                    sfSalaryBreakdown = Object.values(acc).map((x: any) => ({ ...x, amountEUR: Math.round(x.amountEUR / 3), amountILS: Math.round(x.amountILS / 3) }));
+                  }
+                } catch (e: any) { console.warn(`[Budget] LS salary breakdown bake failed: ${e.message}`); }
+                const sfSalaryBreakdownSum = sfSalaryBreakdown.reduce((s: number, x: any) => s + (x.amountEUR || 0), 0);
+                console.log(`[Budget] LS salary breakdown baked: ${sfSalaryBreakdown.length} accounts, sum €${sfSalaryBreakdownSum.toLocaleString()}`);
                 let nsBudget3 = { byMonth: {} } as any;
                 try { nsBudget3 = await queueNsCall(() => ns3.fetchNsBudget()); } catch {}
                 // Fetch bank balance + salary + vendor history + collections for opening balance
@@ -1968,13 +1990,17 @@ function banksPlugin(): Plugin {
                   lastMonthInflow,
                   // Vendor budget: carry 2026 monthly values to 2027 (same month mapping)
                   sfBudget: { byMonth: remapMonths(sfBudget.byMonth || {}), totalByMonth: remapMonths(sfBudget.totalByMonth || {}) },
-                  // Salary budget: AVG of last 3 months (Oct-Dec) as flat baseline for all target year months
+                  // Per-account salary breakdown (avg Oct-Dec source year) — drives the projection-year salary modal.
+                  sfSalaryBreakdown,
+                  // Salary budget: flat baseline for all target year months. Prefer the baked
+                  // breakdown's sum (so the salary modal total ties to the dashboard exactly);
+                  // fall back to the avg of last 3 source-year monthly totals (Oct-Dec).
                   sfSalaryBudget: (() => {
                     const octSal = getByMonthIdx(sfSalaryBudget, 9)?.eur || salByIdx[9] || lastSal;
                     const novSal = getByMonthIdx(sfSalaryBudget, 10)?.eur || salByIdx[10] || lastSal;
                     const decSal = getByMonthIdx(sfSalaryBudget, 11)?.eur || salByIdx[11] || lastSal;
-                    const avgSal = Math.round((octSal + novSal + decSal) / 3) || lastSal;
-                    console.log(`[Budget] LS salary baseline: avg(Oct €${octSal.toLocaleString()}, Nov €${novSal.toLocaleString()}, Dec €${decSal.toLocaleString()}) = €${avgSal.toLocaleString()}`);
+                    const avgSal = sfSalaryBreakdownSum > 0 ? sfSalaryBreakdownSum : (Math.round((octSal + novSal + decSal) / 3) || lastSal);
+                    console.log(`[Budget] LS salary baseline: €${avgSal.toLocaleString()} (${sfSalaryBreakdownSum > 0 ? 'breakdown sum' : `avg Oct €${octSal.toLocaleString()}/Nov €${novSal.toLocaleString()}/Dec €${decSal.toLocaleString()}`})`);
                     const flat: Record<string, { eur: number }> = {};
                     for (let m = 1; m <= 12; m++) flat[`${targetYear}-${String(m).padStart(2, '0')}`] = { eur: avgSal };
                     return flat;
