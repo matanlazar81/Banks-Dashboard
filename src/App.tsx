@@ -2186,8 +2186,9 @@ useEffect(() => {
               }
               setSfSalaryBudget(liveSalaryBudget);
               console.info(`[Snapshot] ${co} ${coYear} salary baseline: avg(Oct/Nov/Dec) = €${avgSalary.toLocaleString()}`);
-              // Vendor baseline: avg of full year from live current-year cashflow
-              const avgVendors = Math.round(liveCf.reduce((s: number, r: any) => s + r.vendors, 0) / 12);
+              // Vendor baseline: avg of last 3 months (Oct, Nov, Dec) from live current-year
+              // cashflow — the year-end run-rate, matching the salary baseline above.
+              const avgVendors = Math.round((liveCf[9].vendors + liveCf[10].vendors + liveCf[11].vendors) / 3);
               const liveVendorTotal: Record<string, { eur: number; ils: number }> = {};
               for (let m = 1; m <= 12; m++) {
                 liveVendorTotal[`${coYear}-${String(m).padStart(2, '0')}`] = { eur: avgVendors, ils: 0 };
