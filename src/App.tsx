@@ -6392,21 +6392,36 @@ useEffect(() => {
             <button
               onClick={async () => {
                 setFxMarket({ loading: true });
-                try {
-                  // Goes through our /api/fx-rate proxy → bypasses any browser CSP
-                  // that blocked the direct ECB call ("fetch blocked").
-                  const r = await fetch('/api/fx-rate?from=EUR&to=ILS', { credentials: 'include' });
-                  const d = await r.json();
-                  if (d?.ok && d.rate && isFinite(d.rate)) {
-                    setFxMarket({ rate: d.rate, date: d.date });
-                    setFxRateByYear(prev => ({ ...prev, [activeYear]: d.rate })); // fill + save; user can still edit
-                  } else { setFxMarket({ error: d?.error || 'no rate returned' }); }
-                } catch (e: any) { setFxMarket({ error: e?.message || 'fetch failed — set manually' }); }
+                // Try sources in order: the dev proxy (present in dev, may 404 in prod),
+                // then several public FX services direct from the browser. At least one
+                // usually passes CSP. First success wins; all-fail → manual entry.
+                type Source = { name: string; url: string; pick: (d: any) => number | undefined; date: (d: any) => string | undefined };
+                const sources: Source[] = [
+                  { name: 'proxy', url: '/api/fx-rate?from=EUR&to=ILS', pick: d => d?.rate, date: d => d?.date },
+                  { name: 'ECB (Frankfurter)', url: 'https://api.frankfurter.app/latest?from=EUR&to=ILS', pick: d => d?.rates?.ILS, date: d => d?.date },
+                  { name: 'open.er-api.com', url: 'https://open.er-api.com/v6/latest/EUR', pick: d => d?.rates?.ILS, date: d => (d?.time_last_update_utc || '').slice(0, 16) },
+                  { name: 'exchangerate.host', url: 'https://api.exchangerate.host/latest?base=EUR&symbols=ILS', pick: d => d?.rates?.ILS, date: d => d?.date },
+                ];
+                for (const s of sources) {
+                  try {
+                    const r = await fetch(s.url, s.name === 'proxy' ? { credentials: 'include' } : undefined);
+                    if (!r.ok) continue;
+                    const d = await r.json();
+                    const rate = s.pick(d);
+                    if (rate && isFinite(rate)) {
+                      const rounded = Math.round(rate * 1000) / 1000;
+                      setFxMarket({ rate: rounded, date: s.date(d), source: s.name } as any);
+                      setFxRateByYear(prev => ({ ...prev, [activeYear]: rounded }));
+                      return;
+                    }
+                  } catch { /* try next */ }
+                }
+                setFxMarket({ error: 'no source reachable — set manually' });
               }}
               className="text-[10px] font-medium text-white bg-blue-500 hover:bg-blue-600 rounded px-2 py-1 disabled:bg-gray-300"
               disabled={!!fxMarket?.loading}
             >{fxMarket?.loading ? 'fetching…' : '🌐 Get live rate'}</button>
-            {fxMarket?.rate && <span className="text-[10px] text-emerald-600">ECB {fxMarket.rate} · {fxMarket.date}</span>}
+            {fxMarket?.rate && <span className="text-[10px] text-emerald-600">{(fxMarket as any).source || 'FX'} {fxMarket.rate} · {fxMarket.date}</span>}
             {fxMarket?.error && <span className="text-[10px] text-red-500">{fxMarket.error}</span>}
             {isOverridden
               ? <button onClick={() => { setFxRateByYear(prev => { const n = { ...prev }; delete n[activeYear]; return n; }); setFxMarket(null); }} className="text-[10px] text-red-500 hover:text-red-700 underline ml-auto">reset to {bankRate.toFixed(3)} (current rate)</button>
