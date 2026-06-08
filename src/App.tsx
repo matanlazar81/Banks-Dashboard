@@ -1219,6 +1219,8 @@ export default function App() {
   const [liveFxRate, setLiveFxRate] = useState<number>(() => {
     try { const v = parseFloat(localStorage.getItem('banks-live-fx-rate') || ''); return (isFinite(v) && v > 0.5 && v < 10) ? v : 3.68; } catch { return 3.68; }
   });
+  // Live market EUR→ILS rate fetched on demand from the ECB (Frankfurter API, CORS-enabled).
+  const [fxMarket, setFxMarket] = useState<{ rate?: number; date?: string; error?: string; loading?: boolean } | null>(null);
   const [pipelineAdjPctByMonth, setPipelineAdjPctByMonth] = useState<Record<number, number>>({}); // per-month pipeline % adjustment
   const [expandedKpi, setExpandedKpi] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -6325,9 +6327,28 @@ useEffect(() => {
                 className="w-20 text-center text-xs font-semibold text-blue-800 border border-blue-300 rounded px-1.5 py-0.5 bg-white" />
               <span className="text-[11px] text-gray-500">₪</span>
             </div>
+            <button
+              onClick={async () => {
+                setFxMarket({ loading: true });
+                try {
+                  const r = await fetch('https://api.frankfurter.app/latest?from=EUR&to=ILS');
+                  const d = await r.json();
+                  const rate = d?.rates?.ILS;
+                  if (rate && isFinite(rate)) {
+                    const rounded = Math.round(rate * 1000) / 1000;
+                    setFxMarket({ rate: rounded, date: d.date });
+                    setFxRateByYear(prev => ({ ...prev, [activeYear]: rounded })); // fill + save; user can still edit
+                  } else { setFxMarket({ error: 'no rate returned' }); }
+                } catch { setFxMarket({ error: 'fetch blocked — set manually' }); }
+              }}
+              className="text-[10px] font-medium text-white bg-blue-500 hover:bg-blue-600 rounded px-2 py-1 disabled:bg-gray-300"
+              disabled={!!fxMarket?.loading}
+            >{fxMarket?.loading ? 'fetching…' : '🌐 Get live rate'}</button>
+            {fxMarket?.rate && <span className="text-[10px] text-emerald-600">ECB {fxMarket.rate} · {fxMarket.date}</span>}
+            {fxMarket?.error && <span className="text-[10px] text-red-500">{fxMarket.error}</span>}
             {isOverridden
-              ? <button onClick={() => setFxRateByYear(prev => { const n = { ...prev }; delete n[activeYear]; return n; })} className="text-[10px] text-red-500 hover:text-red-700 underline">reset to {bankRate.toFixed(3)} (current rate)</button>
-              : <span className="text-[10px] text-gray-400">current FX rate · edit to set your FY{activeYear} planning rate</span>}
+              ? <button onClick={() => { setFxRateByYear(prev => { const n = { ...prev }; delete n[activeYear]; return n; }); setFxMarket(null); }} className="text-[10px] text-red-500 hover:text-red-700 underline ml-auto">reset to {bankRate.toFixed(3)} (current rate)</button>
+              : <span className="text-[10px] text-gray-400 ml-auto">current FX rate · edit or fetch to set your FY{activeYear} rate</span>}
           </div>
           );
         })()}
