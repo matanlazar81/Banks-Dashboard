@@ -9606,6 +9606,14 @@ useEffect(() => {
                       const vendorOverrides = (sfBudget.overrides || []).filter(o => o.mKey === forecastDrilldown.mKey);
                       const hasVendorOverrides = vendorOverrides.length > 0;
                       const overrideTotal = vendorOverrides.reduce((s, o) => s + (o.mode === 'Override' ? (o.newVal - o.oldVal) : o.amountEUR), 0);
+                      // Budget → forecast reconciliation. The residual between the (override-adjusted)
+                      // budget and what the forecast actually uses is the scenario's vendor adjustment
+                      // (category + per-line detail). Detail-level trims don't appear in the category
+                      // breakdown below, so surface the total here — otherwise the modal looks like it
+                      // disagrees with the dashboard, when in fact the dashboard = "Used in Forecast".
+                      const _nowVM = new Date();
+                      const _isFutVM = forecastDrilldown.mKey > `${_nowVM.getFullYear()}-${String(_nowVM.getMonth()+1).padStart(2,'0')}`;
+                      const scenarioAdj = Math.round((typeof meta.used === 'number' ? meta.used : 0) - (meta.budgetTotal || 0));
                       return (
                         <div className="bg-gray-50 rounded-lg p-3 mb-3">
                           <p className="text-xs text-gray-400 mb-2 uppercase">Budget vs Historical{hasVendorOverrides ? ' — overrides applied' : ''}</p>
@@ -9638,7 +9646,10 @@ useEffect(() => {
                                 </tr>
                               )}
                               {meta.actual > 0 && <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600">Snowflake Actual (this month)<SourceInfo source="DL_PRODUCTION.FINANCE.FCT_EXPENSE" column="SUM(AMOUNT_EUR), SUM(AMOUNT_ILS)" detail="non-payroll, source='netsuite', subsidiary_id=3, current month" /></td><td className="py-1.5 text-right font-bold text-amber-700">{fmt(meta.actual)}</td></tr>}
-                              <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600">Used in Forecast<SourceInfo source="computed client-side" column="MAX(Budget, HistoricalAvg) × (1 + adj%) + overrides" detail="forecast formula combining FCT_BUDGET base, 12m historical baseline, and adjustments" /></td><td className="py-1.5 text-right font-bold text-green-700">{fmt(meta.used)}</td></tr>
+                              {_isFutVM && scenarioAdj !== 0 && (
+                                <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600">Scenario adjustments<span className="text-[10px] text-gray-400 ml-1">dept / per-line — incl. detail not shown below</span></td><td className={`py-1.5 text-right font-bold ${scenarioAdj >= 0 ? 'text-red-600' : 'text-green-700'}`}>{scenarioAdj >= 0 ? '+' : ''}{fmt(scenarioAdj)}</td></tr>
+                              )}
+                              <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600">Used in Forecast <span className="text-[10px] text-violet-400">= dashboard cell</span><SourceInfo source="computed client-side" column="budget (after overrides) + scenario adjustments" detail="the exact value shown in the cashflow Vendors cell for this month" /></td><td className="py-1.5 text-right font-bold text-green-700">{fmt(meta.used)}</td></tr>
                               {meta.histAvg > 0 && <tr><td className="py-1.5 text-gray-600">Budget − Historical Gap</td><td className={`py-1.5 text-right font-bold ${gap >= 0 ? 'text-red-600' : 'text-green-700'}`}>{gap >= 0 ? '+' : ''}{fmt(gap)}</td></tr>}
                             </tbody>
                           </table>
@@ -9829,6 +9840,13 @@ useEffect(() => {
                         const adj = _effVendorAdj[cat]?.pct || 0;
                         return s + Math.round((typeof amt === 'number' ? amt : 0) * (adj / 100));
                       }, 0);
+                      // Reconcile the breakdown to the dashboard. Per-line (detail) adjustments aren't
+                      // shown as category rows, so the visible budget Total can sit above the forecast.
+                      // Residual = forecast − budget − category impacts → the detail-level piece.
+                      const _vmetaBd = (forecastDrilldown.data as any).__vendorMeta;
+                      const _budgetSumBd = _catEntries.reduce((s, [, v]: any) => s + (typeof v === 'number' ? v : 0), 0);
+                      const _usedFcBd = _vmetaBd && typeof _vmetaBd.used === 'number' ? Math.round(_vmetaBd.used) : null;
+                      const _detailAdjBd = (_isFutureCat && _usedFcBd != null && _catEntries.length > 0) ? _usedFcBd - _budgetSumBd - _totalVcImpact : 0;
                       return (<><p className="text-xs text-gray-500 mb-2">
                       {forecastDrilldown.type === 'vendors' ? (_isFutureCat ? 'Snowflake Budget Breakdown — click category for details' : 'Snowflake Actuals Breakdown — click category for details') : 'Budget Breakdown'}
                       {forecastDrilldown.type === 'vendors' && (_isFutureCat
@@ -9933,7 +9951,22 @@ useEffect(() => {
                         {_isFutureCat && <td className={`py-1.5 text-right font-bold ${_totalVcImpact === 0 ? 'text-gray-300' : _totalVcImpact >= 0 ? 'text-red-600' : 'text-green-700'}`}>
                           {_totalVcImpact === 0 ? '—' : `${_totalVcImpact >= 0 ? '+' : ''}${fmt(_totalVcImpact)}`}
                         </td>}
-                      </tr></tfoot>
+                      </tr>
+                      {_detailAdjBd !== 0 && (
+                        <>
+                          <tr className="text-[11px] text-gray-500">
+                            <td className="py-1">Per-line / detail adjustments<span className="text-[10px] text-gray-400 ml-1">(not in categories above)</span></td>
+                            <td className={`py-1 pr-2 text-right font-semibold ${_detailAdjBd >= 0 ? 'text-red-600' : 'text-green-700'}`}>{_detailAdjBd >= 0 ? '+' : ''}{fmt(_detailAdjBd)}</td>
+                            <td className="py-1"></td><td className="py-1"></td><td className="py-1"></td>
+                          </tr>
+                          <tr className="border-t font-bold">
+                            <td className="py-1.5">Used in Forecast <span className="text-[10px] text-violet-400 font-normal">= dashboard cell</span></td>
+                            <td className="py-1.5 pr-2 text-right text-green-700">{fmt(_usedFcBd)}</td>
+                            <td className="py-1.5"></td><td className="py-1.5"></td><td className="py-1.5"></td>
+                          </tr>
+                        </>
+                      )}
+                      </tfoot>
                     </table>
                     </>);
                     })()}
