@@ -2326,60 +2326,30 @@ useEffect(() => {
             setChurnMonthlyAvg(0);
             setYoyRevenue(null);
             setSalaryDeptBudgets({});
-            // Dashboard-year salary basis. Prefer the SAME-YEAR FY budget (so the dashboard
-            // equals that year's Targets); fall back to the prior-year Oct-Dec run-rate when
-            // FCT_BUDGET has no salary rows for coYear. (The forward-year plan currently lives
-            // only in the synced Budget Targets table, not in FCT_BUDGET by BUDGET_MONTH_DATE,
-            // so same-year breakdown fetches come back empty until that data exists.)
-            const srcYearSal = coYear - 1; // synthetic-key year: sorts before coYear months
-            const aggMonths = (months: string[]) => Promise.all(months.map(mm =>
-              fetch(`/api/sf-salary-budget-breakdown?month=${mm}`).then(r => r.ok ? r.json() : { data: [] }).catch(() => ({ data: [] }))
-            )).then(results => {
-              const perKey: Record<string, { department: string; account: string; accountId?: number; name: string; eur: number; ils: number }> = {};
-              const perDept: Record<string, { eur: number; ils: number }> = {};
-              let monthsWithData = 0;
-              for (const j of results) {
-                const rows = j.data || [];
-                if (rows.length > 0) monthsWithData++;
-                for (const row of rows) {
-                  const dept = row.department || 'Unassigned';
-                  const key = `${dept}__${row.account || ''}__${row.name || ''}`;
-                  if (!perKey[key]) perKey[key] = { department: dept, account: row.account || '', accountId: row.accountId, name: row.name || '', eur: 0, ils: 0 };
-                  perKey[key].eur += (row.amountEUR || 0);
-                  perKey[key].ils += (row.amountILS || 0);
-                  if (!perDept[dept]) perDept[dept] = { eur: 0, ils: 0 };
-                  perDept[dept].eur += (row.amountEUR || 0);
-                  perDept[dept].ils += (row.amountILS || 0);
-                }
-              }
-              return { perKey, perDept, monthsWithData };
-            });
-            const coMonths = MONTH_KEYS.map(m => `${coYear}-${m}`);
-            const fbMonths = [10, 11, 12].map(m => `${srcYearSal}-${String(m).padStart(2, '0')}`);
-            aggMonths(coMonths).then(async sameYear => {
-              // Same-year present → divide the 12-month sum by 12 (annual spread flat, = Targets
-              // annual). Empty → fall back to prior-year Oct-Dec, divided by the months with data
-              // (the run-rate average that was the prior behavior).
-              let { perKey, perDept, monthsWithData } = sameYear;
-              let divisor = 12;
-              let basis = `FY${coYear} budget (Targets basis)`;
-              if (monthsWithData === 0) {
-                const fb = await aggMonths(fbMonths);
-                perKey = fb.perKey; perDept = fb.perDept; monthsWithData = fb.monthsWithData;
-                divisor = Math.max(1, fb.monthsWithData);
-                basis = `Oct-Dec ${srcYearSal} run-rate (fallback — no FY${coYear} salary in FCT_BUDGET)`;
-              }
-              if (monthsWithData === 0) {
-                setSalaryActualsByDept({}); setLastActualSalaryMonth(''); setSfSalaryBreakdownSnap([]);
-                return;
-              }
+            // ── Projection-year outflow basis ──
+            // Prefer the synced Budget Targets (so the dashboard EQUALS that year's Targets):
+            //   salary  = 76xxx accounts, per (dept, account), EUR + ILS final (incl. overrides);
+            //   vendors = every other account; scale the snapshot's monthly/category distribution
+            //             to the Targets vendor annual so the Vendor modal stays consistent and the
+            //             dashboard vendor total = Targets vendors.
+            // Salary + Vendors then tie to the FY Targets total by construction. If Targets isn't
+            // synced for coYear, fall back to the prior-year Oct-Dec salary run-rate (snapshot
+            // vendors unchanged) so the dashboard still works.
+            const srcYearSal = coYear - 1;            // synthetic-key year: sorts before coYear months
+            const synthKey = `${srcYearSal}-AVG`;
+            const sumV = (o: any): number => o ? Object.values(o).reduce((s: number, v: any) => s + (Number(v) || 0), 0) : 0;
+            const tgtRowEur = (r: any): number => { const e = sumV(r.MONTHLY_SOURCE_EUR); if (Math.abs(e) > 0) return e; const ils = r.MONTHLY_SOURCE_ILS ? sumV(r.MONTHLY_SOURCE_ILS) : (r.SOURCE_AMOUNT_ILS || 0); return ils / 3.68; };
+            const tgtRowIls = (r: any): number => r.MONTHLY_SOURCE_ILS ? sumV(r.MONTHLY_SOURCE_ILS) : (r.SOURCE_AMOUNT_ILS || 0);
+            const tgtRatio = (r: any): number => { const src = r.SOURCE_AMOUNT_ILS || 0; const fin = r.ANNUAL_BUDGET_TARGET_AMOUNT ?? src; return src !== 0 ? fin / src : 1; }; // override ratio
+            // Shared salary state setter (divisor annualizes → flat monthly).
+            const setSalaryFrom = (perKey: Record<string, { department: string; account: string; accountId?: number; name: string; eur: number; ils: number }>, perDept: Record<string, { eur: number; ils: number }>, divisor: number, label: string) => {
+              const div = Math.max(1, divisor);
               const breakdown = Object.values(perKey)
-                .map(x => ({ department: x.department, account: x.account, accountId: x.accountId, name: x.name, amountEUR: Math.round(x.eur / divisor), amountILS: Math.round(x.ils / divisor) }))
+                .map(x => ({ department: x.department, account: x.account, accountId: x.accountId, name: x.name, amountEUR: Math.round(x.eur / div), amountILS: Math.round(x.ils / div) }))
                 .sort((a, b) => b.amountEUR - a.amountEUR);
               setSfSalaryBreakdownSnap(breakdown);
               const synth: Record<string, { eur: number; ils: number }> = {};
-              for (const [d, v] of Object.entries(perDept)) synth[d] = { eur: Math.round(v.eur / divisor), ils: Math.round(v.ils / divisor) };
-              const synthKey = `${srcYearSal}-AVG`;
+              for (const [d, v] of Object.entries(perDept)) synth[d] = { eur: Math.round(v.eur / div), ils: Math.round(v.ils / div) };
               setSalaryActualsByDept({ [synthKey]: synth });
               setLastActualSalaryMonth(synthKey);
               setSalaryProjectionMode('lastActual');
@@ -2388,8 +2358,78 @@ useEffect(() => {
               const flat: Record<string, { eur: number; ils: number }> = {};
               for (let m = 1; m <= 12; m++) flat[`${coYear}-${String(m).padStart(2, '0')}`] = { eur: baseSum, ils: baseSumIls };
               setSfSalaryBudget(flat);
-              console.info(`[Snapshot] ${co} ${coYear} salary: ${basis} €${(baseSum * 12).toLocaleString()}/yr across ${Object.keys(synth).length} depts, ${breakdown.length} rows`);
-            }).catch(() => { setSalaryActualsByDept({}); setLastActualSalaryMonth(''); setSfSalaryBreakdownSnap([]); });
+              console.info(`[Snapshot] ${co} ${coYear} salary: ${label} €${(baseSum * 12).toLocaleString()}/yr across ${Object.keys(synth).length} depts, ${breakdown.length} rows`);
+            };
+            // Run-rate fallback: prior-year Oct-Dec FCT_BUDGET salary (used when Targets unsynced).
+            const runRateFallback = () => {
+              const fbMonths = [10, 11, 12].map(m => `${srcYearSal}-${String(m).padStart(2, '0')}`);
+              Promise.all(fbMonths.map(mm => fetch(`/api/sf-salary-budget-breakdown?month=${mm}`).then(r => r.ok ? r.json() : { data: [] }).catch(() => ({ data: [] }))))
+                .then(results => {
+                  const perKey: Record<string, { department: string; account: string; accountId?: number; name: string; eur: number; ils: number }> = {};
+                  const perDept: Record<string, { eur: number; ils: number }> = {};
+                  let monthsWithData = 0;
+                  for (const j of results) {
+                    const rows = j.data || [];
+                    if (rows.length > 0) monthsWithData++;
+                    for (const row of rows) {
+                      const dept = row.department || 'Unassigned';
+                      const key = `${dept}__${row.account || ''}__${row.name || ''}`;
+                      if (!perKey[key]) perKey[key] = { department: dept, account: row.account || '', accountId: row.accountId, name: row.name || '', eur: 0, ils: 0 };
+                      perKey[key].eur += (row.amountEUR || 0); perKey[key].ils += (row.amountILS || 0);
+                      if (!perDept[dept]) perDept[dept] = { eur: 0, ils: 0 };
+                      perDept[dept].eur += (row.amountEUR || 0); perDept[dept].ils += (row.amountILS || 0);
+                    }
+                  }
+                  if (monthsWithData === 0) { setSalaryActualsByDept({}); setLastActualSalaryMonth(''); setSfSalaryBreakdownSnap([]); return; }
+                  setSalaryFrom(perKey, perDept, monthsWithData, `Oct-Dec ${srcYearSal} run-rate (fallback — no synced Targets)`);
+                })
+                .catch(() => { setSalaryActualsByDept({}); setLastActualSalaryMonth(''); setSfSalaryBreakdownSnap([]); });
+            };
+            fetch(`/api/budget-targets?year=${coYear}&subsidiary=${cfg.subsidiary}`)
+              .then(r => r.ok ? r.json() : { ok: false, rows: [] })
+              .then(tg => {
+                const tgRows: any[] = (tg && tg.ok && Array.isArray(tg.rows)) ? tg.rows : [];
+                if (tgRows.length === 0) { runRateFallback(); return; }
+                // Partition Targets rows: salary = 76xxx, vendors = everything else.
+                const salByKey: Record<string, { department: string; account: string; accountId?: number; name: string; eur: number; ils: number }> = {};
+                const salByDept: Record<string, { eur: number; ils: number }> = {};
+                let venEur = 0, venIls = 0;
+                for (const r of tgRows) {
+                  const acct = String(r.ACCOUNT_NUMBER || '');
+                  const ratio = tgtRatio(r);
+                  const fe = Math.round(tgtRowEur(r) * ratio);
+                  const fi = Math.round(tgtRowIls(r) * ratio);
+                  if (acct.startsWith('76')) {
+                    const dept = r.DEPARTMENT || 'Unassigned';
+                    const key = `${dept}__${acct}__${r.ACCOUNT_NAME || ''}`;
+                    if (!salByKey[key]) salByKey[key] = { department: dept, account: acct, accountId: r.NETSUITE_INTERNAL_NUMBER || undefined, name: r.ACCOUNT_NAME || '', eur: 0, ils: 0 };
+                    salByKey[key].eur += fe; salByKey[key].ils += fi;
+                    if (!salByDept[dept]) salByDept[dept] = { eur: 0, ils: 0 };
+                    salByDept[dept].eur += fe; salByDept[dept].ils += fi;
+                  } else { venEur += fe; venIls += fi; }
+                }
+                // Salary: annual → flat monthly (Targets shows flat); feeds dashboard cell + modal.
+                setSalaryFrom(salByKey, salByDept, 12, `FY${coYear} Targets`);
+                // Vendors: scale the snapshot distribution so its annual = Targets vendors. Each
+                // month + category scales by the same factor, so the modal stays consistent and the
+                // dashboard vendor total reconciles to Targets.
+                const snapVen: any = snap.sfBudget;
+                if (snapVen?.totalByMonth && Object.keys(snapVen.totalByMonth).length > 0) {
+                  const snapEur = Object.values(snapVen.totalByMonth).reduce((s: number, v: any) => s + (v.eur || 0), 0);
+                  const snapIls = Object.values(snapVen.totalByMonth).reduce((s: number, v: any) => s + (v.ils || 0), 0);
+                  const fE = snapEur !== 0 ? venEur / snapEur : 1;
+                  const fI = snapIls !== 0 ? venIls / snapIls : 1;
+                  const scaledTotal: Record<string, { eur: number; ils: number }> = {};
+                  for (const [mk, v] of Object.entries(snapVen.totalByMonth)) scaledTotal[mk] = { eur: Math.round((v as any).eur * fE), ils: Math.round((v as any).ils * fI) };
+                  const scaledByMonth: Record<string, Record<string, number>> = {};
+                  if (snapVen.byMonth) for (const [mk, cats] of Object.entries(snapVen.byMonth)) { scaledByMonth[mk] = {}; for (const [c, amt] of Object.entries(cats as Record<string, number>)) scaledByMonth[mk][c] = Math.round((amt as number) * fE); }
+                  setSfBudget({ ...snapVen, totalByMonth: scaledTotal, byMonth: scaledByMonth });
+                  console.info(`[Snapshot] ${co} ${coYear} vendors: scaled snapshot to FY${coYear} Targets €${venEur.toLocaleString()}/yr (×${fE.toFixed(3)})`);
+                } else {
+                  console.info(`[Snapshot] ${co} ${coYear} vendors: Targets €${venEur.toLocaleString()}/yr but no snapshot distribution to scale`);
+                }
+              })
+              .catch(() => runRateFallback());
             setMonthlyHCImpact({});
             // Persist updated opening balance to snapshot file for page refresh consistency
             if (hasLiveCf && Math.round(openBal) !== Math.round(snap.projectedDecClosing || 0)) {
