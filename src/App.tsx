@@ -70,6 +70,15 @@ type ScenarioData = {
   pipelineMinProb: number;
   currencyDefensePct?: number; // global % applied to FX defense budget when no per-month override
   currencyDefensePctByMonth?: Record<number, number>; // per-month % override (month index 0-11)
+  // ── View state ── captured so a shared scenario reproduces the author's exact view,
+  // not just the adjustment deltas. All optional: scenarios saved before this keep
+  // today's behavior (absent field = "leave the viewer's current setting").
+  salaryProjectionMode?: 'budget' | 'lastActual'; // Salary: Budget vs Actual toggle
+  revenueMethodology?: 'legacy' | 'pipeline';      // Revenue: Win-rate vs Pipeline toggle
+  salaryManualILS?: Record<string, number>;        // per-month manual salary override (ILS)
+  pipelineAdjPctByMonth?: Record<number, number>;  // per-month pipeline %
+  churnOverride?: Record<string, number>;          // per-month manual churn
+  year?: number;                                   // fiscal year the author was viewing
 };
 type Scenario = {
   id: string;
@@ -1225,6 +1234,8 @@ export default function App() {
   }, [activeYear, currentYear]);
   const activeYearRef = useRef(activeYear);
   activeYearRef.current = activeYear;
+  const activeCompanyRef = useRef(activeCompany);
+  activeCompanyRef.current = activeCompany;
   useEffect(() => { try { localStorage.setItem(`banks-salary-adj-${activeYearRef.current}`, JSON.stringify(salaryAdjPctByMonth)); } catch {} }, [salaryAdjPctByMonth]);
   // Collection % adjustment per month (default 100% — expected collection rate vs forecast)
   const [collPctByMonth, setCollPctByMonth] = useState<Record<number, number>>(() => {
@@ -1482,7 +1493,7 @@ useEffect(() => {
         const me = ((d.viewerEmail as string) || '').toLowerCase();
         const own = (d.data || []) as any[];
         const shared = (d.shared || []) as any[];
-        const all: Array<{id:string;name:string;updatedAt?:string}> = [...own, ...shared];
+        const all: any[] = [...own, ...shared]; // full objects (incl .data) for auto-apply
         const seen = _lastSeenScenarioRef.current;
         const firstRun = !_scenarioSeededRef.current;
         const since24h = Date.now() - 24 * 60 * 60 * 1000;
@@ -1572,6 +1583,21 @@ useEffect(() => {
           if (me && batch.editorEmail.toLowerCase() === me) {
             console.log('[ScenarioNotif] skipping self-edit batch:', batch.scenarioName);
             continue;
+          }
+          // Auto-apply: if the edited scenario is the one currently open, pull the
+          // author's latest data into the live view so all parties converge on the last
+          // update. Only fires for others' edits (self-edits skipped above), so it can't
+          // clobber your own in-flight changes or loop with auto-save.
+          if (batch.scenarioId === activeScenarioIdRef.current && applyScenarioDataRef.current) {
+            const full = all.find((s: any) => s.id === batch.scenarioId);
+            if (full?.data) {
+              isLoadingScenario.current = true; // suppress the echo auto-save
+              applyScenarioDataRef.current(full.data);
+              setScenarios(prev => prev.map((s: any) => s.id === full.id ? { ...s, data: full.data, updatedAt: full.updatedAt } : s));
+              _setShared(prev => prev.map((s: any) => s.id === full.id ? { ...s, data: full.data, updatedAt: full.updatedAt } : s));
+              console.info('[ScenarioNotif] auto-applied remote update to active scenario:', batch.scenarioName, 'by', batch.editorName);
+            }
+            continue; // converged live; no need to also surface a popup for the active one
           }
           let p = pending[batch.scenarioId];
           if (p) {
@@ -1783,7 +1809,13 @@ useEffect(() => {
     pipelineMinProb,
     currencyDefensePct,
     currencyDefensePctByMonth: { ...currencyDefensePctByMonth },
-  }), [salaryAdjPctByMonth, collPctByMonth, salaryDeptAdj, vendorCatAdj, vendorDetailAdj, leverOverrides, headcountAdj, pipelineMinProb, currencyDefensePct, currencyDefensePctByMonth]);
+    salaryProjectionMode,
+    revenueMethodology,
+    salaryManualILS: { ...salaryManualILS },
+    pipelineAdjPctByMonth: { ...pipelineAdjPctByMonth },
+    churnOverride: { ...churnOverride },
+    year: activeYear,
+  }), [salaryAdjPctByMonth, collPctByMonth, salaryDeptAdj, vendorCatAdj, vendorDetailAdj, leverOverrides, headcountAdj, pipelineMinProb, currencyDefensePct, currencyDefensePctByMonth, salaryProjectionMode, revenueMethodology, salaryManualILS, pipelineAdjPctByMonth, churnOverride, activeYear]);
 
   const applyScenarioData = useCallback((data: ScenarioData) => {
     isLoadingScenario.current = true; // prevent auto-save from overwriting during load
@@ -1796,6 +1828,20 @@ useEffect(() => {
     setPipelineMinProb(data.pipelineMinProb ?? 100);
     if (data.currencyDefensePct !== undefined) setCurrencyDefensePct(data.currencyDefensePct);
     if (data.currencyDefensePctByMonth) setCurrencyDefensePctByMonth(data.currencyDefensePctByMonth);
+    // View state: methodology toggles (only override when the scenario carries one, so
+    // older scenarios leave the viewer's current toggle alone); per-month overrides reset
+    // to {} when absent (a scenario without them means "no such override").
+    if (data.salaryProjectionMode) setSalaryProjectionMode(data.salaryProjectionMode);
+    if (data.revenueMethodology) setRevenueMethodology(data.revenueMethodology);
+    setSalaryManualILS(data.salaryManualILS || {});
+    setPipelineAdjPctByMonth(data.pipelineAdjPctByMonth || {});
+    setChurnOverride(data.churnOverride || {});
+    // Switch the viewed year to the author's so the view matches exactly. Adjustments are
+    // keyed 'YYYY-MM', so they only line up on that year. (Skip for consolidated, which
+    // derives its year from the two subsidiaries.)
+    if (data.year && data.year !== activeYearRef.current && activeCompanyRef.current !== 'consolidated') {
+      setActiveYears(prev => ({ ...prev, [activeCompanyRef.current]: data.year! }));
+    }
     // If scenario has headcountAdj, use it; otherwise compute from salaryDeptAdj + deptHeadcount
     const hcAdj = data.headcountAdj || {};
     const hasExplicitHc = Object.keys(hcAdj).some(mKey => Object.values(hcAdj[mKey] || {}).some(v => v !== 0));
@@ -1837,6 +1883,13 @@ useEffect(() => {
       }
     }
   }, [salaryDeptBudgets]);
+
+  // Latest-value refs for the scenario-edit poll (its effect has [] deps, so it would
+  // otherwise close over stale values). Assigned every render, like activeYearRef.
+  const applyScenarioDataRef = useRef(applyScenarioData);
+  applyScenarioDataRef.current = applyScenarioData;
+  const activeScenarioIdRef = useRef(activeScenarioId);
+  activeScenarioIdRef.current = activeScenarioId;
 
   const saveScenario = useCallback((name: string) => {
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -1885,17 +1938,19 @@ useEffect(() => {
         || Object.keys(currentData.vendorCatAdj).length > 0
         || Object.keys(currentData.vendorDetailAdj).length > 0
         || Object.keys(currentData.headcountAdj).length > 0;
-      if (!hasAnyAdj) return;
+      // No early return on "no adjustments": an active scenario must also capture pure
+      // view changes (a toggle flip, a year switch) so they broadcast to everyone sharing it.
       if (activeScenarioId && _activeSharedOwnerRef.current) {
-        // Update shared scenario (owned by someone else)
+        // Shared scenario (owned by someone else): a sharer's edits write back to the same
+        // scenario id, so the owner and every other sharer converge on this update.
         _setShared(prev => prev.map(s => s.id === activeScenarioId ? { ...s, updatedAt: new Date().toISOString(), data: currentData } : s));
         _syncUpdate(activeScenarioId, { data: currentData });
       } else if (activeScenarioId) {
         // Update own scenario
         setScenarios(prev => prev.map(s => s.id === activeScenarioId ? { ...s, updatedAt: new Date().toISOString(), data: currentData } : s));
         _syncUpdate(activeScenarioId, { data: currentData });
-      } else {
-        // Auto-create new scenario
+      } else if (hasAnyAdj) {
+        // No active scenario: only auto-create a draft for real adjustments (not a lone toggle).
         const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
         const name = `Draft ${new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}`;
         const newScenario: Scenario = { id, name, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), data: currentData };
@@ -1905,7 +1960,7 @@ useEffect(() => {
       }
     }, 1500);
     return () => { if (autoSaveRef.current) clearTimeout(autoSaveRef.current); };
-  }, [salaryAdjPctByMonth, collPctByMonth, salaryDeptAdj, vendorCatAdj, vendorDetailAdj, leverOverrides, headcountAdj, pipelineMinProb]);
+  }, [salaryAdjPctByMonth, collPctByMonth, salaryDeptAdj, vendorCatAdj, vendorDetailAdj, leverOverrides, headcountAdj, pipelineMinProb, salaryProjectionMode, revenueMethodology, salaryManualILS, pipelineAdjPctByMonth, churnOverride, currencyDefensePct, currencyDefensePctByMonth, activeYear]);
 
   const deleteScenario = useCallback((id: string) => {
     setScenarios(prev => prev.filter(s => s.id !== id));
