@@ -8692,7 +8692,20 @@ useEffect(() => {
                               {forecastDrilldown.mKey >= `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}` && <th className="pb-1 pr-2 text-right">%</th>}
                             </tr></thead>
                             <tbody>
-                              {d.budget.map((r: any, idx: number) => {
+                              {(() => {
+                                // Group by department in the same order as the Department Adjustments
+                                // table (desc by base EUR per dept), then within each dept sort accounts
+                                // by amountEUR desc. So a reader can scan dept-by-dept consistently.
+                                const deptTot: Record<string, number> = {};
+                                for (const row of d.budget as any[]) deptTot[row.department || ''] = (deptTot[row.department || ''] || 0) + (row.amountEUR || 0);
+                                const deptRank: Record<string, number> = {};
+                                Object.entries(deptTot).sort((a, b) => (b[1] as number) - (a[1] as number)).forEach(([dep], i) => { deptRank[dep] = i; });
+                                const sortedBudget = (d.budget as any[]).slice().sort((a, b) => {
+                                  const da = a.department || '', db = b.department || '';
+                                  if (deptRank[da] !== deptRank[db]) return (deptRank[da] ?? 999) - (deptRank[db] ?? 999);
+                                  return (b.amountEUR || 0) - (a.amountEUR || 0);
+                                });
+                                return sortedBudget.map((r: any, idx: number) => {
                                 const budgetBillKey = `budget__${r.account}__${r.department}`;
                                 const isBudgetBillExpanded = forecastDrilldown.data?.__expandedBillRow === budgetBillKey;
                                 return (
@@ -8779,7 +8792,8 @@ useEffect(() => {
                                 )}
                                 </Fragment>
                                 );
-                              })}
+                              });
+                              })()}
                             </tbody>
                             <tfoot><tr className="border-t-2 font-bold">
                               <td className="py-1.5" colSpan={3}>Total</td>
