@@ -9909,6 +9909,24 @@ useEffect(() => {
                       const _budgetSumBd = _catEntries.reduce((s, [, v]: any) => s + (typeof v === 'number' ? v : 0), 0);
                       const _usedFcBd = _vmetaBd && typeof _vmetaBd.used === 'number' ? Math.round(_vmetaBd.used) : null;
                       const _detailAdjBd = (_isFutureCat && _usedFcBd != null && _catEntries.length > 0) ? _usedFcBd - _budgetSumBd - _totalVcImpact : 0;
+                      // Roll per-line (detail) adjustments up to their parent category (key = "Category||…"),
+                      // so each category row shows the per-line impact + an effective rate instead of hiding
+                      // it behind 0%. Cascading like the forecast.
+                      const _detailByCat: Record<string, number> = {};
+                      if (_isFutureCat) {
+                        const _effD: Record<string, { pct: number; base: number }> = {};
+                        const _dm = Object.keys(vendorDetailAdj).filter(k => k <= forecastDrilldown.mKey && k.slice(0,4) === forecastDrilldown.mKey.slice(0,4)).sort();
+                        for (const m of _dm) for (const [k, v] of Object.entries(vendorDetailAdj[m] || {})) { if (Number(v.pct) !== 0) _effD[k] = v; else delete _effD[k]; }
+                        for (const [k, v] of Object.entries(_effD)) {
+                          const base = Number(v.base); const pct = Number(v.pct);
+                          if (!Number.isFinite(base) || !Number.isFinite(pct)) continue;
+                          const c = k.split('||')[0] || '';
+                          _detailByCat[c] = (_detailByCat[c] || 0) + Math.round(base * pct / 100);
+                        }
+                      }
+                      const _matchedPerLine = _catEntries.reduce((s, [cat]: any) => s + (_detailByCat[cat] || 0), 0);
+                      const _unmatchedPerLine = _detailAdjBd - _matchedPerLine;       // per-line whose category isn't a visible row
+                      const _totalCombinedImpact = _totalVcImpact + _matchedPerLine;  // category manual + rolled-up per-line
                       return (<><p className="text-xs text-gray-500 mb-2">
                       {forecastDrilldown.type === 'vendors' ? (_isFutureCat ? 'Snowflake Budget Breakdown — click category for details' : 'Snowflake Actuals Breakdown — click category for details') : 'Budget Breakdown'}
                       {forecastDrilldown.type === 'vendors' && (_isFutureCat
@@ -9948,7 +9966,7 @@ useEffect(() => {
                                     });
                                 }
                               }}>
-                            <td className="py-1.5 pr-2 text-violet-600 hover:text-violet-800 underline">{cat}{(sfBudget.overrides || []).some(o => o.mKey === forecastDrilldown.mKey && o.category === cat) && <span className="ml-1 inline-block w-2 h-2 rounded-full bg-orange-500" title="Has Google Sheets override"></span>}</td>
+                            <td className="py-1.5 pr-2 text-violet-600 hover:text-violet-800 underline">{cat}{(sfBudget.overrides || []).some(o => o.mKey === forecastDrilldown.mKey && o.category === cat) && <span className="ml-1 inline-block w-2 h-2 rounded-full bg-orange-500" title="Has Google Sheets override"></span>}{(_detailByCat[cat] || 0) !== 0 && <span className="ml-1 inline-block w-2 h-2 rounded-full bg-amber-500 align-middle" title="Has a per-line (GL-account) adjustment — click to view/edit"></span>}</td>
                             <td className="py-1.5 pr-2 text-right font-medium text-violet-700">{fmt(amt)}</td>
                             <td className="py-1.5 pr-2 text-right text-gray-400">{_catTotal > 0 ? (Math.abs(typeof amt === 'number' ? amt : 0) / _catTotal * 100).toFixed(1) + '%' : '—'}</td>
                             {_isFutureCat && <td className="py-1.5 pr-2" onClick={e => e.stopPropagation()}>
@@ -9996,9 +10014,15 @@ useEffect(() => {
                               </div>
                               {vcInherited && vcPct !== 0 && <div className="text-[9px] text-teal-400 text-center mt-0.5">from {new Date(vcAdj.fromMonth + '-01').toLocaleDateString('en-GB', { month: 'short' })}</div>}
                             </td>}
-                            {_isFutureCat && <td className={`py-1.5 text-right font-bold ${vcPct === 0 ? 'text-gray-300' : vcImpact >= 0 ? 'text-red-600' : 'text-green-700'}`}>
-                              {vcPct === 0 ? '—' : `${vcImpact >= 0 ? '+' : ''}${fmt(vcImpact)}`}
-                            </td>}
+                            {_isFutureCat && (() => {
+                              const perLine = _detailByCat[cat] || 0;
+                              const combined = vcImpact + perLine;
+                              const hasAny = vcPct !== 0 || perLine !== 0;
+                              const effPct = (typeof amt === 'number' && amt !== 0) ? Math.round((combined / amt) * 100) : 0;
+                              return (<td className={`py-1.5 text-right font-bold ${!hasAny ? 'text-gray-300' : combined >= 0 ? 'text-red-600' : 'text-green-700'}`}>
+                                {!hasAny ? '—' : (<>{combined >= 0 ? '+' : ''}{fmt(combined)}{effPct !== 0 && <span className="text-[10px] font-normal opacity-70 ml-1">({effPct > 0 ? '+' : ''}{effPct}%)</span>}{perLine !== 0 && <div className="text-[9px] text-amber-600 font-normal">incl. per-line {perLine >= 0 ? '+' : ''}{fmt(perLine)}</div>}</>)}
+                              </td>);
+                            })()}
                           </tr>
                           );
                         })}
@@ -10010,20 +10034,22 @@ useEffect(() => {
                         {_isFutureCat && <td className="py-1.5 text-center">
                           {(_hasAnyVcAdj || _detailAdjBd !== 0) && <button onClick={() => { setVendorCatAdj({}); setVendorDetailAdj({}); }} className="text-[9px] text-red-500 hover:text-red-700 underline" title="Clear category AND per-line vendor adjustments (all months)">reset all</button>}
                         </td>}
-                        {_isFutureCat && <td className={`py-1.5 text-right font-bold ${_totalVcImpact === 0 ? 'text-gray-300' : _totalVcImpact >= 0 ? 'text-red-600' : 'text-green-700'}`}>
-                          {_totalVcImpact === 0 ? '—' : `${_totalVcImpact >= 0 ? '+' : ''}${fmt(_totalVcImpact)}`}
+                        {_isFutureCat && <td className={`py-1.5 text-right font-bold ${_totalCombinedImpact === 0 ? 'text-gray-300' : _totalCombinedImpact >= 0 ? 'text-red-600' : 'text-green-700'}`}>
+                          {_totalCombinedImpact === 0 ? '—' : `${_totalCombinedImpact >= 0 ? '+' : ''}${fmt(_totalCombinedImpact)}`}
                         </td>}
                       </tr>
-                      {_detailAdjBd !== 0 && (
+                      {(_detailAdjBd !== 0 || _totalVcImpact !== 0) && (
                         <>
+                          {_unmatchedPerLine !== 0 && (
                           <tr className="text-[11px] text-gray-500">
-                            <td className="py-1">Per-line / detail adjustments<span className="text-[10px] text-gray-400 ml-1">(not in categories above)</span></td>
-                            <td className={`py-1 pr-2 text-right font-semibold ${_detailAdjBd >= 0 ? 'text-red-600' : 'text-green-700'}`}>{_detailAdjBd >= 0 ? '+' : ''}{fmt(_detailAdjBd)}{_budgetSumBd > 0 && (() => { const p = Math.round((_detailAdjBd / _budgetSumBd) * 100); return p !== 0 ? <span className="text-[10px] font-normal opacity-70 ml-1">({p > 0 ? '+' : ''}{p}%)</span> : null; })()}</td>
+                            <td className="py-1">Per-line adjustments<span className="text-[10px] text-gray-400 ml-1">(category not listed above)</span></td>
+                            <td className={`py-1 pr-2 text-right font-semibold ${_unmatchedPerLine >= 0 ? 'text-red-600' : 'text-green-700'}`}>{_unmatchedPerLine >= 0 ? '+' : ''}{fmt(_unmatchedPerLine)}</td>
                             <td className="py-1"></td><td className="py-1"></td><td className="py-1"></td>
                           </tr>
+                          )}
                           <tr className="border-t font-bold">
                             <td className="py-1.5">Used in Forecast <span className="text-[10px] text-violet-400 font-normal">= dashboard cell</span></td>
-                            <td className="py-1.5 pr-2 text-right text-green-700">{fmt(_usedFcBd)}</td>
+                            <td className="py-1.5 pr-2 text-right text-green-700">{fmt(_usedFcBd != null ? _usedFcBd : _budgetSumBd + _totalCombinedImpact + _unmatchedPerLine)}</td>
                             <td className="py-1.5"></td><td className="py-1.5"></td><td className="py-1.5"></td>
                           </tr>
                         </>
