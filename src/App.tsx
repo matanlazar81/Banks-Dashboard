@@ -79,6 +79,7 @@ type ScenarioData = {
   pipelineAdjPctByMonth?: Record<number, number>;  // per-month pipeline %
   churnOverride?: Record<string, number>;          // per-month manual churn
   year?: number;                                   // fiscal year the author was viewing
+  fxRateByYear?: Record<number, number>;           // per-year EUR→ILS override (EUR base)
 };
 type Scenario = {
   id: string;
@@ -1854,7 +1855,8 @@ useEffect(() => {
     pipelineAdjPctByMonth: { ...pipelineAdjPctByMonth },
     churnOverride: { ...churnOverride },
     year: activeYear,
-  }), [salaryAdjPctByMonth, collPctByMonth, salaryDeptAdj, vendorCatAdj, vendorDetailAdj, leverOverrides, headcountAdj, pipelineMinProb, currencyDefensePct, currencyDefensePctByMonth, salaryProjectionMode, revenueMethodology, salaryManualILS, pipelineAdjPctByMonth, churnOverride, activeYear]);
+    fxRateByYear: { ...fxRateByYear },
+  }), [salaryAdjPctByMonth, collPctByMonth, salaryDeptAdj, vendorCatAdj, vendorDetailAdj, leverOverrides, headcountAdj, pipelineMinProb, currencyDefensePct, currencyDefensePctByMonth, salaryProjectionMode, revenueMethodology, salaryManualILS, pipelineAdjPctByMonth, churnOverride, activeYear, fxRateByYear]);
 
   const applyScenarioData = useCallback((data: ScenarioData) => {
     isLoadingScenario.current = true; // prevent auto-save from overwriting during load
@@ -1875,6 +1877,8 @@ useEffect(() => {
     setSalaryManualILS(data.salaryManualILS || {});
     setPipelineAdjPctByMonth(data.pipelineAdjPctByMonth || {});
     setChurnOverride(data.churnOverride || {});
+    // FX rate: merge so a scenario's rates override the local map without clearing other years.
+    if (data.fxRateByYear) setFxRateByYear(prev => ({ ...prev, ...data.fxRateByYear }));
     // Switch the viewed year to the author's so the view matches exactly. Adjustments are
     // keyed 'YYYY-MM', so they only line up on that year. (Skip for consolidated, which
     // derives its year from the two subsidiaries.)
@@ -1999,7 +2003,7 @@ useEffect(() => {
       }
     }, 1500);
     return () => { if (autoSaveRef.current) clearTimeout(autoSaveRef.current); };
-  }, [salaryAdjPctByMonth, collPctByMonth, salaryDeptAdj, vendorCatAdj, vendorDetailAdj, leverOverrides, headcountAdj, pipelineMinProb, salaryProjectionMode, revenueMethodology, salaryManualILS, pipelineAdjPctByMonth, churnOverride, currencyDefensePct, currencyDefensePctByMonth, activeYear]);
+  }, [salaryAdjPctByMonth, collPctByMonth, salaryDeptAdj, vendorCatAdj, vendorDetailAdj, leverOverrides, headcountAdj, pipelineMinProb, salaryProjectionMode, revenueMethodology, salaryManualILS, pipelineAdjPctByMonth, churnOverride, currencyDefensePct, currencyDefensePctByMonth, activeYear, fxRateByYear]);
 
   const deleteScenario = useCallback((id: string) => {
     setScenarios(prev => prev.filter(s => s.id !== id));
@@ -2357,7 +2361,7 @@ useEffect(() => {
             const tgtRowIls = (r: any): number => r.MONTHLY_SOURCE_ILS ? sumV(r.MONTHLY_SOURCE_ILS) : (r.SOURCE_AMOUNT_ILS || 0);
             const tgtRatio = (r: any): number => { const src = r.SOURCE_AMOUNT_ILS || 0; const fin = r.ANNUAL_BUDGET_TARGET_AMOUNT ?? src; return src !== 0 ? fin / src : 1; }; // override ratio
             // Shared salary state setter (divisor annualizes → flat monthly).
-            const setSalaryFrom = (perKey: Record<string, { department: string; account: string; accountId?: number; name: string; eur: number; ils: number }>, perDept: Record<string, { eur: number; ils: number }>, divisor: number, label: string) => {
+            const setSalaryFrom = (perKey: Record<string, { department: string; account: string; accountId?: number; name: string; eur: number; ils: number }>, perDept: Record<string, { eur: number; ils: number }>, divisor: number, label: string, monthly?: Record<string, { eur: number; ils: number }>) => {
               const div = Math.max(1, divisor);
               const breakdown = Object.values(perKey)
                 .map(x => ({ department: x.department, account: x.account, accountId: x.accountId, name: x.name, amountEUR: Math.round(x.eur / div), amountILS: Math.round(x.ils / div) }))
@@ -2370,10 +2374,19 @@ useEffect(() => {
               setSalaryProjectionMode('lastActual');
               const baseSum = Object.values(synth).reduce((s, v) => s + v.eur, 0);
               const baseSumIls = Object.values(synth).reduce((s, v) => s + v.ils, 0);
-              const flat: Record<string, { eur: number; ils: number }> = {};
-              for (let m = 1; m <= 12; m++) flat[`${coYear}-${String(m).padStart(2, '0')}`] = { eur: baseSum, ils: baseSumIls };
-              setSfSalaryBudget(flat);
-              console.info(`[Snapshot] ${co} ${coYear} salary: ${label} €${(baseSum * 12).toLocaleString()}/yr across ${Object.keys(synth).length} depts, ${breakdown.length} rows`);
+              // Per-month salary baseline. When the caller supplies a monthly map (Targets path
+              // with MONTHLY_SOURCE_ILS weights), honour the real per-month shape so the dashboard
+              // total ties to the Targets total — e.g. October being doubled across 76xxx accounts
+              // shows up as an actual €4.6M October, not a flat €2.3M with a separate scenario
+              // adjustment. Without a monthly map (fallback path), still spread the annual flat.
+              const perMonth: Record<string, { eur: number; ils: number }> = {};
+              for (let m = 1; m <= 12; m++) {
+                const mk = `${coYear}-${String(m).padStart(2, '0')}`;
+                perMonth[mk] = monthly && monthly[mk] ? monthly[mk] : { eur: baseSum, ils: baseSumIls };
+              }
+              setSfSalaryBudget(perMonth);
+              const monthlyAnnual = Object.values(perMonth).reduce((s, v) => s + v.eur, 0);
+              console.info(`[Snapshot] ${co} ${coYear} salary: ${label} €${monthlyAnnual.toLocaleString()}/yr (${monthly ? 'monthly' : 'flat'}) across ${Object.keys(synth).length} depts, ${breakdown.length} rows`);
             };
             // Run-rate fallback: prior-year Oct-Dec FCT_BUDGET salary (used when Targets unsynced).
             const runRateFallback = () => {
@@ -2413,9 +2426,13 @@ useEffect(() => {
                 const salByDept: Record<string, { eur: number; ils: number }> = {};
                 const venTotalByMonth: Record<string, { eur: number; ils: number }> = {};
                 const venByMonth: Record<string, Record<string, number>> = {}; // monthKey → { category: EUR }
+                // Per-month salary baseline (same weights as vendors). Lets the dashboard reflect
+                // when a salary account is bumped in a specific month (e.g. October doubled in
+                // Targets), instead of flattening annual÷12.
+                const salTotalByMonth: Record<string, { eur: number; ils: number }> = {};
                 let venEur = 0, venIls = 0;
                 let venCategoryRows = 0; // count of vendor rows that carried CATEGORY
-                for (let m = 1; m <= 12; m++) { const mk = `${coYear}-${String(m).padStart(2, '0')}`; venTotalByMonth[mk] = { eur: 0, ils: 0 }; venByMonth[mk] = {}; }
+                for (let m = 1; m <= 12; m++) { const mk = `${coYear}-${String(m).padStart(2, '0')}`; venTotalByMonth[mk] = { eur: 0, ils: 0 }; venByMonth[mk] = {}; salTotalByMonth[mk] = { eur: 0, ils: 0 }; }
                 for (const r of tgRows) {
                   const acct = String(r.ACCOUNT_NUMBER || '');
                   const ratio = tgtRatio(r);
@@ -2428,6 +2445,20 @@ useEffect(() => {
                     salByKey[key].eur += fe; salByKey[key].ils += fi;
                     if (!salByDept[dept]) salByDept[dept] = { eur: 0, ils: 0 };
                     salByDept[dept].eur += fe; salByDept[dept].ils += fi;
+                    // Distribute salary row across months using its MONTHLY_SOURCE_ILS weights.
+                    const monthlyIls: Record<string, number> = r.MONTHLY_SOURCE_ILS && typeof r.MONTHLY_SOURCE_ILS === 'object' ? r.MONTHLY_SOURCE_ILS : {};
+                    const monthlySum = Object.values(monthlyIls).reduce((s: number, v: any) => s + (Number(v) || 0), 0);
+                    for (let m = 1; m <= 12; m++) {
+                      const mk = `${coYear}-${String(m).padStart(2, '0')}`;
+                      const wKey = String(m).padStart(2, '0');
+                      let monthEur: number, monthIls: number;
+                      if (monthlySum > 0) {
+                        const w = (Number(monthlyIls[wKey]) || 0) / monthlySum;
+                        monthEur = Math.round(fe * w); monthIls = Math.round(fi * w);
+                      } else { monthEur = Math.round(fe / 12); monthIls = Math.round(fi / 12); }
+                      salTotalByMonth[mk].eur += monthEur;
+                      salTotalByMonth[mk].ils += monthIls;
+                    }
                   } else {
                     venEur += fe; venIls += fi;
                     // Distribute this row across months using its MONTHLY_SOURCE_ILS weights
@@ -2451,7 +2482,7 @@ useEffect(() => {
                   }
                 }
                 // Salary: annual → flat monthly (Targets shows flat); feeds dashboard cell + modal.
-                setSalaryFrom(salByKey, salByDept, 12, `FY${coYear} Targets`);
+                setSalaryFrom(salByKey, salByDept, 12, `FY${coYear} Targets`, salTotalByMonth);
                 // Vendors: prefer the Targets-native per-month/per-category breakdown when CATEGORY
                 // is populated (post-sync after the CATEGORY column was added). Else fall back to
                 // scaling the snapshot distribution so the dashboard total still ties to Targets.
