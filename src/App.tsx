@@ -2863,7 +2863,7 @@ useEffect(() => {
       } else if (isPastMonth && nsVendorActual > 0) {
         // NS actual vendor payments (used for non-SF subsidiaries like Statscore)
         vendors = nsVendorActual;
-      } else if (sfBudget.totalByMonth[mKey]) {
+      } else if (sfBudget.totalByMonth[mKey] && Number.isFinite(sfBudget.totalByMonth[mKey].eur)) {
         vendors = Math.round(sfBudget.totalByMonth[mKey].eur);
       } else if (nsBudget.byMonth[mKey]?.vendors) {
         vendors = Math.round(nsBudget.byMonth[mKey].vendors);
@@ -2889,7 +2889,8 @@ useEffect(() => {
           let vendorDelta = 0;
           for (const [cat, pct] of Object.entries(effectiveVendorAdj)) {
             const catBudget = (catData as Record<string, number>)[cat] || 0;
-            vendorDelta += Math.round(catBudget * (pct / 100));
+            const p = Number(pct); // pct may be a mid-typing string ('' / '-') from the input
+            if (Number.isFinite(catBudget) && Number.isFinite(p)) vendorDelta += Math.round(catBudget * (p / 100));
           }
           vendors += vendorDelta;
         }
@@ -2907,7 +2908,12 @@ useEffect(() => {
         }
         let detailDelta = 0;
         for (const [, val] of Object.entries(effectiveDetailAdj)) {
-          detailDelta += Math.round(val.base * (val.pct / 100));
+          // base / pct can be non-numeric if a scenario stored a mid-typing value
+          // (e.g. pct '-' → '-'/100 = NaN). Skip non-finite so one bad line can't
+          // poison the whole vendor total (and cascade NaN into closing balances).
+          const base = Number(val.base);
+          const pct = Number(val.pct);
+          if (Number.isFinite(base) && Number.isFinite(pct)) detailDelta += Math.round(base * (pct / 100));
         }
         if (detailDelta !== 0) vendors += detailDelta;
       }
@@ -3026,6 +3032,14 @@ useEffect(() => {
         other = -bcm.other.eur;
         otherILS = -bcm.other.ils;
       }
+      // Cascade-stopper: never let a non-finite component reach net/closing. A single NaN
+      // (from a malformed scenario adjustment or a budget month with an undefined amount)
+      // would otherwise propagate net → closing → every later month's opening, blanking
+      // the rest of the year. Fall back to the pre-adjustment base (or 0) per component.
+      if (!Number.isFinite(salary)) salary = Number.isFinite(salaryBase) ? salaryBase : 0;
+      if (!Number.isFinite(vendors)) vendors = Number.isFinite(vendorsBase) ? vendorsBase : 0;
+      if (!Number.isFinite(collections)) collections = 0;
+      if (!Number.isFinite(other)) other = 0;
       let totalOutflow = salary + vendors + Math.max(0, other);
       // Cumulative churn: every customer that churned in earlier forecast months is still gone,
       // so each month deducts rate × (number of forecast months elapsed). Mirrors the pipeline,
