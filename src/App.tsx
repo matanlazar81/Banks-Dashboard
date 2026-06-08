@@ -1213,6 +1213,12 @@ export default function App() {
     try { const s = localStorage.getItem('banks-fx-rate-by-year'); return s ? JSON.parse(s) : {}; } catch { return {}; }
   });
   useEffect(() => { try { localStorage.setItem('banks-fx-rate-by-year', JSON.stringify(fxRateByYear)); } catch {} }, [fxRateByYear]);
+  // Last-known live EUR→ILS rate (captured from real bank balances on the current-year view).
+  // Projection years have no ILS bank balance, so they default to this "current FX rate"
+  // instead of 0. Persisted so it survives a direct load of a projection year.
+  const [liveFxRate, setLiveFxRate] = useState<number>(() => {
+    try { const v = parseFloat(localStorage.getItem('banks-live-fx-rate') || ''); return (isFinite(v) && v > 0.5 && v < 10) ? v : 3.68; } catch { return 3.68; }
+  });
   const [pipelineAdjPctByMonth, setPipelineAdjPctByMonth] = useState<Record<number, number>>({}); // per-month pipeline % adjustment
   const [expandedKpi, setExpandedKpi] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -2796,6 +2802,14 @@ useEffect(() => {
   const hasAdjustedLocal = bookLocal?.dailyBalances?.some((d: any) => d.adjustedBalance !== undefined && d.adjustedBalance !== d.balance);
   const adjustedCurrent = (book as any)?.adjustedCurrentBalance || book?.currentBalance || 0;
   const adjustedCurrentLocal = (bookLocal as any)?.adjustedCurrentBalance || bookLocal?.currentBalance || 0;
+  // Capture the live EUR→ILS rate whenever real EUR + ILS bank balances exist (the current-year
+  // view). Projection years (no ILS balance) then default to this instead of 0.
+  useEffect(() => {
+    if (adjustedCurrent > 0 && adjustedCurrentLocal > 0) {
+      const r = adjustedCurrentLocal / adjustedCurrent;
+      if (r > 0.5 && r < 10) { setLiveFxRate(r); try { localStorage.setItem('banks-live-fx-rate', String(r)); } catch {} }
+    }
+  }, [adjustedCurrent, adjustedCurrentLocal]);
 
   // Monthly cashflow forecast — Snowflake as single source of truth for actuals + projections
   const cashflowForecast = useMemo(() => {
@@ -2840,7 +2854,7 @@ useEffect(() => {
 
     // EUR→ILS ratio from bank balances. For a projection year, an explicit per-year override
     // wins (EUR is the base → ILS = EUR × rate), so the user can set the planning rate.
-    const derivedEurIls = adjustedCurrent > 0 ? adjustedCurrentLocal / adjustedCurrent : 3.7;
+    const derivedEurIls = (adjustedCurrent > 0 && adjustedCurrentLocal > 0) ? adjustedCurrentLocal / adjustedCurrent : liveFxRate;
     const eurIlsRatio = (forecastYear !== currentYear && (fxRateByYear[forecastYear] || 0) > 0) ? fxRateByYear[forecastYear] : derivedEurIls;
 
     // Jan 1 opening: prefer NS Bank+CC actual at year-start (yearStartBalance). Falls back to
@@ -3243,7 +3257,7 @@ useEffect(() => {
       rows.push({ month: label, mKey, openingBalance, openingBalanceILS, salary, salaryBase, salaryILS, vendors, vendorsBase, vendorsILS, other, otherILS, otherDetails: bcm?.details || [], totalOutflow, totalOutflowILS, collections, collectionsILS, collectionsActual, collectionsRemaining, collectionsForecast, collectionsRevenue, collectionsUnpaidCarry, collectionsUnpaidCarryMonth, collectionsPipeline, customers, pipelineWeighted, pipelineWeightedILS, pipelineTotal, pipelineCount, pipelineOpps, pipelineHistWinRate, pipelineDelayMonths, churnDeduction, churnDeductionILS, net, netILS, revalImpact, revalImpactILS, revalHasBothEnds, closingBalance: runningBalance, closingBalanceILS: runningBalanceILS, wcDelta, wcDeltaILS, isCurrent: isCurMonth, isPast: isPastMonth });
     }
     return rows;
-  }, [vendorBills, arForecast, salaryData, vendorActuals, revenueActuals, vendorHistory, expenseCategories, book, bookLocal, actualCollections, sfBudget, sfRevenue, sfActualsSplit, nsPaidVendors, nsBankClassified, salaryAdjPctByMonth, collPctByMonth, monthlyReval, sfSalaryBudget, sfRevenuePaid, sfPipeline, pipelineMinProb, sfConversion, salaryDeptAdj, salaryDeptBudgets, vendorCatAdj, vendorDetailAdj, prevMonthEndBalance, yearStartBalance, monthEndBalances, churnMonthlyAvg, churnData, sfChurnQuarterly, churnOverride, asOfDate, nsBudget, activeYear, sfFinanceBudget, currencyDefensePct, currencyDefensePctByMonth, pipelineAdjPctByMonth, salaryProjectionMode, salaryActualsByDept, lastActualSalaryMonth, monthlyHCImpact, salaryManualILS, revenueMethodology, pipelineMethodology, fxRateByYear, currentYear]);
+  }, [vendorBills, arForecast, salaryData, vendorActuals, revenueActuals, vendorHistory, expenseCategories, book, bookLocal, actualCollections, sfBudget, sfRevenue, sfActualsSplit, nsPaidVendors, nsBankClassified, salaryAdjPctByMonth, collPctByMonth, monthlyReval, sfSalaryBudget, sfRevenuePaid, sfPipeline, pipelineMinProb, sfConversion, salaryDeptAdj, salaryDeptBudgets, vendorCatAdj, vendorDetailAdj, prevMonthEndBalance, yearStartBalance, monthEndBalances, churnMonthlyAvg, churnData, sfChurnQuarterly, churnOverride, asOfDate, nsBudget, activeYear, sfFinanceBudget, currencyDefensePct, currencyDefensePctByMonth, pipelineAdjPctByMonth, salaryProjectionMode, salaryActualsByDept, lastActualSalaryMonth, monthlyHCImpact, salaryManualILS, revenueMethodology, pipelineMethodology, fxRateByYear, currentYear, liveFxRate]);
 
   // ── Capture current-year cashflow for propagation to next year ──
   useEffect(() => {
@@ -3259,7 +3273,7 @@ useEffect(() => {
     const completedSalaries = salaryData.filter(s => s.month < currentMonth && s.amountEUR > 0);
     const lastSalary = completedSalaries.length > 0 ? completedSalaries[completedSalaries.length - 1].amountEUR : 0;
     const openBillsTotal = vendorBills.reduce((s, b) => s + b.amountEUR, 0);
-    const eurIlsRatio = (activeYear !== currentYear && (fxRateByYear[activeYear] || 0) > 0) ? fxRateByYear[activeYear] : (adjustedCurrent > 0 ? adjustedCurrentLocal / adjustedCurrent : 3.7);
+    const eurIlsRatio = (activeYear !== currentYear && (fxRateByYear[activeYear] || 0) > 0) ? fxRateByYear[activeYear] : ((adjustedCurrent > 0 && adjustedCurrentLocal > 0) ? adjustedCurrentLocal / adjustedCurrent : liveFxRate);
     let runBal = (book?.openingBalance || 0) + (monthlyReval.preYear?.eur || 0);
     let prevSal = 0;
     let prevUnpaid = 0;
@@ -3335,7 +3349,7 @@ useEffect(() => {
       rows.push({ salary, vendors, collections, totalOutflow, net, closingBalance: runBal });
     }
     return rows;
-  }, [salaryData, vendorBills, book, bookLocal, adjustedCurrent, adjustedCurrentLocal, monthlyReval, sfActualsSplit, sfSalaryBudget, sfBudget, sfRevenue, sfRevenuePaid, actualCollections, salaryDeptBudgets, sfPipeline, prevMonthEndBalance, salaryProjectionMode, salaryActualsByDept, lastActualSalaryMonth, monthlyHCImpact, activeYear, currentYear, fxRateByYear]);
+  }, [salaryData, vendorBills, book, bookLocal, adjustedCurrent, adjustedCurrentLocal, monthlyReval, sfActualsSplit, sfSalaryBudget, sfBudget, sfRevenue, sfRevenuePaid, actualCollections, salaryDeptBudgets, sfPipeline, prevMonthEndBalance, salaryProjectionMode, salaryActualsByDept, lastActualSalaryMonth, monthlyHCImpact, activeYear, currentYear, fxRateByYear, liveFxRate]);
 
   // Compare scenario cashflow (inline header delta)
   const compareCashflow = useMemo(() => {
@@ -6297,7 +6311,8 @@ useEffect(() => {
 
         {/* EUR→ILS rate control (projection years only) — EUR is the base, ILS = EUR × rate */}
         {activeCompany !== 'consolidated' && activeYear !== currentYear && cashflowForecast.length > 0 && (() => {
-          const effective = fxRateByYear[activeYear] ?? Number(currentEurIlsRate.toFixed(3));
+          const bankRate = (adjustedCurrentLocal > 0 && adjustedCurrent > 0) ? adjustedCurrentLocal / adjustedCurrent : liveFxRate;
+          const effective = fxRateByYear[activeYear] ?? Number(bankRate.toFixed(3));
           const isOverridden = (fxRateByYear[activeYear] || 0) > 0;
           return (
           <div className="flex items-center gap-3 bg-blue-50 rounded-xl border border-blue-200 px-4 py-2.5 mb-2">
@@ -6311,8 +6326,8 @@ useEffect(() => {
               <span className="text-[11px] text-gray-500">₪</span>
             </div>
             {isOverridden
-              ? <button onClick={() => setFxRateByYear(prev => { const n = { ...prev }; delete n[activeYear]; return n; })} className="text-[10px] text-red-500 hover:text-red-700 underline">reset to {currentEurIlsRate.toFixed(3)} (bank rate)</button>
-              : <span className="text-[10px] text-gray-400">bank-derived default · edit to set your FY{activeYear} planning rate</span>}
+              ? <button onClick={() => setFxRateByYear(prev => { const n = { ...prev }; delete n[activeYear]; return n; })} className="text-[10px] text-red-500 hover:text-red-700 underline">reset to {bankRate.toFixed(3)} (current rate)</button>
+              : <span className="text-[10px] text-gray-400">current FX rate · edit to set your FY{activeYear} planning rate</span>}
           </div>
           );
         })()}
