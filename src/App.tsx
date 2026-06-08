@@ -747,7 +747,7 @@ function BudgetTargetsDrawer({
           <div>
             <h2 className="text-base font-bold text-gray-800">Budget Targets — FY{year} · Subsidiary {subsidiary}</h2>
             <p className="text-xs text-gray-500">Override absolute amount or % adjustment. Source values come from Snowflake via Sync.</p>
-            <p className="text-[11px] text-violet-600 mt-0.5">This annual total is the budget basis for the FY{year} dashboard outflow: salary (76xxx accounts) + vendors (all other accounts). The dashboard projects the same figures, so the FY{year} cashflow Salary + Vendors total reconciles to this table.</p>
+            <p className="text-[11px] text-violet-600 mt-0.5">FY{year} budget by department/account (Snowflake source + your overrides). The dashboard's FY{year} outflow is built from this: vendors (non-76xxx) and salary (76xxx). Salary mirrors this budget when the FY data is in the warehouse; otherwise it falls back to the prior year-end run-rate, so the totals can differ until the year is synced.</p>
           </div>
           <div className="flex items-center gap-2">
             <div className="inline-flex bg-gray-100 rounded-lg p-0.5">
@@ -2326,27 +2326,21 @@ useEffect(() => {
             setChurnMonthlyAvg(0);
             setYoyRevenue(null);
             setSalaryDeptBudgets({});
-            // Dashboard-year salary mirrors the SAME-YEAR FY budget (the Budget Targets table),
-            // so each year's dashboard salary equals that year's Targets salary. Pull all 12 months
-            // of coYear's FCT_BUDGET salary per (department, account), sum to the annual, and spread
-            // it flat over 12 months (FCT_BUDGET salary is ~flat; the dashboard shows a flat monthly
-            // run-rate). The synthetic '${coYear-1}-AVG' key sorts after every source-year month and
-            // before every coYear month, so the Last-Actual projection path consumes it for all
-            // coYear months. Per-account detail feeds the salary modal.
-            //
-            // Reverses the earlier Oct-Dec prior-year run-rate: per "the dashboard of each year should
-            // equal the target of the same year", salary now reads the same-year FY budget.
+            // Dashboard-year salary basis. Prefer the SAME-YEAR FY budget (so the dashboard
+            // equals that year's Targets); fall back to the prior-year Oct-Dec run-rate when
+            // FCT_BUDGET has no salary rows for coYear. (The forward-year plan currently lives
+            // only in the synced Budget Targets table, not in FCT_BUDGET by BUDGET_MONTH_DATE,
+            // so same-year breakdown fetches come back empty until that data exists.)
             const srcYearSal = coYear - 1; // synthetic-key year: sorts before coYear months
-            const srcMonths = MONTH_KEYS.map(m => `${coYear}-${m}`);
-            Promise.all(srcMonths.map(mm =>
+            const aggMonths = (months: string[]) => Promise.all(months.map(mm =>
               fetch(`/api/sf-salary-budget-breakdown?month=${mm}`).then(r => r.ok ? r.json() : { data: [] }).catch(() => ({ data: [] }))
             )).then(results => {
-              let anyData = false;
               const perKey: Record<string, { department: string; account: string; accountId?: number; name: string; eur: number; ils: number }> = {};
               const perDept: Record<string, { eur: number; ils: number }> = {};
+              let monthsWithData = 0;
               for (const j of results) {
                 const rows = j.data || [];
-                if (rows.length > 0) anyData = true;
+                if (rows.length > 0) monthsWithData++;
                 for (const row of rows) {
                   const dept = row.department || 'Unassigned';
                   const key = `${dept}__${row.account || ''}__${row.name || ''}`;
@@ -2358,17 +2352,33 @@ useEffect(() => {
                   perDept[dept].ils += (row.amountILS || 0);
                 }
               }
-              if (!anyData) {
+              return { perKey, perDept, monthsWithData };
+            });
+            const coMonths = MONTH_KEYS.map(m => `${coYear}-${m}`);
+            const fbMonths = [10, 11, 12].map(m => `${srcYearSal}-${String(m).padStart(2, '0')}`);
+            aggMonths(coMonths).then(async sameYear => {
+              // Same-year present → divide the 12-month sum by 12 (annual spread flat, = Targets
+              // annual). Empty → fall back to prior-year Oct-Dec, divided by the months with data
+              // (the run-rate average that was the prior behavior).
+              let { perKey, perDept, monthsWithData } = sameYear;
+              let divisor = 12;
+              let basis = `FY${coYear} budget (Targets basis)`;
+              if (monthsWithData === 0) {
+                const fb = await aggMonths(fbMonths);
+                perKey = fb.perKey; perDept = fb.perDept; monthsWithData = fb.monthsWithData;
+                divisor = Math.max(1, fb.monthsWithData);
+                basis = `Oct-Dec ${srcYearSal} run-rate (fallback — no FY${coYear} salary in FCT_BUDGET)`;
+              }
+              if (monthsWithData === 0) {
                 setSalaryActualsByDept({}); setLastActualSalaryMonth(''); setSfSalaryBreakdownSnap([]);
                 return;
               }
-              // Annual (sum across coYear months) spread flat over 12 → matches the Targets annual.
               const breakdown = Object.values(perKey)
-                .map(x => ({ department: x.department, account: x.account, accountId: x.accountId, name: x.name, amountEUR: Math.round(x.eur / 12), amountILS: Math.round(x.ils / 12) }))
+                .map(x => ({ department: x.department, account: x.account, accountId: x.accountId, name: x.name, amountEUR: Math.round(x.eur / divisor), amountILS: Math.round(x.ils / divisor) }))
                 .sort((a, b) => b.amountEUR - a.amountEUR);
               setSfSalaryBreakdownSnap(breakdown);
               const synth: Record<string, { eur: number; ils: number }> = {};
-              for (const [d, v] of Object.entries(perDept)) synth[d] = { eur: Math.round(v.eur / 12), ils: Math.round(v.ils / 12) };
+              for (const [d, v] of Object.entries(perDept)) synth[d] = { eur: Math.round(v.eur / divisor), ils: Math.round(v.ils / divisor) };
               const synthKey = `${srcYearSal}-AVG`;
               setSalaryActualsByDept({ [synthKey]: synth });
               setLastActualSalaryMonth(synthKey);
@@ -2378,7 +2388,7 @@ useEffect(() => {
               const flat: Record<string, { eur: number; ils: number }> = {};
               for (let m = 1; m <= 12; m++) flat[`${coYear}-${String(m).padStart(2, '0')}`] = { eur: baseSum, ils: baseSumIls };
               setSfSalaryBudget(flat);
-              console.info(`[Snapshot] ${co} ${coYear} salary: FY${coYear} budget (Targets basis) €${(baseSum * 12).toLocaleString()}/yr across ${Object.keys(synth).length} depts, ${breakdown.length} rows`);
+              console.info(`[Snapshot] ${co} ${coYear} salary: ${basis} €${(baseSum * 12).toLocaleString()}/yr across ${Object.keys(synth).length} depts, ${breakdown.length} rows`);
             }).catch(() => { setSalaryActualsByDept({}); setLastActualSalaryMonth(''); setSfSalaryBreakdownSnap([]); });
             setMonthlyHCImpact({});
             // Persist updated opening balance to snapshot file for page refresh consistency
