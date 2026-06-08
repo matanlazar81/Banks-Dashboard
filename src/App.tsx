@@ -1535,6 +1535,7 @@ useEffect(() => {
           scenarioId: string; scenarioName: string;
           editorEmail: string; editorName: string;
           firstEditedAt: string; lastEditedAt: string;
+          updatedAt: string; // scenario's updatedAt at the latest merged edit — used as the notif/dismiss key
           fields: Record<string, { changeType: string; before: any; after: any }>;
           mergedBatches: string[];
         };
@@ -1549,7 +1550,7 @@ useEffect(() => {
         // Fetch history for every bumped scenario and merge into pending
         const resolvedBatches: Array<{
           scenarioId: string; scenarioName: string; editorEmail: string; editorName: string;
-          editedAt: string; changes: Array<{ changeType: string; fieldPath: string; before: any; after: any }>;
+          editedAt: string; scenarioUpdatedAt: string; changes: Array<{ changeType: string; fieldPath: string; before: any; after: any }>;
         }> = [];
         await Promise.all(bumps.map(async b => {
           try {
@@ -1568,6 +1569,7 @@ useEffect(() => {
               editorEmail: (first.editedByEmail as string) || '',
               editorName: (first.editedByName as string) || (first.editedByEmail as string) || 'Someone',
               editedAt: (first.editedAt as string) || b.updatedAt,
+              scenarioUpdatedAt: b.updatedAt, // canonical version key — matches the reload-suppression check
               changes: batch.map(e => ({
                 changeType: e.changeType || 'changed',
                 fieldPath: e.fieldPath || '',
@@ -1616,6 +1618,7 @@ useEffect(() => {
               editorName: batch.editorName,
               firstEditedAt: batch.editedAt,
               lastEditedAt: batch.editedAt,
+              updatedAt: batch.scenarioUpdatedAt,
               fields: {},
               mergedBatches: [],
             };
@@ -1623,6 +1626,8 @@ useEffect(() => {
           if (p.mergedBatches.includes(batch.editedAt)) { pending[batch.scenarioId] = p; continue; }
           p.mergedBatches.push(batch.editedAt);
           if (Date.parse(batch.editedAt) > Date.parse(p.lastEditedAt)) p.lastEditedAt = batch.editedAt;
+          // Track the latest scenario version so the notif id reflects the newest edit
+          if (!p.updatedAt || Date.parse(batch.scenarioUpdatedAt) > Date.parse(p.updatedAt)) p.updatedAt = batch.scenarioUpdatedAt;
           p.scenarioName = batch.scenarioName; // refresh name in case it changed
           for (const c of batch.changes) {
             if (!c.fieldPath) continue;
@@ -1653,7 +1658,11 @@ useEffect(() => {
           const fieldEntries = Object.entries(p.fields);
           delete pending[sid];
           if (fieldEntries.length === 0) continue;
-          const id = p.scenarioId + ':' + p.firstEditedAt;
+          // Key the notification by the scenario's updatedAt (its canonical version), so the
+          // DISMISS key matches the reload/poll suppression check above (s.id + ':' + s.updatedAt).
+          // A genuinely new edit advances updatedAt → new id → new popup; dismissing a version
+          // keeps it dismissed across reloads. Fallback to firstEditedAt for pre-upgrade buckets.
+          const id = p.scenarioId + ':' + (p.updatedAt || p.firstEditedAt);
           if (dismissedNow.has(id)) { console.log('[ScenarioNotif] flush skipped (dismissed):', p.scenarioName); continue; }
           console.log('[ScenarioNotif] flushing idle session for', p.scenarioName, 'with', fieldEntries.length, 'net changes');
           newlyReady.push({
