@@ -9624,6 +9624,22 @@ useEffect(() => {
                       const _isFutVM = forecastDrilldown.mKey > `${_nowVM.getFullYear()}-${String(_nowVM.getMonth()+1).padStart(2,'0')}`;
                       const scenarioAdj = Math.round((typeof meta.used === 'number' ? meta.used : 0) - (meta.budgetTotal || 0));
                       const scenarioAdjPct = meta.budgetTotal > 0 ? Math.round((scenarioAdj / meta.budgetTotal) * 100) : 0; // same % the dashboard shows next to Vendors
+                      // Active per-line (detail) adjustments for this month — the source of the trim
+                      // the category breakdown can't show (keys are "Category||Name||account"). Cascading,
+                      // same as the forecast. Lets the user see exactly which line items drive it and clear them.
+                      const _effDetailList: { key: string; category: string; name: string; account: string; pct: number; eur: number }[] = [];
+                      if (_isFutVM) {
+                        const _eff: Record<string, { pct: number; base: number }> = {};
+                        const _months = Object.keys(vendorDetailAdj).filter(k => k <= forecastDrilldown.mKey && k.slice(0,4) === forecastDrilldown.mKey.slice(0,4)).sort();
+                        for (const m of _months) for (const [k, v] of Object.entries(vendorDetailAdj[m] || {})) { if (Number(v.pct) !== 0) _eff[k] = v; else delete _eff[k]; }
+                        for (const [k, v] of Object.entries(_eff)) {
+                          const base = Number(v.base); const pct = Number(v.pct);
+                          if (!Number.isFinite(base) || !Number.isFinite(pct)) continue;
+                          const parts = k.split('||');
+                          _effDetailList.push({ key: k, category: parts[0] || '', name: parts[1] || '', account: parts[2] || '', pct, eur: Math.round(base * pct / 100) });
+                        }
+                        _effDetailList.sort((a, b) => a.eur - b.eur);
+                      }
                       return (
                         <div className="bg-gray-50 rounded-lg p-3 mb-3">
                           <p className="text-xs text-gray-400 mb-2 uppercase">Budget vs Historical{hasVendorOverrides ? ' — overrides applied' : ''}</p>
@@ -9663,6 +9679,28 @@ useEffect(() => {
                               {meta.histAvg > 0 && <tr><td className="py-1.5 text-gray-600">Budget − Historical Gap</td><td className={`py-1.5 text-right font-bold ${gap >= 0 ? 'text-red-600' : 'text-green-700'}`}>{gap >= 0 ? '+' : ''}{fmt(gap)}</td></tr>}
                             </tbody>
                           </table>
+                          {/* Per-line (detail) adjustments — the source of the trim the category breakdown can't show */}
+                          {_effDetailList.length > 0 && (
+                            <div className="mt-3 pt-3 border-t border-gray-200">
+                              <div className="flex items-center justify-between mb-1">
+                                <p className="text-[11px] text-gray-600 font-medium">Per-line adjustments driving this ({_effDetailList.length}) <span className="text-gray-400 font-normal">— total {scenarioAdj >= 0 ? '+' : ''}{fmt(scenarioAdj)}</span></p>
+                                <button onClick={() => { if (confirm('Clear ALL per-line vendor adjustments (every month)? This removes the per-account reductions/increases that the category list does not show.')) setVendorDetailAdj({}); }} className="text-[10px] text-red-500 hover:text-red-700 underline">clear all per-line</button>
+                              </div>
+                              <table className="w-full text-[11px]">
+                                <tbody>
+                                  {_effDetailList.map(d => (
+                                    <tr key={d.key} className="border-b border-gray-50">
+                                      <td className="py-0.5 text-gray-600">{d.name || d.account || '(unnamed)'}<span className="text-gray-400 ml-1">{d.category}{d.account ? ` · ${d.account}` : ''}</span></td>
+                                      <td className="py-0.5 pr-2 text-right text-gray-500 tabular-nums">{d.pct > 0 ? '+' : ''}{d.pct}%</td>
+                                      <td className={`py-0.5 pr-2 text-right font-medium tabular-nums ${d.eur >= 0 ? 'text-red-600' : 'text-green-700'}`}>{d.eur >= 0 ? '+' : ''}{fmt(d.eur)}</td>
+                                      <td className="py-0.5 text-right"><button onClick={() => setVendorDetailAdj(prev => { const u: Record<string, Record<string, { pct: number; base: number }>> = {}; for (const m of Object.keys(prev)) { const row = { ...prev[m] }; delete row[d.key]; u[m] = row; } return u; })} className="text-red-400 hover:text-red-600 text-[11px] leading-none font-bold" title="Remove this line adjustment (all months)">✕</button></td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                              <p className="text-[9px] text-gray-400 mt-1">These are per-account (GL-line) reductions/increases. They are not shown in the category breakdown below, and the main "Reset adj." menu does not clear them — use the buttons here.</p>
+                            </div>
+                          )}
                           {/* Historical months breakdown */}
                           {forecastDrilldown.data.__showHistDetail && meta.histMonths && meta.histMonths.length > 0 && (
                             <div className="mt-3 pt-3 border-t border-gray-200">
@@ -9956,7 +9994,7 @@ useEffect(() => {
                         <td className="py-1.5 pr-2 text-right text-violet-800">{fmt(Object.entries(forecastDrilldown.data as Record<string, any>).filter(([k]) => !k.startsWith('__')).reduce((s, [, v]) => s + (typeof v === 'number' ? v : 0), 0))}</td>
                         <td className="py-1.5 pr-2 text-right text-gray-500 font-bold">100%</td>
                         {_isFutureCat && <td className="py-1.5 text-center">
-                          {_hasAnyVcAdj && <button onClick={() => setVendorCatAdj({})} className="text-[9px] text-red-500 hover:text-red-700 underline">reset all</button>}
+                          {(_hasAnyVcAdj || _detailAdjBd !== 0) && <button onClick={() => { setVendorCatAdj({}); setVendorDetailAdj({}); }} className="text-[9px] text-red-500 hover:text-red-700 underline" title="Clear category AND per-line vendor adjustments (all months)">reset all</button>}
                         </td>}
                         {_isFutureCat && <td className={`py-1.5 text-right font-bold ${_totalVcImpact === 0 ? 'text-gray-300' : _totalVcImpact >= 0 ? 'text-red-600' : 'text-green-700'}`}>
                           {_totalVcImpact === 0 ? '—' : `${_totalVcImpact >= 0 ? '+' : ''}${fmt(_totalVcImpact)}`}
