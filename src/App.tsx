@@ -1598,8 +1598,22 @@ useEffect(() => {
               setScenarios(prev => prev.map((s: any) => s.id === full.id ? { ...s, data: full.data, updatedAt: full.updatedAt } : s));
               _setShared(prev => prev.map((s: any) => s.id === full.id ? { ...s, data: full.data, updatedAt: full.updatedAt } : s));
               console.info('[ScenarioNotif] auto-applied remote update to active scenario:', batch.scenarioName, 'by', batch.editorName);
+              // The view just changed under the user, so surface a popup immediately rather than
+              // waiting for the idle-aggregation flush (which is meant for scenarios you're NOT
+              // viewing). Same id scheme (scenarioId:updatedAt) so Dismiss sticks and the next edit
+              // re-pops; the byScenario collapse below keeps a single card per scenario.
+              const _aaId = batch.scenarioId + ':' + batch.scenarioUpdatedAt;
+              const _aaChanges = batch.changes.filter(c => { if (!c.fieldPath) return false; try { return JSON.stringify(c.before) !== JSON.stringify(c.after); } catch { return true; } });
+              if (!dismissedNow.has(_aaId) && _aaChanges.length > 0) {
+                _setScenarioNotifs(prev => {
+                  const combined = [{ id: _aaId, scenarioId: batch.scenarioId, scenarioName: batch.scenarioName, editedByEmail: batch.editorEmail, editedByName: batch.editorName, editedAt: batch.editedAt, changes: _aaChanges }, ...prev];
+                  const byScenario = new Map<string, typeof combined[number]>();
+                  for (const n of combined) { const e = byScenario.get(n.scenarioId); if (!e || (Date.parse(n.editedAt) || 0) > (Date.parse(e.editedAt) || 0)) byScenario.set(n.scenarioId, n); }
+                  return Array.from(byScenario.values()).slice(0, 20);
+                });
+              }
             }
-            continue; // converged live; no need to also surface a popup for the active one
+            continue; // applied live + popped immediately; skip the delayed aggregation path
           }
           let p = pending[batch.scenarioId];
           if (p) {
