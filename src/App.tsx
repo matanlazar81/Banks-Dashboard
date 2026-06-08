@@ -6362,15 +6362,15 @@ useEffect(() => {
               onClick={async () => {
                 setFxMarket({ loading: true });
                 try {
-                  const r = await fetch('https://api.frankfurter.app/latest?from=EUR&to=ILS');
+                  // Goes through our /api/fx-rate proxy → bypasses any browser CSP
+                  // that blocked the direct ECB call ("fetch blocked").
+                  const r = await fetch('/api/fx-rate?from=EUR&to=ILS', { credentials: 'include' });
                   const d = await r.json();
-                  const rate = d?.rates?.ILS;
-                  if (rate && isFinite(rate)) {
-                    const rounded = Math.round(rate * 1000) / 1000;
-                    setFxMarket({ rate: rounded, date: d.date });
-                    setFxRateByYear(prev => ({ ...prev, [activeYear]: rounded })); // fill + save; user can still edit
-                  } else { setFxMarket({ error: 'no rate returned' }); }
-                } catch { setFxMarket({ error: 'fetch blocked — set manually' }); }
+                  if (d?.ok && d.rate && isFinite(d.rate)) {
+                    setFxMarket({ rate: d.rate, date: d.date });
+                    setFxRateByYear(prev => ({ ...prev, [activeYear]: d.rate })); // fill + save; user can still edit
+                  } else { setFxMarket({ error: d?.error || 'no rate returned' }); }
+                } catch (e: any) { setFxMarket({ error: e?.message || 'fetch failed — set manually' }); }
               }}
               className="text-[10px] font-medium text-white bg-blue-500 hover:bg-blue-600 rounded px-2 py-1 disabled:bg-gray-300"
               disabled={!!fxMarket?.loading}
