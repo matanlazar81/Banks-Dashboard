@@ -2424,7 +2424,52 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
     return { byMonth };
   }
 
-  return { suiteql, suiteqlAll, fetchAgingData, fetchCollectionData, buildCollectionJson, fetchClientAnomalies, fetchAllSOsByBillingPeriod, fetchRevenueData, fetchMRRData, fetchBankBalance, fetchVendorBills, fetchVendorPaymentHistory, fetchBankAccountList, fetchBankAccountListAsOf, fetchSalaryData, fetchVendorActuals, fetchRevenueActuals, fetchCustomerCashReceipts, fetchCashflowHistory, fetchExpenseCategoryData, fetchPaymentsByCategory, fetchCashflowBreakdown, fetchCashflowTransactions, fetchExpenseTransactions, fetchSalaryBreakdown, fetchInvoiceBasedProjection, fetchMonthlyRevaluation, fetchVendorBillsByAccount, fetchNSBudget, fetchCurrencyDefenseBudget, fetchPaidVendorsYearly, fetchBankClassifiedYearly };
+  // ── Latest EUR→ILS exchange rate from NetSuite ──
+  // Tries currencyrate (daily ECB-fed) first; falls back to the most recent ILS
+  // transaction's exchangerate. Always returns the rate as "ILS per 1 EUR" so the
+  // dashboard ratio (EUR base) consumes it directly. Returns null when nothing matches.
+  async function fetchLatestFxRate(fromSymbol = 'EUR', toSymbol = 'ILS') {
+    const from = String(fromSymbol).toUpperCase();
+    const to = String(toSymbol).toUpperCase();
+    // Attempt 1: currencyrate table (preferred — explicit base/transaction columns).
+    try {
+      const rows = await suiteql(`
+        SELECT cr.exchangerate AS RATE, cr.effectivedate AS DT
+        FROM currencyrate cr
+        INNER JOIN currency fc ON cr.basecurrency = fc.id
+        INNER JOIN currency tc ON cr.transactioncurrency = tc.id
+        WHERE fc.symbol = '${from}' AND tc.symbol = '${to}'
+        ORDER BY cr.effectivedate DESC FETCH FIRST 1 ROWS ONLY
+      `);
+      if (rows && rows.length > 0) {
+        const rate = parseFloat(rows[0].rate || rows[0].RATE);
+        if (rate && isFinite(rate)) return { rate, date: rows[0].dt || rows[0].DT || null, source: 'NetSuite currencyrate' };
+      }
+    } catch (e) { /* swallow + try fallback */ }
+    // Attempt 2: latest ILS transaction's exchangerate (assumes EUR base; the rate is
+    // the ratio NetSuite used to convert that ILS transaction into the EUR book).
+    try {
+      const rows = await suiteql(`
+        SELECT t.exchangerate AS RATE, t.trandate AS DT
+        FROM transaction t
+        INNER JOIN currency c ON t.currency = c.id
+        WHERE c.symbol = '${to}' AND t.exchangerate IS NOT NULL
+        ORDER BY t.trandate DESC FETCH FIRST 1 ROWS ONLY
+      `);
+      if (rows && rows.length > 0) {
+        // NetSuite stores foreigntotal × exchangerate = base. If base=EUR, foreign=ILS,
+        // then exchangerate ≈ EUR per ILS (~0.27). Invert to get ILS per EUR (~3.68).
+        const r = parseFloat(rows[0].rate || rows[0].RATE);
+        if (r && isFinite(r)) {
+          const rate = r > 1 ? r : 1 / r; // accept either convention; we want ILS per EUR
+          return { rate, date: rows[0].dt || rows[0].DT || null, source: 'NetSuite transaction (latest)' };
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  return { suiteql, suiteqlAll, fetchAgingData, fetchCollectionData, buildCollectionJson, fetchClientAnomalies, fetchAllSOsByBillingPeriod, fetchRevenueData, fetchMRRData, fetchBankBalance, fetchVendorBills, fetchVendorPaymentHistory, fetchBankAccountList, fetchBankAccountListAsOf, fetchSalaryData, fetchVendorActuals, fetchRevenueActuals, fetchCustomerCashReceipts, fetchCashflowHistory, fetchExpenseCategoryData, fetchPaymentsByCategory, fetchCashflowBreakdown, fetchCashflowTransactions, fetchExpenseTransactions, fetchSalaryBreakdown, fetchInvoiceBasedProjection, fetchMonthlyRevaluation, fetchVendorBillsByAccount, fetchNSBudget, fetchCurrencyDefenseBudget, fetchPaidVendorsYearly, fetchBankClassifiedYearly, fetchLatestFxRate };
 }
 
 

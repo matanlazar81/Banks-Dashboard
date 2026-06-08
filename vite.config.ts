@@ -613,6 +613,28 @@ function banksPlugin(): Plugin {
         }
       });
 
+      // ── GET /api/ns-fx-rate — latest EUR→ILS rate from NetSuite ──
+      // Sidesteps the production CSP that blocks external FX services: NetSuite is on the
+      // same allowlist as the rest of /api/* calls. Returns "ILS per 1 EUR" (the rate the
+      // dashboard's eurIlsRatio expects), date, and which NS source it came from.
+      server.middlewares.use('/api/ns-fx-rate', async (req, res) => {
+        res.setHeader('Content-Type', 'application/json');
+        try {
+          const url = new URL(req.url || '', 'http://localhost');
+          const from = (url.searchParams.get('from') || 'EUR').toUpperCase();
+          const to = (url.searchParams.get('to') || 'ILS').toUpperCase();
+          const sub = parseInt(url.searchParams.get('subsidiary') || '3', 10) || 3;
+          const ns = getNsClient(sub);
+          if (!ns?.fetchLatestFxRate) { res.statusCode = 501; res.end(JSON.stringify({ ok: false, error: 'fetchLatestFxRate not available — NS client needs refresh' })); return; }
+          const data = await ns.fetchLatestFxRate(from, to);
+          if (!data) { res.statusCode = 404; res.end(JSON.stringify({ ok: false, error: `no NetSuite rate for ${from}→${to}` })); return; }
+          res.end(JSON.stringify({ ok: true, from, to, rate: Math.round(data.rate * 1000) / 1000, date: data.date, source: data.source }));
+        } catch (e: any) {
+          res.statusCode = 500;
+          res.end(JSON.stringify({ ok: false, error: e?.message || 'NS fx fetch failed' }));
+        }
+      });
+
       // ── POST /api/sync-budget-targets — refresh FCT_BUDGET_TARGET_BY_DEPT_ACCT
       // for the (subsidiary, year) currently shown on the dashboard.
       // Gated to SYNC_ALLOWLIST (defaults to matan.l@lsports.eu). User overrides
