@@ -6397,6 +6397,9 @@ useEffect(() => {
                 // usually passes CSP. First success wins; all-fail → manual entry.
                 type Source = { name: string; url: string; pick: (d: any) => number | undefined; date: (d: any) => string | undefined };
                 const sources: Source[] = [
+                  // NetSuite proxy first: same-origin, lives on the prod /api/* allowlist, so it
+                  // works behind the CSP that blocks external FX services.
+                  { name: 'NetSuite', url: '/api/ns-fx-rate?from=EUR&to=ILS', pick: d => d?.rate, date: d => d?.date },
                   { name: 'proxy', url: '/api/fx-rate?from=EUR&to=ILS', pick: d => d?.rate, date: d => d?.date },
                   { name: 'ECB (Frankfurter)', url: 'https://api.frankfurter.app/latest?from=EUR&to=ILS', pick: d => d?.rates?.ILS, date: d => d?.date },
                   { name: 'open.er-api.com', url: 'https://open.er-api.com/v6/latest/EUR', pick: d => d?.rates?.ILS, date: d => (d?.time_last_update_utc || '').slice(0, 16) },
@@ -6404,7 +6407,8 @@ useEffect(() => {
                 ];
                 for (const s of sources) {
                   try {
-                    const r = await fetch(s.url, s.name === 'proxy' ? { credentials: 'include' } : undefined);
+                    const sameOrigin = s.url.startsWith('/api/');
+                    const r = await fetch(s.url, sameOrigin ? { credentials: 'include' } : undefined);
                     if (!r.ok) continue;
                     const d = await r.json();
                     const rate = s.pick(d);
