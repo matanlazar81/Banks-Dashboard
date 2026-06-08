@@ -581,6 +581,38 @@ function banksPlugin(): Plugin {
         res.end(JSON.stringify({ email, canSync: canUserSync(email) }));
       });
 
+      // ── GET /api/fx-rate — server-side EUR→ILS proxy ──
+      // The dashboard's "Get live rate" button used to call the ECB (Frankfurter) API
+      // straight from the browser. A Content-Security-Policy was blocking it
+      // ("fetch blocked"). Calling from the server avoids the browser policy entirely.
+      // Primary: Frankfurter (ECB ref rates). Backup: open.er-api.com (no key).
+      server.middlewares.use('/api/fx-rate', async (req, res) => {
+        res.setHeader('Content-Type', 'application/json');
+        try {
+          const url = new URL(req.url || '', 'http://localhost');
+          const from = (url.searchParams.get('from') || 'EUR').toUpperCase();
+          const to = (url.searchParams.get('to') || 'ILS').toUpperCase();
+          const fetchJson = async (u: string) => {
+            const r = await fetch(u, { signal: AbortSignal.timeout(5000) } as any);
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            return r.json();
+          };
+          let rate: number | undefined, date: string | undefined, source: string | undefined;
+          try {
+            const d: any = await fetchJson(`https://api.frankfurter.app/latest?from=${from}&to=${to}`);
+            rate = d?.rates?.[to]; date = d?.date; source = 'ECB (Frankfurter)';
+          } catch {
+            const d: any = await fetchJson(`https://open.er-api.com/v6/latest/${from}`);
+            rate = d?.rates?.[to]; date = (d?.time_last_update_utc || '').slice(0, 16); source = 'open.er-api.com';
+          }
+          if (!rate || !isFinite(rate)) { res.statusCode = 502; res.end(JSON.stringify({ ok: false, error: 'no rate' })); return; }
+          res.end(JSON.stringify({ ok: true, from, to, rate: Math.round(rate * 1000) / 1000, date, source }));
+        } catch (e: any) {
+          res.statusCode = 500;
+          res.end(JSON.stringify({ ok: false, error: e?.message || 'fx fetch failed' }));
+        }
+      });
+
       // ── POST /api/sync-budget-targets — refresh FCT_BUDGET_TARGET_BY_DEPT_ACCT
       // for the (subsidiary, year) currently shown on the dashboard.
       // Gated to SYNC_ALLOWLIST (defaults to matan.l@lsports.eu). User overrides
