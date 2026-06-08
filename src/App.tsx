@@ -6422,7 +6422,14 @@ useEffect(() => {
               disabled={!!fxMarket?.loading}
             >{fxMarket?.loading ? 'fetching…' : '🌐 Get live rate'}</button>
             {fxMarket?.rate && <span className="text-[10px] text-emerald-600">{(fxMarket as any).source || 'FX'} {fxMarket.rate} · {fxMarket.date}</span>}
-            {fxMarket?.error && <span className="text-[10px] text-red-500">{fxMarket.error}</span>}
+            {fxMarket?.error && (
+              <span className="text-[10px] text-red-500 flex items-center gap-1">
+                {fxMarket.error}
+                <a href="https://www.ecb.europa.eu/stats/policy_and_exchange_rates/euro_reference_exchange_rates/html/eurofxref-graph-ils.en.html"
+                   target="_blank" rel="noreferrer" className="underline text-blue-600 hover:text-blue-800"
+                   title="ECB EUR/ILS reference rate (opens in a new tab)">view ECB rate ↗</a>
+              </span>
+            )}
             {isOverridden
               ? <button onClick={() => { setFxRateByYear(prev => { const n = { ...prev }; delete n[activeYear]; return n; }); setFxMarket(null); }} className="text-[10px] text-red-500 hover:text-red-700 underline ml-auto">reset to {bankRate.toFixed(3)} (current rate)</button>
               : <span className="text-[10px] text-gray-400 ml-auto">current FX rate · edit or fetch to set your FY{activeYear} rate</span>}
