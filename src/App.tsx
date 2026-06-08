@@ -2278,6 +2278,38 @@ useEffect(() => {
                 for (let m = 1; m <= 12; m++) flat[`${coYear}-${String(m).padStart(2, '0')}`] = { eur: baseSum, ils: baseSumIls };
                 setSfSalaryBudget(flat);
                 console.info(`[Snapshot] ${co} ${coYear} salary: per-dept avg of ${last3.join(', ')} (€${baseSum.toLocaleString()} across ${Object.keys(synth).length} depts)`);
+                // ── Hybrid step: overlay real FCT_BUDGET ${coYear} where it has data ──
+                // If the user has Sync'd the Targets table, FCT_BUDGET ${coYear} now holds
+                // the real planned budget (incl. e.g. Aug headcount cuts). Prefer it per
+                // month; keep the AVG flat baseline as the fallback for months FCT_BUDGET
+                // doesn't cover. Switch projection mode to Budget so the dashboard reads
+                // sfSalaryBudget — Last Actual stays accessible via the toggle.
+                Promise.all([
+                  fetch(`/api/sf-salary-budget?year=${coYear}`).then(r => r.ok ? r.json() : null).catch(() => null),
+                  fetch(`/api/sf-budget?year=${coYear}`).then(r => r.ok ? r.json() : null).catch(() => null),
+                ]).then(([salResp, venResp]) => {
+                  const liveSal: Record<string, { eur: number; ils: number }> = salResp?.data || salResp || {};
+                  let salHits = 0;
+                  if (liveSal && typeof liveSal === 'object') {
+                    const merged: Record<string, { eur: number; ils: number }> = { ...flat };
+                    for (let m = 1; m <= 12; m++) {
+                      const mk = `${coYear}-${String(m).padStart(2, '0')}`;
+                      const live = liveSal[mk];
+                      if (live && (live.eur || 0) > 0) { merged[mk] = live; salHits++; }
+                    }
+                    if (salHits > 0) {
+                      setSfSalaryBudget(merged);
+                      setSalaryProjectionMode('budget');
+                      console.info(`[Snapshot] ${co} ${coYear} salary hybrid: FCT_BUDGET covers ${salHits}/12 months, AVG fallback for the rest`);
+                    }
+                  }
+                  const liveVen = venResp?.data;
+                  if (liveVen?.totalByMonth && Object.values(liveVen.totalByMonth).some((v: any) => (v?.eur || 0) > 0)) {
+                    setSfBudget(liveVen);
+                    if (liveVen.financeBudget) setSfFinanceBudget(liveVen.financeBudget);
+                    console.info(`[Snapshot] ${co} ${coYear} vendors hybrid: using FCT_BUDGET ${coYear}`);
+                  }
+                }).catch(() => {});
               })
               .catch(() => { setSalaryActualsByDept({}); setLastActualSalaryMonth(''); });
             setMonthlyHCImpact({});
@@ -7010,21 +7042,7 @@ useEffect(() => {
                             const adjPct = salaryAdjPctByMonth[i] || 0;
                             setForecastDrilldown({ type: 'salary', month: r.month, mKey: r.mKey, data: 'loading', adjPct });
                             const isSnapshotFuture = activeYear !== currentYear && !r.isPast;
-                            if (companyConfig.hasSF && isSnapshotFuture && lastActualSalaryMonth && salaryActualsByDept[lastActualSalaryMonth]) {
-                              // Projection year (e.g. 2027): no live Snowflake rows exist, so render the
-                              // per-department average (synthetic e.g. '2026-AVG' = avg of the last 3 actual
-                              // months) as the breakdown. Sourced from the SAME salaryActualsByDept the Last
-                              // Actual summary uses, so the breakdown total ties to the summary and to the
-                              // cashflow Salary cell, and each department is adjustable via the +/- controls.
-                              const deptData = salaryActualsByDept[lastActualSalaryMonth];
-                              const budget = Object.entries(deptData)
-                                .map(([dept, v]) => ({ department: dept, account: '', name: 'Recurring payroll (avg of last 3 actual months)', amountEUR: (v as { eur: number }).eur, amountILS: (v as { ils: number }).ils }))
-                                .sort((a, b) => b.amountEUR - a.amountEUR);
-                              setForecastDrilldown(prev => prev ? { ...prev, data: { actuals: [], budget, headcount: { events: [], cumulative: [], baseline: {} } } } : null);
-                              const byDept: Record<string, number> = {};
-                              for (const row of budget) byDept[row.department] = (byDept[row.department] || 0) + row.amountEUR;
-                              setSalaryDeptBudgets(prev => ({ ...prev, [r.mKey]: byDept }));
-                            } else if (companyConfig.hasSF) {
+                            if (companyConfig.hasSF) {
                               // PR-Z: for past months, fetch actuals from NS (full 76xxx GL).
                               // SF mart is missing 760017 Bonus / 760019 Maternity for past months.
                               // Budget side stays on Snowflake (forecast lives there).
@@ -7039,11 +7057,22 @@ useEffect(() => {
                               ]).then(([actRes, budRes, hcRes, hcDeptRes]) => {
                                 // ns-salary-breakdown returns { actuals: [...] }; sf-salary-breakdown returns { data: [...] }
                                 const actuals = actRes.actuals || actRes.data || [];
-                                setForecastDrilldown(prev => prev ? { ...prev, data: { actuals, budget: budRes.data || [], headcount: hcRes.data || { events: [], cumulative: [], baseline: {} } } } : null);
+                                let budget = budRes.data || [];
+                                // Hybrid fallback: for a projection year where FCT_BUDGET has no rows for
+                                // this month, fall back to the per-dept 2026 AVG (synthetic '2026-AVG').
+                                // Picks up the planned Aug 2027 cut etc. when FCT_BUDGET has the data,
+                                // and still shows a per-dept breakdown when it doesn't.
+                                if (budget.length === 0 && isSnapshotFuture && lastActualSalaryMonth && salaryActualsByDept[lastActualSalaryMonth]) {
+                                  const avgDeptData = salaryActualsByDept[lastActualSalaryMonth];
+                                  budget = Object.entries(avgDeptData)
+                                    .map(([dept, v]) => ({ department: dept, account: '', name: 'Recurring payroll (avg of last 3 actual months — fallback)', amountEUR: (v as { eur: number }).eur, amountILS: (v as { ils: number }).ils }))
+                                    .sort((a, b) => b.amountEUR - a.amountEUR);
+                                }
+                                setForecastDrilldown(prev => prev ? { ...prev, data: { actuals, budget, headcount: hcRes.data || { events: [], cumulative: [], baseline: {} } } } : null);
                                 // Cache department budgets for per-dept adjustments
-                                if (budRes.data && budRes.data.length > 0) {
+                                if (budget.length > 0) {
                                   const byDept: Record<string, number> = {};
-                                  for (const row of budRes.data) { byDept[row.department] = (byDept[row.department] || 0) + (row.amountEUR || 0); }
+                                  for (const row of budget) { byDept[row.department] = (byDept[row.department] || 0) + (row.amountEUR || 0); }
                                   setSalaryDeptBudgets(prev => ({ ...prev, [r.mKey]: byDept }));
                                 }
                                 // Cache headcount per department
