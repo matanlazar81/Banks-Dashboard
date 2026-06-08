@@ -457,7 +457,8 @@ function banksPlugin(): Plugin {
             if (!year) { res.statusCode = 400; res.end(JSON.stringify({ ok: false, error: 'year required' })); return; }
             const raw = db.prepare(`
               SELECT FISCAL_YEAR, DEPARTMENT, LOCATION, CURRENCY, ACCOUNT_NUMBER, ACCOUNT_NAME,
-                     NETSUITE_INTERNAL_NUMBER, SOURCE_AMOUNT_ILS, MONTHLY_SOURCE_ILS,
+                     NETSUITE_INTERNAL_NUMBER, CATEGORY,
+                     SOURCE_AMOUNT_ILS, MONTHLY_SOURCE_ILS,
                      USER_OVERRIDE_AMOUNT_ILS, USER_OVERRIDE_PCT, ANNUAL_BUDGET_TARGET_AMOUNT,
                      SUBSIDIARY_ID, USER_EDITED_BY, USER_EDITED_AT, SOURCE_SYNCED_AT
               FROM FCT_BUDGET_TARGET_BY_DEPT_ACCT

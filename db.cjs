@@ -93,6 +93,12 @@ function migrate(d) {
   if (!cols2.some((c) => c.name === 'MONTHLY_SOURCE_ILS')) {
     d.exec(`ALTER TABLE FCT_BUDGET_TARGET_BY_DEPT_ACCT ADD COLUMN MONTHLY_SOURCE_ILS TEXT;`);
   }
+  // Parent GL category (e.g. "Outsourcing", "SW Licenses"). Lets the dashboard build a
+  // vendor breakdown for projection years from Targets directly, instead of scaling the
+  // prior year's category mix. NULL until the next Sync repopulates the row.
+  if (!cols2.some((c) => c.name === 'CATEGORY')) {
+    d.exec(`ALTER TABLE FCT_BUDGET_TARGET_BY_DEPT_ACCT ADD COLUMN CATEGORY TEXT;`);
+  }
 }
 
 module.exports = { getDb, DB_PATH };
