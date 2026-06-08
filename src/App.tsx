@@ -1129,11 +1129,6 @@ export default function App() {
   const [pipelineMethodOpen, setPipelineMethodOpen] = useState(false);
   const [monthlyReval, setMonthlyReval] = useState<{ byMonth: Record<string, { eur: number; ils: number; hasBothEnds?: boolean }>; preYear: { eur: number; ils: number } }>({ byMonth: {}, preYear: { eur: 0, ils: 0 } });
   const [sfSalaryBudget, setSfSalaryBudget] = useState<Record<string, { eur: number; ils: number }>>({});
-  // Baked per-account salary breakdown for snapshot (non-current) years. Carries the
-  // last-3-months (Oct-Dec) source-year salary modal average so the projection-year salary
-  // drilldown can render the same per-account detail the dashboard total is built from,
-  // without a live Snowflake query (the projection year has no SF rows). Empty when not baked.
-  const [sfSalaryBreakdownSnap, setSfSalaryBreakdownSnap] = useState<{ department?: string; account: string; name: string; amountEUR: number; amountILS: number }[]>([]);
   const [sfFinanceBudget, setSfFinanceBudget] = useState<Record<string, { eur: number; ils: number }>>({});
   const [arrData, setArrData] = useState<{ mrr: number; arr: number; customers: number; avgPerCustomer: number; month: string; snapDate: string; liveMonth?: string; liveDate?: string; history: { name: string; snapDate: string; mrr: number; arr: number; customers: number; avgPerCustomer: number }[] } | null>(null);
   const [sfSalaryOverrides, setSfSalaryOverrides] = useState<{ account: string; fromMonth: string; toMonth: string; department: string; location: string; amountEUR: number; mode: string; comments: string; mKey: string; oldVal: number; newVal: number }[]>([]);
@@ -2198,10 +2193,6 @@ useEffect(() => {
             else if (!snap.sfBudget?.financeBudget) setSfFinanceBudget({});
             if (snap.nsBudget) setNsBudget(snap.nsBudget);
             else setNsBudget({ byMonth: {} });
-            // Baked per-account salary breakdown (Oct-Dec source-year modal average) for the
-            // salary drilldown. Empty in older snapshots → the modal falls back to a live
-            // Oct-Dec source-year fetch, scaled to the dashboard total (see salary onClick).
-            setSfSalaryBreakdownSnap(Array.isArray(snap.sfSalaryBreakdown) ? snap.sfSalaryBreakdown : []);
             if (hasLiveCf) {
               // Inflows baseline: avg of Oct/Nov/Dec collections from the live current-year
               // cashflow (run-rate carry). Set here so the snapshot revenue doesn't override it.
@@ -2251,9 +2242,45 @@ useEffect(() => {
             setChurnMonthlyAvg(0);
             setYoyRevenue(null);
             setSalaryDeptBudgets({});
-            // Clear live-year salary actuals/HC so the projection-year salary modal renders the
-            // baked budget breakdown (Budget mode) rather than a stale 'Last Actual' snapshot.
-            setSalaryActualsByDept({}); setLastActualSalaryMonth(''); setMonthlyHCImpact({});
+            // Projection-year salary view: pull source-year (e.g. 2026) per-department actuals,
+            // compute the per-dept average over the last 3 months WITH ACTUAL data (only those
+            // months have per-dept rows in FCT_EXPENSE — Oct-Dec have only budget, not actuals),
+            // and bake a synthetic '${srcYear}-AVG' key. The synthetic key is strictly greater
+            // than every '${srcYear}-MM' month and less than every '${coYear}-MM' month
+            // (chars: 'A' > '1', '2027' > '2026'), so the existing Last Actual projection
+            // path picks it up for all 2027 months and ignores it for 2026 months. The flat
+            // salary baseline is then set to the dept-avg sum so the dashboard cell and the
+            // modal total tie exactly (no scaling needed).
+            const srcYearSalDept = coYear - 1;
+            fetch(`/api/sf-salary-actuals-by-dept?year=${srcYearSalDept}`)
+              .then(r => r.ok ? r.json() : null)
+              .then(j => {
+                if (!j?.byMonth) { setSalaryActualsByDept({}); setLastActualSalaryMonth(''); return; }
+                const monthsWithData = Object.keys(j.byMonth).filter((m: string) => Object.keys(j.byMonth[m] || {}).length > 0).sort();
+                const last3 = monthsWithData.slice(-3);
+                if (last3.length === 0) { setSalaryActualsByDept({}); setLastActualSalaryMonth(''); return; }
+                const tot: Record<string, { eur: number; ils: number; n: number }> = {};
+                for (const m of last3) for (const [d, v] of Object.entries(j.byMonth[m] || {})) {
+                  if (!tot[d]) tot[d] = { eur: 0, ils: 0, n: 0 };
+                  tot[d].eur += (v as { eur: number; ils: number }).eur || 0;
+                  tot[d].ils += (v as { eur: number; ils: number }).ils || 0;
+                  tot[d].n += 1;
+                }
+                const synth: Record<string, { eur: number; ils: number }> = {};
+                for (const [d, s] of Object.entries(tot)) synth[d] = { eur: Math.round(s.eur / s.n), ils: Math.round(s.ils / s.n) };
+                const synthKey = `${srcYearSalDept}-AVG`;
+                setSalaryActualsByDept({ [synthKey]: synth });
+                setLastActualSalaryMonth(synthKey);
+                setSalaryProjectionMode('lastActual');
+                const baseSum = Object.values(synth).reduce((s, v) => s + v.eur, 0);
+                const baseSumIls = Object.values(synth).reduce((s, v) => s + v.ils, 0);
+                const flat: Record<string, { eur: number; ils: number }> = {};
+                for (let m = 1; m <= 12; m++) flat[`${coYear}-${String(m).padStart(2, '0')}`] = { eur: baseSum, ils: baseSumIls };
+                setSfSalaryBudget(flat);
+                console.info(`[Snapshot] ${co} ${coYear} salary: per-dept avg of ${last3.join(', ')} (€${baseSum.toLocaleString()} across ${Object.keys(synth).length} depts)`);
+              })
+              .catch(() => { setSalaryActualsByDept({}); setLastActualSalaryMonth(''); });
+            setMonthlyHCImpact({});
             // Persist updated opening balance to snapshot file for page refresh consistency
             if (hasLiveCf && Math.round(openBal) !== Math.round(snap.projectedDecClosing || 0)) {
               fetch('/api/budget-snapshot-patch', {
@@ -6982,47 +7009,7 @@ useEffect(() => {
                             e.stopPropagation();
                             const adjPct = salaryAdjPctByMonth[i] || 0;
                             setForecastDrilldown({ type: 'salary', month: r.month, mKey: r.mKey, data: 'loading', adjPct });
-                            const isSnapshotFuture = activeYear !== currentYear && !r.isPast;
-                            if (companyConfig.hasSF && isSnapshotFuture) {
-                              // Projection (snapshot) year, future month: the projection year has no
-                              // live Snowflake rows, so build the salary breakdown from the baked
-                              // Oct-Dec source-year modal average (snapshot.sfSalaryBreakdown), falling
-                              // back to a live source-year fetch for older snapshots. Scale it to the
-                              // dashboard total (sfSalaryBudget) so the modal total == the dashboard
-                              // salary exactly — the modal mirrors what the cashflow row shows.
-                              const dashTotal = r.salaryBase || sfSalaryBudget[r.mKey]?.eur || r.salary || 0;
-                              const applyBreakdown = (rawRows: any[]) => {
-                                const sum = rawRows.reduce((s: number, x: any) => s + (x.amountEUR || 0), 0);
-                                const f = sum > 0 && dashTotal > 0 ? dashTotal / sum : 1;
-                                const budget = rawRows.map((x: any) => ({
-                                  department: x.department || x.name || x.account,
-                                  account: x.account, accountId: x.accountId, name: x.name,
-                                  amountEUR: Math.round((x.amountEUR || 0) * f),
-                                  amountILS: Math.round((x.amountILS || 0) * f),
-                                }));
-                                setForecastDrilldown(prev => prev ? { ...prev, data: { actuals: [], budget, headcount: { events: [], cumulative: [], baseline: {} } } } : null);
-                                const byDept: Record<string, number> = {};
-                                for (const row of budget) { byDept[row.department] = (byDept[row.department] || 0) + (row.amountEUR || 0); }
-                                setSalaryDeptBudgets(prev => ({ ...prev, [r.mKey]: byDept }));
-                              };
-                              if (sfSalaryBreakdownSnap.length > 0) {
-                                applyBreakdown(sfSalaryBreakdownSnap);
-                              } else {
-                                const srcYear = activeYear - 1;
-                                Promise.all([10, 11, 12].map(mm =>
-                                  fetch(`/api/sf-salary-budget-breakdown?month=${srcYear}-${String(mm).padStart(2, '0')}`).then(res => res.json()).catch(() => ({ data: [] }))
-                                )).then(results => {
-                                  const acc: Record<string, any> = {};
-                                  for (const res of results) for (const row of (res.data || [])) {
-                                    const key = row.account || row.name;
-                                    if (!acc[key]) acc[key] = { department: row.department, account: row.account, accountId: row.accountId, name: row.name, amountEUR: 0, amountILS: 0 };
-                                    acc[key].amountEUR += (row.amountEUR || 0);
-                                    acc[key].amountILS += (row.amountILS || 0);
-                                  }
-                                  applyBreakdown(Object.values(acc).map((x: any) => ({ ...x, amountEUR: Math.round(x.amountEUR / 3), amountILS: Math.round(x.amountILS / 3) })));
-                                });
-                              }
-                            } else if (companyConfig.hasSF) {
+                            if (companyConfig.hasSF) {
                               // PR-Z: for past months, fetch actuals from NS (full 76xxx GL).
                               // SF mart is missing 760017 Bonus / 760019 Maternity for past months.
                               // Budget side stays on Snowflake (forecast lives there).
