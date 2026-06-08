@@ -9623,6 +9623,7 @@ useEffect(() => {
                       const _nowVM = new Date();
                       const _isFutVM = forecastDrilldown.mKey > `${_nowVM.getFullYear()}-${String(_nowVM.getMonth()+1).padStart(2,'0')}`;
                       const scenarioAdj = Math.round((typeof meta.used === 'number' ? meta.used : 0) - (meta.budgetTotal || 0));
+                      const scenarioAdjPct = meta.budgetTotal > 0 ? Math.round((scenarioAdj / meta.budgetTotal) * 100) : 0; // same % the dashboard shows next to Vendors
                       return (
                         <div className="bg-gray-50 rounded-lg p-3 mb-3">
                           <p className="text-xs text-gray-400 mb-2 uppercase">Budget vs Historical{hasVendorOverrides ? ' — overrides applied' : ''}</p>
@@ -9656,7 +9657,7 @@ useEffect(() => {
                               )}
                               {meta.actual > 0 && <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600">Snowflake Actual (this month)<SourceInfo source="DL_PRODUCTION.FINANCE.FCT_EXPENSE" column="SUM(AMOUNT_EUR), SUM(AMOUNT_ILS)" detail="non-payroll, source='netsuite', subsidiary_id=3, current month" /></td><td className="py-1.5 text-right font-bold text-amber-700">{fmt(meta.actual)}</td></tr>}
                               {_isFutVM && scenarioAdj !== 0 && (
-                                <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600">Scenario adjustments<span className="text-[10px] text-gray-400 ml-1">dept / per-line — incl. detail not shown below</span></td><td className={`py-1.5 text-right font-bold ${scenarioAdj >= 0 ? 'text-red-600' : 'text-green-700'}`}>{scenarioAdj >= 0 ? '+' : ''}{fmt(scenarioAdj)}</td></tr>
+                                <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600">Scenario adjustments<span className="text-[10px] text-gray-400 ml-1">dept / per-line — incl. detail not shown below</span></td><td className={`py-1.5 text-right font-bold ${scenarioAdj >= 0 ? 'text-red-600' : 'text-green-700'}`}>{scenarioAdj >= 0 ? '+' : ''}{fmt(scenarioAdj)}{scenarioAdjPct !== 0 && <span className="text-[11px] font-normal opacity-70 ml-1">({scenarioAdjPct > 0 ? '+' : ''}{scenarioAdjPct}%)</span>}</td></tr>
                               )}
                               <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600">Used in Forecast <span className="text-[10px] text-violet-400">= dashboard cell</span><SourceInfo source="computed client-side" column="budget (after overrides) + scenario adjustments" detail="the exact value shown in the cashflow Vendors cell for this month" /></td><td className="py-1.5 text-right font-bold text-green-700">{fmt(meta.used)}</td></tr>
                               {meta.histAvg > 0 && <tr><td className="py-1.5 text-gray-600">Budget − Historical Gap</td><td className={`py-1.5 text-right font-bold ${gap >= 0 ? 'text-red-600' : 'text-green-700'}`}>{gap >= 0 ? '+' : ''}{fmt(gap)}</td></tr>}
@@ -9965,7 +9966,7 @@ useEffect(() => {
                         <>
                           <tr className="text-[11px] text-gray-500">
                             <td className="py-1">Per-line / detail adjustments<span className="text-[10px] text-gray-400 ml-1">(not in categories above)</span></td>
-                            <td className={`py-1 pr-2 text-right font-semibold ${_detailAdjBd >= 0 ? 'text-red-600' : 'text-green-700'}`}>{_detailAdjBd >= 0 ? '+' : ''}{fmt(_detailAdjBd)}</td>
+                            <td className={`py-1 pr-2 text-right font-semibold ${_detailAdjBd >= 0 ? 'text-red-600' : 'text-green-700'}`}>{_detailAdjBd >= 0 ? '+' : ''}{fmt(_detailAdjBd)}{_budgetSumBd > 0 && (() => { const p = Math.round((_detailAdjBd / _budgetSumBd) * 100); return p !== 0 ? <span className="text-[10px] font-normal opacity-70 ml-1">({p > 0 ? '+' : ''}{p}%)</span> : null; })()}</td>
                             <td className="py-1"></td><td className="py-1"></td><td className="py-1"></td>
                           </tr>
                           <tr className="border-t font-bold">
