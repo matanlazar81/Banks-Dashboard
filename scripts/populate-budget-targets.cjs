@@ -70,6 +70,7 @@ async function populateBudgetTargets({ subsidiary, years, env, log = console.log
       g.GL_ACCOUNT_NUMBER                                        AS ACCOUNT_NUMBER,
       g.GL_ACCOUNT_NAME                                          AS ACCOUNT_NAME,
       g.GL_ACCOUNT_ID                                            AS NETSUITE_INTERNAL_NUMBER,
+      g.PARENT_GL_ACCOUNT_NAME                                   AS CATEGORY,
       ROUND(SUM(b.AMOUNT_ILS_CC), 2)                             AS MONTH_AMOUNT_ILS,
       b.SUBSIDIARY_ID                                            AS SUBSIDIARY_ID
     FROM DL_PRODUCTION.FINANCE.FCT_BUDGET b
@@ -88,7 +89,7 @@ async function populateBudgetTargets({ subsidiary, years, env, log = console.log
       d.DEPARTMENT_NAME,
       ${hasLocationId && hasDimLocation ? 'l.LOCATION_NAME,' : ''}
       ${hasCurrencyCode ? 'b.CURRENCY_CODE,' : ''}
-      g.GL_ACCOUNT_NUMBER, g.GL_ACCOUNT_NAME, g.GL_ACCOUNT_ID,
+      g.GL_ACCOUNT_NUMBER, g.GL_ACCOUNT_NAME, g.GL_ACCOUNT_ID, g.PARENT_GL_ACCOUNT_NAME,
       b.SUBSIDIARY_ID
   `;
 
@@ -112,6 +113,7 @@ async function populateBudgetTargets({ subsidiary, years, env, log = console.log
         ACCOUNT_NUMBER: String(r.ACCOUNT_NUMBER || ''),
         ACCOUNT_NAME: r.ACCOUNT_NAME || null,
         NETSUITE_INTERNAL_NUMBER: r.NETSUITE_INTERNAL_NUMBER != null ? Number(r.NETSUITE_INTERNAL_NUMBER) : null,
+        CATEGORY: r.CATEGORY || null,
         annual: 0,
         monthly: {},
       };
@@ -137,17 +139,18 @@ async function populateBudgetTargets({ subsidiary, years, env, log = console.log
   const upsert = db.prepare(`
     INSERT INTO FCT_BUDGET_TARGET_BY_DEPT_ACCT (
       FISCAL_YEAR, DEPARTMENT, LOCATION, CURRENCY,
-      ACCOUNT_NUMBER, ACCOUNT_NAME, NETSUITE_INTERNAL_NUMBER,
+      ACCOUNT_NUMBER, ACCOUNT_NAME, NETSUITE_INTERNAL_NUMBER, CATEGORY,
       SOURCE_AMOUNT_ILS, MONTHLY_SOURCE_ILS, SUBSIDIARY_ID, SOURCE_SYNCED_AT
     ) VALUES (
       @FISCAL_YEAR, @DEPARTMENT, @LOCATION, @CURRENCY,
-      @ACCOUNT_NUMBER, @ACCOUNT_NAME, @NETSUITE_INTERNAL_NUMBER,
+      @ACCOUNT_NUMBER, @ACCOUNT_NAME, @NETSUITE_INTERNAL_NUMBER, @CATEGORY,
       @SOURCE_AMOUNT_ILS, @MONTHLY_SOURCE_ILS, @SUBSIDIARY_ID, @SOURCE_SYNCED_AT
     )
     ON CONFLICT (FISCAL_YEAR, SUBSIDIARY_ID, DEPARTMENT, LOCATION, ACCOUNT_NUMBER, CURRENCY)
     DO UPDATE SET
       ACCOUNT_NAME             = excluded.ACCOUNT_NAME,
       NETSUITE_INTERNAL_NUMBER = excluded.NETSUITE_INTERNAL_NUMBER,
+      CATEGORY                 = excluded.CATEGORY,
       SOURCE_AMOUNT_ILS        = excluded.SOURCE_AMOUNT_ILS,
       MONTHLY_SOURCE_ILS       = excluded.MONTHLY_SOURCE_ILS,
       SOURCE_SYNCED_AT         = excluded.SOURCE_SYNCED_AT
@@ -172,6 +175,7 @@ async function populateBudgetTargets({ subsidiary, years, env, log = console.log
         ACCOUNT_NUMBER: r.ACCOUNT_NUMBER,
         ACCOUNT_NAME: r.ACCOUNT_NAME,
         NETSUITE_INTERNAL_NUMBER: r.NETSUITE_INTERNAL_NUMBER,
+        CATEGORY: r.CATEGORY,
         SOURCE_AMOUNT_ILS: Math.round(r.annual * 100) / 100,
         MONTHLY_SOURCE_ILS: JSON.stringify(r.monthly),
         SUBSIDIARY_ID: r.SUBSIDIARY_ID,

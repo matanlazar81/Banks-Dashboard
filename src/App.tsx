@@ -623,6 +623,7 @@ type BudgetTargetRow = {
   FISCAL_YEAR: number; DEPARTMENT: string; LOCATION: string; CURRENCY: string;
   ACCOUNT_NUMBER: string; ACCOUNT_NAME: string | null;
   NETSUITE_INTERNAL_NUMBER: number | null;
+  CATEGORY: string | null;
   SOURCE_AMOUNT_ILS: number | null;
   MONTHLY_SOURCE_ILS: Record<string, number> | null;
   MONTHLY_RAW_ILS: Record<string, number> | null;
@@ -2405,9 +2406,16 @@ useEffect(() => {
                 const tgRows: any[] = (tg && tg.ok && Array.isArray(tg.rows)) ? tg.rows : [];
                 if (tgRows.length === 0) { runRateFallback(); return; }
                 // Partition Targets rows: salary = 76xxx, vendors = everything else.
+                // Build per-month, per-category vendor totals natively from Targets (each row carries
+                // CATEGORY = PARENT_GL_ACCOUNT_NAME + MONTHLY_SOURCE_ILS), so the vendor modal shows
+                // the actual FY${coYear} category mix instead of last year's mix scaled.
                 const salByKey: Record<string, { department: string; account: string; accountId?: number; name: string; eur: number; ils: number }> = {};
                 const salByDept: Record<string, { eur: number; ils: number }> = {};
+                const venTotalByMonth: Record<string, { eur: number; ils: number }> = {};
+                const venByMonth: Record<string, Record<string, number>> = {}; // monthKey → { category: EUR }
                 let venEur = 0, venIls = 0;
+                let venCategoryRows = 0; // count of vendor rows that carried CATEGORY
+                for (let m = 1; m <= 12; m++) { const mk = `${coYear}-${String(m).padStart(2, '0')}`; venTotalByMonth[mk] = { eur: 0, ils: 0 }; venByMonth[mk] = {}; }
                 for (const r of tgRows) {
                   const acct = String(r.ACCOUNT_NUMBER || '');
                   const ratio = tgtRatio(r);
@@ -2420,15 +2428,38 @@ useEffect(() => {
                     salByKey[key].eur += fe; salByKey[key].ils += fi;
                     if (!salByDept[dept]) salByDept[dept] = { eur: 0, ils: 0 };
                     salByDept[dept].eur += fe; salByDept[dept].ils += fi;
-                  } else { venEur += fe; venIls += fi; }
+                  } else {
+                    venEur += fe; venIls += fi;
+                    // Distribute this row across months using its MONTHLY_SOURCE_ILS weights
+                    // (if present); else spread the annual flat. Always × override ratio.
+                    const monthlyIls: Record<string, number> = r.MONTHLY_SOURCE_ILS && typeof r.MONTHLY_SOURCE_ILS === 'object' ? r.MONTHLY_SOURCE_ILS : {};
+                    const monthlySum = Object.values(monthlyIls).reduce((s: number, v: any) => s + (Number(v) || 0), 0);
+                    const cat = r.CATEGORY || 'Uncategorised';
+                    if (r.CATEGORY) venCategoryRows++;
+                    for (let m = 1; m <= 12; m++) {
+                      const mk = `${coYear}-${String(m).padStart(2, '0')}`;
+                      const wKey = String(m).padStart(2, '0');
+                      let monthEur: number, monthIls: number;
+                      if (monthlySum > 0) {
+                        const w = (Number(monthlyIls[wKey]) || 0) / monthlySum;
+                        monthEur = Math.round(fe * w); monthIls = Math.round(fi * w);
+                      } else { monthEur = Math.round(fe / 12); monthIls = Math.round(fi / 12); }
+                      venTotalByMonth[mk].eur += monthEur;
+                      venTotalByMonth[mk].ils += monthIls;
+                      venByMonth[mk][cat] = (venByMonth[mk][cat] || 0) + monthEur;
+                    }
+                  }
                 }
                 // Salary: annual → flat monthly (Targets shows flat); feeds dashboard cell + modal.
                 setSalaryFrom(salByKey, salByDept, 12, `FY${coYear} Targets`);
-                // Vendors: scale the snapshot distribution so its annual = Targets vendors. Each
-                // month + category scales by the same factor, so the modal stays consistent and the
-                // dashboard vendor total reconciles to Targets.
+                // Vendors: prefer the Targets-native per-month/per-category breakdown when CATEGORY
+                // is populated (post-sync after the CATEGORY column was added). Else fall back to
+                // scaling the snapshot distribution so the dashboard total still ties to Targets.
                 const snapVen: any = snap.sfBudget;
-                if (snapVen?.totalByMonth && Object.keys(snapVen.totalByMonth).length > 0) {
+                if (venCategoryRows > 0) {
+                  setSfBudget({ ...(snapVen || {}), totalByMonth: venTotalByMonth, byMonth: venByMonth });
+                  console.info(`[Snapshot] ${co} ${coYear} vendors: FY${coYear} Targets native categories — €${venEur.toLocaleString()}/yr across ${new Set(tgRows.filter((r: any) => !String(r.ACCOUNT_NUMBER || '').startsWith('76')).map((r: any) => r.CATEGORY || 'Uncategorised')).size} categories`);
+                } else if (snapVen?.totalByMonth && Object.keys(snapVen.totalByMonth).length > 0) {
                   const snapEur = Object.values(snapVen.totalByMonth).reduce((s: number, v: any) => s + (v.eur || 0), 0);
                   const snapIls = Object.values(snapVen.totalByMonth).reduce((s: number, v: any) => s + (v.ils || 0), 0);
                   const fE = snapEur !== 0 ? venEur / snapEur : 1;
@@ -2438,7 +2469,7 @@ useEffect(() => {
                   const scaledByMonth: Record<string, Record<string, number>> = {};
                   if (snapVen.byMonth) for (const [mk, cats] of Object.entries(snapVen.byMonth)) { scaledByMonth[mk] = {}; for (const [c, amt] of Object.entries(cats as Record<string, number>)) scaledByMonth[mk][c] = Math.round((amt as number) * fE); }
                   setSfBudget({ ...snapVen, totalByMonth: scaledTotal, byMonth: scaledByMonth });
-                  console.info(`[Snapshot] ${co} ${coYear} vendors: scaled snapshot to FY${coYear} Targets €${venEur.toLocaleString()}/yr (×${fE.toFixed(3)})`);
+                  console.info(`[Snapshot] ${co} ${coYear} vendors: scaled snapshot to FY${coYear} Targets €${venEur.toLocaleString()}/yr (×${fE.toFixed(3)}) — re-Sync to switch to native categories`);
                 } else {
                   console.info(`[Snapshot] ${co} ${coYear} vendors: Targets €${venEur.toLocaleString()}/yr but no snapshot distribution to scale`);
                 }
