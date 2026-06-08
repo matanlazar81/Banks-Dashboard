@@ -7009,7 +7009,22 @@ useEffect(() => {
                             e.stopPropagation();
                             const adjPct = salaryAdjPctByMonth[i] || 0;
                             setForecastDrilldown({ type: 'salary', month: r.month, mKey: r.mKey, data: 'loading', adjPct });
-                            if (companyConfig.hasSF) {
+                            const isSnapshotFuture = activeYear !== currentYear && !r.isPast;
+                            if (companyConfig.hasSF && isSnapshotFuture && lastActualSalaryMonth && salaryActualsByDept[lastActualSalaryMonth]) {
+                              // Projection year (e.g. 2027): no live Snowflake rows exist, so render the
+                              // per-department average (synthetic e.g. '2026-AVG' = avg of the last 3 actual
+                              // months) as the breakdown. Sourced from the SAME salaryActualsByDept the Last
+                              // Actual summary uses, so the breakdown total ties to the summary and to the
+                              // cashflow Salary cell, and each department is adjustable via the +/- controls.
+                              const deptData = salaryActualsByDept[lastActualSalaryMonth];
+                              const budget = Object.entries(deptData)
+                                .map(([dept, v]) => ({ department: dept, account: '', name: 'Recurring payroll (avg of last 3 actual months)', amountEUR: (v as { eur: number }).eur, amountILS: (v as { ils: number }).ils }))
+                                .sort((a, b) => b.amountEUR - a.amountEUR);
+                              setForecastDrilldown(prev => prev ? { ...prev, data: { actuals: [], budget, headcount: { events: [], cumulative: [], baseline: {} } } } : null);
+                              const byDept: Record<string, number> = {};
+                              for (const row of budget) byDept[row.department] = (byDept[row.department] || 0) + row.amountEUR;
+                              setSalaryDeptBudgets(prev => ({ ...prev, [r.mKey]: byDept }));
+                            } else if (companyConfig.hasSF) {
                               // PR-Z: for past months, fetch actuals from NS (full 76xxx GL).
                               // SF mart is missing 760017 Bonus / 760019 Maternity for past months.
                               // Budget side stays on Snowflake (forecast lives there).
