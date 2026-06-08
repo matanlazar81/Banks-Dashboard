@@ -10013,6 +10013,14 @@ useEffect(() => {
                                 })()}
                               </div>
                               {vcInherited && vcPct !== 0 && <div className="text-[9px] text-teal-400 text-center mt-0.5">from {new Date(vcAdj.fromMonth + '-01').toLocaleDateString('en-GB', { month: 'short' })}</div>}
+                              {(() => {
+                                const perLine = _detailByCat[cat] || 0;
+                                if (perLine === 0 || typeof amt !== 'number' || amt === 0) return null;
+                                const plPct = Math.round((perLine / amt) * 100);
+                                // Effective category-level rate from per-line (GL-account) edits. The input above
+                                // stays the category-level manual %; this is the per-line contribution, click to edit.
+                                return <div className="text-[9px] text-amber-600 text-center mt-0.5" title="Effective rate from per-line (GL-account) adjustments inside this category. Click the category row to view or edit them.">{plPct > 0 ? '+' : ''}{plPct}% per-line</div>;
+                              })()}
                             </td>}
                             {_isFutureCat && (() => {
                               const perLine = _detailByCat[cat] || 0;
