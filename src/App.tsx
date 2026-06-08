@@ -7326,10 +7326,28 @@ useEffect(() => {
                                   setForecastDrilldown(prev => prev ? { ...prev, data: { ...byCategory, __vendorMeta: prev.data.__vendorMeta } } : null);
                                 });
                             } else {
-                              setForecastDrilldown({ type: 'vendors', month: r.month, mKey: r.mKey, data: {
-                                ...(sfBudget.byMonth?.[r.mKey] || nsBudget.byMonth[r.mKey]?.categories || expenseCategories.byMonth?.[r.mKey] || {}),
-                                __vendorMeta: vendorMeta
-                              }});
+                              const localCats = sfBudget.byMonth?.[r.mKey] || nsBudget.byMonth[r.mKey]?.categories || expenseCategories.byMonth?.[r.mKey] || {};
+                              if (Object.keys(localCats).length > 0) {
+                                setForecastDrilldown({ type: 'vendors', month: r.month, mKey: r.mKey, data: { ...localCats, __vendorMeta: vendorMeta } });
+                              } else {
+                                // Snapshot/projection year with no baked categories: derive the same
+                                // category breakdown as the source year (current year), scaled to this
+                                // month's vendor total, so the modal shows "how the data is combined".
+                                setForecastDrilldown({ type: 'vendors', month: r.month, mKey: r.mKey, data: { __vendorMeta: vendorMeta } });
+                                const srcMonth = `${currentYear}-${r.mKey.slice(5)}`;
+                                fetch(`/api/sf-budget?year=${currentYear}`).then(res => res.json()).then(j => {
+                                  const bm = j?.data?.byMonth || {};
+                                  let cats: Record<string, number> = bm[srcMonth] && Object.keys(bm[srcMonth]).length > 0 ? bm[srcMonth] : {};
+                                  if (Object.keys(cats).length === 0) { // no same-month data → annual category mix
+                                    cats = {};
+                                    for (const mk of Object.keys(bm)) for (const [c, a] of Object.entries(bm[mk] as Record<string, number>)) cats[c] = (cats[c] || 0) + (a as number);
+                                  }
+                                  const srcTotal = Object.values(cats).reduce((s, v) => s + Math.abs(v as number), 0);
+                                  const scaled: Record<string, number> = {};
+                                  if (srcTotal > 0) for (const [c, a] of Object.entries(cats)) scaled[c] = Math.round(((a as number) / srcTotal) * (r.vendors || 0));
+                                  setForecastDrilldown(prev => prev && prev.mKey === r.mKey ? { ...prev, data: { ...scaled, __vendorMeta: prev.data.__vendorMeta } } : prev);
+                                }).catch(() => {});
+                              }
                             }
                           }}>
                         {r.vendors > 0 ? `-${fmtC(r.vendors, r.vendorsILS)}` : '-'}
