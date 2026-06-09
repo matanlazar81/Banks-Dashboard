@@ -763,12 +763,30 @@ function BudgetTargetsDrawer({
     }
     return last;
   };
+  // Fallback when CATEGORY isn't yet on the row (pre-Sync after PR #74). Match by the
+  // `||name||account` suffix so auto-applied entries like 'Facilities||Refreshments||710002'
+  // still tag the right row even when r.CATEGORY is null.
+  const effectiveDetailBySuffix = (suffix: string, mKey: string): { pct: number; base: number } | null => {
+    if (!vendorDetailAdj) return null;
+    let last: { pct: number; base: number } | null = null;
+    const yr = mKey.slice(0, 4);
+    const monthKeys = Object.keys(vendorDetailAdj).filter(k => k <= mKey && k.slice(0, 4) === yr).sort();
+    for (const k of monthKeys) {
+      for (const fullKey of Object.keys(vendorDetailAdj[k] || {})) {
+        if (fullKey.endsWith(suffix)) {
+          const v = vendorDetailAdj[k][fullKey];
+          last = v.pct !== 0 ? v : null;
+        }
+      }
+    }
+    return last;
+  };
   // Per-row scenario factor + EUR delta for a given month. Matches the cashflow math:
   //   • 76xxx (salary):  base × (1 + manualPct/100 + deptPct/100)
   //   • Non-76xxx:       base × (1 + catPct/100) + perLineBase × perLinePct/100
   const monthScenario = (r: BudgetTargetRow, mk: string): { factor: number; deltaEur: number } => {
     const acct = String(r.ACCOUNT_NUMBER || '');
-    const moNum = parseInt(mk.split('-')[1] || '0', 10) - 1;
+    const moNum = parseInt(mk, 10) - 1; // mk is 'MM' (01..12); month index 0..11 for the per-month maps
     const fullMk = `${r.FISCAL_YEAR}-${mk}`;
     if (acct.startsWith('76')) {
       const manualPct = Number(salaryAdjPctByMonth?.[moNum]) || 0;
@@ -778,7 +796,10 @@ function BudgetTargetsDrawer({
     const cat = r.CATEGORY || '';
     const catPct = effectiveCatPct(cat, fullMk);
     const detailKey = `${cat}||${r.ACCOUNT_NAME || ''}||${acct}`;
-    const det = effectiveDetail(detailKey, fullMk);
+    let det = effectiveDetail(detailKey, fullMk);
+    // Fallback: row has no CATEGORY yet (pre-Sync after PR #74). Try suffix match so
+    // auto-applied HR_VENDOR_ACCOUNTS entries still apply to the right row.
+    if (!det && !r.CATEGORY) det = effectiveDetailBySuffix(`||${r.ACCOUNT_NAME || ''}||${acct}`, fullMk);
     const deltaEur = det ? Math.round(det.base * det.pct / 100) : 0;
     return { factor: 1 + catPct / 100, deltaEur };
   };
@@ -1024,18 +1045,44 @@ function BudgetTargetsDrawer({
                   const sumSource = totalRows.reduce((s, r) => s + annualSourceCcy(r), 0);
                   const sumFinal  = totalRows.reduce((s, r) => s + annualFinalCcy(r), 0);
                   const monthSums = MONTH_KEYS.map(mk => totalRows.reduce((s, r) => s + (monthCcy(r, mk) || 0), 0));
+                  // Some scenario adjustments don't map to a single row (salaryManualILS, headcount-
+                  // implied vendor savings on rows whose CATEGORY isn't synced yet, etc.). The
+                  // residual line absorbs the remainder so TOTAL still equals the dashboard.
+                  const hasDash = !!dashboardOutflowAnnual && (dashboardOutflowAnnual.eur > 0 || dashboardOutflowAnnual.ils > 0);
+                  const dashAnnual = !hasDash ? null : (drawerCurrency === 'EUR' ? dashboardOutflowAnnual!.eur : dashboardOutflowAnnual!.ils);
+                  const residual = hasDash ? (dashAnnual! - sumFinal) : 0;
+                  const monthlyResiduals = !hasDash ? MONTH_KEYS.map(() => 0) : MONTH_KEYS.map((mk, i) => {
+                    const v = dashboardOutflowByMonth?.[`${year}-${mk}`];
+                    if (!v) return 0;
+                    const dashM = drawerCurrency === 'EUR' ? v.eur : v.ils;
+                    return dashM - monthSums[i];
+                  });
+                  const showResidual = Math.abs(residual) > 0.5;
                   return (
+                    <>
                     <tr className="text-gray-800 font-bold text-[11px]">
-                      <td className="px-2 py-1.5">TOTAL <span className="text-[9px] font-normal text-gray-500">scenario adjusted = dashboard</span></td>
+                      <td className="px-2 py-1.5">TOTAL <span className="text-[9px] font-normal text-gray-500">scenario adjusted{showResidual ? '' : ' = dashboard'}</span></td>
                       <td className="px-2 py-1.5 text-[10px] text-gray-500">{totalRows.length} rows</td>
-                      <td className="px-2 py-1.5 text-right font-mono">{fmtMoney(sumSource)}</td>
+                      <td className="px-2 py-1.5 text-right font-mono">{fmtMoney(sumSource + (showResidual ? residual : 0))}</td>
                       {monthSums.map((s, i) => (
-                        <td key={MONTH_KEYS[i]} className="px-1 py-1.5 text-right font-mono text-[10px]">{fmtMoney(s)}</td>
+                        <td key={MONTH_KEYS[i]} className="px-1 py-1.5 text-right font-mono text-[10px]">{fmtMoney(s + (showResidual ? monthlyResiduals[i] : 0))}</td>
                       ))}
                       <td className="px-1 py-1.5"></td>
                       <td className="px-1 py-1.5"></td>
-                      <td className="px-2 py-1.5 text-right font-mono">{fmtMoney(sumFinal)}</td>
+                      <td className="px-2 py-1.5 text-right font-mono">{fmtMoney(sumFinal + (showResidual ? residual : 0))}</td>
                     </tr>
+                    {showResidual && (
+                      <tr className={`text-[10px] ${residual >= 0 ? 'text-red-600' : 'text-green-700'} bg-white border-t border-gray-200`}>
+                        <td className="px-2 py-1" colSpan={2}>↳ scenario auto-savings (not row-level)</td>
+                        <td className="px-2 py-1 text-right font-mono">{residual >= 0 ? '+' : ''}{fmtMoney(residual)}</td>
+                        {monthlyResiduals.map((mr, i) => (
+                          <td key={MONTH_KEYS[i]} className="px-1 py-1 text-right font-mono text-[10px]">{Math.abs(mr) < 0.5 ? '' : (mr >= 0 ? '+' : '') + fmtMoney(mr)}</td>
+                        ))}
+                        <td></td><td></td>
+                        <td className="px-2 py-1 text-right font-mono">{residual >= 0 ? '+' : ''}{fmtMoney(residual)}</td>
+                      </tr>
+                    )}
+                    </>
                   );
                 })()}
               </tfoot>
