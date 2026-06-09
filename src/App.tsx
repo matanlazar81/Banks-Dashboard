@@ -648,12 +648,19 @@ const ILS_PER_EUR = 3.68;
 
 function BudgetTargetsDrawer({
   open, onClose, subsidiary, year, dashboardOutflowByMonth, dashboardOutflowAnnual, scenarioName,
-}: { open: boolean; onClose: () => void; subsidiary: number; year: number; dashboardOutflowByMonth?: Record<string, { eur: number; ils: number }>; dashboardOutflowAnnual?: { eur: number; ils: number }; scenarioName?: string | null; }) {
+  salaryAdjPctByMonth, salaryDeptAdj, vendorCatAdj, vendorDetailAdj,
+}: { open: boolean; onClose: () => void; subsidiary: number; year: number; dashboardOutflowByMonth?: Record<string, { eur: number; ils: number }>; dashboardOutflowAnnual?: { eur: number; ils: number }; scenarioName?: string | null;
+  salaryAdjPctByMonth?: Record<number, number>; salaryDeptAdj?: Record<string, Record<string, number>>; vendorCatAdj?: Record<string, Record<string, number>>; vendorDetailAdj?: Record<string, Record<string, { pct: number; base: number }>>; }) {
   const [rows, setRows] = useState<BudgetTargetRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
   const [drawerCurrency, setDrawerCurrency] = useState<'ILS' | 'EUR'>('ILS');
+  // Source vs Adjusted view. Adjusted applies the active scenario's per-row adjustments
+  // (salary % + dept %, vendor category %, per-line GL deltas) so the row totals tie to
+  // the dashboard's after-savings figures. Defaults to Adjusted because that's what the
+  // user usually wants to compare against the cashflow.
+  const [viewMode, setViewMode] = useState<'source' | 'adjusted'>('adjusted');
 
   const reload = useCallback(() => {
     setLoading(true);
@@ -711,7 +718,7 @@ function BudgetTargetsDrawer({
     if (ilsVal == null) return null;
     return drawerCurrency === 'EUR' ? ilsVal / rowNativeRate(r) : ilsVal;
   };
-  const monthCcy = (r: BudgetTargetRow, mk: string): number | null => {
+  const monthCcySource = (r: BudgetTargetRow, mk: string): number | null => {
     if (drawerCurrency === 'EUR') {
       const eur = r.MONTHLY_SOURCE_EUR ? r.MONTHLY_SOURCE_EUR[mk] : null;
       if (eur != null) return eur;
@@ -720,20 +727,82 @@ function BudgetTargetsDrawer({
     }
     return r.MONTHLY_SOURCE_ILS ? r.MONTHLY_SOURCE_ILS[mk] : null;
   };
-  // Annual source in the display currency = SUM of the monthly cells, NOT the stored
-  // SOURCE_AMOUNT_ILS converted at a blended rate. After Sync scales monthly EUR and
-  // ILS by independent factors, converting the ILS annual drifts from Σ(monthly EUR);
-  // summing the monthly cells keeps the annual tied to the columns (and the dashboard).
+  // ── Scenario adjustment helpers ──
+  // Each rule cascades from the earliest month of the same year up to (and including)
+  // the requested month — a non-zero value sets the effective adjustment, a zero clears
+  // any inherited one. Matches the cashflow's effective-adjustment resolution.
+  const effectiveDeptPct = (dept: string, mKey: string): number => {
+    if (!salaryDeptAdj) return 0;
+    let pct = 0;
+    const yr = mKey.slice(0, 4);
+    const keys = Object.keys(salaryDeptAdj).filter(k => k <= mKey && k.slice(0, 4) === yr).sort();
+    for (const k of keys) {
+      const v = salaryDeptAdj[k]?.[dept];
+      if (v !== undefined) pct = v !== 0 ? v : 0;
+    }
+    return pct;
+  };
+  const effectiveCatPct = (cat: string, mKey: string): number => {
+    if (!vendorCatAdj) return 0;
+    let pct = 0;
+    const yr = mKey.slice(0, 4);
+    const keys = Object.keys(vendorCatAdj).filter(k => k <= mKey && k.slice(0, 4) === yr).sort();
+    for (const k of keys) {
+      const v = vendorCatAdj[k]?.[cat];
+      if (v !== undefined) pct = v !== 0 ? Number(v) || 0 : 0;
+    }
+    return pct;
+  };
+  const effectiveDetail = (key: string, mKey: string): { pct: number; base: number } | null => {
+    if (!vendorDetailAdj) return null;
+    let last: { pct: number; base: number } | null = null;
+    const yr = mKey.slice(0, 4);
+    const keys = Object.keys(vendorDetailAdj).filter(k => k <= mKey && k.slice(0, 4) === yr).sort();
+    for (const k of keys) {
+      const v = vendorDetailAdj[k]?.[key];
+      if (v !== undefined) last = v.pct !== 0 ? v : null;
+    }
+    return last;
+  };
+  // Per-row scenario factor + EUR delta for a given month. Matches the cashflow math:
+  //   • 76xxx (salary):  base × (1 + manualPct/100 + deptPct/100)
+  //   • Non-76xxx:       base × (1 + catPct/100) + perLineBase × perLinePct/100
+  const monthScenario = (r: BudgetTargetRow, mk: string): { factor: number; deltaEur: number } => {
+    const acct = String(r.ACCOUNT_NUMBER || '');
+    const moNum = parseInt(mk.split('-')[1] || '0', 10) - 1;
+    const fullMk = `${r.FISCAL_YEAR}-${mk}`;
+    if (acct.startsWith('76')) {
+      const manualPct = Number(salaryAdjPctByMonth?.[moNum]) || 0;
+      const deptPct = effectiveDeptPct(r.DEPARTMENT || '', fullMk);
+      return { factor: 1 + (manualPct + deptPct) / 100, deltaEur: 0 };
+    }
+    const cat = r.CATEGORY || '';
+    const catPct = effectiveCatPct(cat, fullMk);
+    const detailKey = `${cat}||${r.ACCOUNT_NAME || ''}||${acct}`;
+    const det = effectiveDetail(detailKey, fullMk);
+    const deltaEur = det ? Math.round(det.base * det.pct / 100) : 0;
+    return { factor: 1 + catPct / 100, deltaEur };
+  };
+  const monthCcy = (r: BudgetTargetRow, mk: string): number | null => {
+    const src = monthCcySource(r, mk);
+    if (viewMode !== 'adjusted' || src == null) return src;
+    const { factor, deltaEur } = monthScenario(r, mk);
+    if (factor === 1 && deltaEur === 0) return src;
+    const deltaCcy = drawerCurrency === 'EUR' ? deltaEur : deltaEur * rowNativeRate(r);
+    return src * factor + deltaCcy;
+  };
   const annualSourceCcy = (r: BudgetTargetRow): number => {
+    if (viewMode === 'adjusted') {
+      return MONTH_KEYS.reduce((s, mk) => s + (monthCcy(r, mk) || 0), 0);
+    }
     if (drawerCurrency === 'EUR') {
       const eur = sumVals(r.MONTHLY_SOURCE_EUR);
       return Math.abs(eur) > 0 ? eur : (r.SOURCE_AMOUNT_ILS || 0) / rowNativeRate(r);
     }
     return r.MONTHLY_SOURCE_ILS ? sumVals(r.MONTHLY_SOURCE_ILS) : (r.SOURCE_AMOUNT_ILS || 0);
   };
-  // Final (override-adjusted) annual in display currency: scale the summed-monthly
-  // annual by the override ratio (ANNUAL_BUDGET_TARGET / SOURCE in ILS). Ratio = 1
-  // when no override, so Final == annualSourceCcy and still ties to the monthly sum.
+  // Final = source × override ratio. In Adjusted view, source already includes scenario,
+  // so Final = scenario-adjusted × override (the dashboard applies both layers).
   const annualFinalCcy = (r: BudgetTargetRow): number => {
     const src = r.SOURCE_AMOUNT_ILS || 0;
     const fin = r.ANNUAL_BUDGET_TARGET_AMOUNT ?? src;
@@ -749,9 +818,9 @@ function BudgetTargetsDrawer({
           <div>
             <h2 className="text-base font-bold text-gray-800">Budget Targets — FY{year} · Subsidiary {subsidiary}</h2>
             <p className="text-xs text-gray-500">Override absolute amount or % adjustment. Source values come from Snowflake via Sync.</p>
-            <p className="text-[11px] text-violet-600 mt-0.5">FY{year} budget by department/account (Snowflake source + your overrides). The dashboard's FY{year} outflow is built from this: vendors (non-76xxx) and salary (76xxx). Salary mirrors this budget when the FY data is in the warehouse; otherwise it falls back to the prior year-end run-rate, so the totals can differ until the year is synced.</p>
+            <p className="text-[11px] text-violet-600 mt-0.5">{viewMode === 'adjusted' ? `Showing FY${year} ${scenarioName ? `scenario "${scenarioName}"` : 'scenario'} adjusted values — rows + total tie to the dashboard. Switch to "Source" for the raw FCT_BUDGET.` : `FY${year} raw budget by department/account (Snowflake source + your overrides). Switch to "Adjusted" to see rows after the active scenario's % and per-line adjustments.`}</p>
             {dashboardOutflowAnnual && (dashboardOutflowAnnual.eur > 0 || dashboardOutflowAnnual.ils > 0) && (
-              <p className="text-[11px] text-emerald-700 mt-0.5">Dashboard FY{year} outflow {scenarioName ? `(scenario "${scenarioName}")` : '(baseline)'}: <strong>{drawerCurrency === 'EUR' ? Math.round(dashboardOutflowAnnual.eur).toLocaleString('en-GB') : Math.round(dashboardOutflowAnnual.ils).toLocaleString('en-GB')} {drawerCurrency}</strong> — shown in the footer for direct comparison with the budget total.</p>
+              <p className="text-[11px] text-emerald-700 mt-0.5">Dashboard FY{year} outflow {scenarioName ? `(scenario "${scenarioName}")` : '(baseline)'}: <strong>{drawerCurrency === 'EUR' ? Math.round(dashboardOutflowAnnual.eur).toLocaleString('en-GB') : Math.round(dashboardOutflowAnnual.ils).toLocaleString('en-GB')} {drawerCurrency}</strong> — shown in the footer for direct comparison with the {viewMode === 'adjusted' ? 'Adjusted' : 'Source'} total.</p>
             )}
           </div>
           <div className="flex items-center gap-2">
@@ -762,6 +831,16 @@ function BudgetTargetsDrawer({
                   className={`text-xs px-3 py-1 rounded-md font-semibold transition-colors ${drawerCurrency === c ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
                   title={`Display amounts in ${c}`}
                 >{c}</button>
+              ))}
+            </div>
+            {/* Source vs Adjusted: rows + monthly cells switch between raw budget and
+                the after-scenario figures so the row sum ties to the dashboard. */}
+            <div className="inline-flex bg-gray-100 rounded-lg p-0.5" title={viewMode === 'adjusted' ? 'Showing scenario-adjusted values — rows + total tie to the dashboard' : 'Showing raw budget — rows match the source FCT_BUDGET'}>
+              {(['source', 'adjusted'] as const).map(v => (
+                <button key={v}
+                  onClick={() => setViewMode(v)}
+                  className={`text-[11px] px-2.5 py-1 rounded-md font-semibold transition-colors ${viewMode === v ? (v === 'adjusted' ? 'bg-emerald-100 text-emerald-800 shadow-sm' : 'bg-white text-gray-800 shadow-sm') : 'text-gray-500 hover:text-gray-700'}`}
+                >{v === 'adjusted' ? 'Adjusted' : 'Source'}</button>
               ))}
             </div>
             <input type="text" placeholder="Filter dept / account…" value={filter} onChange={e => setFilter(e.target.value)}
@@ -871,7 +950,7 @@ function BudgetTargetsDrawer({
                 <tr className="text-left text-gray-700">
                   <th className="px-2 py-1.5 font-bold border-b border-gray-300">Department</th>
                   <th className="px-2 py-1.5 font-bold border-b border-gray-300">Account</th>
-                  <th className="px-2 py-1.5 font-bold text-right border-b border-gray-300">Source {drawerCurrency}</th>
+                  <th className="px-2 py-1.5 font-bold text-right border-b border-gray-300">{viewMode === 'adjusted' ? 'Adjusted' : 'Source'} {drawerCurrency}</th>
                   {MONTH_LABELS.map(m => (
                     <th key={m} className="px-1 py-1.5 font-bold text-right text-[10px] text-gray-700 border-b border-gray-300">{m}</th>
                   ))}
@@ -972,7 +1051,7 @@ function BudgetTargetsDrawer({
                   return (
                     <>
                     <tr className="text-gray-800 font-bold text-[11px]">
-                      <td className="px-2 py-1.5">TOTAL <span className="text-[9px] font-normal text-gray-500">budget</span></td>
+                      <td className="px-2 py-1.5">TOTAL <span className="text-[9px] font-normal text-gray-500">{viewMode === 'adjusted' ? 'budget · scenario adjusted' : 'budget'}</span></td>
                       <td className="px-2 py-1.5 text-[10px] text-gray-500">{totalRows.length} rows</td>
                       <td className="px-2 py-1.5 text-right font-mono">{fmtMoney(sumSource)}</td>
                       {monthSums.map((s, i) => (
@@ -4298,6 +4377,10 @@ useEffect(() => {
           return { eur: arr.reduce((s, r) => s + r.salary + r.vendors + Math.max(0, r.other), 0), ils: arr.reduce((s, r) => s + r.salaryILS + r.vendorsILS + Math.max(0, r.otherILS), 0) };
         })()}
         scenarioName={activeScenario?.name || null}
+        salaryAdjPctByMonth={salaryAdjPctByMonth}
+        salaryDeptAdj={salaryDeptAdj}
+        vendorCatAdj={vendorCatAdj}
+        vendorDetailAdj={vendorDetailAdj}
       />
 
       {/* ── Pipeline Methodology (Column B) breakdown ── */}
