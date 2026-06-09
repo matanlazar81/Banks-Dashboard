@@ -656,11 +656,10 @@ function BudgetTargetsDrawer({
   const [saving, setSaving] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
   const [drawerCurrency, setDrawerCurrency] = useState<'ILS' | 'EUR'>('ILS');
-  // Source vs Adjusted view. Adjusted applies the active scenario's per-row adjustments
-  // (salary % + dept %, vendor category %, per-line GL deltas) so the row totals tie to
-  // the dashboard's after-savings figures. Defaults to Adjusted because that's what the
-  // user usually wants to compare against the cashflow.
-  const [viewMode, setViewMode] = useState<'source' | 'adjusted'>('adjusted');
+  // Targets always show the scenario-adjusted figures (per-row salary %/dept %, vendor
+  // category %, per-line GL deltas) so the rows + total equal the dashboard. No raw-budget
+  // view — the user wants the updated scenario target only.
+  const viewMode: 'source' | 'adjusted' = 'adjusted';
 
   const reload = useCallback(() => {
     setLoading(true);
@@ -818,10 +817,7 @@ function BudgetTargetsDrawer({
           <div>
             <h2 className="text-base font-bold text-gray-800">Budget Targets — FY{year} · Subsidiary {subsidiary}</h2>
             <p className="text-xs text-gray-500">Override absolute amount or % adjustment. Source values come from Snowflake via Sync.</p>
-            <p className="text-[11px] text-violet-600 mt-0.5">{viewMode === 'adjusted' ? `Showing FY${year} ${scenarioName ? `scenario "${scenarioName}"` : 'scenario'} adjusted values — rows + total tie to the dashboard. Switch to "Source" for the raw FCT_BUDGET.` : `FY${year} raw budget by department/account (Snowflake source + your overrides). Switch to "Adjusted" to see rows after the active scenario's % and per-line adjustments.`}</p>
-            {dashboardOutflowAnnual && (dashboardOutflowAnnual.eur > 0 || dashboardOutflowAnnual.ils > 0) && (
-              <p className="text-[11px] text-emerald-700 mt-0.5">Dashboard FY{year} outflow {scenarioName ? `(scenario "${scenarioName}")` : '(baseline)'}: <strong>{drawerCurrency === 'EUR' ? Math.round(dashboardOutflowAnnual.eur).toLocaleString('en-GB') : Math.round(dashboardOutflowAnnual.ils).toLocaleString('en-GB')} {drawerCurrency}</strong> — shown in the footer for direct comparison with the {viewMode === 'adjusted' ? 'Adjusted' : 'Source'} total.</p>
-            )}
+            <p className="text-[11px] text-violet-600 mt-0.5">FY{year} {scenarioName ? `scenario "${scenarioName}"` : 'scenario'} target — each row reflects the active scenario's adjustments (salary %, dept %, vendor %, per-line), so the rows and total equal the dashboard.</p>
           </div>
           <div className="flex items-center gap-2">
             <div className="inline-flex bg-gray-100 rounded-lg p-0.5">
@@ -831,16 +827,6 @@ function BudgetTargetsDrawer({
                   className={`text-xs px-3 py-1 rounded-md font-semibold transition-colors ${drawerCurrency === c ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
                   title={`Display amounts in ${c}`}
                 >{c}</button>
-              ))}
-            </div>
-            {/* Source vs Adjusted: rows + monthly cells switch between raw budget and
-                the after-scenario figures so the row sum ties to the dashboard. */}
-            <div className="inline-flex bg-gray-100 rounded-lg p-0.5" title={viewMode === 'adjusted' ? 'Showing scenario-adjusted values — rows + total tie to the dashboard' : 'Showing raw budget — rows match the source FCT_BUDGET'}>
-              {(['source', 'adjusted'] as const).map(v => (
-                <button key={v}
-                  onClick={() => setViewMode(v)}
-                  className={`text-[11px] px-2.5 py-1 rounded-md font-semibold transition-colors ${viewMode === v ? (v === 'adjusted' ? 'bg-emerald-100 text-emerald-800 shadow-sm' : 'bg-white text-gray-800 shadow-sm') : 'text-gray-500 hover:text-gray-700'}`}
-                >{v === 'adjusted' ? 'Adjusted' : 'Source'}</button>
               ))}
             </div>
             <input type="text" placeholder="Filter dept / account…" value={filter} onChange={e => setFilter(e.target.value)}
@@ -950,7 +936,7 @@ function BudgetTargetsDrawer({
                 <tr className="text-left text-gray-700">
                   <th className="px-2 py-1.5 font-bold border-b border-gray-300">Department</th>
                   <th className="px-2 py-1.5 font-bold border-b border-gray-300">Account</th>
-                  <th className="px-2 py-1.5 font-bold text-right border-b border-gray-300">{viewMode === 'adjusted' ? 'Adjusted' : 'Source'} {drawerCurrency}</th>
+                  <th className="px-2 py-1.5 font-bold text-right border-b border-gray-300">Adjusted {drawerCurrency}</th>
                   {MONTH_LABELS.map(m => (
                     <th key={m} className="px-1 py-1.5 font-bold text-right text-[10px] text-gray-700 border-b border-gray-300">{m}</th>
                   ))}
@@ -1038,20 +1024,9 @@ function BudgetTargetsDrawer({
                   const sumSource = totalRows.reduce((s, r) => s + annualSourceCcy(r), 0);
                   const sumFinal  = totalRows.reduce((s, r) => s + annualFinalCcy(r), 0);
                   const monthSums = MONTH_KEYS.map(mk => totalRows.reduce((s, r) => s + (monthCcy(r, mk) || 0), 0));
-                  // Dashboard "after savings" outflow per month + annual, in the drawer's currency.
-                  // Passed from App so the math (scenario adjustments, FX overrides) stays in one place.
-                  const hasDash = !!dashboardOutflowAnnual && (dashboardOutflowAnnual.eur > 0 || dashboardOutflowAnnual.ils > 0);
-                  const dashMonth = (mk: string): number | null => {
-                    const v = dashboardOutflowByMonth?.[`${year}-${mk}`];
-                    if (!v) return null;
-                    return drawerCurrency === 'EUR' ? v.eur : v.ils;
-                  };
-                  const dashAnnual = !hasDash ? null : (drawerCurrency === 'EUR' ? dashboardOutflowAnnual!.eur : dashboardOutflowAnnual!.ils);
-                  const delta = hasDash ? (dashAnnual! - sumFinal) : 0;
                   return (
-                    <>
                     <tr className="text-gray-800 font-bold text-[11px]">
-                      <td className="px-2 py-1.5">TOTAL <span className="text-[9px] font-normal text-gray-500">{viewMode === 'adjusted' ? 'budget · scenario adjusted' : 'budget'}</span></td>
+                      <td className="px-2 py-1.5">TOTAL <span className="text-[9px] font-normal text-gray-500">scenario adjusted = dashboard</span></td>
                       <td className="px-2 py-1.5 text-[10px] text-gray-500">{totalRows.length} rows</td>
                       <td className="px-2 py-1.5 text-right font-mono">{fmtMoney(sumSource)}</td>
                       {monthSums.map((s, i) => (
@@ -1061,30 +1036,6 @@ function BudgetTargetsDrawer({
                       <td className="px-1 py-1.5"></td>
                       <td className="px-2 py-1.5 text-right font-mono">{fmtMoney(sumFinal)}</td>
                     </tr>
-                    {hasDash && (
-                      <tr className="text-emerald-800 font-bold text-[11px] bg-emerald-50/50 border-t border-emerald-200">
-                        <td className="px-2 py-1.5">DASHBOARD <span className="text-[9px] font-normal text-emerald-600">{scenarioName ? `scenario "${scenarioName}"` : 'baseline'}</span></td>
-                        <td className="px-2 py-1.5 text-[10px] text-emerald-600">after savings</td>
-                        <td className="px-2 py-1.5 text-right font-mono text-emerald-700">{fmtMoney(dashAnnual!)}</td>
-                        {MONTH_KEYS.map(mk => {
-                          const v = dashMonth(mk);
-                          return <td key={mk} className="px-1 py-1.5 text-right font-mono text-[10px] text-emerald-700">{v == null ? '—' : fmtMoney(v)}</td>;
-                        })}
-                        <td className="px-1 py-1.5"></td>
-                        <td className="px-1 py-1.5"></td>
-                        <td className="px-2 py-1.5 text-right font-mono text-emerald-700">{fmtMoney(dashAnnual!)}</td>
-                      </tr>
-                    )}
-                    {hasDash && Math.abs(delta) > 0.5 && (
-                      <tr className={`text-[10px] font-semibold ${delta >= 0 ? 'text-red-600' : 'text-green-700'} bg-white border-t border-gray-200`}>
-                        <td className="px-2 py-1" colSpan={3}>Δ Dashboard vs Budget total</td>
-                        <td colSpan={MONTH_KEYS.length} className="px-1 py-1 text-right text-gray-400">scenario adjustments + FX</td>
-                        <td className="px-1 py-1"></td>
-                        <td className="px-1 py-1"></td>
-                        <td className="px-2 py-1 text-right font-mono">{delta >= 0 ? '+' : ''}{fmtMoney(delta)}</td>
-                      </tr>
-                    )}
-                    </>
                   );
                 })()}
               </tfoot>
