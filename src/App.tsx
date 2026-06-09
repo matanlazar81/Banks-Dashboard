@@ -647,9 +647,13 @@ const MONTH_LABELS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct
 const ILS_PER_EUR = 3.68;
 
 function BudgetTargetsDrawer({
-  open, onClose, subsidiary, year, dashboardOutflowByMonth, dashboardOutflowAnnual, scenarioName,
+  open, onClose, subsidiary, year, dashboardOutflowByMonth, dashboardSalaryByMonth, dashboardVendorByMonth, dashboardOutflowAnnual, scenarioName,
   salaryAdjPctByMonth, salaryDeptAdj, vendorCatAdj, vendorDetailAdj,
-}: { open: boolean; onClose: () => void; subsidiary: number; year: number; dashboardOutflowByMonth?: Record<string, { eur: number; ils: number }>; dashboardOutflowAnnual?: { eur: number; ils: number }; scenarioName?: string | null;
+}: { open: boolean; onClose: () => void; subsidiary: number; year: number;
+  dashboardOutflowByMonth?: Record<string, { eur: number; ils: number }>;
+  dashboardSalaryByMonth?: Record<string, { eur: number; ils: number }>;
+  dashboardVendorByMonth?: Record<string, { eur: number; ils: number }>;
+  dashboardOutflowAnnual?: { eur: number; ils: number }; scenarioName?: string | null;
   salaryAdjPctByMonth?: Record<number, number>; salaryDeptAdj?: Record<string, Record<string, number>>; vendorCatAdj?: Record<string, Record<string, number>>; vendorDetailAdj?: Record<string, Record<string, { pct: number; base: number }>>; }) {
   const [rows, setRows] = useState<BudgetTargetRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -803,13 +807,50 @@ function BudgetTargetsDrawer({
     const deltaEur = det ? Math.round(det.base * det.pct / 100) : 0;
     return { factor: 1 + catPct / 100, deltaEur };
   };
-  const monthCcy = (r: BudgetTargetRow, mk: string): number | null => {
+  // Per-row, scenario-adjusted monthly value (factor + per-line delta only — no column scaling yet).
+  const monthScenarioCcy = (r: BudgetTargetRow, mk: string): number | null => {
     const src = monthCcySource(r, mk);
     if (viewMode !== 'adjusted' || src == null) return src;
     const { factor, deltaEur } = monthScenario(r, mk);
     if (factor === 1 && deltaEur === 0) return src;
     const deltaCcy = drawerCurrency === 'EUR' ? deltaEur : deltaEur * rowNativeRate(r);
     return src * factor + deltaCcy;
+  };
+  // Column-level scaling. After per-row scenario math, the monthly column sums (Σ rows per
+  // month) can still drift from the dashboard's monthly outflow because (a) Targets stores
+  // mostly flat monthly weights while the dashboard's vendor side carries seasonality from
+  // the snapshot, and (b) some adjustments (salaryManualILS, headcount-implied savings on
+  // not-yet-categorised rows) don't have a per-row home. Scale salary rows and vendor rows
+  // independently per month so Σ row monthly = dashboard monthly by construction.
+  const isSalaryRow = (r: BudgetTargetRow) => String(r.ACCOUNT_NUMBER || '').startsWith('76');
+  const scaleByMonth = (() => {
+    const factors: Record<string, { salary: number; vendor: number }> = {};
+    for (const mk of MONTH_KEYS) {
+      const fullMk = `${year}-${mk}`;
+      const dashSal = dashboardSalaryByMonth?.[fullMk];
+      const dashVen = dashboardVendorByMonth?.[fullMk];
+      let baseSal = 0, baseVen = 0;
+      for (const r of rows) {
+        if (r.ACCOUNT_NUMBER === '800029') continue; // matches the TOTAL-row exclusion
+        const v = monthScenarioCcy(r, mk) || 0;
+        if (isSalaryRow(r)) baseSal += v; else baseVen += v;
+      }
+      const tgtSal = drawerCurrency === 'EUR' ? dashSal?.eur : dashSal?.ils;
+      const tgtVen = drawerCurrency === 'EUR' ? dashVen?.eur : dashVen?.ils;
+      factors[mk] = {
+        salary: (tgtSal != null && baseSal !== 0) ? tgtSal / baseSal : 1,
+        vendor: (tgtVen != null && baseVen !== 0) ? tgtVen / baseVen : 1,
+      };
+    }
+    return factors;
+  })();
+  const monthCcy = (r: BudgetTargetRow, mk: string): number | null => {
+    const base = monthScenarioCcy(r, mk);
+    if (base == null) return null;
+    const f = scaleByMonth[mk];
+    if (!f) return base;
+    const scale = isSalaryRow(r) ? f.salary : f.vendor;
+    return base * scale;
   };
   const annualSourceCcy = (r: BudgetTargetRow): number => {
     if (viewMode === 'adjusted') {
@@ -4365,9 +4406,22 @@ useEffect(() => {
         year={activeYears[activeCompany] || currentYear}
         dashboardOutflowByMonth={(() => {
           // After-savings outflow per month (salary + vendors + other), from the live dashboard.
-          // Lets the Targets footer show the "dashboard view" of the same figures in one place.
           const m: Record<string, { eur: number; ils: number }> = {};
           for (const r of cashflowForecast || []) m[r.mKey] = { eur: r.salary + r.vendors + Math.max(0, r.other), ils: r.salaryILS + r.vendorsILS + Math.max(0, r.otherILS) };
+          return m;
+        })()}
+        dashboardSalaryByMonth={(() => {
+          // Salary outflow per month from the live dashboard — drives row-level scaling for
+          // 76xxx rows in Targets so Σ salary rows per month = dashboard salary.
+          const m: Record<string, { eur: number; ils: number }> = {};
+          for (const r of cashflowForecast || []) m[r.mKey] = { eur: r.salary, ils: r.salaryILS };
+          return m;
+        })()}
+        dashboardVendorByMonth={(() => {
+          // Vendor outflow per month — drives row-level scaling for non-76xxx rows so Σ
+          // vendor rows per month = dashboard vendors (incl. seasonality + scenario savings).
+          const m: Record<string, { eur: number; ils: number }> = {};
+          for (const r of cashflowForecast || []) m[r.mKey] = { eur: r.vendors + Math.max(0, r.other), ils: r.vendorsILS + Math.max(0, r.otherILS) };
           return m;
         })()}
         dashboardOutflowAnnual={(() => {
