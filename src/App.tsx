@@ -647,8 +647,8 @@ const MONTH_LABELS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct
 const ILS_PER_EUR = 3.68;
 
 function BudgetTargetsDrawer({
-  open, onClose, subsidiary, year,
-}: { open: boolean; onClose: () => void; subsidiary: number; year: number; }) {
+  open, onClose, subsidiary, year, dashboardOutflowByMonth, dashboardOutflowAnnual, scenarioName,
+}: { open: boolean; onClose: () => void; subsidiary: number; year: number; dashboardOutflowByMonth?: Record<string, { eur: number; ils: number }>; dashboardOutflowAnnual?: { eur: number; ils: number }; scenarioName?: string | null; }) {
   const [rows, setRows] = useState<BudgetTargetRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState<string | null>(null);
@@ -750,6 +750,9 @@ function BudgetTargetsDrawer({
             <h2 className="text-base font-bold text-gray-800">Budget Targets — FY{year} · Subsidiary {subsidiary}</h2>
             <p className="text-xs text-gray-500">Override absolute amount or % adjustment. Source values come from Snowflake via Sync.</p>
             <p className="text-[11px] text-violet-600 mt-0.5">FY{year} budget by department/account (Snowflake source + your overrides). The dashboard's FY{year} outflow is built from this: vendors (non-76xxx) and salary (76xxx). Salary mirrors this budget when the FY data is in the warehouse; otherwise it falls back to the prior year-end run-rate, so the totals can differ until the year is synced.</p>
+            {dashboardOutflowAnnual && (dashboardOutflowAnnual.eur > 0 || dashboardOutflowAnnual.ils > 0) && (
+              <p className="text-[11px] text-emerald-700 mt-0.5">Dashboard FY{year} outflow {scenarioName ? `(scenario "${scenarioName}")` : '(baseline)'}: <strong>{drawerCurrency === 'EUR' ? Math.round(dashboardOutflowAnnual.eur).toLocaleString('en-GB') : Math.round(dashboardOutflowAnnual.ils).toLocaleString('en-GB')} {drawerCurrency}</strong> — shown in the footer for direct comparison with the budget total.</p>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <div className="inline-flex bg-gray-100 rounded-lg p-0.5">
@@ -956,9 +959,20 @@ function BudgetTargetsDrawer({
                   const sumSource = totalRows.reduce((s, r) => s + annualSourceCcy(r), 0);
                   const sumFinal  = totalRows.reduce((s, r) => s + annualFinalCcy(r), 0);
                   const monthSums = MONTH_KEYS.map(mk => totalRows.reduce((s, r) => s + (monthCcy(r, mk) || 0), 0));
+                  // Dashboard "after savings" outflow per month + annual, in the drawer's currency.
+                  // Passed from App so the math (scenario adjustments, FX overrides) stays in one place.
+                  const hasDash = !!dashboardOutflowAnnual && (dashboardOutflowAnnual.eur > 0 || dashboardOutflowAnnual.ils > 0);
+                  const dashMonth = (mk: string): number | null => {
+                    const v = dashboardOutflowByMonth?.[`${year}-${mk}`];
+                    if (!v) return null;
+                    return drawerCurrency === 'EUR' ? v.eur : v.ils;
+                  };
+                  const dashAnnual = !hasDash ? null : (drawerCurrency === 'EUR' ? dashboardOutflowAnnual!.eur : dashboardOutflowAnnual!.ils);
+                  const delta = hasDash ? (dashAnnual! - sumFinal) : 0;
                   return (
+                    <>
                     <tr className="text-gray-800 font-bold text-[11px]">
-                      <td className="px-2 py-1.5">TOTAL</td>
+                      <td className="px-2 py-1.5">TOTAL <span className="text-[9px] font-normal text-gray-500">budget</span></td>
                       <td className="px-2 py-1.5 text-[10px] text-gray-500">{totalRows.length} rows</td>
                       <td className="px-2 py-1.5 text-right font-mono">{fmtMoney(sumSource)}</td>
                       {monthSums.map((s, i) => (
@@ -968,6 +982,30 @@ function BudgetTargetsDrawer({
                       <td className="px-1 py-1.5"></td>
                       <td className="px-2 py-1.5 text-right font-mono">{fmtMoney(sumFinal)}</td>
                     </tr>
+                    {hasDash && (
+                      <tr className="text-emerald-800 font-bold text-[11px] bg-emerald-50/50 border-t border-emerald-200">
+                        <td className="px-2 py-1.5">DASHBOARD <span className="text-[9px] font-normal text-emerald-600">{scenarioName ? `scenario "${scenarioName}"` : 'baseline'}</span></td>
+                        <td className="px-2 py-1.5 text-[10px] text-emerald-600">after savings</td>
+                        <td className="px-2 py-1.5 text-right font-mono text-emerald-700">{fmtMoney(dashAnnual!)}</td>
+                        {MONTH_KEYS.map(mk => {
+                          const v = dashMonth(mk);
+                          return <td key={mk} className="px-1 py-1.5 text-right font-mono text-[10px] text-emerald-700">{v == null ? '—' : fmtMoney(v)}</td>;
+                        })}
+                        <td className="px-1 py-1.5"></td>
+                        <td className="px-1 py-1.5"></td>
+                        <td className="px-2 py-1.5 text-right font-mono text-emerald-700">{fmtMoney(dashAnnual!)}</td>
+                      </tr>
+                    )}
+                    {hasDash && Math.abs(delta) > 0.5 && (
+                      <tr className={`text-[10px] font-semibold ${delta >= 0 ? 'text-red-600' : 'text-green-700'} bg-white border-t border-gray-200`}>
+                        <td className="px-2 py-1" colSpan={3}>Δ Dashboard vs Budget total</td>
+                        <td colSpan={MONTH_KEYS.length} className="px-1 py-1 text-right text-gray-400">scenario adjustments + FX</td>
+                        <td className="px-1 py-1"></td>
+                        <td className="px-1 py-1"></td>
+                        <td className="px-2 py-1 text-right font-mono">{delta >= 0 ? '+' : ''}{fmtMoney(delta)}</td>
+                      </tr>
+                    )}
+                    </>
                   );
                 })()}
               </tfoot>
@@ -4248,6 +4286,18 @@ useEffect(() => {
         onClose={() => setTargetsDrawerOpen(false)}
         subsidiary={COMPANY_CONFIG[activeCompany]?.subsidiary || 3}
         year={activeYears[activeCompany] || currentYear}
+        dashboardOutflowByMonth={(() => {
+          // After-savings outflow per month (salary + vendors + other), from the live dashboard.
+          // Lets the Targets footer show the "dashboard view" of the same figures in one place.
+          const m: Record<string, { eur: number; ils: number }> = {};
+          for (const r of cashflowForecast || []) m[r.mKey] = { eur: r.salary + r.vendors + Math.max(0, r.other), ils: r.salaryILS + r.vendorsILS + Math.max(0, r.otherILS) };
+          return m;
+        })()}
+        dashboardOutflowAnnual={(() => {
+          const arr = cashflowForecast || [];
+          return { eur: arr.reduce((s, r) => s + r.salary + r.vendors + Math.max(0, r.other), 0), ils: arr.reduce((s, r) => s + r.salaryILS + r.vendorsILS + Math.max(0, r.otherILS), 0) };
+        })()}
+        scenarioName={activeScenario?.name || null}
       />
 
       {/* ── Pipeline Methodology (Column B) breakdown ── */}
