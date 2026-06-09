@@ -7786,15 +7786,17 @@ useEffect(() => {
                     const otherTotalAfter = cashflowForecast.reduce((s, r) => s + (r.other || 0), 0);
                     const otherTotalAfterILS = cashflowForecast.reduce((s, r) => s + (r.otherILS || 0), 0);
                     return (<>
-                      <tr className="bg-green-50 border-t border-green-200 font-semibold text-green-700 whitespace-nowrap">
-                        <td className="py-2 pr-1 text-green-800" colSpan={6}>TOTAL SAVINGS</td>
-                        <td className="py-2 pr-1 text-right">{fmtC(totalSalarySaving, totalSalarySavingILS)}</td>
-                        <td className="py-2 pr-1 text-right">{fmtC(totalVendorSaving, totalVendorSavingILS)}</td>
+                      <tr className="bg-green-50 border-t border-green-200 font-semibold whitespace-nowrap">
+                        {/* Each value is colored by SIGN: positive (real saving) → green, negative
+                            (scenario added cost) → red, zero → gray. The row label stays neutral. */}
+                        <td className="py-2 pr-1 text-gray-700" colSpan={6}>TOTAL SAVINGS</td>
+                        <td className={`py-2 pr-1 text-right ${totalSalarySaving > 0 ? 'text-green-700' : totalSalarySaving < 0 ? 'text-red-600' : 'text-gray-400'}`}>{fmtC(totalSalarySaving, totalSalarySavingILS)}</td>
+                        <td className={`py-2 pr-1 text-right ${totalVendorSaving > 0 ? 'text-green-700' : totalVendorSaving < 0 ? 'text-red-600' : 'text-gray-400'}`}>{fmtC(totalVendorSaving, totalVendorSavingILS)}</td>
                         <td className="py-2 pr-1 text-right"></td>
-                        <td className="py-2 pr-1 text-right">{fmtC(totalSaving, totalSavingILS)}</td>
-                        <td className="py-2 pr-1 text-right">{fmtC(totalSaving, totalSavingILS)}</td>
+                        <td className={`py-2 pr-1 text-right ${totalSaving > 0 ? 'text-green-700' : totalSaving < 0 ? 'text-red-600' : 'text-gray-400'}`}>{fmtC(totalSaving, totalSavingILS)}</td>
+                        <td className={`py-2 pr-1 text-right ${totalSaving > 0 ? 'text-green-700' : totalSaving < 0 ? 'text-red-600' : 'text-gray-400'}`}>{fmtC(totalSaving, totalSavingILS)}</td>
                         <td className="py-2 pr-1 text-right"></td>
-                        <td className="py-2 pr-1 text-right">{fmtC(totalSaving, totalSavingILS)}</td>
+                        <td className={`py-2 pr-1 text-right ${totalSaving > 0 ? 'text-green-700' : totalSaving < 0 ? 'text-red-600' : 'text-gray-400'}`}>{fmtC(totalSaving, totalSavingILS)}</td>
                       </tr>
                       <tr className="bg-emerald-50 font-bold text-emerald-800 whitespace-nowrap">
                         <td className="py-2 pr-1" colSpan={6}>TOTAL AFTER SAVINGS</td>
