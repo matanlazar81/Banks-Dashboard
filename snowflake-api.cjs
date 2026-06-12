@@ -1614,7 +1614,7 @@ function createSnowflakeClient(env) {
       WHERE e.SUBSIDIARY_ID = 3
         AND e.SOURCE = 'netsuite'
         AND g.IS_PAYROLL = TRUE
-        AND g.GL_ACCOUNT_NUMBER NOT IN ('760017', '760019', '760023', '760029')
+        AND g.GL_ACCOUNT_NUMBER NOT IN ('760017', '760019', '760023', '760029', '760030')
         AND e.CAL_MONTH_START_DATE >= '${yr}-01-01'
         AND e.CAL_MONTH_START_DATE <= '${yr}-12-31'
       GROUP BY d.DEPARTMENT_NAME, DATE_TRUNC('month', e.CAL_MONTH_START_DATE)::VARCHAR
