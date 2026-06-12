@@ -8680,11 +8680,14 @@ useEffect(() => {
                           </tbody>
                         </table>
                       </div>
-                      {/* Per-department % adjustment (projected months only) */}
+                      {/* Per-department % adjustment (current + projected months) */}
                       {hasBudget && !forecastDrilldown.data?.__nsMode && (() => {
                         const now2 = new Date();
                         const curMKey = `${now2.getFullYear()}-${String(now2.getMonth() + 1).padStart(2, '0')}`;
-                        const isProjected = forecastDrilldown.mKey > curMKey;
+                        // Include the current month: its salary is still projected off the last
+                        // actual (not yet closed), so the per-dept projection breakdown applies
+                        // just like a future month — only fully closed past months are excluded.
+                        const isProjected = forecastDrilldown.mKey >= curMKey;
                         if (!isProjected) return null;
                         // Group budget by department — use last-actual dept data when in lastActual mode
                         const deptTotals: Record<string, number> = {};
