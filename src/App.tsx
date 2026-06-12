@@ -8239,10 +8239,12 @@ useEffect(() => {
                   const hc = d.headcount;
                   const adj = forecastDrilldown.adjPct || 0;
                   const multiplier = 1 + (adj / 100);
-                  // In lastActual mode: use this month's own actuals snapshot if available,
-                  // otherwise project forward using the most-recent-actual snapshot.
+                  // In lastActual mode: use this month's own actuals snapshot only when it
+                  // is a CLOSED actual month (≤ last actual). The current calendar month is
+                  // only partially posted, so projecting it forward must use the last fully
+                  // closed actual snapshot instead of its own partial figures.
                   const drillBasisMonth = salaryProjectionMode === 'lastActual' && lastActualSalaryMonth
-                    ? (salaryActualsByDept[forecastDrilldown.mKey] ? forecastDrilldown.mKey : lastActualSalaryMonth)
+                    ? (forecastDrilldown.mKey <= lastActualSalaryMonth && salaryActualsByDept[forecastDrilldown.mKey] ? forecastDrilldown.mKey : lastActualSalaryMonth)
                     : null;
                   const useLastActualInDrill = !!(drillBasisMonth && salaryActualsByDept[drillBasisMonth]);
                   const budgetTotal = useLastActualInDrill
