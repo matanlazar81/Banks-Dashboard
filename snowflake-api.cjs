@@ -1621,6 +1621,13 @@ function createSnowflakeClient(env) {
       ORDER BY MONTH_STR, DEPT
     `);
 
+    // The current calendar month is still in progress — payroll for it is only
+    // partially posted, so it must NOT be picked as the "last actual" projection
+    // basis (doing so collapses the whole forward projection). Only fully closed
+    // past months qualify; the current month is surfaced as "CURRENT" elsewhere.
+    const now = new Date();
+    const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+
     const byMonth = {};
     let lastActualMonth = '';
     for (const r of rows) {
@@ -1628,10 +1635,10 @@ function createSnowflakeClient(env) {
       if (!byMonth[m]) byMonth[m] = {};
       const dept = r.DEPT || 'Unassigned';
       byMonth[m][dept] = { eur: Math.round(r.AMOUNT_EUR || 0), ils: Math.round(r.AMOUNT_ILS || 0) };
-      if (m > lastActualMonth) lastActualMonth = m;
+      if (m < currentMonth && m > lastActualMonth) lastActualMonth = m;
     }
 
-    console.log(`[Snowflake] Salary actuals by dept: ${Object.keys(byMonth).length} months, last=${lastActualMonth}`);
+    console.log(`[Snowflake] Salary actuals by dept: ${Object.keys(byMonth).length} months, last=${lastActualMonth} (current month ${currentMonth} excluded as partial)`);
     return { byMonth, lastActualMonth };
   }
 
