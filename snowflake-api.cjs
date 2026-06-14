@@ -1818,11 +1818,13 @@ function createSnowflakeWriteClient(env) {
     });
   }
 
-  // OVERWRITE the whole landing table with the supplied snapshot, atomically.
-  // (DELETE + chunked INSERT inside one transaction — array-bound INSERT may split
-  // into chunks, so an INSERT OVERWRITE per chunk would clobber earlier chunks;
-  // the transaction makes the replace atomic to readers and chunk-safe.)
-  async function writeBudgetTargetsLanding(rows) {
+  // Serialize writes: this client reuses ONE Snowflake connection, so two
+  // overlapping syncs (double-click, or two users) would interleave statements
+  // and Snowflake cancels one ("transaction was committed, SQL execution
+  // canceled"). Chaining keeps each OVERWRITE start-to-finish on its own.
+  let writeChain = Promise.resolve();
+
+  async function doWriteLanding(rows) {
     await exec(`
       CREATE TABLE IF NOT EXISTS ${fqtn} (
         FISCAL_YEAR                 NUMBER,
@@ -1846,6 +1848,12 @@ function createSnowflakeWriteClient(env) {
       )
     `);
 
+    // No rows → just clear the table (INSERT OVERWRITE needs at least one VALUES row).
+    if (!rows.length) {
+      await exec(`TRUNCATE TABLE ${fqtn}`);
+      return { table: fqtn, rowCount: 0 };
+    }
+
     const cols = [
       'FISCAL_YEAR', 'SUBSIDIARY_ID', 'DEPARTMENT', 'LOCATION', 'CURRENCY',
       'ACCOUNT_NUMBER', 'ACCOUNT_NAME', 'NETSUITE_INTERNAL_NUMBER', 'CATEGORY',
@@ -1864,18 +1872,17 @@ function createSnowflakeWriteClient(env) {
       r.USER_EDITED_AT || r.SOURCE_SYNCED_AT || null,
     ]);
 
-    await exec('BEGIN');
-    try {
-      await exec(`DELETE FROM ${fqtn}`);
-      if (binds.length) {
-        await exec(`INSERT INTO ${fqtn} (${cols.join(',')}) VALUES ${placeholders}`, binds);
-      }
-      await exec('COMMIT');
-    } catch (e) {
-      try { await exec('ROLLBACK'); } catch { /* ignore rollback error */ }
-      throw e;
-    }
+    // Single atomic statement: INSERT OVERWRITE replaces the whole table in one
+    // shot (array binding stages all rows and runs once), so no explicit
+    // transaction is needed and readers never see a half-written table.
+    await exec(`INSERT OVERWRITE INTO ${fqtn} (${cols.join(',')}) VALUES ${placeholders}`, binds);
     return { table: fqtn, rowCount: binds.length };
+  }
+
+  function writeBudgetTargetsLanding(rows) {
+    const run = writeChain.then(() => doWriteLanding(rows), () => doWriteLanding(rows));
+    writeChain = run.catch(() => {}); // keep the chain alive even if this write fails
+    return run;
   }
 
   return { getConnection, exec, writeBudgetTargetsLanding, fqtn };
