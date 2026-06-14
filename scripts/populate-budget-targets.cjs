@@ -9,7 +9,7 @@
 //   const result = await populateBudgetTargets({ subsidiary: 3, years: [2026], env: process.env });
 
 const path = require('path');
-const { createSnowflakeClient } = require('../snowflake-api.cjs');
+const { createSnowflakeClient, createSnowflakeWriteClient } = require('../snowflake-api.cjs');
 const { getDb, DB_PATH } = require('../db.cjs');
 
 function runSelect(conn, sql) {
@@ -205,12 +205,41 @@ async function populateBudgetTargets({ subsidiary, years, env, log = console.log
   for (const s of summary) log(`  ${s.FISCAL_YEAR}: ${s.ROW_COUNT} rows, total ILS ${s.TOTAL_ILS}, preserved ${s.OVERRIDE_COUNT} user override(s)`);
   if (deletedOrphans > 0) log(`[populate] cleaned up ${deletedOrphans} stale row(s) without user overrides`);
 
+  // ── Write-back: land the full Budget Targets snapshot into RAW.LANDING_FINANCE ──
+  // Non-fatal: a landing failure must never break the (already-committed) local
+  // sync. Off unless SNOWFLAKE_LANDING_WRITE is enabled. The whole table is pushed
+  // (not just this sync's scope) so OVERWRITE doesn't drop other years/subsidiaries.
+  let landingWrite = null;
+  try {
+    const writer = createSnowflakeWriteClient(env);
+    if (writer) {
+      const allRows = db.prepare(`
+        SELECT FISCAL_YEAR, SUBSIDIARY_ID, DEPARTMENT, LOCATION, CURRENCY,
+               ACCOUNT_NUMBER, ACCOUNT_NAME, NETSUITE_INTERNAL_NUMBER, CATEGORY,
+               SOURCE_AMOUNT_ILS, USER_OVERRIDE_AMOUNT_ILS, USER_OVERRIDE_PCT,
+               ANNUAL_BUDGET_TARGET_AMOUNT, MONTHLY_SOURCE_ILS, USER_EDITED_BY,
+               USER_EDITED_AT, SOURCE_SYNCED_AT
+        FROM FCT_BUDGET_TARGET_BY_DEPT_ACCT
+      `).all();
+      const t1 = Date.now();
+      const res = await writer.writeBudgetTargetsLanding(allRows);
+      landingWrite = { ok: true, ...res, elapsedMs: Date.now() - t1 };
+      log(`[populate] landed ${res.rowCount} rows → ${res.table} in ${((Date.now() - t1) / 1000).toFixed(1)}s`);
+    } else {
+      log('[populate] landing write-back disabled (set SNOWFLAKE_LANDING_WRITE=1 to enable)');
+    }
+  } catch (e) {
+    landingWrite = { ok: false, error: e && e.message ? e.message : String(e) };
+    log(`[populate] landing write-back FAILED (local sync unaffected): ${landingWrite.error}`);
+  }
+
   return {
     subsidiary,
     fiscalYears,
     rowCount: rows.length,
     elapsedMs,
     deletedOrphans,
+    landingWrite,
     summary: summary.map((s) => ({
       fiscalYear: s.FISCAL_YEAR,
       rowCount: s.ROW_COUNT,

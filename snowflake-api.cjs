@@ -1763,4 +1763,122 @@ function createSnowflakeClient(env) {
   };
 }
 
-module.exports = { createSnowflakeClient, assemblePipelineMethodology, pipelineStageWeight, PIPELINE_STAGE_WEIGHTS, PIPELINE_FALLBACK_FACTOR };
+// ── Write client — lands user-owned dashboard data into RAW.LANDING_FINANCE ──
+// Kept ENTIRELY separate from createSnowflakeClient: that client is read-only by
+// design (it blocks every non-SELECT). This one opens its own connection under
+// the LOADER_FINANCE role and is the only place writes are allowed. It reuses the
+// same JWT key/account/user; role, warehouse, db, schema and table are env-driven.
+//
+// Writes are OFF unless SNOWFLAKE_LANDING_WRITE is '1'/'true', so deploying this
+// code is inert until the role/grants are confirmed and the flag is flipped.
+function createSnowflakeWriteClient(env) {
+  if (!(env.SNOWFLAKE_LANDING_WRITE === '1' || env.SNOWFLAKE_LANDING_WRITE === 'true')) {
+    return null; // write-back disabled
+  }
+  const account = env.SNOWFLAKE_ACCOUNT;
+  const username = env.SNOWFLAKE_USER;
+  const warehouse = env.SNOWFLAKE_WRITE_WAREHOUSE || env.SNOWFLAKE_WAREHOUSE;
+  const privateKeyPath = env.SNOWFLAKE_PRIVATE_KEY_PATH;
+  const role = env.SNOWFLAKE_WRITE_ROLE || 'LOADER_FINANCE';
+  const database = env.SNOWFLAKE_LANDING_DB || 'RAW';
+  const schema = env.SNOWFLAKE_LANDING_SCHEMA || 'LANDING_FINANCE';
+  const table = (env.SNOWFLAKE_LANDING_TABLE || 'BANK_DASHBOARD_BUDGET_TARGETS').replace(/[^A-Za-z0-9_]/g, '');
+  const fqtn = `${database}.${schema}.${table}`;
+
+  if (!account || !username || !privateKeyPath) {
+    console.warn('[Snowflake][write] Missing config — SNOWFLAKE_ACCOUNT, SNOWFLAKE_USER, or SNOWFLAKE_PRIVATE_KEY_PATH');
+    return null;
+  }
+  let privateKey;
+  try {
+    privateKey = fs.readFileSync(privateKeyPath, 'utf-8').trim();
+  } catch (e) {
+    console.error(`[Snowflake][write] Failed to read private key from ${privateKeyPath}:`, e.message);
+    return null;
+  }
+
+  let connection = null;
+  async function getConnection() {
+    if (connection && connection.isUp()) return connection;
+    return new Promise((resolve, reject) => {
+      const conn = snowflake.createConnection({
+        account, username, authenticator: 'SNOWFLAKE_JWT', privateKey,
+        warehouse, role, database, schema, application: 'BankDashboardLoader',
+      });
+      conn.connect((err, c) => {
+        if (err) { console.error('[Snowflake][write] Connection failed:', err.message); reject(err); }
+        else { console.log(`[Snowflake][write] Connected as role ${role} → ${database}.${schema}`); connection = c; resolve(c); }
+      });
+    });
+  }
+  async function exec(sqlText, binds) {
+    const conn = await getConnection();
+    return new Promise((resolve, reject) => {
+      conn.execute({ sqlText, binds, complete: (err, _stmt, rows) => (err ? reject(err) : resolve(rows || [])) });
+    });
+  }
+
+  // OVERWRITE the whole landing table with the supplied snapshot, atomically.
+  // (DELETE + chunked INSERT inside one transaction — array-bound INSERT may split
+  // into chunks, so an INSERT OVERWRITE per chunk would clobber earlier chunks;
+  // the transaction makes the replace atomic to readers and chunk-safe.)
+  async function writeBudgetTargetsLanding(rows) {
+    await exec(`
+      CREATE TABLE IF NOT EXISTS ${fqtn} (
+        FISCAL_YEAR                 NUMBER,
+        SUBSIDIARY_ID               NUMBER,
+        DEPARTMENT                  STRING,
+        LOCATION                    STRING,
+        CURRENCY                    STRING,
+        ACCOUNT_NUMBER              STRING,
+        ACCOUNT_NAME                STRING,
+        NETSUITE_INTERNAL_NUMBER    NUMBER,
+        CATEGORY                    STRING,
+        SOURCE_AMOUNT_ILS           FLOAT,
+        USER_OVERRIDE_AMOUNT_ILS    FLOAT,
+        USER_OVERRIDE_PCT           FLOAT,
+        ANNUAL_BUDGET_TARGET_AMOUNT FLOAT,
+        MONTHLY_SOURCE_ILS          STRING,
+        USER_EDITED_BY              STRING,
+        USER_EDITED_AT              STRING,
+        SOURCE_SYNCED_AT            STRING,
+        SRC_UPDATED_AT              TIMESTAMP_NTZ
+      )
+    `);
+
+    const cols = [
+      'FISCAL_YEAR', 'SUBSIDIARY_ID', 'DEPARTMENT', 'LOCATION', 'CURRENCY',
+      'ACCOUNT_NUMBER', 'ACCOUNT_NAME', 'NETSUITE_INTERNAL_NUMBER', 'CATEGORY',
+      'SOURCE_AMOUNT_ILS', 'USER_OVERRIDE_AMOUNT_ILS', 'USER_OVERRIDE_PCT',
+      'ANNUAL_BUDGET_TARGET_AMOUNT', 'MONTHLY_SOURCE_ILS', 'USER_EDITED_BY',
+      'USER_EDITED_AT', 'SOURCE_SYNCED_AT', 'SRC_UPDATED_AT',
+    ];
+    const placeholders = `(${cols.map(() => '?').join(',')})`;
+    const binds = rows.map((r) => [
+      r.FISCAL_YEAR, r.SUBSIDIARY_ID, r.DEPARTMENT, r.LOCATION, r.CURRENCY,
+      r.ACCOUNT_NUMBER, r.ACCOUNT_NAME, r.NETSUITE_INTERNAL_NUMBER, r.CATEGORY,
+      r.SOURCE_AMOUNT_ILS, r.USER_OVERRIDE_AMOUNT_ILS, r.USER_OVERRIDE_PCT,
+      r.ANNUAL_BUDGET_TARGET_AMOUNT, r.MONTHLY_SOURCE_ILS, r.USER_EDITED_BY,
+      r.USER_EDITED_AT, r.SOURCE_SYNCED_AT,
+      // src_updated_at = when the source row last changed (edit time, else sync time)
+      r.USER_EDITED_AT || r.SOURCE_SYNCED_AT || null,
+    ]);
+
+    await exec('BEGIN');
+    try {
+      await exec(`DELETE FROM ${fqtn}`);
+      if (binds.length) {
+        await exec(`INSERT INTO ${fqtn} (${cols.join(',')}) VALUES ${placeholders}`, binds);
+      }
+      await exec('COMMIT');
+    } catch (e) {
+      try { await exec('ROLLBACK'); } catch { /* ignore rollback error */ }
+      throw e;
+    }
+    return { table: fqtn, rowCount: binds.length };
+  }
+
+  return { getConnection, exec, writeBudgetTargetsLanding, fqtn };
+}
+
+module.exports = { createSnowflakeClient, createSnowflakeWriteClient, assemblePipelineMethodology, pipelineStageWeight, PIPELINE_STAGE_WEIGHTS, PIPELINE_FALLBACK_FACTOR };

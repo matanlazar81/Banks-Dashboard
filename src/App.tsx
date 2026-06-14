@@ -4863,13 +4863,20 @@ useEffect(() => {
                       const fb = result.fallbackFromYear;
                       // PR-J: if the past-month actuals overlay failed, it's no longer silent —
                       // surface it so closed-month figures aren't quietly left at budget values.
+                      const lw = result.landingWrite;
                       if (result.overlayError) {
                         setBudgetSyncStatus('error');
                         setBudgetSyncMsg(`Synced ${rows} rows, but actuals overlay FAILED: ${String(result.overlayError).slice(0, 200)}`);
                         setTimeout(() => setBudgetSyncStatus('idle'), 12000);
+                      } else if (lw && lw.ok === false) {
+                        // Local sync succeeded; only the Snowflake landing write failed.
+                        setBudgetSyncStatus('error');
+                        setBudgetSyncMsg(`Synced ${rows} rows, but Snowflake landing FAILED: ${String(lw.error).slice(0, 200)}`);
+                        setTimeout(() => setBudgetSyncStatus('idle'), 12000);
                       } else {
                         setBudgetSyncStatus('success');
-                        setBudgetSyncMsg(fb ? `Synced ${rows} rows for ${yr} (from ${fb})` : `Synced ${rows} rows for ${yr}`);
+                        const base = fb ? `Synced ${rows} rows for ${yr} (from ${fb})` : `Synced ${rows} rows for ${yr}`;
+                        setBudgetSyncMsg(lw && lw.ok ? `${base} • landed ${lw.rowCount} to Snowflake` : base);
                         setTimeout(() => setBudgetSyncStatus('idle'), 4000);
                       }
                     } else {
