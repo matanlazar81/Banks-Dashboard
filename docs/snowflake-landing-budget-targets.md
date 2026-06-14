@@ -46,6 +46,9 @@ Both currencies are stored and reconcile to the dashboard:
 - **EUR** — `SOURCE_AMOUNT_EUR` (annual) and `MONTHLY_SOURCE_EUR` (per month). EUR is the
   dashboard's native EUR (scaled independently from ILS), not an ILS÷rate conversion, so
   it matches the dashboard's EUR view to the cent.
+- ILS and EUR are each the dashboard's own figure. Don't expect `ILS = EUR × a fixed rate`
+  (the implied ratio is not a single FX rate): compare each currency to the dashboard's
+  matching ILS/EUR toggle.
 
 ### How a year's numbers are produced
 
@@ -58,6 +61,20 @@ Both currencies are stored and reconcile to the dashboard:
   vendor total, and the per-account split follows the most-recent-actual (prior-year) mix —
   exactly what the dashboard's drilldown modals show. True independent per-account budgets
   for a projection year only appear once that year's budget is built in NetSuite.
+
+### Verifying against the dashboard
+
+The figures reconcile bottom-up, so any month can be self-checked:
+- **Accounts → department:** payroll accounts within a department sum to that department's
+  salary (e.g. Jan 2027 Playmakers accounts sum to €1,607,589 = the Playmakers total).
+- **Departments → month:** all departments sum to the dashboard's monthly salary (e.g.
+  Jan 2027 = €2,403,887 = the dashboard salary row). Vendors tie out the same way to the
+  dashboard's vendor total per month.
+- Holds in **both ILS and EUR** independently; annual totals match the dashboard's year
+  totals (2027 ≈ €28.85M salary, €25.59M vendors).
+
+A row matches its drilldown modal: in the salary modal, a department's "Effective" equals
+its row here, and each account's "Adjusted" equals that account's monthly value.
 
 ## Querying
 
