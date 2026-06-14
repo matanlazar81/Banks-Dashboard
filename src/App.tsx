@@ -4851,9 +4851,18 @@ useEffect(() => {
                         }
                       }
                     }
+                    // CSRF: the backend enforces double-submit CSRF on mutating requests.
+                    // Fetch a token (this also sets the paired cookie) and echo it back in
+                    // the x-csrf-token header, or the POST is rejected with 'csrf-invalid'.
+                    let _csrfToken = '';
+                    try {
+                      const _tr = await fetch('/api/csrf-token', { credentials: 'same-origin' });
+                      if (_tr.ok) _csrfToken = (await _tr.json()).csrfToken || '';
+                    } catch { /* token fetch failed; the POST will surface the csrf error */ }
                     const resp = await fetch(`/api/sync-budget-targets?year=${yr}&subsidiary=${sub}`, {
                       method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
+                      credentials: 'same-origin',
+                      headers: { 'Content-Type': 'application/json', 'x-csrf-token': _csrfToken },
                       body: JSON.stringify({ vendorCatAdj, salaryDeptAdj, salaryAdjPctByMonth, headcountAdj, deptHeadcount, dashboardTotals, salaryByDept }),
                     });
                     const result = await resp.json();
