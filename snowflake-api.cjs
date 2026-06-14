@@ -1844,9 +1844,15 @@ function createSnowflakeWriteClient(env) {
         USER_EDITED_BY              STRING,
         USER_EDITED_AT              STRING,
         SOURCE_SYNCED_AT            STRING,
-        SRC_UPDATED_AT              TIMESTAMP_NTZ
+        SRC_UPDATED_AT              TIMESTAMP_NTZ,
+        SOURCE_AMOUNT_EUR           FLOAT,
+        MONTHLY_SOURCE_EUR          STRING
       )
     `);
+    // Idempotent: add the EUR columns to a table created before EUR support
+    // (CREATE TABLE IF NOT EXISTS won't alter an existing table).
+    await exec(`ALTER TABLE ${fqtn} ADD COLUMN IF NOT EXISTS SOURCE_AMOUNT_EUR FLOAT`);
+    await exec(`ALTER TABLE ${fqtn} ADD COLUMN IF NOT EXISTS MONTHLY_SOURCE_EUR STRING`);
 
     // No rows → just clear the table (INSERT OVERWRITE needs at least one VALUES row).
     if (!rows.length) {
@@ -1860,6 +1866,7 @@ function createSnowflakeWriteClient(env) {
       'SOURCE_AMOUNT_ILS', 'USER_OVERRIDE_AMOUNT_ILS', 'USER_OVERRIDE_PCT',
       'ANNUAL_BUDGET_TARGET_AMOUNT', 'MONTHLY_SOURCE_ILS', 'USER_EDITED_BY',
       'USER_EDITED_AT', 'SOURCE_SYNCED_AT', 'SRC_UPDATED_AT',
+      'SOURCE_AMOUNT_EUR', 'MONTHLY_SOURCE_EUR',
     ];
     const placeholders = `(${cols.map(() => '?').join(',')})`;
     const binds = rows.map((r) => [
@@ -1870,6 +1877,8 @@ function createSnowflakeWriteClient(env) {
       r.USER_EDITED_AT, r.SOURCE_SYNCED_AT,
       // src_updated_at = when the source row last changed (edit time, else sync time)
       r.USER_EDITED_AT || r.SOURCE_SYNCED_AT || null,
+      r.SOURCE_AMOUNT_EUR != null ? r.SOURCE_AMOUNT_EUR : null,
+      r.MONTHLY_SOURCE_EUR != null ? r.MONTHLY_SOURCE_EUR : null,
     ]);
 
     // Single atomic statement: INSERT OVERWRITE replaces the whole table in one
