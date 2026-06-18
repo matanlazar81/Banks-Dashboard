@@ -1742,6 +1742,44 @@ function banksPlugin(): Plugin {
         fs.writeFileSync(scenariosPath, JSON.stringify(scenarios, null, 2));
       };
 
+      // ── /api/user-pref — per-user preferences (keyed by email) ──
+      // Persists across devices so Lital's last scenario follows her wherever she signs in.
+      // GET → { activeScenarioId, activeSharedOwner } | PUT body { activeScenarioId?, activeSharedOwner? }.
+      const userPrefPath = path.resolve(__dirname, 'data', 'user-prefs.json');
+      const loadPrefs = (): Record<string, any> => {
+        try { return JSON.parse(fs.readFileSync(userPrefPath, 'utf-8')); } catch { return {}; }
+      };
+      const savePrefs = (p: Record<string, any>) => {
+        const dir = path.dirname(userPrefPath);
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(userPrefPath, JSON.stringify(p, null, 2));
+      };
+      server.middlewares.use('/api/user-pref', async (req: any, res: any) => {
+        res.setHeader('Content-Type', 'application/json');
+        try {
+          const email = (getUserEmail(req) || '').toLowerCase();
+          if (!email) { res.statusCode = 401; res.end(JSON.stringify({ ok: false, error: 'not authenticated' })); return; }
+          const method = (req.method || 'GET').toUpperCase();
+          const prefs = loadPrefs();
+          if (method === 'GET') {
+            res.end(JSON.stringify({ ok: true, data: prefs[email] || {} }));
+            return;
+          }
+          if (method === 'PUT') {
+            let body = '';
+            for await (const chunk of req) body += chunk;
+            const patch = JSON.parse(body || '{}');
+            prefs[email] = { ...(prefs[email] || {}), ...patch, updatedAt: new Date().toISOString() };
+            savePrefs(prefs);
+            res.end(JSON.stringify({ ok: true }));
+            return;
+          }
+          res.statusCode = 405; res.end(JSON.stringify({ ok: false, error: 'method not allowed' }));
+        } catch (e: any) {
+          res.statusCode = 500; res.end(JSON.stringify({ ok: false, error: e?.message || 'pref error' }));
+        }
+      });
+
       // GET /api/bank-dashboard-users — stub
       server.middlewares.use('/api/bank-dashboard-users', (_req: any, res: any) => {
         res.setHeader('Content-Type', 'application/json');

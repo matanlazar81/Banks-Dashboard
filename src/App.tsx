@@ -1972,6 +1972,44 @@ useEffect(() => {
     });
   }, [_loadShares, _ensureSaved, refetchScenarios, _sharePending]);
   useEffect(() => { try { if (activeScenarioId) localStorage.setItem('banks-active-scenario', activeScenarioId); else localStorage.removeItem('banks-active-scenario'); } catch {} }, [activeScenarioId]);
+  // Server-side per-user preference so Lital sees her last scenario on any device.
+  // Hydrate once on mount AFTER scenarios load (need the data to apply), then PUT on every
+  // change. Localstorage is the fast first-paint default; the server overrides if different.
+  const _userPrefHydratedRef = useRef(false);
+  useEffect(() => {
+    if (_userPrefHydratedRef.current) return;
+    // Wait for at least one scenario list to arrive (own + shared) so we can resolve the id.
+    if (scenarios.length === 0 && _shared.length === 0) return;
+    _userPrefHydratedRef.current = true;
+    fetch('/api/user-pref', { credentials: 'include' })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        const remoteId = d?.data?.activeScenarioId as string | undefined;
+        const remoteSharedOwner = d?.data?.activeSharedOwner as string | undefined;
+        if (!remoteId) return; // user has no saved choice — keep current (likely localStorage default)
+        if (remoteId === activeScenarioId) return; // already on it
+        // Apply: prefer own list, else shared list. If neither has it (deleted/unshared), do nothing.
+        const own = scenarios.find(s => s.id === remoteId);
+        const shared = _shared.find((s: any) => s.id === remoteId);
+        const sc = own || shared;
+        if (!sc) return;
+        applyScenarioData(sc.data);
+        setActiveScenarioId(sc.id);
+        _setActiveSharedOwner(!own && shared ? (remoteSharedOwner || (shared as any).ownerEmail || null) : null);
+      })
+      .catch(() => {});
+  }, [scenarios, _shared, activeScenarioId, applyScenarioData]);
+  // Push the user's choice to the server whenever it changes (after hydration), so the next
+  // device picks it up. Fire-and-forget.
+  useEffect(() => {
+    if (!_userPrefHydratedRef.current) return; // don't write back during initial hydration
+    fetch('/api/user-pref', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ activeScenarioId: activeScenarioId || null, activeSharedOwner: _activeSharedOwner || null }),
+    }).catch(() => {});
+  }, [activeScenarioId, _activeSharedOwner]);
 
   // Auto-sync active scenario to consolidated pickers when switching tabs
   const prevCompanyRef = useRef<CompanyView>(activeCompany);
