@@ -1971,7 +1971,21 @@ useEffect(() => {
       });
     });
   }, [_loadShares, _ensureSaved, refetchScenarios, _sharePending]);
-  useEffect(() => { try { if (activeScenarioId) localStorage.setItem('banks-active-scenario', activeScenarioId); else localStorage.removeItem('banks-active-scenario'); } catch {} }, [activeScenarioId]);
+  // Persist the active scenario per user (keyed by viewer email) so each person gets back
+  // *their* last-used scenario, not whatever the previous user of a shared browser had open.
+  // The legacy global key is kept in sync as a bootstrap for the very first paint before the
+  // viewer email is known.
+  useEffect(() => {
+    try {
+      if (activeScenarioId) localStorage.setItem('banks-active-scenario', activeScenarioId);
+      else localStorage.removeItem('banks-active-scenario');
+      if (_viewerEmail) {
+        const key = 'banks-active-scenario:' + _viewerEmail.toLowerCase();
+        if (activeScenarioId) localStorage.setItem(key, activeScenarioId);
+        else localStorage.removeItem(key);
+      }
+    } catch {}
+  }, [activeScenarioId, _viewerEmail]);
 
   // Auto-sync active scenario to consolidated pickers when switching tabs
   const prevCompanyRef = useRef<CompanyView>(activeCompany);
@@ -2089,6 +2103,44 @@ useEffect(() => {
   applyScenarioDataRef.current = applyScenarioData;
   const activeScenarioIdRef = useRef(activeScenarioId);
   activeScenarioIdRef.current = activeScenarioId;
+
+  // ── Restore the last scenario the viewer worked on ──
+  // Runs once, after their scenarios arrive from the server. We don't just mark a scenario
+  // active — we apply its adjustments so the dashboard actually opens on that scenario's view.
+  // Selection order:
+  //   1. The scenario id this user last had active on this device (per-user localStorage key,
+  //      falling back to the legacy global key for back-compat).
+  //   2. Cross-device fallback: their most-recently-updated own scenario for the active company
+  //      (updatedAt is bumped on every edit, so this is "the last one they worked on").
+  const _restoredActiveRef = useRef(false);
+  useEffect(() => {
+    if (_restoredActiveRef.current) return;
+    if (!_viewerEmail) return;
+    if (scenarios.length === 0 && _shared.length === 0) return; // wait for the fetch to land
+    _restoredActiveRef.current = true;
+
+    let savedId: string | null = null;
+    try {
+      savedId = localStorage.getItem('banks-active-scenario:' + _viewerEmail.toLowerCase())
+        || localStorage.getItem('banks-active-scenario');
+    } catch {}
+
+    const findById = (id: string | null) =>
+      id ? (scenarios.find(s => s.id === id) || _shared.find(s => s.id === id) || null) : null;
+
+    let target = findById(savedId);
+    if (!target) {
+      target = scenarios
+        .filter(s => !s.company || s.company === activeCompanyRef.current)
+        .slice()
+        .sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''))[0] || null;
+    }
+    if (target) {
+      applyScenarioData(target.data);
+      setActiveScenarioId(target.id);
+      _setActiveSharedOwner(_shared.some(s => s.id === target!.id) ? (target!.ownerEmail || null) : null);
+    }
+  }, [_viewerEmail, scenarios, _shared, applyScenarioData]);
 
   const saveScenario = useCallback((name: string) => {
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
