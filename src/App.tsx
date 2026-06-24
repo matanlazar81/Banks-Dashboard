@@ -5577,10 +5577,30 @@ useEffect(() => {
               const yoyOnTrack = yoyGrowthPct !== null && yoyGrowthPct >= yoyTarget;
               const yoyProgress = yoyGrowthPct !== null ? Math.min(100, Math.max(0, (yoyGrowthPct / yoyTarget) * 100)) : 0;
 
+              // ── Hardcoded NS GL recognized revenue per month for closed prior years ──
+              // The live /api/ns-revenue-actuals?year=2025 returns under-reported per-month values
+              // AND an over-reported annual total (~€74M vs €51.32M NS P&L). Until that endpoint
+              // is fixed upstream, hardcode the verified per-month NS Custom P&L numbers here:
+              //   Reports → Profit and Loss, Custom Jan–Dec 2025, Lsports Data LTD,
+              //   Primary Accounting Book, COLUMN = Accounting Period.
+              //   Total 400000 - REVENUES per month.
+              // When 2026 closes, add a 2026 entry. Re-verify periodically — adjusting entries drift.
+              const CLOSED_YEAR_REVENUE_NS_GL_MONTHLY: Record<string, Record<number, Record<string, number>>> = {
+                lsports: {
+                  2025: {
+                    '2025-01': 5381927, '2025-02': 3275298, '2025-03': 3785220,
+                    '2025-04': 3680433, '2025-05': 3925035, '2025-06': 4995369,
+                    '2025-07': 4869282, '2025-08': 4380851, '2025-09': 4358932,
+                    '2025-10': 4292920, '2025-11': 5070977, '2025-12': 3307379,
+                  },
+                },
+              };
+
               // ── Recognized YTD (Aging-Report basis) ──
               // NS GL 4xxxx revenue per month for current + prior year, summed through the same
-              // throughMonth as the cash side. Surfaced as a context line so anyone debugging
-              // "why doesn't the aging report agree?" sees both methodologies on the same card.
+              // throughMonth as the cash side. Current year reads revenueActuals (live, correct);
+              // prior year prefers the hardcoded monthly map (verified NS P&L) and falls back to
+              // revenueActualsPrior (live, under-reports) only if no map exists for this company.
               const ytdMonths = cashflowForecast.filter(r => r.isPast || r.isCurrent).map(r => r.mKey).sort();
               const lastYtdMonth = ytdMonths[ytdMonths.length - 1] || ''; // e.g. '2026-06'
               const lastMonthSuffix = lastYtdMonth.slice(5); // 'MM'
@@ -5589,9 +5609,14 @@ useEffect(() => {
               const currentYearRecognized = revenueActuals
                 .filter(r => r.month >= `${curYr}-01` && r.month <= lastYtdMonth)
                 .reduce((s, r) => s + (r.amountEUR || 0), 0);
-              const priorYearRecognized = revenueActualsPrior
-                .filter(r => r.month >= `${prevYr}-01` && r.month <= `${prevYr}-${lastMonthSuffix || '12'}`)
-                .reduce((s, r) => s + (r.amountEUR || 0), 0);
+              const priorYearMonthlyMapForRec = CLOSED_YEAR_REVENUE_NS_GL_MONTHLY[activeCompany]?.[prevYr];
+              const priorYearRecognized = priorYearMonthlyMapForRec
+                ? Object.entries(priorYearMonthlyMapForRec)
+                    .filter(([m]) => m >= `${prevYr}-01` && m <= `${prevYr}-${lastMonthSuffix || '12'}`)
+                    .reduce((s, [, v]) => s + v, 0)
+                : revenueActualsPrior
+                    .filter(r => r.month >= `${prevYr}-01` && r.month <= `${prevYr}-${lastMonthSuffix || '12'}`)
+                    .reduce((s, r) => s + (r.amountEUR || 0), 0);
               const recognizedGrowthPct = priorYearRecognized > 0
                 ? Math.round((currentYearRecognized - priorYearRecognized) / priorYearRecognized * 1000) / 10
                 : null;
@@ -5599,22 +5624,14 @@ useEffect(() => {
 
               // Projected full-year revenue: sum all collections from cashflow forecast
               const projectedFullYearRev = cashflowForecast.reduce((s, r) => s + r.collections, 0);
-              // Prior year full-year: hardcoded to the verified closed-year actual from the
-              // NetSuite Custom P&L (sub 3 LSports, accrual, Primary Accounting Book, Jan–Dec).
-              // The live /api/ns-revenue-actuals?year=2025 returns ~€74M which doesn't reconcile
-              // against the NS P&L (€51.32M) — until that endpoint is fixed, this hardcoded value
-              // keeps "Projected Growth" honest. When 2026 closes, add the FY2026 P&L total here
-              // keyed by 2026. Re-verify the 2025 figure against NS periodically — adjusting entries
-              // can drift it.
-              // Source: Reports → Profit and Loss, Period: Custom Jan 2025 – Dec 2025,
-              //         Subsidiary: Lsports Data LTD, Accounting Book: Primary
-              //         Total 400000 - REVENUES = €51,323,621.83 (rounded to €51,323,622).
-              const CLOSED_YEAR_REVENUE_NS_GL: Record<string, Record<number, number>> = {
-                lsports: { 2025: 51323622 },
-              };
+              // Prior year full-year: sum the monthly map declared above. The same hardcoded
+              // monthly values feed both YTD Recognized and Projected Growth.
               const throughMonth = yoyRevenue?.throughMonth || (cashflowForecast.filter(r => r.isPast || r.isCurrent).length || 1);
               const priorYrForLookup = (activeYears[activeCompany] || currentYear) - 1;
-              const priorFullYearActual = CLOSED_YEAR_REVENUE_NS_GL[activeCompany]?.[priorYrForLookup] || 0;
+              const priorYearMonthlyMap = CLOSED_YEAR_REVENUE_NS_GL_MONTHLY[activeCompany]?.[priorYrForLookup];
+              const priorFullYearActual = priorYearMonthlyMap
+                ? Object.values(priorYearMonthlyMap).reduce((s, v) => s + v, 0)
+                : 0;
               const priorFullYearEst = priorFullYearActual > 0
                 ? priorFullYearActual
                 : (priorYearYTD > 0 && throughMonth > 0 ? Math.round(priorYearYTD / throughMonth * 12) : 0);
