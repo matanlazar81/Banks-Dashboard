@@ -1250,6 +1250,11 @@ export default function App() {
   // sourced directly from NetSuite to match the P&L line-for-line.
   const [vendorActuals, setVendorActuals] = useState<{ month: string; amountEUR: number; amountILS: number }[]>([]);
   const [revenueActuals, setRevenueActuals] = useState<{ month: string; amountEUR: number; amountILS: number }[]>([]);
+  // Prior-year NS GL recognized revenue (same source as revenueActuals, year=currentYear-1).
+  // Used by the OKR card to render an Aging-Report-equivalent "Recognized" YoY line alongside
+  // the cash-collections line. Fetched once per (company, year) change via a separate useEffect
+  // so we don't bloat the main fetchData callback.
+  const [revenueActualsPrior, setRevenueActualsPrior] = useState<{ month: string; amountEUR: number; amountILS: number }[]>([]);
   // Customer cash receipts per month (CustPymt + CashSale bank debits).
   // Keyed by YYYY-MM. Preferred source for past-month Inflows when populated.
   const [customerReceipts, setCustomerReceipts] = useState<Record<string, number>>({});
@@ -2968,6 +2973,23 @@ useEffect(() => {
     });
     return () => { cancelled = true; };
   }, [activeCompany, activeYear, asOfDate]);
+
+  // Prior-year NS GL recognized revenue (per month) for the OKR card's "Recognized" line.
+  // Same endpoint as revenueActuals, just one year back. Hits /api/ns-revenue-actuals which
+  // (for closed years like 2025) returns the hardcoded REVENUE_2025 map from netsuite-api.cjs,
+  // and for any other prior year runs a live SuiteQL on transactionaccountingline (4xxxx).
+  useEffect(() => {
+    if (activeCompany === 'consolidated') { setRevenueActualsPrior([]); return; }
+    const cfg = COMPANY_CONFIG[activeCompany];
+    if (!cfg) return;
+    const prevYear = (activeYears[activeCompany] || currentYear) - 1;
+    let cancelled = false;
+    fetch(`/api/ns-revenue-actuals?subsidiary=${cfg.subsidiary}&year=${prevYear}`, { credentials: 'include' })
+      .then(r => r.ok ? r.json() : { data: [] })
+      .then(j => { if (!cancelled) setRevenueActualsPrior(j.data || []); })
+      .catch(() => { if (!cancelled) setRevenueActualsPrior([]); });
+    return () => { cancelled = true; };
+  }, [activeCompany, activeYear, currentYear]);
 
   // For the consolidated view: fetch each subsidiary's NS month-end bank balances
   // so the consolidated past-month closings can pin to (LS-NS + ST-NS).
@@ -5550,8 +5572,11 @@ useEffect(() => {
             {/* OKR Cards */}
             {(() => {
               // OKR 1: YoY Revenue Growth — target 18%
-              // Current year YTD: use cashflow collections (past+current months) — same source as the table
-              const currentYearYTD = cashflowForecast.filter(r => r.isPast || r.isCurrent).reduce((s, r) => s + r.collections, 0);
+              // Current year YTD: use cashflow collections (past+current months) — same source as the table.
+              // Current month uses collectionsActual (real bank deposits only, no remaining-month
+              // projection). Past months keep the full r.collections value (which IS actual for closed
+              // months, since the priority chain in cashflowForecast picks NS receipts first).
+              const currentYearYTD = cashflowForecast.filter(r => r.isPast || r.isCurrent).reduce((s, r) => s + (r.isCurrent ? r.collectionsActual : r.collections), 0);
               const priorYearYTDRaw = yoyRevenue?.priorYearPaid || yoyRevenue?.priorYearRev || 0;
               // Prorate prior year by same factor when as-of date is mid-month
               const refDate = asOfDate ? new Date(asOfDate + 'T12:00:00') : new Date();
@@ -5567,6 +5592,26 @@ useEffect(() => {
               const yoyTarget = 18; // same for both companies
               const yoyOnTrack = yoyGrowthPct !== null && yoyGrowthPct >= yoyTarget;
               const yoyProgress = yoyGrowthPct !== null ? Math.min(100, Math.max(0, (yoyGrowthPct / yoyTarget) * 100)) : 0;
+
+              // ── Recognized YTD (Aging-Report basis) ──
+              // NS GL 4xxxx revenue per month for current + prior year, summed through the same
+              // throughMonth as the cash side. Surfaced as a context line so anyone debugging
+              // "why doesn't the aging report agree?" sees both methodologies on the same card.
+              const ytdMonths = cashflowForecast.filter(r => r.isPast || r.isCurrent).map(r => r.mKey).sort();
+              const lastYtdMonth = ytdMonths[ytdMonths.length - 1] || ''; // e.g. '2026-06'
+              const lastMonthSuffix = lastYtdMonth.slice(5); // 'MM'
+              const curYr = activeYears[activeCompany] || currentYear;
+              const prevYr = curYr - 1;
+              const currentYearRecognized = revenueActuals
+                .filter(r => r.month >= `${curYr}-01` && r.month <= lastYtdMonth)
+                .reduce((s, r) => s + (r.amountEUR || 0), 0);
+              const priorYearRecognized = revenueActualsPrior
+                .filter(r => r.month >= `${prevYr}-01` && r.month <= `${prevYr}-${lastMonthSuffix || '12'}`)
+                .reduce((s, r) => s + (r.amountEUR || 0), 0);
+              const recognizedGrowthPct = priorYearRecognized > 0
+                ? Math.round((currentYearRecognized - priorYearRecognized) / priorYearRecognized * 1000) / 10
+                : null;
+              const hasRecognized = currentYearRecognized > 0 && priorYearRecognized > 0;
 
               // Projected full-year revenue: sum all collections from cashflow forecast
               const projectedFullYearRev = cashflowForecast.reduce((s, r) => s + r.collections, 0);
@@ -5669,6 +5714,13 @@ useEffect(() => {
                     <div className="flex justify-between"><span>Prior Year (Jan–{throughLabel} {yoyRevenue?.priorYear || ''})</span><span className="font-medium">{fmt(priorYearYTD)}</span></div>
                     <div className="flex justify-between"><span>Current Year (Jan–{throughLabel} {yoyRevenue?.currentYear || ''})</span><span className="font-medium">{fmt(currentYearYTD)}</span></div>
                     <div className="flex justify-between"><span>YTD Growth</span><span className={`font-semibold ${currentYearYTD - priorYearYTD >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{fmt(currentYearYTD - priorYearYTD)} ({yoyGrowthPct !== null ? `${yoyGrowthPct > 0 ? '+' : ''}${yoyGrowthPct}%` : '—'})</span></div>
+                    {hasRecognized && (<>
+                      <p className="text-[10px] text-gray-400 font-semibold uppercase mt-2">YTD Recognized <span className="font-normal normal-case text-[9px]">(accrual · Aging-Report basis · NS GL 4xxxx)</span></p>
+                      <div className="flex justify-between"><span>Prior Year (Jan–{monthNames[(parseInt(lastMonthSuffix, 10) || 12) - 1]} {prevYr})</span><span className="font-medium">{fmt(priorYearRecognized)}</span></div>
+                      <div className="flex justify-between"><span>Current Year (Jan–{throughLabel} {curYr})</span><span className="font-medium">{fmt(currentYearRecognized)}</span></div>
+                      <div className="flex justify-between"><span>YTD Growth</span><span className={`font-semibold ${currentYearRecognized - priorYearRecognized >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{fmt(currentYearRecognized - priorYearRecognized)} ({recognizedGrowthPct !== null ? `${recognizedGrowthPct > 0 ? '+' : ''}${recognizedGrowthPct}%` : '—'})</span></div>
+                      <div className="flex justify-between text-[10px] text-gray-400"><span>Cash vs Recognized</span><span className="font-medium">{currentYearYTD - currentYearRecognized >= 0 ? '+' : ''}{fmt(currentYearYTD - currentYearRecognized)}</span></div>
+                    </>)}
                     <p className="text-[10px] text-gray-400 font-semibold uppercase mt-2">Projected Full Year</p>
                     <div className="flex justify-between"><span>Prior Year (annualised)</span><span className="font-medium">{fmt(priorFullYearEst)}</span></div>
                     <div className="flex justify-between"><span>Current Year (forecast)</span><span className="font-medium">{fmt(projectedFullYearRev)}</span></div>
