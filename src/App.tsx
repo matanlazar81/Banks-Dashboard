@@ -5615,11 +5615,16 @@ useEffect(() => {
 
               // Projected full-year revenue: sum all collections from cashflow forecast
               const projectedFullYearRev = cashflowForecast.reduce((s, r) => s + r.collections, 0);
-              // Prior year full-year extrapolation: priorYTD / months * 12
+              // Prior year full-year: prefer the ACTUAL full prior year (sum of all 12 months from
+              // revenueActualsPrior — NS GL recognized for last year, already loaded). Falls back
+              // to linear annualisation (priorYTD / months × 12) only when the data isn't loaded.
+              // The actual is correct (2025 wasn't linear — Q4 is heavier); annualising drifts.
               const throughMonth = yoyRevenue?.throughMonth || (cashflowForecast.filter(r => r.isPast || r.isCurrent).length || 1);
-              const priorFullYearEst = priorYearYTD > 0 && throughMonth > 0
-                ? Math.round(priorYearYTD / throughMonth * 12)
-                : 0;
+              const priorFullYearActual = revenueActualsPrior.reduce((s, r) => s + (r.amountEUR || 0), 0);
+              const priorFullYearEst = priorFullYearActual > 0
+                ? priorFullYearActual
+                : (priorYearYTD > 0 && throughMonth > 0 ? Math.round(priorYearYTD / throughMonth * 12) : 0);
+              const priorFullYearIsActual = priorFullYearActual > 0;
               const projectedGrowthPct = priorFullYearEst > 0
                 ? Math.round((projectedFullYearRev - priorFullYearEst) / priorFullYearEst * 1000) / 10
                 : null;
@@ -5722,7 +5727,7 @@ useEffect(() => {
                       <div className="flex justify-between text-[10px] text-gray-400"><span>Cash vs Recognized</span><span className="font-medium">{currentYearYTD - currentYearRecognized >= 0 ? '+' : ''}{fmt(currentYearYTD - currentYearRecognized)}</span></div>
                     </>)}
                     <p className="text-[10px] text-gray-400 font-semibold uppercase mt-2">Projected Full Year</p>
-                    <div className="flex justify-between"><span>Prior Year (annualised)</span><span className="font-medium">{fmt(priorFullYearEst)}</span></div>
+                    <div className="flex justify-between"><span>Prior Year ({priorFullYearIsActual ? 'actual' : 'annualised'})</span><span className="font-medium">{fmt(priorFullYearEst)}</span></div>
                     <div className="flex justify-between"><span>Current Year (forecast)</span><span className="font-medium">{fmt(projectedFullYearRev)}</span></div>
                     <div className="flex justify-between"><span>Projected Growth</span><span className={`font-semibold ${projectedOnTrack ? 'text-emerald-600' : 'text-amber-600'}`}>{fmt(projectedFullYearRev - priorFullYearEst)} ({projectedGrowthPct !== null ? `${projectedGrowthPct > 0 ? '+' : ''}${projectedGrowthPct}%` : '—'})</span></div>
                   </div>
