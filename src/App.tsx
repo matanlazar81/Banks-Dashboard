@@ -5600,15 +5600,17 @@ useEffect(() => {
               // Projected full-year revenue: sum all collections from cashflow forecast
               const projectedFullYearRev = cashflowForecast.reduce((s, r) => s + r.collections, 0);
               // Prior year full-year: hardcoded to the verified closed-year actual from the
-              // REVENUE_2025 map in netsuite-api.cjs:460-465 (NS GL, sub 3, 22-account allowlist,
-              // same source the Aging Report uses). The live /api/ns-revenue-actuals?year=2025
-              // currently returns ~€74M which doesn't reconcile against the NS P&L — until that
-              // endpoint is fixed, this hardcoded value keeps the OKR's "Projected Growth"
-              // honest. When 2026 closes, add the FY2026 sum here keyed by 2026.
-              // Falls back to linear annualisation (priorYTD/months × 12) when we don't have a
-              // verified prior-year actual for the (company, year) pair.
+              // NetSuite Custom P&L (sub 3 LSports, accrual, Primary Accounting Book, Jan–Dec).
+              // The live /api/ns-revenue-actuals?year=2025 returns ~€74M which doesn't reconcile
+              // against the NS P&L (€51.32M) — until that endpoint is fixed, this hardcoded value
+              // keeps "Projected Growth" honest. When 2026 closes, add the FY2026 P&L total here
+              // keyed by 2026. Re-verify the 2025 figure against NS periodically — adjusting entries
+              // can drift it.
+              // Source: Reports → Profit and Loss, Period: Custom Jan 2025 – Dec 2025,
+              //         Subsidiary: Lsports Data LTD, Accounting Book: Primary
+              //         Total 400000 - REVENUES = €51,323,621.83 (rounded to €51,323,622).
               const CLOSED_YEAR_REVENUE_NS_GL: Record<string, Record<number, number>> = {
-                lsports: { 2025: 52376973 },
+                lsports: { 2025: 51323622 },
               };
               const throughMonth = yoyRevenue?.throughMonth || (cashflowForecast.filter(r => r.isPast || r.isCurrent).length || 1);
               const priorYrForLookup = (activeYears[activeCompany] || currentYear) - 1;
