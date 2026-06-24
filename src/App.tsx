@@ -5621,6 +5621,9 @@ useEffect(() => {
                 ? Math.round((currentYearRecognized - priorYearRecognized) / priorYearRecognized * 1000) / 10
                 : null;
               const hasRecognized = currentYearRecognized > 0 && priorYearRecognized > 0;
+              // Card status + progress are driven by the recognized YoY (matches the data shown).
+              const recognizedOnTrack = recognizedGrowthPct !== null && recognizedGrowthPct >= yoyTarget;
+              const recognizedProgress = recognizedGrowthPct !== null ? Math.min(100, Math.max(0, (recognizedGrowthPct / yoyTarget) * 100)) : 0;
 
               // Projected full-year revenue: sum all collections from cashflow forecast
               const projectedFullYearRev = cashflowForecast.reduce((s, r) => s + r.collections, 0);
@@ -5709,29 +5712,27 @@ useEffect(() => {
                   </div>
                 </div>
 
-                {/* OKR: YoY Revenue Growth */}
-                <div className={`rounded-xl shadow-sm border p-4 ${yoyOnTrack ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
+                {/* OKR: YoY Revenue Growth — headlines the YTD Recognized YoY (accrual, NS GL),
+                    matching the data shown on the card. The cash-collections YTD section was
+                    removed at the user's request — only recognized YTD + Projected Full Year. */}
+                <div className={`rounded-xl shadow-sm border p-4 ${recognizedOnTrack ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
                   <div className="flex items-center gap-2 mb-1">
                     <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">OKR</span>
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${yoyOnTrack ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{yoyOnTrack ? 'On Track' : 'Behind'}</span>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${recognizedOnTrack ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{recognizedOnTrack ? 'On Track' : 'Behind'}</span>
                     {asOfDate && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium ml-auto">as of {asOfLabel}</span>}
                   </div>
-                  <p className="text-xs font-medium text-gray-700 mb-2">Increase YoY Revenue (cash collection) by 18%</p>
+                  <p className="text-xs font-medium text-gray-700 mb-2">Increase YoY Revenue by 18%</p>
                   <div className="flex items-end gap-3 mb-2">
-                    <p className={`text-2xl font-bold ${yoyOnTrack ? 'text-emerald-700' : 'text-amber-700'}`}>{yoyGrowthPct !== null ? `${yoyGrowthPct > 0 ? '+' : ''}${yoyGrowthPct}%` : '—'}</p>
+                    <p className={`text-2xl font-bold ${recognizedOnTrack ? 'text-emerald-700' : 'text-amber-700'}`}>{recognizedGrowthPct !== null ? `${recognizedGrowthPct > 0 ? '+' : ''}${recognizedGrowthPct}%` : '—'}</p>
                     <p className="text-xs text-gray-400 mb-1">target: +{yoyTarget}%</p>
                   </div>
                   {/* Progress bar */}
                   <div className="w-full bg-gray-200 rounded-full h-2 mb-2">
-                    <div className={`h-2 rounded-full transition-all ${yoyOnTrack ? 'bg-emerald-500' : 'bg-amber-500'}`} style={{ width: `${yoyProgress}%` }}></div>
+                    <div className={`h-2 rounded-full transition-all ${recognizedOnTrack ? 'bg-emerald-500' : 'bg-amber-500'}`} style={{ width: `${recognizedProgress}%` }}></div>
                   </div>
                   <div className="text-[11px] space-y-1 text-gray-600">
-                    <p className="text-[10px] text-gray-400 font-semibold uppercase mt-1">YTD Actual (Collections)</p>
-                    <div className="flex justify-between"><span>Prior Year (Jan–{throughLabel} {yoyRevenue?.priorYear || ''})</span><span className="font-medium">{fmt(priorYearYTD)}</span></div>
-                    <div className="flex justify-between"><span>Current Year (Jan–{throughLabel} {yoyRevenue?.currentYear || ''})</span><span className="font-medium">{fmt(currentYearYTD)}</span></div>
-                    <div className="flex justify-between"><span>YTD Growth</span><span className={`font-semibold ${currentYearYTD - priorYearYTD >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{fmt(currentYearYTD - priorYearYTD)} ({yoyGrowthPct !== null ? `${yoyGrowthPct > 0 ? '+' : ''}${yoyGrowthPct}%` : '—'})</span></div>
                     {hasRecognized && (<>
-                      <p className="text-[10px] text-gray-400 font-semibold uppercase mt-2">YTD Recognized <span className="font-normal normal-case text-[9px]">(accrual · Aging-Report basis · NS GL 4xxxx)</span></p>
+                      <p className="text-[10px] text-gray-400 font-semibold uppercase mt-1">YTD Recognized <span className="font-normal normal-case text-[9px]">(accrual · Aging-Report basis · NS GL 4xxxx)</span></p>
                       <div className="flex justify-between"><span>Prior Year (Jan–{monthNames[(parseInt(lastMonthSuffix, 10) || 12) - 1]} {prevYr})</span><span className="font-medium">{fmt(priorYearRecognized)}</span></div>
                       <div className="flex justify-between"><span>Current Year (Jan–{throughLabel} {curYr})</span><span className="font-medium">{fmt(currentYearRecognized)}</span></div>
                       <div className="flex justify-between"><span>YTD Growth</span><span className={`font-semibold ${currentYearRecognized - priorYearRecognized >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{fmt(currentYearRecognized - priorYearRecognized)} ({recognizedGrowthPct !== null ? `${recognizedGrowthPct > 0 ? '+' : ''}${recognizedGrowthPct}%` : '—'})</span></div>
