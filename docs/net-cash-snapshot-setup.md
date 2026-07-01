@@ -25,8 +25,9 @@ Cron @ 23:00 Asia/Jerusalem
   Exit-plan-June26 scenario** (other scenarios don't overwrite it). Fallback chain: env override
   → persisted snapshot → **carry-forward** (reuse the last row's `FORECAST_EUR`). The first run
   has no prior row, so seed it once with `NET_CASH_FORECAST_EUR`.
-- `SRC_UPDATE_AT` / `IS_APPROVED_UPDATED_AT` = **NOT written by this job** — populated by a
-  separate process / the external approval automation.
+- `SRC_UPDATED_AT` = `CURRENT_TIMESTAMP()` at insert (the load time; the live column is spelled
+  `SRC_UPDATED_AT`, with a "D"). `IS_APPROVED_UPDATED_AT` = **NOT written** — set by the external
+  approval automation.
 - The INSERT **adapts to the table's actual columns**: it always writes `DATE` /
   `TOTAL_BANK_EUR` / `FORECAST_EUR`, and adds `IS_APPROVED=FALSE` only if that column exists.
 
@@ -94,8 +95,8 @@ NET_CASH_FORECAST_EUR=7048154 node scripts/net-cash-snapshot.cjs            # or
 - The bank balance auto-fetches from NetSuite as of the **previous month-end** — no need to
   pass it. Only the forecast needs a one-time seed; after that it carries forward.
 - The insert **adapts to the table's actual columns** (writes `DATE` / `TOTAL_BANK_EUR` /
-  `FORECAST_EUR`, plus `IS_APPROVED=FALSE` if that column exists). It never writes
-  `SRC_UPDATE_AT`.
+  `FORECAST_EUR`, plus `SRC_UPDATED_AT=CURRENT_TIMESTAMP()` and `IS_APPROVED=FALSE` if those
+  columns exist).
 - `--dry-run` needs **no** Snowflake credentials.
 - `--show` prints the last 10 rows in the table (to inspect what's there).
 - The real insert **skips** if a row for today already exists. To **correct** a bad same-day
@@ -152,9 +153,9 @@ seeding. Other scenarios do not overwrite the file.
 
 ## Notes
 
-- `IS_APPROVED` is written `FALSE` (if the column exists). `SRC_UPDATE_AT` and
-  `IS_APPROVED_UPDATED_AT` are **not** written by this job — a separate process / the external
-  Workato/n8n approval automation manages them.
+- `IS_APPROVED` is written `FALSE` and `SRC_UPDATED_AT` is stamped with the insert time (both if
+  the columns exist). `IS_APPROVED_UPDATED_AT` is **not** written — the external Workato/n8n
+  approval automation manages it.
 - Append-only: the job never updates or deletes; every day adds one row.
 - The bank figure is anchored to the previous month-end, so it is stable for the whole month
   (every day in July shows the Jun 30 balance); it steps once at each month boundary.
