@@ -1,7 +1,8 @@
 # Daily Net Cash snapshot → Snowflake — setup
 
-Writes one row per day into `RAW.LANDING_FINANCE.NET_CASH_ACTUAL_AND_FORECAST`
-(append-only history). See `scripts/net-cash-snapshot.cjs`.
+Appends one row per run into `RAW.LANDING_FINANCE.NET_CASH_ACTUAL_AND_FORECAST`
+(append-only history — every update is a new row, never overwritten). See
+`scripts/net-cash-snapshot.cjs`.
 
 ## Data flow
 
@@ -99,9 +100,10 @@ NET_CASH_FORECAST_EUR=7048154 node scripts/net-cash-snapshot.cjs            # or
   columns exist).
 - `--dry-run` needs **no** Snowflake credentials.
 - `--show` prints the last 10 rows in the table (to inspect what's there).
-- The real insert **skips** if a row for today already exists. To **correct** a bad same-day
-  row use `--replace` (deletes today's row[s], needs DELETE privilege, then inserts); `--force`
-  adds another row instead of replacing.
+- **Append-only**: every run inserts a **new** row — no dedupe, no overwrite, no delete. Each
+  update is preserved as its own row (keyed by the DATE sync timestamp), so the table holds the
+  full history of every sync. To correct a value, just run again with the right figure; the
+  latest row (by DATE / SRC_UPDATED_AT) is the current one.
 - `TOTAL_BANK_EUR` is fetched live from NetSuite if not in env/snapshot — no need to paste it.
 - After the first row exists, later runs with no env/snapshot **carry forward** the last
   `FORECAST_EUR`, so the daily job keeps working; the number refreshes once the dashboard
