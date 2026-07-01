@@ -5579,7 +5579,11 @@ useEffect(() => {
               // ── Pinned NS GL recognized revenue per CLOSED month ──
               // Values = NS Custom P&L "Total 400000 - REVENUES" per month (sub 3 Lsports Data LTD,
               // Primary Accounting Book, accrual; verified by direct SuiteQL on
-              // transactionaccountingline, acctnumber LIKE '4%' excluding 400019).
+              // transactionaccountingline, acctnumber LIKE '4%').
+              // EXCLUDED accounts: 400019 (Employees interest — a 4% account the P&L parks outside
+              // the REVENUES parent) and 400022 (Service Cloud - Statscore Revenue I/C — excluded
+              // per user request; intercompany). 400022 posted only in Dec-2025 (€38,522) and across
+              // 2026 Jan–Jun (€108,594 total).
               //
               // WHY PIN 2026 CLOSED MONTHS TOO (not just prior year):
               // The live /api/ns-revenue-actuals endpoint (finance-it-backend) caches each month and
@@ -5593,16 +5597,18 @@ useEffect(() => {
               // finance-it-backend (re-query the just-closed month once) — out of this repo's deploy.
               const CLOSED_YEAR_REVENUE_NS_GL_MONTHLY: Record<string, Record<number, Record<string, number>>> = {
                 lsports: {
+                  // Net of 400022; only Dec differs (−€38,522). Jan–Jun 2025 unchanged (no 400022).
                   2025: {
                     '2025-01': 5381927, '2025-02': 3275298, '2025-03': 3785220,
                     '2025-04': 3680433, '2025-05': 3925035, '2025-06': 4995369,
                     '2025-07': 4869282, '2025-08': 4380851, '2025-09': 4358932,
-                    '2025-10': 4292920, '2025-11': 5070977, '2025-12': 3307379,
+                    '2025-10': 4292920, '2025-11': 5070977, '2025-12': 3268857,
                   },
-                  // 2026 closed months (Jan–Jun). Sum Jan–Jun = €29,149,237 = NS P&L to the cent.
+                  // 2026 closed months (Jan–Jun), net of 400022. Sum Jan–Jun = €29,040,644
+                  // (= €29,149,237 Total 400000 REVENUES − €108,594 account 400022 I/C).
                   2026: {
-                    '2026-01': 4999169, '2026-02': 4483986, '2026-03': 4182130,
-                    '2026-04': 5083704, '2026-05': 5147441, '2026-06': 5252807,
+                    '2026-01': 4975991, '2026-02': 4463091, '2026-03': 4176249,
+                    '2026-04': 5056848, '2026-05': 5122039, '2026-06': 5246427,
                   },
                 },
               };
