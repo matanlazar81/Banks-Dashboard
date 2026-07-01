@@ -5576,14 +5576,21 @@ useEffect(() => {
               const yoyOnTrack = yoyGrowthPct !== null && yoyGrowthPct >= yoyTarget;
               const yoyProgress = yoyGrowthPct !== null ? Math.min(100, Math.max(0, (yoyGrowthPct / yoyTarget) * 100)) : 0;
 
-              // ── Hardcoded NS GL recognized revenue per month for closed prior years ──
-              // The live /api/ns-revenue-actuals?year=2025 returns under-reported per-month values
-              // AND an over-reported annual total (~€74M vs €51.32M NS P&L). Until that endpoint
-              // is fixed upstream, hardcode the verified per-month NS Custom P&L numbers here:
-              //   Reports → Profit and Loss, Custom Jan–Dec 2025, Lsports Data LTD,
-              //   Primary Accounting Book, COLUMN = Accounting Period.
-              //   Total 400000 - REVENUES per month.
-              // When 2026 closes, add a 2026 entry. Re-verify periodically — adjusting entries drift.
+              // ── Pinned NS GL recognized revenue per CLOSED month ──
+              // Values = NS Custom P&L "Total 400000 - REVENUES" per month (sub 3 Lsports Data LTD,
+              // Primary Accounting Book, accrual; verified by direct SuiteQL on
+              // transactionaccountingline, acctnumber LIKE '4%' excluding 400019).
+              //
+              // WHY PIN 2026 CLOSED MONTHS TOO (not just prior year):
+              // The live /api/ns-revenue-actuals endpoint (finance-it-backend) caches each month and
+              // only re-queries the CURRENT month. When a month closes, its last cached value —
+              // written mid-month with partial data — is frozen and never refreshed. On 2026-07-01
+              // that left June cached at ~€4.98M vs the true €5.25M, so the dashboard read €28.88M
+              // vs the NS P&L €29.15M. Pinning closed months here overrides the stale cache.
+              //
+              // MAINTENANCE: at each month-end, add the newly-closed month from the NS P&L (or re-run
+              // the SuiteQL). Unpinned months fall back to the live endpoint. The real fix is in
+              // finance-it-backend (re-query the just-closed month once) — out of this repo's deploy.
               const CLOSED_YEAR_REVENUE_NS_GL_MONTHLY: Record<string, Record<number, Record<string, number>>> = {
                 lsports: {
                   2025: {
@@ -5591,6 +5598,11 @@ useEffect(() => {
                     '2025-04': 3680433, '2025-05': 3925035, '2025-06': 4995369,
                     '2025-07': 4869282, '2025-08': 4380851, '2025-09': 4358932,
                     '2025-10': 4292920, '2025-11': 5070977, '2025-12': 3307379,
+                  },
+                  // 2026 closed months (Jan–Jun). Sum Jan–Jun = €29,149,237 = NS P&L to the cent.
+                  2026: {
+                    '2026-01': 4999169, '2026-02': 4483986, '2026-03': 4182130,
+                    '2026-04': 5083704, '2026-05': 5147441, '2026-06': 5252807,
                   },
                 },
               };
@@ -5605,9 +5617,13 @@ useEffect(() => {
               const lastMonthSuffix = lastYtdMonth.slice(5); // 'MM'
               const curYr = activeYears[activeCompany] || currentYear;
               const prevYr = curYr - 1;
-              const currentYearRecognized = revenueActuals
-                .filter(r => r.month >= `${curYr}-01` && r.month <= lastYtdMonth)
-                .reduce((s, r) => s + (r.amountEUR || 0), 0);
+              // Current year: prefer a pinned closed-month value (overrides the stale endpoint
+              // cache); fall back to the live revenueActuals endpoint for any unpinned month.
+              const curYearMap = CLOSED_YEAR_REVENUE_NS_GL_MONTHLY[activeCompany]?.[curYr];
+              const currentYearRecognized = ytdMonths.reduce((s, m) => {
+                const pinned = curYearMap?.[m];
+                return s + (pinned != null ? pinned : (revenueActuals.find(r => r.month === m)?.amountEUR || 0));
+              }, 0);
               const priorYearMonthlyMapForRec = CLOSED_YEAR_REVENUE_NS_GL_MONTHLY[activeCompany]?.[prevYr];
               const priorYearRecognized = priorYearMonthlyMapForRec
                 ? Object.entries(priorYearMonthlyMapForRec)
