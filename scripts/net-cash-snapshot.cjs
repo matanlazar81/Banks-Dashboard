@@ -28,7 +28,7 @@
  *   TOTAL_BANK_EUR = prev-month-end bank balance, EUR
  *   FORECAST_EUR   = Exit-plan-June26 year-end closing, EUR
  *   IS_APPROVED    = FALSE (only if the column exists)
- *   SRC_UPDATE_AT  = NOT written here — it is populated by a separate process.
+ *   SRC_UPDATED_AT = CURRENT_TIMESTAMP() at insert (the load time; only if the column exists).
  *   IS_APPROVED_UPDATED_AT = NOT written here — external approval automation.
  *
  * The INSERT adapts to the table's ACTUAL columns (discovered via INFORMATION_SCHEMA):
@@ -196,7 +196,7 @@ async function main() {
       console.warn('[net-cash] FORECAST_EUR unresolved from env/snapshot — a real run would carry forward the last Snowflake row.');
     }
     console.log('[net-cash] --dry-run: not writing. Would insert:');
-    console.log(`[net-cash]   DATE=TO_TIMESTAMP_NTZ('${syncTs}'), TOTAL_BANK_EUR=${Number.isFinite(totalBankEur) ? Math.round(totalBankEur) : 'null'}, FORECAST_EUR=${Number.isFinite(forecastEur) ? Math.round(forecastEur) : 'null'} (+ IS_APPROVED=FALSE if column exists)`);
+    console.log(`[net-cash]   DATE=TO_TIMESTAMP_NTZ('${syncTs}'), TOTAL_BANK_EUR=${Number.isFinite(totalBankEur) ? Math.round(totalBankEur) : 'null'}, FORECAST_EUR=${Number.isFinite(forecastEur) ? Math.round(forecastEur) : 'null'} (+ SRC_UPDATED_AT=CURRENT_TIMESTAMP() and IS_APPROVED=FALSE if those columns exist)`);
     process.exit(0);
   }
 
@@ -250,11 +250,13 @@ async function main() {
     reportRow();
 
     // Build the INSERT from the intersection of our candidate columns and the table's columns.
-    // SRC_UPDATE_AT is intentionally NOT a candidate — a separate process populates it.
+    // SRC_UPDATED_AT = load time (when this job wrote the row). IS_APPROVED_UPDATED_AT is left
+    // to the external approval automation.
     const candidates = [
       { name: 'DATE', expr: 'TO_TIMESTAMP_NTZ(?)', bind: syncTs },
       { name: 'TOTAL_BANK_EUR', expr: '?', bind: totalBankEur },
       { name: 'FORECAST_EUR', expr: '?', bind: forecastEur },
+      { name: 'SRC_UPDATED_AT', expr: 'CURRENT_TIMESTAMP()' },
       { name: 'IS_APPROVED', expr: 'FALSE' },
     ];
     const missingCore = ['DATE', 'TOTAL_BANK_EUR', 'FORECAST_EUR'].filter((n) => !cols.has(n));
