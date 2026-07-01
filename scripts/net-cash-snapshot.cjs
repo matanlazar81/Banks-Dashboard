@@ -45,15 +45,18 @@
  *   NET_CASH_TOTAL_BANK_EUR / NET_CASH_FORECAST_EUR  (optional manual overrides)
  *   NET_CASH_NO_NS=1         (optional) skip the live NetSuite bank fetch
  *
+ * APPEND-ONLY: every run inserts a NEW row. Nothing is overwritten, deduped, or deleted —
+ * each update is preserved as its own row (a full history), keyed by the DATE sync timestamp.
+ *
  * Flags
  * ─────
  *   --dry-run           resolve + print the row and SQL, do NOT write to Snowflake (no creds needed)
- *   --force             insert even if a row already exists for the target date
  *   --date=YYYY-MM-DD   override the snapshot date (time portion stays the live sync time)
  *   --describe          print the table's actual columns and exit
+ *   --show              print the last 10 rows and exit
  *   --create-table      run CREATE TABLE IF NOT EXISTS before inserting (needs CREATE privilege)
  *
- * Exit codes: 0 = row written (or dry-run/skip/describe), 1 = error.
+ * Exit codes: 0 = row appended (or dry-run/describe/show), 1 = error.
  */
 
 const fs = require('fs');
@@ -66,14 +69,12 @@ const REPO_ROOT = path.resolve(__dirname, '..');
 const TABLE = 'RAW.LANDING_FINANCE.NET_CASH_ACTUAL_AND_FORECAST';
 
 function parseArgs(argv) {
-  const a = { dryRun: false, force: false, createTable: false, describe: false, show: false, replace: false, date: null };
+  const a = { dryRun: false, createTable: false, describe: false, show: false, date: null };
   for (const arg of argv.slice(2)) {
     if (arg === '--dry-run') a.dryRun = true;
-    else if (arg === '--force') a.force = true;
     else if (arg === '--create-table') a.createTable = true;
     else if (arg === '--describe') a.describe = true;
     else if (arg === '--show') a.show = true;                 // print recent rows and exit
-    else if (arg === '--replace') a.replace = true;           // delete today's row(s), then insert
     else if (arg.startsWith('--date=')) a.date = arg.slice('--date='.length);
   }
   return a;
@@ -271,21 +272,10 @@ async function main() {
       `SELECT ${used.map((c) => c.expr).join(', ')}`;
     const binds = used.filter((c) => Object.prototype.hasOwnProperty.call(c, 'bind')).map((c) => c.bind);
 
-    // --replace: delete today's existing row(s) first (needs DELETE privilege), then insert.
-    // Use this to correct a bad same-day row. Without it, an existing row is left untouched.
-    if (args.replace) {
-      const del = await exec(conn, `DELETE FROM ${TABLE} WHERE DATE::DATE = TO_DATE(?)`, [dateOnly]);
-      console.log(`[net-cash] --replace: deleted existing row(s) for ${dateOnly}.`);
-    } else if (!args.force) {
-      const dupe = await exec(conn, `SELECT COUNT(*) AS CNT FROM ${TABLE} WHERE DATE::DATE = TO_DATE(?)`, [dateOnly]);
-      if (Number(dupe?.[0]?.CNT || 0) > 0) {
-        console.log(`[net-cash] A row for ${dateOnly} already exists. Skipping (use --replace to correct it, or --force to add another).`);
-        process.exit(0);
-      }
-    }
-
+    // Append-only history: every run inserts a NEW row (each update is preserved, keyed by the
+    // DATE sync timestamp). Rows are never overwritten or deleted by this job.
     await exec(conn, adaptedSql, binds);
-    console.log(`[net-cash] ✓ Inserted 1 row for ${syncTs} (columns: ${used.map((c) => c.name).join(', ')}).`);
+    console.log(`[net-cash] ✓ Appended 1 row for ${syncTs} (columns: ${used.map((c) => c.name).join(', ')}).`);
     process.exit(0);
   } catch (e) {
     console.error(`[net-cash] ERROR: ${e && e.message ? e.message : e}`);
