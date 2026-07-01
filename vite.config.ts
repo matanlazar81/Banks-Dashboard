@@ -1780,6 +1780,47 @@ function banksPlugin(): Plugin {
         }
       });
 
+      // ── /api/net-cash-forecast — latest net-cash snapshot persisted from the dashboard ──
+      // The dashboard POSTs its LSports current-year bank total + year-end (Dec) closing here.
+      // The server cron scripts/net-cash-snapshot.cjs reads this file nightly and inserts one
+      // row into RAW.LANDING_FINANCE.NET_CASH_ACTUAL_AND_FORECAST.
+      // GET → { data: {...} } | POST body { date, company, totalBankEur, totalBankIls, forecastEur, forecastIls }
+      const netCashPath = path.resolve(__dirname, 'data', 'net-cash-forecast.json');
+      server.middlewares.use('/api/net-cash-forecast', async (req: any, res: any) => {
+        res.setHeader('Content-Type', 'application/json');
+        try {
+          const method = (req.method || 'GET').toUpperCase();
+          if (method === 'GET') {
+            let data = {};
+            try { data = JSON.parse(fs.readFileSync(netCashPath, 'utf-8')); } catch {}
+            res.end(JSON.stringify({ ok: true, data }));
+            return;
+          }
+          if (method === 'POST') {
+            let body = '';
+            for await (const chunk of req) body += chunk;
+            const b = JSON.parse(body || '{}');
+            const record = {
+              date: b.date || new Date().toISOString().slice(0, 10),
+              company: b.company || 'lsports',
+              totalBankEur: Number(b.totalBankEur) || 0,
+              totalBankIls: Number(b.totalBankIls) || 0,
+              forecastEur: Number(b.forecastEur) || 0,
+              forecastIls: Number(b.forecastIls) || 0,
+              updatedAt: new Date().toISOString(),
+            };
+            const dir = path.dirname(netCashPath);
+            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+            fs.writeFileSync(netCashPath, JSON.stringify(record, null, 2));
+            res.end(JSON.stringify({ ok: true }));
+            return;
+          }
+          res.statusCode = 405; res.end(JSON.stringify({ ok: false, error: 'method not allowed' }));
+        } catch (e: any) {
+          res.statusCode = 500; res.end(JSON.stringify({ ok: false, error: e?.message || 'net-cash error' }));
+        }
+      });
+
       // GET /api/bank-dashboard-users — stub
       server.middlewares.use('/api/bank-dashboard-users', (_req: any, res: any) => {
         res.setHeader('Content-Type', 'application/json');

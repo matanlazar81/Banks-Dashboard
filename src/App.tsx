@@ -4327,6 +4327,38 @@ useEffect(() => {
     return lines.join('\n');
   }, [activeCompany, consolidatedCashflow, asOfDate, bankAccounts, displayTotalEUR, displayTotalILS, categorizedAccounts, cashflowForecast, yoyRevenue, salaryDeptBudgets, sfBudget, sfRevenue, sfRevenuePaid, sfActualsSplit, salaryActualsByDept, monthlyHCImpact, activeScenarioId, scenarios, hasAnyAdjustments, getCurrentScenarioData]);
 
+  // ── Persist net-cash snapshot for the daily Snowflake job ──
+  // Writes the LSports current-year bank total (raw NS BANK-category balance) + year-end
+  // (Dec) closing balance to data/net-cash-forecast.json via POST /api/net-cash-forecast.
+  // The server cron scripts/net-cash-snapshot.cjs reads this each night at 23:00 Asia/Jerusalem
+  // and inserts one row into RAW.LANDING_FINANCE.NET_CASH_ACTUAL_AND_FORECAST. The accurate
+  // forecast (after-savings, incl. pipeline/churn/unpaid-carry) only exists client-side, so it
+  // must be persisted from here. Fire-and-forget; the signature ref avoids re-posting identical
+  // values on every render (clears on failure so the next change retries).
+  const lastNetCashSigRef = useRef<string>('');
+  useEffect(() => {
+    if (activeCompany !== 'lsports') return;
+    if ((activeYears[activeCompany] || currentYear) !== currentYear) return; // current year only
+    if (!cashflowForecast || cashflowForecast.length === 0) return;
+    const dec = cashflowForecast[cashflowForecast.length - 1]; // December (after-savings closing)
+    if (!dec) return;
+    const forecastEur = Math.round(dec.closingBalance || 0);
+    const forecastIls = Math.round(dec.closingBalanceILS || 0);
+    const totalBankEur = Math.round(totalPrimaryBalance || 0); // raw NS balance (not reval-adjusted)
+    const totalBankIls = Math.round(totalLocalBalance || 0);
+    if (!forecastEur && !totalBankEur) return; // nothing meaningful loaded yet
+    const now = new Date();
+    const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const sig = `${dateStr}|${totalBankEur}|${forecastEur}`;
+    if (lastNetCashSigRef.current === sig) return;
+    lastNetCashSigRef.current = sig;
+    fetch('/api/net-cash-forecast', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date: dateStr, company: 'lsports', totalBankEur, totalBankIls, forecastEur, forecastIls }),
+    }).catch(() => { lastNetCashSigRef.current = ''; });
+  }, [activeCompany, activeYears, currentYear, cashflowForecast, totalPrimaryBalance, totalLocalBalance]);
+
   const sendChatMessage = useCallback(async () => {
     // Read from whichever input has text (header or panel)
     const headerVal = chatInputRef.current?.value?.trim() || '';
