@@ -4364,6 +4364,7 @@ useEffect(() => {
     fetch('/api/net-cash-forecast', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include', // send the session cookie (iframe / bankRole auth)
       body: JSON.stringify({ date: dateStr, company: 'lsports', scenario: activeName, totalBankEur, totalBankIls, forecastEur, forecastIls }),
     }).catch(() => { lastNetCashSigRef.current = ''; });
   }, [activeCompany, activeYears, currentYear, cashflowForecast, totalPrimaryBalance, totalLocalBalance, scenarios, activeScenarioId]);
