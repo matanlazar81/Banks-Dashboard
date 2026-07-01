@@ -1803,6 +1803,7 @@ function banksPlugin(): Plugin {
             const record = {
               date: b.date || new Date().toISOString().slice(0, 10),
               company: b.company || 'lsports',
+              scenario: b.scenario || '',
               totalBankEur: Number(b.totalBankEur) || 0,
               totalBankIls: Number(b.totalBankIls) || 0,
               forecastEur: Number(b.forecastEur) || 0,
