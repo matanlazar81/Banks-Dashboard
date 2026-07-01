@@ -5572,11 +5572,10 @@ useEffect(() => {
             {/* OKR Cards */}
             {(() => {
               // OKR 1: YoY Revenue Growth — target 18%
-              // Current year YTD: use cashflow collections (past+current months) — same source as the table.
-              // Current month uses collectionsActual (real bank deposits only, no remaining-month
-              // projection). Past months keep the full r.collections value (which IS actual for closed
-              // months, since the priority chain in cashflowForecast picks NS receipts first).
-              const currentYearYTD = cashflowForecast.filter(r => r.isPast || r.isCurrent).reduce((s, r) => s + (r.isCurrent ? r.collectionsActual : r.collections), 0);
+              // YTD window = COMPLETE months only (exclude the current, partial month). On Jul 1
+              // this is Jan–Jun; in Aug it's Jan–Jul; etc. Past months use r.collections (which is
+              // actual for closed months). This keeps the current partial month out of every figure.
+              const currentYearYTD = cashflowForecast.filter(r => r.isPast).reduce((s, r) => s + r.collections, 0);
               const priorYearYTDRaw = yoyRevenue?.priorYearPaid || yoyRevenue?.priorYearRev || 0;
               // Prorate prior year by same factor when as-of date is mid-month
               const refDate = asOfDate ? new Date(asOfDate + 'T12:00:00') : new Date();
@@ -5613,12 +5612,12 @@ useEffect(() => {
               };
 
               // ── Recognized YTD (Aging-Report basis) ──
-              // NS GL 4xxxx revenue per month for current + prior year, summed through the same
-              // throughMonth as the cash side. Current year reads revenueActuals (live, correct);
-              // prior year prefers the hardcoded monthly map (verified NS P&L) and falls back to
-              // revenueActualsPrior (live, under-reports) only if no map exists for this company.
-              const ytdMonths = cashflowForecast.filter(r => r.isPast || r.isCurrent).map(r => r.mKey).sort();
-              const lastYtdMonth = ytdMonths[ytdMonths.length - 1] || ''; // e.g. '2026-06'
+              // NS GL 4xxxx revenue per month for current + prior year, summed through the last
+              // COMPLETE month (current partial month excluded — see currentYearYTD note above).
+              // Current year reads revenueActuals (live, correct); prior year prefers the hardcoded
+              // monthly map (verified NS P&L) and falls back to revenueActualsPrior only if no map.
+              const ytdMonths = cashflowForecast.filter(r => r.isPast).map(r => r.mKey).sort();
+              const lastYtdMonth = ytdMonths[ytdMonths.length - 1] || ''; // last complete month, e.g. '2026-06'
               const lastMonthSuffix = lastYtdMonth.slice(5); // 'MM'
               const curYr = activeYears[activeCompany] || currentYear;
               const prevYr = curYr - 1;
@@ -5645,7 +5644,7 @@ useEffect(() => {
               const projectedFullYearRev = cashflowForecast.reduce((s, r) => s + r.collections, 0);
               // Prior year full-year: sum the monthly map declared above. The same hardcoded
               // monthly values feed both YTD Recognized and Projected Growth.
-              const throughMonth = yoyRevenue?.throughMonth || (cashflowForecast.filter(r => r.isPast || r.isCurrent).length || 1);
+              const throughMonth = (cashflowForecast.filter(r => r.isPast).length) || yoyRevenue?.throughMonth || 1;
               const priorYrForLookup = (activeYears[activeCompany] || currentYear) - 1;
               const priorYearMonthlyMap = CLOSED_YEAR_REVENUE_NS_GL_MONTHLY[activeCompany]?.[priorYrForLookup];
               const priorFullYearActual = priorYearMonthlyMap
@@ -5678,8 +5677,9 @@ useEffect(() => {
               const projNetCashProgress = Math.min(100, Math.max(0, (projNetCashGrowth / netCashTarget) * 100));
 
               const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-              const pastCurrentMonths = cashflowForecast.filter(r => r.isPast || r.isCurrent);
-              const throughLabel = pastCurrentMonths.length > 0 ? monthNames[pastCurrentMonths.length - 1] : (yoyRevenue ? monthNames[(yoyRevenue.throughMonth || 1) - 1] : '');
+              // Label the window by its last COMPLETE month (derived from lastYtdMonth so it's
+              // robust even if the forecast doesn't start in January). On Jul 1 → 'Jun'.
+              const throughLabel = lastYtdMonth ? monthNames[(parseInt(lastYtdMonth.slice(5), 10) || 1) - 1] : '';
               const asOfLabel = asOfDate ? new Date(asOfDate + 'T12:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
 
               // ARR data (from FCT_MRR_Q_SNAPSHOT)
