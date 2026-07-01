@@ -4335,20 +4335,18 @@ useEffect(() => {
   // forecast (after-savings, incl. pipeline/churn/unpaid-carry) only exists client-side, so it
   // must be persisted from here.
   //
-  // PINNED SCENARIO: the daily Snowflake figure must be deterministic, so we ONLY persist when
-  // the active scenario is the canonical net-cash plan (default "Exit plan June26"). Viewing any
-  // other scenario does NOT overwrite the persisted figure. The scenario name is included in the
-  // payload for transparency. Match is case/space/punctuation-insensitive.
-  const CANONICAL_NET_CASH_SCENARIO = 'Exit plan June26';
-  const normScenario = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  // Persist the active LSports current-year forecast so the daily Snowflake job reads the live
+  // figure. The scenario name is recorded in the payload for transparency, but we do NOT hard-gate
+  // on it: the finance team works in "Exit plan June26", and gating on an exact name match
+  // silently blocked persistence (the scenario lookup can miss for shared scenarios, so no POST
+  // fired at all). If strict single-scenario enforcement is needed, apply it in the cron script,
+  // where the persisted scenario tag is available.
   const lastNetCashSigRef = useRef<string>('');
   useEffect(() => {
     if (activeCompany !== 'lsports') return;
     if ((activeYears[activeCompany] || currentYear) !== currentYear) return; // current year only
     if (!cashflowForecast || cashflowForecast.length === 0) return;
-    // Only sync the canonical scenario, so the daily figure always reflects the same plan.
     const activeName = scenarios.find((s: any) => s.id === activeScenarioId)?.name || '';
-    if (normScenario(activeName) !== normScenario(CANONICAL_NET_CASH_SCENARIO)) return;
     const dec = cashflowForecast[cashflowForecast.length - 1]; // December (after-savings closing)
     if (!dec) return;
     const forecastEur = Math.round(dec.closingBalance || 0);
