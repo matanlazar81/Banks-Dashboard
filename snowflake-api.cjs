@@ -16,7 +16,7 @@ const PIPELINE_STAGE_WEIGHTS = [
   { match: /test/i,               weight: 0.17 },
   { match: /new|qualif/i,         weight: 0.12 },
 ];
-const PIPELINE_FALLBACK_FACTOR = 0.8381;
+const PIPELINE_FALLBACK_FACTOR = 0.8489; // FY2025 calibration (per methodology doc); only used if the live compute fails/clamps
 function pipelineStageWeight(stage) {
   const s = String(stage || '');
   for (const w of PIPELINE_STAGE_WEIGHTS) if (w.match.test(s)) return w.weight;
@@ -33,10 +33,13 @@ function pipelineStageWeight(stage) {
 //   actualMrrByMonth { 'YYYY-MM': eur }  opp amounts closed each month (info)
 //   calibrationFactor number
 //   calibrationSource string
-function assemblePipelineMethodology({ yr, refDate, openOpps, sfContribByMonth, actualMrrByMonth, calibrationFactor, calibrationSource }) {
+function assemblePipelineMethodology({ yr, refDate, openOpps, sfContribByMonth, actualMrrByMonth, priorYearClosedByQuarter, calibrationFactor, calibrationSource }) {
   const ref = refDate ? new Date(refDate) : new Date();
   const curYear = ref.getFullYear();
   const curMonthIdx = ref.getMonth(); // 0-based
+  const curMonthKey = `${curYear}-${String(curMonthIdx + 1).padStart(2, '0')}`;
+  const currentQuarter = Math.ceil((curMonthIdx + 1) / 3);
+  const pyByQ = priorYearClosedByQuarter || {}; // prior-year closed-won by quarter (floor source)
   const monthState = (mIdx) => {
     if (yr < curYear) return 'past';
     if (yr > curYear) return 'future';
@@ -57,10 +60,30 @@ function assemblePipelineMethodology({ yr, refDate, openOpps, sfContribByMonth, 
     const months = [q * 3 - 2, q * 3 - 1, q * 3];
     return months.filter(m => monthState(m - 1) !== 'past').length;
   };
-  const projectedMrrForMonth = (mIdx) => {
+  // Raw model MRR: quarter's weighted open pipeline spread over its open months.
+  const modelMrrForMonth = (mIdx) => {
     const q = Math.ceil((mIdx + 1) / 3);
     const openMo = openMonthsInQuarter(q);
     return openMo > 0 ? Math.round(quarterWeighted[q] / openMo) : 0;
+  };
+  // Prior-year floor (per month) for a quarter = prior-year closed-won in that quarter × 0.80 ÷ 3.
+  const floorMrrForQuarter = (q) => Math.round(((Number(pyByQ[q]) || 0) * 0.80) / 3);
+  // Effective projected MRR for a month, per the methodology:
+  //  • current month  → model minus what already closed this month: max(0, model − cur_mrr)
+  //  • future quarter (beyond the current quarter, or any quarter of a future year)
+  //                   → max(model, prior-year floor)
+  //  • current-quarter future months → model only (no floor)
+  const projectedMrrForMonth = (mIdx, state) => {
+    const q = Math.ceil((mIdx + 1) / 3);
+    const model = modelMrrForMonth(mIdx);
+    if (state === 'current') {
+      const closedSoFar = Math.round((actualMrrByMonth || {})[curMonthKey] || 0);
+      return Math.max(0, model - closedSoFar);
+    }
+    if (state === 'future' && (yr > curYear || q > currentQuarter)) {
+      return Math.max(model, floorMrrForQuarter(q));
+    }
+    return model;
   };
 
   const byMonth = {};
@@ -71,7 +94,7 @@ function assemblePipelineMethodology({ yr, refDate, openOpps, sfContribByMonth, 
     const mKey = `${yr}-${String(mIdx + 1).padStart(2, '0')}`;
     const state = monthState(mIdx);
     const monthsRemaining = 12 - mIdx; // Jan=12 … Dec=1 (June idx5 → 7, Dec idx11 → 1)
-    const projectedMrr = projectedMrrForMonth(mIdx);
+    const projectedMrr = projectedMrrForMonth(mIdx, state);
     const sfContribution = Math.round((sfContribByMonth || {})[mKey] || 0);
     const actualMRR = Math.round((actualMrrByMonth || {})[mKey] || 0);
     // Per-month cashflow contribution from open pipeline (vs columnD's annual roll-forward).
@@ -1183,10 +1206,26 @@ function createSnowflakeClient(env) {
     `).catch(() => []);
     for (const r of wonRows) actualMrrByMonth[(r.M || '').substring(0, 7)] = Number(r.AMT) || 0;
 
+    // ── Prior-year closed-won by quarter (floor for future quarters) ──────────
+    // floor(q) = prior_year_closed_won[q] × 0.80 ÷ 3. Applied only to quarters
+    // beyond the current one, to keep the model from underestimating when the
+    // open pipeline for a future quarter is still thin.
+    const priorYearClosedByQuarter = { 1: 0, 2: 0, 3: 0, 4: 0 };
+    const pyqRows = await query(`
+      SELECT QUARTER(CLOSED_WON_DATE) AS Q, SUM(ROUND(OPPORTUNITY_AMOUNT)) AS AMT
+      FROM DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY
+      WHERE IS_OPPORTUNITY_WON = TRUE
+        AND EXTRACT(YEAR FROM CLOSED_WON_DATE) = ${yr - 1}
+        AND OPPORTUNITY_AMOUNT > 0
+      GROUP BY 1
+    `).catch((e) => { console.log(`[Snowflake] pipeline prior-year floor query failed: ${e.message}`); return []; });
+    for (const r of pyqRows) priorYearClosedByQuarter[Number(r.Q)] = Number(r.AMT) || 0;
+
     const result = assemblePipelineMethodology({
       yr, refDate: new Date(), openOpps: openOppsNorm, sfContribByMonth, actualMrrByMonth,
-      calibrationFactor, calibrationSource,
+      priorYearClosedByQuarter, calibrationFactor, calibrationSource,
     });
+    result.priorYearClosedByQuarter = priorYearClosedByQuarter;
     result.mrColumnsResolved = { table: MR_TABLE, month: MR_MONTH, opp: MR_OPP, amount: MR_AMOUNT, churned: MR_CHURNED, zero: MR_ZERO || (MR_TABLE === 'FCT_MONTHLY_REVENUE' ? `${MR_AMOUNT}<>0 (inferred)` : 'n/a'), integration: MR_INTEG, currency: MR_CCY };
     result.calibrationRaw = calibrationRaw;
     console.log(`[Snowflake] Pipeline methodology: factor=${calibrationFactor.toFixed(4)} (${calibrationSource})${calibrationRaw != null ? `, raw=${calibrationRaw.toFixed(4)}` : ''}, footer=${result.footerTotal}, columnD=${result.columnDTotal}`);
