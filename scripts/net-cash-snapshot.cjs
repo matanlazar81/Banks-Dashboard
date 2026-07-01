@@ -63,11 +63,12 @@ const REPO_ROOT = path.resolve(__dirname, '..');
 const TABLE = 'RAW.LANDING_FINANCE.NET_CASH_ACTUAL_AND_FORECAST';
 
 function parseArgs(argv) {
-  const a = { dryRun: false, force: false, createTable: false, date: null };
+  const a = { dryRun: false, force: false, createTable: false, describe: false, date: null };
   for (const arg of argv.slice(2)) {
     if (arg === '--dry-run') a.dryRun = true;
     else if (arg === '--force') a.force = true;
     else if (arg === '--create-table') a.createTable = true;
+    else if (arg === '--describe') a.describe = true;
     else if (arg.startsWith('--date=')) a.date = arg.slice('--date='.length);
   }
   return a;
@@ -189,13 +190,31 @@ async function main() {
     conn = await connect();
     if (args.createTable) { await exec(conn, CREATE_DDL); console.log('[net-cash] Ensured table exists.'); }
 
+    // Discover the table's ACTUAL columns and adapt the INSERT to them. The table may
+    // pre-exist with a schema that differs from the spec (e.g. no SRC_UPDATE_AT), so we
+    // insert only into columns that exist.
+    const colRows = await exec(conn,
+      `SELECT COLUMN_NAME FROM RAW.INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = 'LANDING_FINANCE' AND TABLE_NAME = 'NET_CASH_ACTUAL_AND_FORECAST'`);
+    const cols = new Set(colRows.map((r) => String(r.COLUMN_NAME || '').toUpperCase()));
+
+    if (args.describe) {
+      console.log(`[net-cash] Columns in ${TABLE}:`);
+      console.log(`[net-cash]   ${cols.size ? [...cols].join(', ') : '(table not found / no columns)'}`);
+      process.exit(0);
+    }
+    if (cols.size === 0) {
+      console.error(`[net-cash] Table ${TABLE} not found. Run with --create-table (needs CREATE privilege).`);
+      process.exit(1);
+    }
+
     // Forecast carry-forward: if still unknown, reuse the most recent row's FORECAST_EUR.
-    if (forecastEur == null) {
+    if (forecastEur == null && cols.has('FORECAST_EUR')) {
       try {
         const last = await exec(conn, `SELECT FORECAST_EUR FROM ${TABLE} ORDER BY DATE DESC LIMIT 1`);
         const v = numOrNull(last?.[0]?.FORECAST_EUR);
         if (v != null) { forecastEur = v; forecastSrc = 'carry-forward (last Snowflake row)'; }
-      } catch { /* table may not exist yet */ }
+      } catch { /* ignore */ }
     }
 
     if (!Number.isFinite(totalBankEur) || !Number.isFinite(forecastEur)) {
@@ -211,6 +230,29 @@ async function main() {
     forecastEur = Math.round(forecastEur);
     reportRow();
 
+    // Build the INSERT from the intersection of our candidate columns and the table's columns.
+    const candidates = [
+      { name: 'DATE', expr: 'TO_TIMESTAMP_NTZ(?)', bind: `${date} 00:00:00` },
+      { name: 'TOTAL_BANK_EUR', expr: '?', bind: totalBankEur },
+      { name: 'FORECAST_EUR', expr: '?', bind: forecastEur },
+      { name: 'SRC_UPDATE_AT', expr: 'CURRENT_TIMESTAMP()' },
+      { name: 'IS_APPROVED', expr: 'FALSE' },
+    ];
+    const missingCore = ['DATE', 'TOTAL_BANK_EUR', 'FORECAST_EUR'].filter((n) => !cols.has(n));
+    if (missingCore.length) {
+      console.error(`[net-cash] Table is missing core column(s): ${missingCore.join(', ')}.`);
+      console.error(`[net-cash]   Actual columns: ${[...cols].join(', ')}`);
+      process.exit(1);
+    }
+    const skipped = ['SRC_UPDATE_AT', 'IS_APPROVED'].filter((n) => !cols.has(n));
+    if (skipped.length) console.warn(`[net-cash] Table lacks ${skipped.join(', ')} — inserting without them.`);
+
+    const used = candidates.filter((c) => cols.has(c.name));
+    const adaptedSql =
+      `INSERT INTO ${TABLE} (${used.map((c) => c.name).join(', ')}) ` +
+      `SELECT ${used.map((c) => c.expr).join(', ')}`;
+    const binds = used.filter((c) => Object.prototype.hasOwnProperty.call(c, 'bind')).map((c) => c.bind);
+
     if (!args.force) {
       const dupe = await exec(conn, `SELECT COUNT(*) AS CNT FROM ${TABLE} WHERE DATE::DATE = TO_DATE(?)`, [date]);
       if (Number(dupe?.[0]?.CNT || 0) > 0) {
@@ -219,8 +261,8 @@ async function main() {
       }
     }
 
-    await exec(conn, insertSql, [`${date} 00:00:00`, totalBankEur, forecastEur]);
-    console.log(`[net-cash] ✓ Inserted 1 row into ${TABLE} for ${date}.`);
+    await exec(conn, adaptedSql, binds);
+    console.log(`[net-cash] ✓ Inserted 1 row into ${TABLE} for ${date} (columns: ${used.map((c) => c.name).join(', ')}).`);
     process.exit(0);
   } catch (e) {
     console.error(`[net-cash] ERROR: ${e && e.message ? e.message : e}`);
