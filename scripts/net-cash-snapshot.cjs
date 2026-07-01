@@ -5,52 +5,55 @@
  * Inserts ONE append-only row into
  *   RAW.LANDING_FINANCE.NET_CASH_ACTUAL_AND_FORECAST
  *
- * Intended to run once per day at 23:00 Asia/Jerusalem via cron (see
+ * Runs once per day at 23:00 Asia/Jerusalem via cron (see
  * docs/net-cash-snapshot-setup.md).
  *
- * Value sourcing (each with a fallback chain, so the job is robust even before
- * the finance-it-backend /api/net-cash-forecast route exists):
- *
- *   TOTAL_BANK_EUR  = env NET_CASH_TOTAL_BANK_EUR
- *                     → persisted dashboard snapshot (data/net-cash-forecast.json)
- *                     → live NetSuite fetchBankBalance().primary.currentBalance   [fresh]
- *   FORECAST_EUR    = env NET_CASH_FORECAST_EUR
- *                     → persisted dashboard snapshot
- *                     → last FORECAST_EUR already in Snowflake (carry-forward)
- *
- * The persisted snapshot is written by the dashboard (POST /api/net-cash-forecast)
- * and is the "as presented" source of truth; NetSuite / carry-forward are fallbacks
- * that keep the daily row flowing when the dashboard hasn't been loaded that day.
- * The accurate forecast (after-savings, incl. pipeline/churn/unpaid-carry) only
- * exists client-side, which is why there is no server-side recompute.
+ * Values
+ * ──────
+ *   TOTAL_BANK_EUR  = NetSuite bank balance (all BANK/CredCard accounts, EUR primary
+ *                     book) AS OF THE END OF THE PREVIOUS MONTH. So every day in July
+ *                     reports the Jun 30 balance; every day in August reports Jul 31; etc.
+ *                     Sourced live from NetSuite (fetchBankAccountListAsOf), so it needs
+ *                     no dashboard. Override with env NET_CASH_TOTAL_BANK_EUR.
+ *   FORECAST_EUR    = the "Exit plan June26" year-end (Dec) closing balance, after savings,
+ *                     persisted from the dashboard (POST /api/net-cash-forecast →
+ *                     data/net-cash-forecast.json, gated to that scenario). Fallback chain:
+ *                     env NET_CASH_FORECAST_EUR → persisted snapshot → carry-forward (last
+ *                     row's FORECAST_EUR in Snowflake). Only the first run needs a seed.
  *
  * Row written
  * ───────────
- *   DATE                   = snapshot date (default: today; --date to override)
- *   TOTAL_BANK_EUR         = total bank balance (all BANK category), EUR
- *   FORECAST_EUR           = year-end (Dec) closing balance, EUR
- *   SRC_UPDATE_AT          = CURRENT_TIMESTAMP() at insert
- *   IS_APPROVED            = FALSE
- *   IS_APPROVED_UPDATED_AT = NULL (set later by the external Workato/n8n approval automation)
+ *   DATE           = the SYNC TIMESTAMP (Asia/Jerusalem), incl. the hour, e.g.
+ *                    2026-07-01 23:00:07. (--date overrides the date part; time stays live.)
+ *   TOTAL_BANK_EUR = prev-month-end bank balance, EUR
+ *   FORECAST_EUR   = Exit-plan-June26 year-end closing, EUR
+ *   IS_APPROVED    = FALSE (only if the column exists)
+ *   SRC_UPDATE_AT  = NOT written here — it is populated by a separate process.
+ *   IS_APPROVED_UPDATED_AT = NOT written here — external approval automation.
+ *
+ * The INSERT adapts to the table's ACTUAL columns (discovered via INFORMATION_SCHEMA):
+ * it always writes DATE / TOTAL_BANK_EUR / FORECAST_EUR (required) and adds IS_APPROVED
+ * only if that column exists.
  *
  * Environment (from .env in repo root, or the process environment)
  * ────────────────────────────────────────────────────────────────
  *   SNOWFLAKE_ACCOUNT / SNOWFLAKE_USER / SNOWFLAKE_PRIVATE_KEY_PATH / SNOWFLAKE_WAREHOUSE
  *   optional write overrides: SNOWFLAKE_WRITE_USER / SNOWFLAKE_WRITE_PRIVATE_KEY_PATH / SNOWFLAKE_WRITE_ROLE
  *   NetSuite creds used by createNetSuiteClient (already configured for the app)
- *   NET_CASH_SNAPSHOT_PATH   (optional) path to the persisted snapshot json
+ *   NET_CASH_SNAPSHOT_PATH   (optional) path to the persisted forecast json
  *   NET_CASH_SUBSIDIARY      (optional) NS subsidiary for the bank balance (default 3 = LSports)
  *   NET_CASH_TOTAL_BANK_EUR / NET_CASH_FORECAST_EUR  (optional manual overrides)
- *   NET_CASH_NO_NS=1         (optional) skip the live NetSuite bank fallback
+ *   NET_CASH_NO_NS=1         (optional) skip the live NetSuite bank fetch
  *
  * Flags
  * ─────
- *   --dry-run           resolve + print the row and SQL, do NOT write to Snowflake
- *   --force             insert even if a row already exists for the target DATE
- *   --date=YYYY-MM-DD   override the snapshot date (default: today, local server date)
- *   --create-table      run CREATE TABLE IF NOT EXISTS before inserting (needs CREATE priv)
+ *   --dry-run           resolve + print the row and SQL, do NOT write to Snowflake (no creds needed)
+ *   --force             insert even if a row already exists for the target date
+ *   --date=YYYY-MM-DD   override the snapshot date (time portion stays the live sync time)
+ *   --describe          print the table's actual columns and exit
+ *   --create-table      run CREATE TABLE IF NOT EXISTS before inserting (needs CREATE privilege)
  *
- * Exit codes: 0 = row written (or dry-run/skip), 1 = error.
+ * Exit codes: 0 = row written (or dry-run/skip/describe), 1 = error.
  */
 
 const fs = require('fs');
@@ -74,18 +77,31 @@ function parseArgs(argv) {
   return a;
 }
 
-function localToday() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
 function numOrNull(v) {
   if (v == null || v === '') return null;
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
 }
 
-function readPersisted() {
+// Current wall-clock split into date + time in Asia/Jerusalem (the sync's local time).
+function israelNowParts() {
+  const fmt = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Jerusalem', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+  });
+  const p = Object.fromEntries(fmt.formatToParts(new Date()).map((x) => [x.type, x.value]));
+  return { date: `${p.year}-${p.month}-${p.day}`, time: `${p.hour}:${p.minute}:${p.second}` };
+}
+
+// Last calendar day of the month BEFORE dateStr ('YYYY-MM-DD'). July date → '<yr>-06-30'.
+function prevMonthEnd(dateStr) {
+  const [y, m] = dateStr.split('-').map(Number); // m = 1..12
+  const d = new Date(Date.UTC(y, m - 1, 1)); // 1st of the current month
+  d.setUTCDate(0); // roll back to the last day of the previous month
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+}
+
+function readPersistedForecast() {
   const p = process.env.NET_CASH_SNAPSHOT_PATH
     ? path.resolve(process.env.NET_CASH_SNAPSHOT_PATH)
     : path.resolve(REPO_ROOT, 'data', 'net-cash-forecast.json');
@@ -93,18 +109,18 @@ function readPersisted() {
   catch { return { path: p, data: null }; }
 }
 
-// Live NetSuite bank balance (EUR primary book) — same source the dashboard header shows.
-async function fetchBankFromNs() {
+// Total EUR bank balance (all BANK/CredCard accounts, primary book) as of a given date.
+async function fetchBankAsOf(asOfDate) {
   if (process.env.NET_CASH_NO_NS === '1') return null;
   try {
     const { createNetSuiteClient } = require(path.resolve(REPO_ROOT, 'netsuite-api.cjs'));
     const sub = parseInt(process.env.NET_CASH_SUBSIDIARY || '3', 10);
     const ns = createNetSuiteClient(process.env, sub);
-    const bal = await ns.fetchBankBalance();
-    const eur = bal && bal.primary ? Number(bal.primary.currentBalance) : Number(bal && bal.currentBalance);
+    const accounts = await ns.fetchBankAccountListAsOf(asOfDate);
+    const eur = (accounts || []).reduce((s, a) => s + (Number(a.primaryBalance) || 0), 0);
     return Number.isFinite(eur) ? Math.round(eur) : null;
   } catch (e) {
-    console.warn(`[net-cash] NetSuite bank fallback unavailable: ${e && e.message ? e.message : e}`);
+    console.warn(`[net-cash] NetSuite bank fetch failed: ${e && e.message ? e.message : e}`);
     return null;
   }
 }
@@ -145,43 +161,38 @@ const CREATE_DDL = `CREATE TABLE IF NOT EXISTS ${TABLE} (
 
 async function main() {
   const args = parseArgs(process.argv);
-  const date = args.date || localToday();
-  const { path: snapPath, data: persisted } = readPersisted();
+  const nowParts = israelNowParts();
+  const dateOnly = args.date || nowParts.date;      // calendar day (dedupe key)
+  const syncTs = `${dateOnly} ${nowParts.time}`;    // DATE value = sync timestamp incl. hour
+  const asOf = prevMonthEnd(dateOnly);              // bank balance as-of = previous month-end
 
-  // ── Resolve TOTAL_BANK_EUR: env → persisted (as presented) → live NetSuite ──
+  const { path: snapPath, data: persisted } = readPersistedForecast();
+
+  // ── TOTAL_BANK_EUR: env override → live NetSuite balance as of previous month-end ──
   let totalBankEur = numOrNull(process.env.NET_CASH_TOTAL_BANK_EUR);
   let bankSrc = 'env';
-  if (totalBankEur == null && persisted) { totalBankEur = numOrNull(persisted.totalBankEur); bankSrc = 'dashboard snapshot'; }
-  if (totalBankEur == null) { totalBankEur = await fetchBankFromNs(); bankSrc = 'live NetSuite'; }
+  if (totalBankEur == null) { totalBankEur = await fetchBankAsOf(asOf); bankSrc = `NetSuite as of ${asOf}`; }
 
-  // ── Resolve FORECAST_EUR: env → persisted (Snowflake carry-forward tried on a real run) ──
+  // ── FORECAST_EUR: env → persisted snapshot (Snowflake carry-forward tried on a real run) ──
   let forecastEur = numOrNull(process.env.NET_CASH_FORECAST_EUR);
   let forecastSrc = 'env';
-  if (forecastEur == null && persisted) { forecastEur = numOrNull(persisted.forecastEur); forecastSrc = 'dashboard snapshot'; }
-
-  const insertSql =
-    `INSERT INTO ${TABLE} (DATE, TOTAL_BANK_EUR, FORECAST_EUR, SRC_UPDATE_AT, IS_APPROVED) ` +
-    `SELECT TO_TIMESTAMP_NTZ(?), ?, ?, CURRENT_TIMESTAMP(), FALSE`;
+  if (forecastEur == null && persisted) { forecastEur = numOrNull(persisted.forecastEur); forecastSrc = `dashboard snapshot (${persisted.scenario || 'scenario?'})`; }
 
   const reportRow = () => {
     console.log('[net-cash] Resolved row:');
-    console.log(`[net-cash]   DATE           = ${date} 00:00:00`);
+    console.log(`[net-cash]   DATE           = ${syncTs}  (Asia/Jerusalem)`);
     console.log(`[net-cash]   TOTAL_BANK_EUR = ${Number.isFinite(totalBankEur) ? Math.round(totalBankEur).toLocaleString() : 'MISSING'}  (src: ${bankSrc})`);
     console.log(`[net-cash]   FORECAST_EUR   = ${Number.isFinite(forecastEur) ? Math.round(forecastEur).toLocaleString() : 'MISSING'}  (src: ${forecastSrc})`);
-    if (persisted?.date && persisted.date !== date) {
-      console.warn(`[net-cash]   NOTE: snapshot figures are as-of ${persisted.date} (updated ${persisted.updatedAt || '?'}).`);
-    }
   };
 
-  // ── Dry-run: credential-free. Show what env/file/NS resolved; do NOT touch Snowflake. ──
+  // ── Dry-run: credential-free. Show what resolved; do NOT touch Snowflake. ──
   if (args.dryRun) {
     reportRow();
     if (!Number.isFinite(forecastEur)) {
       console.warn('[net-cash] FORECAST_EUR unresolved from env/snapshot — a real run would carry forward the last Snowflake row.');
     }
-    console.log('[net-cash] --dry-run: not writing. SQL:');
-    console.log(`[net-cash]   ${insertSql}`);
-    console.log(`[net-cash]   binds = ['${date} 00:00:00', ${Number.isFinite(totalBankEur) ? Math.round(totalBankEur) : 'null'}, ${Number.isFinite(forecastEur) ? Math.round(forecastEur) : 'null'}]`);
+    console.log('[net-cash] --dry-run: not writing. Would insert:');
+    console.log(`[net-cash]   DATE=TO_TIMESTAMP_NTZ('${syncTs}'), TOTAL_BANK_EUR=${Number.isFinite(totalBankEur) ? Math.round(totalBankEur) : 'null'}, FORECAST_EUR=${Number.isFinite(forecastEur) ? Math.round(forecastEur) : 'null'} (+ IS_APPROVED=FALSE if column exists)`);
     process.exit(0);
   }
 
@@ -190,9 +201,7 @@ async function main() {
     conn = await connect();
     if (args.createTable) { await exec(conn, CREATE_DDL); console.log('[net-cash] Ensured table exists.'); }
 
-    // Discover the table's ACTUAL columns and adapt the INSERT to them. The table may
-    // pre-exist with a schema that differs from the spec (e.g. no SRC_UPDATE_AT), so we
-    // insert only into columns that exist.
+    // Discover the table's ACTUAL columns and adapt the INSERT.
     const colRows = await exec(conn,
       `SELECT COLUMN_NAME FROM RAW.INFORMATION_SCHEMA.COLUMNS
        WHERE TABLE_SCHEMA = 'LANDING_FINANCE' AND TABLE_NAME = 'NET_CASH_ACTUAL_AND_FORECAST'`);
@@ -221,8 +230,7 @@ async function main() {
       console.error('[net-cash] No usable figures.');
       console.error(`[net-cash]   snapshot file: ${snapPath} ${persisted ? '(found)' : '(MISSING)'}`);
       console.error(`[net-cash]   TOTAL_BANK_EUR=${totalBankEur} (src: ${bankSrc})  FORECAST_EUR=${forecastEur} (src: ${forecastSrc})`);
-      console.error('[net-cash]   For the first run, pass NET_CASH_FORECAST_EUR (and optionally NET_CASH_TOTAL_BANK_EUR),');
-      console.error('[net-cash]   or load the LSports current-year dashboard once the backend route persists the snapshot.');
+      console.error('[net-cash]   For the first run, pass NET_CASH_FORECAST_EUR; the bank balance auto-fetches from NetSuite.');
       process.exit(1);
     }
 
@@ -231,11 +239,11 @@ async function main() {
     reportRow();
 
     // Build the INSERT from the intersection of our candidate columns and the table's columns.
+    // SRC_UPDATE_AT is intentionally NOT a candidate — a separate process populates it.
     const candidates = [
-      { name: 'DATE', expr: 'TO_TIMESTAMP_NTZ(?)', bind: `${date} 00:00:00` },
+      { name: 'DATE', expr: 'TO_TIMESTAMP_NTZ(?)', bind: syncTs },
       { name: 'TOTAL_BANK_EUR', expr: '?', bind: totalBankEur },
       { name: 'FORECAST_EUR', expr: '?', bind: forecastEur },
-      { name: 'SRC_UPDATE_AT', expr: 'CURRENT_TIMESTAMP()' },
       { name: 'IS_APPROVED', expr: 'FALSE' },
     ];
     const missingCore = ['DATE', 'TOTAL_BANK_EUR', 'FORECAST_EUR'].filter((n) => !cols.has(n));
@@ -244,9 +252,6 @@ async function main() {
       console.error(`[net-cash]   Actual columns: ${[...cols].join(', ')}`);
       process.exit(1);
     }
-    const skipped = ['SRC_UPDATE_AT', 'IS_APPROVED'].filter((n) => !cols.has(n));
-    if (skipped.length) console.warn(`[net-cash] Table lacks ${skipped.join(', ')} — inserting without them.`);
-
     const used = candidates.filter((c) => cols.has(c.name));
     const adaptedSql =
       `INSERT INTO ${TABLE} (${used.map((c) => c.name).join(', ')}) ` +
@@ -254,15 +259,15 @@ async function main() {
     const binds = used.filter((c) => Object.prototype.hasOwnProperty.call(c, 'bind')).map((c) => c.bind);
 
     if (!args.force) {
-      const dupe = await exec(conn, `SELECT COUNT(*) AS CNT FROM ${TABLE} WHERE DATE::DATE = TO_DATE(?)`, [date]);
+      const dupe = await exec(conn, `SELECT COUNT(*) AS CNT FROM ${TABLE} WHERE DATE::DATE = TO_DATE(?)`, [dateOnly]);
       if (Number(dupe?.[0]?.CNT || 0) > 0) {
-        console.log(`[net-cash] A row for ${date} already exists. Skipping (use --force to insert anyway).`);
+        console.log(`[net-cash] A row for ${dateOnly} already exists. Skipping (use --force to insert anyway).`);
         process.exit(0);
       }
     }
 
     await exec(conn, adaptedSql, binds);
-    console.log(`[net-cash] ✓ Inserted 1 row into ${TABLE} for ${date} (columns: ${used.map((c) => c.name).join(', ')}).`);
+    console.log(`[net-cash] ✓ Inserted 1 row for ${syncTs} (columns: ${used.map((c) => c.name).join(', ')}).`);
     process.exit(0);
   } catch (e) {
     console.error(`[net-cash] ERROR: ${e && e.message ? e.message : e}`);

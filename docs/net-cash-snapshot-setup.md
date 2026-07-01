@@ -6,24 +6,29 @@ Writes one row per day into `RAW.LANDING_FINANCE.NET_CASH_ACTUAL_AND_FORECAST`
 ## Data flow
 
 ```
-Dashboard (LSports, current year, on load)
-   └─ POST /api/net-cash-forecast  →  data/net-cash-forecast.json
-                                         { date, totalBankEur, totalBankIls, forecastEur, forecastIls, updatedAt }
+Dashboard (LSports, current year, "Exit plan June26" scenario, on load)
+   └─ POST /api/net-cash-forecast  →  data/net-cash-forecast.json   { forecastEur, scenario, ... }
 Cron @ 23:00 Asia/Jerusalem
-   └─ node scripts/net-cash-snapshot.cjs  →  reads that JSON  →  INSERT into Snowflake
+   └─ node scripts/net-cash-snapshot.cjs
+        • TOTAL_BANK_EUR ← live NetSuite balance as of previous month-end
+        • FORECAST_EUR   ← persisted snapshot (or carry-forward)
+        └─ INSERT one row into Snowflake
 ```
 
-- `TOTAL_BANK_EUR` = total bank balance (all BANK-category accounts, raw NS balance —
-  not reval-adjusted). Sourced with a fallback chain: env override → persisted dashboard
-  snapshot ("as presented") → **live NetSuite `fetchBankBalance()`** (same source the
-  dashboard header shows). So the bank figure is always available even if the dashboard
-  wasn't loaded that day.
-- `FORECAST_EUR` = the dashboard's year-end (December) closing balance, **after savings**
-  (the €8,278,814 figure). Computed client-side (includes pipeline / churn / unpaid-carry
-  the server calc omits), so it is persisted from the UI. Fallback chain: env override →
-  persisted snapshot → **carry-forward** (reuse the last row's `FORECAST_EUR` in Snowflake).
-  The first-ever run has no prior row, so seed it once with `NET_CASH_FORECAST_EUR` (or add
-  the backend route first — see below).
+- `DATE` = the **sync timestamp incl. the hour**, in Asia/Jerusalem (e.g. `2026-07-01 23:00:07`).
+- `TOTAL_BANK_EUR` = NetSuite bank balance (all BANK/CredCard accounts, EUR primary book)
+  **as of the end of the previous month** — every day in July reports the Jun 30 balance,
+  every day in August reports Jul 31, etc. Fetched live from NetSuite
+  (`fetchBankAccountListAsOf`), so it needs no dashboard. Override with `NET_CASH_TOTAL_BANK_EUR`.
+- `FORECAST_EUR` = the **"Exit plan June26"** year-end (December) closing, after savings
+  (currently €7,048,154). Computed client-side, so it is persisted from the UI, **gated to the
+  Exit-plan-June26 scenario** (other scenarios don't overwrite it). Fallback chain: env override
+  → persisted snapshot → **carry-forward** (reuse the last row's `FORECAST_EUR`). The first run
+  has no prior row, so seed it once with `NET_CASH_FORECAST_EUR`.
+- `SRC_UPDATE_AT` / `IS_APPROVED_UPDATED_AT` = **NOT written by this job** — populated by a
+  separate process / the external approval automation.
+- The INSERT **adapts to the table's actual columns**: it always writes `DATE` /
+  `TOTAL_BANK_EUR` / `FORECAST_EUR`, and adds `IS_APPROVED=FALSE` only if that column exists.
 
 ## 1. Snowflake write access
 
@@ -75,21 +80,23 @@ SNOWFLAKE_WAREHOUSE=finance_wh
 ```bash
 cd /home/ubuntu/finance-it/extra-apps/bank-dashboard
 
-# 1. Dry run (credential-free — never touches Snowflake). Bank comes from the persisted
-#    snapshot or live NetSuite; seed the forecast for the first run.
-NET_CASH_FORECAST_EUR=8278814 node scripts/net-cash-snapshot.cjs --dry-run
+# 1. See the table's actual columns.
+node scripts/net-cash-snapshot.cjs --describe
 
-# 2. First real insert. --create-table only if the table doesn't exist yet.
-#    Seed the forecast on this first run; afterwards it carries forward automatically.
-NET_CASH_FORECAST_EUR=8278814 node scripts/net-cash-snapshot.cjs            # or add: --create-table
+# 2. Dry run (credential-free). Bank auto-fetches from NetSuite (prev month-end);
+#    seed the forecast for the first run only.
+NET_CASH_FORECAST_EUR=7048154 node scripts/net-cash-snapshot.cjs --dry-run
+
+# 3. First real insert. --create-table only if the table doesn't exist yet.
+NET_CASH_FORECAST_EUR=7048154 node scripts/net-cash-snapshot.cjs            # or add: --create-table
 ```
 
-- `--describe` prints the table's actual columns (useful if the table pre-exists with a
-  different schema): `node scripts/net-cash-snapshot.cjs --describe`.
-- The real insert **adapts to the table's actual columns** — it writes `DATE`,
-  `TOTAL_BANK_EUR`, `FORECAST_EUR` (required) and adds `SRC_UPDATE_AT` / `IS_APPROVED`
-  only if those columns exist, logging any it skips.
-- `--dry-run` needs **no** Snowflake credentials — it just resolves and prints the row + SQL.
+- The bank balance auto-fetches from NetSuite as of the **previous month-end** — no need to
+  pass it. Only the forecast needs a one-time seed; after that it carries forward.
+- The insert **adapts to the table's actual columns** (writes `DATE` / `TOTAL_BANK_EUR` /
+  `FORECAST_EUR`, plus `IS_APPROVED=FALSE` if that column exists). It never writes
+  `SRC_UPDATE_AT`.
+- `--dry-run` needs **no** Snowflake credentials.
 - The real insert skips if a row for today's `DATE` already exists (use `--force` to override).
 - `TOTAL_BANK_EUR` is fetched live from NetSuite if not in env/snapshot — no need to paste it.
 - After the first row exists, later runs with no env/snapshot **carry forward** the last
@@ -109,14 +116,42 @@ Install with `crontab -e` (adjust the node path via `which node`). If your cron 
 support `CRON_TZ`, schedule in UTC instead: 20:00 UTC during IDT (summer, UTC+3) or 21:00 UTC
 during IST (winter, UTC+2).
 
+## 5. Full auto-persist (auto-refresh the forecast)
+
+With just the cron, the **bank** figure is fully automatic (live from NetSuite) and the
+**forecast** carries forward from the last row. To also **auto-refresh the forecast** as the
+Exit-plan-June26 plan changes, the production dashboard must be able to persist it — which
+needs the `/api/net-cash-forecast` route in `finance-it-backend` (the prod `/api/*` host;
+the vite route only serves local dev).
+
+Install it (you are root on the server):
+
+```bash
+# 1. Copy the ready-made route into finance-it-backend's routes dir (adjust path to your layout).
+cp /home/ubuntu/finance-it/extra-apps/bank-dashboard/docs/backend-net-cash-forecast-route.ts \
+   /home/ubuntu/finance-it/backend/src/routes/net-cash-forecast.ts
+
+# 2. Register it in the backend's app (wherever other routers are mounted), e.g.:
+#      import netCashForecast from './routes/net-cash-forecast';
+#      app.use(netCashForecast);
+#    The route defaults NET_CASH_FILE to
+#      /home/ubuntu/finance-it/extra-apps/bank-dashboard/data/net-cash-forecast.json
+#    which is exactly where the cron reads — keep it, or set NET_CASH_FILE to match.
+
+# 3. Rebuild + restart the backend.
+cd /home/ubuntu/finance-it/backend && npm run build && pm2 restart finance-it-backend
+```
+
+Once mounted: whenever anyone loads the LSports current-year dashboard **on the Exit plan
+June26 scenario**, the frontend POSTs `forecastEur` (currently €7,048,154) to that route, which
+writes `data/net-cash-forecast.json`. The nightly cron then picks it up automatically — no more
+seeding. Other scenarios do not overwrite the file.
+
 ## Notes
 
-- `IS_APPROVED` is written `FALSE`; `IS_APPROVED_UPDATED_AT` is left `NULL` — both are managed
-  later by the external Workato/n8n approval automation.
+- `IS_APPROVED` is written `FALSE` (if the column exists). `SRC_UPDATE_AT` and
+  `IS_APPROVED_UPDATED_AT` are **not** written by this job — a separate process / the external
+  Workato/n8n approval automation manages them.
 - Append-only: the job never updates or deletes; every day adds one row.
-- If nobody opened the dashboard on a given day, the persisted figures are the last known
-  values; the row still inserts under today's `DATE`, and the script logs the as-of date.
-- **Production forecast persistence** requires the `/api/net-cash-forecast` route in
-  `finance-it-backend` (the production `/api/*` host). See
-  `docs/backend-net-cash-forecast-route.ts`. Until it is added, seed the file manually or
-  pass `NET_CASH_TOTAL_BANK_EUR` / `NET_CASH_FORECAST_EUR` env overrides.
+- The bank figure is anchored to the previous month-end, so it is stable for the whole month
+  (every day in July shows the Jun 30 balance); it steps once at each month boundary.
