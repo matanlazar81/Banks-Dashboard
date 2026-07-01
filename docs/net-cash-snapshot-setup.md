@@ -84,6 +84,11 @@ NET_CASH_FORECAST_EUR=8278814 node scripts/net-cash-snapshot.cjs --dry-run
 NET_CASH_FORECAST_EUR=8278814 node scripts/net-cash-snapshot.cjs            # or add: --create-table
 ```
 
+- `--describe` prints the table's actual columns (useful if the table pre-exists with a
+  different schema): `node scripts/net-cash-snapshot.cjs --describe`.
+- The real insert **adapts to the table's actual columns** — it writes `DATE`,
+  `TOTAL_BANK_EUR`, `FORECAST_EUR` (required) and adds `SRC_UPDATE_AT` / `IS_APPROVED`
+  only if those columns exist, logging any it skips.
 - `--dry-run` needs **no** Snowflake credentials — it just resolves and prints the row + SQL.
 - The real insert skips if a row for today's `DATE` already exists (use `--force` to override).
 - `TOTAL_BANK_EUR` is fetched live from NetSuite if not in env/snapshot — no need to paste it.
