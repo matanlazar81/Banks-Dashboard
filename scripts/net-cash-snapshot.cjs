@@ -66,12 +66,14 @@ const REPO_ROOT = path.resolve(__dirname, '..');
 const TABLE = 'RAW.LANDING_FINANCE.NET_CASH_ACTUAL_AND_FORECAST';
 
 function parseArgs(argv) {
-  const a = { dryRun: false, force: false, createTable: false, describe: false, date: null };
+  const a = { dryRun: false, force: false, createTable: false, describe: false, show: false, replace: false, date: null };
   for (const arg of argv.slice(2)) {
     if (arg === '--dry-run') a.dryRun = true;
     else if (arg === '--force') a.force = true;
     else if (arg === '--create-table') a.createTable = true;
     else if (arg === '--describe') a.describe = true;
+    else if (arg === '--show') a.show = true;                 // print recent rows and exit
+    else if (arg === '--replace') a.replace = true;           // delete today's row(s), then insert
     else if (arg.startsWith('--date=')) a.date = arg.slice('--date='.length);
   }
   return a;
@@ -150,11 +152,13 @@ function exec(conn, sqlText, binds = []) {
   });
 }
 
+// Matches the live table (note SRC_UPDATED_AT — with a "D"). Only used by --create-table
+// on a fresh environment; a no-op when the table already exists.
 const CREATE_DDL = `CREATE TABLE IF NOT EXISTS ${TABLE} (
   DATE TIMESTAMP_NTZ,
   TOTAL_BANK_EUR FLOAT,
   FORECAST_EUR FLOAT,
-  SRC_UPDATE_AT TIMESTAMP_NTZ,
+  SRC_UPDATED_AT TIMESTAMP_NTZ,
   IS_APPROVED BOOLEAN,
   IS_APPROVED_UPDATED_AT TIMESTAMP_NTZ
 )`;
@@ -217,6 +221,13 @@ async function main() {
       process.exit(1);
     }
 
+    if (args.show) {
+      const rows = await exec(conn, `SELECT * FROM ${TABLE} ORDER BY DATE DESC LIMIT 10`);
+      console.log(`[net-cash] Last ${rows.length} row(s) in ${TABLE} (newest first):`);
+      for (const r of rows) console.log(`[net-cash]   ${JSON.stringify(r)}`);
+      process.exit(0);
+    }
+
     // Forecast carry-forward: if still unknown, reuse the most recent row's FORECAST_EUR.
     if (forecastEur == null && cols.has('FORECAST_EUR')) {
       try {
@@ -258,10 +269,15 @@ async function main() {
       `SELECT ${used.map((c) => c.expr).join(', ')}`;
     const binds = used.filter((c) => Object.prototype.hasOwnProperty.call(c, 'bind')).map((c) => c.bind);
 
-    if (!args.force) {
+    // --replace: delete today's existing row(s) first (needs DELETE privilege), then insert.
+    // Use this to correct a bad same-day row. Without it, an existing row is left untouched.
+    if (args.replace) {
+      const del = await exec(conn, `DELETE FROM ${TABLE} WHERE DATE::DATE = TO_DATE(?)`, [dateOnly]);
+      console.log(`[net-cash] --replace: deleted existing row(s) for ${dateOnly}.`);
+    } else if (!args.force) {
       const dupe = await exec(conn, `SELECT COUNT(*) AS CNT FROM ${TABLE} WHERE DATE::DATE = TO_DATE(?)`, [dateOnly]);
       if (Number(dupe?.[0]?.CNT || 0) > 0) {
-        console.log(`[net-cash] A row for ${dateOnly} already exists. Skipping (use --force to insert anyway).`);
+        console.log(`[net-cash] A row for ${dateOnly} already exists. Skipping (use --replace to correct it, or --force to add another).`);
         process.exit(0);
       }
     }

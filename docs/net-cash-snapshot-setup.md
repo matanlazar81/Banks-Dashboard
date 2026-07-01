@@ -97,7 +97,10 @@ NET_CASH_FORECAST_EUR=7048154 node scripts/net-cash-snapshot.cjs            # or
   `FORECAST_EUR`, plus `IS_APPROVED=FALSE` if that column exists). It never writes
   `SRC_UPDATE_AT`.
 - `--dry-run` needs **no** Snowflake credentials.
-- The real insert skips if a row for today's `DATE` already exists (use `--force` to override).
+- `--show` prints the last 10 rows in the table (to inspect what's there).
+- The real insert **skips** if a row for today already exists. To **correct** a bad same-day
+  row use `--replace` (deletes today's row[s], needs DELETE privilege, then inserts); `--force`
+  adds another row instead of replacing.
 - `TOTAL_BANK_EUR` is fetched live from NetSuite if not in env/snapshot — no need to paste it.
 - After the first row exists, later runs with no env/snapshot **carry forward** the last
   `FORECAST_EUR`, so the daily job keeps working; the number refreshes once the dashboard
