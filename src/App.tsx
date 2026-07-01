@@ -4333,13 +4333,22 @@ useEffect(() => {
   // The server cron scripts/net-cash-snapshot.cjs reads this each night at 23:00 Asia/Jerusalem
   // and inserts one row into RAW.LANDING_FINANCE.NET_CASH_ACTUAL_AND_FORECAST. The accurate
   // forecast (after-savings, incl. pipeline/churn/unpaid-carry) only exists client-side, so it
-  // must be persisted from here. Fire-and-forget; the signature ref avoids re-posting identical
-  // values on every render (clears on failure so the next change retries).
+  // must be persisted from here.
+  //
+  // PINNED SCENARIO: the daily Snowflake figure must be deterministic, so we ONLY persist when
+  // the active scenario is the canonical net-cash plan (default "Exit plan June26"). Viewing any
+  // other scenario does NOT overwrite the persisted figure. The scenario name is included in the
+  // payload for transparency. Match is case/space/punctuation-insensitive.
+  const CANONICAL_NET_CASH_SCENARIO = 'Exit plan June26';
+  const normScenario = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
   const lastNetCashSigRef = useRef<string>('');
   useEffect(() => {
     if (activeCompany !== 'lsports') return;
     if ((activeYears[activeCompany] || currentYear) !== currentYear) return; // current year only
     if (!cashflowForecast || cashflowForecast.length === 0) return;
+    // Only sync the canonical scenario, so the daily figure always reflects the same plan.
+    const activeName = scenarios.find((s: any) => s.id === activeScenarioId)?.name || '';
+    if (normScenario(activeName) !== normScenario(CANONICAL_NET_CASH_SCENARIO)) return;
     const dec = cashflowForecast[cashflowForecast.length - 1]; // December (after-savings closing)
     if (!dec) return;
     const forecastEur = Math.round(dec.closingBalance || 0);
@@ -4355,9 +4364,9 @@ useEffect(() => {
     fetch('/api/net-cash-forecast', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ date: dateStr, company: 'lsports', totalBankEur, totalBankIls, forecastEur, forecastIls }),
+      body: JSON.stringify({ date: dateStr, company: 'lsports', scenario: activeName, totalBankEur, totalBankIls, forecastEur, forecastIls }),
     }).catch(() => { lastNetCashSigRef.current = ''; });
-  }, [activeCompany, activeYears, currentYear, cashflowForecast, totalPrimaryBalance, totalLocalBalance]);
+  }, [activeCompany, activeYears, currentYear, cashflowForecast, totalPrimaryBalance, totalLocalBalance, scenarios, activeScenarioId]);
 
   const sendChatMessage = useCallback(async () => {
     // Read from whichever input has text (header or panel)
