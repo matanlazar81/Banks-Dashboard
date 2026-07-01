@@ -13,11 +13,17 @@ Cron @ 23:00 Asia/Jerusalem
    └─ node scripts/net-cash-snapshot.cjs  →  reads that JSON  →  INSERT into Snowflake
 ```
 
-- `TOTAL_BANK_EUR` = the dashboard's displayed total bank balance (all BANK-category
-  accounts, raw NS balance — not reval-adjusted).
+- `TOTAL_BANK_EUR` = total bank balance (all BANK-category accounts, raw NS balance —
+  not reval-adjusted). Sourced with a fallback chain: env override → persisted dashboard
+  snapshot ("as presented") → **live NetSuite `fetchBankBalance()`** (same source the
+  dashboard header shows). So the bank figure is always available even if the dashboard
+  wasn't loaded that day.
 - `FORECAST_EUR` = the dashboard's year-end (December) closing balance, **after savings**
-  (the €8,278,814 figure). This is computed client-side (it includes pipeline / churn /
-  unpaid-carry that the server-side calc omits), which is why it is persisted from the UI.
+  (the €8,278,814 figure). Computed client-side (includes pipeline / churn / unpaid-carry
+  the server calc omits), so it is persisted from the UI. Fallback chain: env override →
+  persisted snapshot → **carry-forward** (reuse the last row's `FORECAST_EUR` in Snowflake).
+  The first-ever run has no prior row, so seed it once with `NET_CASH_FORECAST_EUR` (or add
+  the backend route first — see below).
 
 ## 1. Snowflake write access
 
@@ -69,17 +75,21 @@ SNOWFLAKE_WAREHOUSE=finance_wh
 ```bash
 cd /home/ubuntu/finance-it/extra-apps/bank-dashboard
 
-# 1. Confirm the persisted figures look right (should show ~8,278,814 forecast).
-cat data/net-cash-forecast.json
+# 1. Dry run (credential-free — never touches Snowflake). Bank comes from the persisted
+#    snapshot or live NetSuite; seed the forecast for the first run.
+NET_CASH_FORECAST_EUR=8278814 node scripts/net-cash-snapshot.cjs --dry-run
 
-# 2. Dry run — prints the row + SQL, writes nothing.
-node scripts/net-cash-snapshot.cjs --dry-run
-
-# 3. First real insert (add --create-table only if the table doesn't exist yet).
-node scripts/net-cash-snapshot.cjs            # or: --create-table
+# 2. First real insert. --create-table only if the table doesn't exist yet.
+#    Seed the forecast on this first run; afterwards it carries forward automatically.
+NET_CASH_FORECAST_EUR=8278814 node scripts/net-cash-snapshot.cjs            # or add: --create-table
 ```
 
-The job skips insert if a row for today's `DATE` already exists (use `--force` to override).
+- `--dry-run` needs **no** Snowflake credentials — it just resolves and prints the row + SQL.
+- The real insert skips if a row for today's `DATE` already exists (use `--force` to override).
+- `TOTAL_BANK_EUR` is fetched live from NetSuite if not in env/snapshot — no need to paste it.
+- After the first row exists, later runs with no env/snapshot **carry forward** the last
+  `FORECAST_EUR`, so the daily job keeps working; the number refreshes once the dashboard
+  persists a new snapshot (see backend route below).
 
 ## 4. Schedule the cron (23:00 Asia/Jerusalem)
 
