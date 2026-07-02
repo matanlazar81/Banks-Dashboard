@@ -1296,7 +1296,7 @@ export default function App() {
   const [pipelineMethodology, setPipelineMethodology] = useState<{ year: number; calibrationFactor: number; calibrationSource: string; quarterWeighted: Record<string, number>; byMonth: Record<string, PipelineMonth>; footerTotal: number; columnDTotal: number } | null>(null);
   // Revenue projection mode: 'legacy' (historical win-rate pipeline) or 'pipeline' (Column B methodology).
   const [revenueMethodology, setRevenueMethodology] = useState<'legacy' | 'pipeline'>(() => {
-    try { return (localStorage.getItem('banks-revenue-methodology') as 'legacy' | 'pipeline') || 'legacy'; } catch { return 'legacy'; }
+    try { return (localStorage.getItem('banks-revenue-methodology') as 'legacy' | 'pipeline') || 'pipeline'; } catch { return 'pipeline'; }
   });
   useEffect(() => { try { localStorage.setItem('banks-revenue-methodology', revenueMethodology); } catch {} }, [revenueMethodology]);
   const [pipelineMethodOpen, setPipelineMethodOpen] = useState(false);
