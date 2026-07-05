@@ -1606,6 +1606,10 @@ export default function App() {
   const [scenarioMenuOpen, setScenarioMenuOpen] = useState(false);
   // Live save-status chip next to the scenario name so edits give instant confirmation.
   const [scenarioSaveStatus, setScenarioSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  // Raw text buffer for the global reval % input, so a negative like "-30" can be typed. The
+  // controlled number binding otherwise re-parses a lone "-" to 0 and snaps back. null = show
+  // the committed currencyDefensePct.
+  const [defPctInput, setDefPctInput] = useState<string | null>(null);
   const [scenarioNameEdit, setScenarioNameEdit] = useState<string | null>(null);
   const [scenarioNewName, setScenarioNewName] = useState('');
   const [compareScenarioId, setCompareScenarioId] = useState<string | null>(null);
@@ -6920,13 +6924,14 @@ useEffect(() => {
             <span className="text-[10px] text-gray-500">Budget ~{fmt(avgFinBudget)}/mo</span>
             <span className="text-[10px] text-gray-400">Default:</span>
             <div className="flex items-center gap-1.5">
-              <button onClick={() => setCurrencyDefensePct(Math.max(-100, currencyDefensePct - 10))}
+              <button onClick={() => { setDefPctInput(null); setCurrencyDefensePct(Math.max(-100, currencyDefensePct - 10)); }}
                 className="w-5 h-5 rounded bg-white hover:bg-amber-100 text-amber-700 text-xs font-bold flex items-center justify-center border border-amber-300">−</button>
-              <input type="number" value={currencyDefensePct} min={-100} max={100} step={10}
-                onChange={(e) => setCurrencyDefensePct(Math.min(100, Math.max(-100, parseInt(e.target.value) || 0)))}
+              <input type="text" inputMode="numeric" value={defPctInput ?? String(currencyDefensePct)}
+                onChange={(e) => { const v = e.target.value; setDefPctInput(v); if (v === '' || v === '-' || v === '+') return; const n = parseInt(v, 10); if (Number.isFinite(n)) setCurrencyDefensePct(Math.min(100, Math.max(-100, n))); }}
+                onBlur={() => setDefPctInput(null)}
                 className="w-12 text-center text-xs font-semibold text-amber-800 border border-amber-300 rounded px-1 py-0.5 bg-white" />
               <span className="text-xs text-amber-600">%</span>
-              <button onClick={() => setCurrencyDefensePct(Math.min(100, currencyDefensePct + 10))}
+              <button onClick={() => { setDefPctInput(null); setCurrencyDefensePct(Math.min(100, currencyDefensePct + 10)); }}
                 className="w-5 h-5 rounded bg-white hover:bg-amber-100 text-amber-700 text-xs font-bold flex items-center justify-center border border-amber-300">+</button>
             </div>
             <span className="text-[10px] text-gray-500">→ ~{fmt(Math.round(avgFinBudget * currencyDefensePct / 100))}/mo to reval</span>
