@@ -1481,7 +1481,7 @@ export default function App() {
   }, [salaryDeptAdj, salaryDeptBudgets]);
   // Salary projection mode: 'budget' (FCT_BUDGET) or 'lastActual' (last actual month projected forward)
   const [salaryProjectionMode, setSalaryProjectionMode] = useState<'budget' | 'lastActual'>(() => {
-    try { return (localStorage.getItem('banks-salary-proj-mode') as 'budget' | 'lastActual') || 'budget'; } catch { return 'budget'; }
+    try { return (localStorage.getItem('banks-salary-proj-mode') as 'budget' | 'lastActual') || 'lastActual'; } catch { return 'lastActual'; }
   });
   useEffect(() => { try { localStorage.setItem('banks-salary-proj-mode', salaryProjectionMode); } catch {} }, [salaryProjectionMode]);
   // Salary actuals by department (for lastActual projection mode)
@@ -4373,6 +4373,14 @@ useEffect(() => {
     if (activeCompany !== 'lsports') return;
     if ((activeYears[activeCompany] || currentYear) !== currentYear) return; // current year only
     if (!cashflowForecast || cashflowForecast.length === 0) return;
+    // Canonical basis for the nightly Snowflake push: Revenue = Pipeline, Salary = Actual.
+    // Any other view (Win-rate / Budget) must NOT overwrite the persisted forecast, or the
+    // number the cron ships would drift from the agreed methodology. Logged (not silent) so a
+    // skipped persist is debuggable — unlike the old scenario-name gate that blocked everything.
+    if (revenueMethodology !== 'pipeline' || salaryProjectionMode !== 'lastActual') {
+      console.log(`[net-cash] persist skipped — basis Revenue:${revenueMethodology}/Salary:${salaryProjectionMode} (need pipeline/lastActual)`);
+      return;
+    }
     const activeName = scenarios.find((s: any) => s.id === activeScenarioId)?.name || '';
     const dec = cashflowForecast[cashflowForecast.length - 1]; // December (after-savings closing)
     if (!dec) return;
@@ -4390,9 +4398,9 @@ useEffect(() => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include', // send the session cookie (iframe / bankRole auth)
-      body: JSON.stringify({ date: dateStr, company: 'lsports', scenario: activeName, totalBankEur, totalBankIls, forecastEur, forecastIls }),
+      body: JSON.stringify({ date: dateStr, company: 'lsports', scenario: activeName, totalBankEur, totalBankIls, forecastEur, forecastIls, revenueBasis: 'pipeline', salaryBasis: 'actual' }),
     }).catch(() => { lastNetCashSigRef.current = ''; });
-  }, [activeCompany, activeYears, currentYear, cashflowForecast, totalPrimaryBalance, totalLocalBalance, scenarios, activeScenarioId]);
+  }, [activeCompany, activeYears, currentYear, cashflowForecast, totalPrimaryBalance, totalLocalBalance, scenarios, activeScenarioId, revenueMethodology, salaryProjectionMode]);
 
   const sendChatMessage = useCallback(async () => {
     // Read from whichever input has text (header or panel)
