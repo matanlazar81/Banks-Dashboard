@@ -1,4 +1,4 @@
-// Type declarations for forecast-core.cjs (the extracted cashflow engine).
+// Type declarations for forecast-core.mjs (the extracted cashflow engine).
 // The build skips tsc (Vite/esbuild only), so these types are for editor DX
 // and to document the input/output contract of the shared engine.
 

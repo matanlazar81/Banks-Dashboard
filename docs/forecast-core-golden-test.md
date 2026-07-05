@@ -1,6 +1,6 @@
 # Forecast-core golden test
 
-`src/forecast/forecast-core.cjs` is the single source of truth for the cashflow
+`src/forecast/forecast-core.mjs` is the single source of truth for the cashflow
 forecast. It was extracted 1:1 from the `cashflowForecast` memo in `src/App.tsx`
 so that BOTH the browser and the nightly server-side job (which has no browser)
 compute the exact same numbers. The golden test guards that faithfulness — and
@@ -38,12 +38,13 @@ when a fixture exists at `scripts/fixtures/forecast-golden.json`:
 
 ### How to capture the fixture
 
-The wiring PR (App.tsx → forecast-core) exposes a dev-only hook so you can grab
-a real snapshot straight from a running dashboard:
+The memo exposes a capture hook. It is always on in a dev build; on the
+production dashboard, opt in by appending `?fccapture=1` to the URL.
 
 1. Open the dashboard on **Exit plan June26** with basis **Revenue: Pipeline**
    and **Salary: Last Actual** (the same basis the nightly job uses), and let it
-   fully load.
+   fully load. On production, add `?fccapture=1` to the URL (e.g.
+   `…/bank-dashboard/?fccapture=1`) so the hook is active.
 2. Open the browser console and run:
 
    ```js
