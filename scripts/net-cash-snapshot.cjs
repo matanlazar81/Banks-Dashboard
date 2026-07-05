@@ -124,17 +124,35 @@ function readPersistedForecast() {
 }
 
 // ── Email notification (optional, env-driven) ──────────────────────────────
-// Emails a summary of what was pushed (or skipped) to NET_CASH_EMAIL_TO via the SMTP
-// connection URL NET_CASH_SMTP_URL. Both must be set or the email is skipped (the sync
-// still runs and logs the body). NO credentials live in code — the URL sits in .env only.
-//   NET_CASH_SMTP_URL  e.g.  smtp://smtp-relay.gmail.com:587        (IP-allowlisted relay, no auth)
-//                      or     smtps://user%40lsports.eu:APP_PW@smtp.gmail.com:465
-//   NET_CASH_EMAIL_TO  recipient(s), comma-separated
-//   NET_CASH_EMAIL_FROM optional sender (defaults to NET_CASH_EMAIL_TO)
+// Emails a summary of what was pushed (or skipped) to NET_CASH_EMAIL_TO. Transport is
+// resolved in this order (NO credentials live in code — they sit in .env only):
+//   1. NET_CASH_SMTP_URL  — an explicit connection URL, e.g.
+//        smtp://smtp-relay.gmail.com:587   (IP-allowlisted relay, no auth)  or
+//        smtps://user%40lsports.eu:APP_PW@smtp.gmail.com:465
+//   2. else the app's existing SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS (reuse the
+//        backend's already-working mailer — no new credentials needed).
+// Email is skipped (body just logged) if neither a URL nor SMTP_HOST is set.
+//   NET_CASH_EMAIL_TO   recipient(s), comma-separated
+//   NET_CASH_EMAIL_FROM optional sender (defaults to SMTP_USER, then NET_CASH_EMAIL_TO)
 async function sendEmail({ enabled, wrote, dryRun, syncTs, totalBankEur, forecastEur, tableName, error }) {
   const to = process.env.NET_CASH_EMAIL_TO;
+  // Transport: explicit URL override, else reuse the app's existing SMTP_* settings.
   const smtpUrl = process.env.NET_CASH_SMTP_URL;
-  const from = process.env.NET_CASH_EMAIL_FROM || to;
+  let transport = null;
+  let from = process.env.NET_CASH_EMAIL_FROM || to;
+  if (smtpUrl) {
+    transport = smtpUrl;
+  } else if (process.env.SMTP_HOST) {
+    const port = parseInt(process.env.SMTP_PORT || '587', 10);
+    transport = {
+      host: process.env.SMTP_HOST,
+      port,
+      secure: port === 465,
+      auth: (process.env.SMTP_USER && process.env.SMTP_PASS)
+        ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } : undefined,
+    };
+    from = process.env.NET_CASH_EMAIL_FROM || process.env.SMTP_USER || to;
+  }
   const fmtEur = (v) => (Number.isFinite(Number(v)) && v != null ? `EUR ${Math.round(Number(v)).toLocaleString('en-US')}` : 'MISSING');
   const statusLine = error ? 'FAILED'
     : !enabled ? 'DISABLED — no row written'
@@ -161,8 +179,8 @@ async function sendEmail({ enabled, wrote, dryRun, syncTs, totalBankEur, forecas
   ];
   if (error) lines.push('', `Error            : ${error}`);
   const text = lines.join('\n');
-  if (!to || !smtpUrl) {
-    console.log('[net-cash] email not sent (set NET_CASH_EMAIL_TO + NET_CASH_SMTP_URL to enable). Would have sent:');
+  if (!to || !transport) {
+    console.log('[net-cash] email not sent (need NET_CASH_EMAIL_TO + either NET_CASH_SMTP_URL or SMTP_HOST/PORT/USER/PASS). Would have sent:');
     console.log(text.split('\n').map((l) => `[net-cash]   ${l}`).join('\n'));
     return;
   }
@@ -170,7 +188,7 @@ async function sendEmail({ enabled, wrote, dryRun, syncTs, totalBankEur, forecas
   try { nodemailer = require('nodemailer'); }
   catch { console.warn('[net-cash] nodemailer not installed (run: npm i nodemailer) — email skipped.'); return; }
   try {
-    const transporter = nodemailer.createTransport(smtpUrl);
+    const transporter = nodemailer.createTransport(transport);
     await transporter.sendMail({ from, to, subject, text });
     console.log(`[net-cash] email sent to ${to}`);
   } catch (e) {
