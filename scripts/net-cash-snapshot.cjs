@@ -66,10 +66,11 @@
  * Flags
  * ─────
  *   --dry-run           resolve + print the row and SQL, do NOT write to Snowflake (no creds needed)
- *   --refresh           recompute the forecast server-side (headless dashboard) BEFORE pushing, so
- *                       the pushed FORECAST_EUR is fresh with no browser open. Needs the bot creds
- *                       (DASHBOARD_BOT_EMAIL/PASSWORD) + Playwright; falls through to the last
- *                       persisted forecast if the refresh can't run. One command = refresh+push+send.
+ *   --refresh           recompute the forecast server-side (NO browser) BEFORE pushing, by running
+ *                       scripts/net-cash-forecast-compute.cjs: it fetches fresh NetSuite + Snowflake
+ *                       data, runs the shared forecast engine, and rewrites data/net-cash-forecast.json.
+ *                       No login/Playwright needed; falls through to the last persisted forecast if the
+ *                       compute can't run. One command = recompute + push + send.
  *   --date=YYYY-MM-DD   override the snapshot date (time portion stays the live sync time)
  *   --describe          print the table's actual columns and exit
  *   --show              print the last 10 rows and exit
@@ -100,25 +101,26 @@ function parseArgs(argv) {
   return a;
 }
 
-// Recompute the forecast server-side by running the REAL dashboard in a headless browser
-// (scripts/refresh-forecast-headless.cjs), which re-persists data/net-cash-forecast.json. This is
-// how the nightly job "recomputes on the backend" with no one's laptop open. Runs to completion
-// BEFORE the push reads the file. Never throws — if it fails (no bot creds / Playwright / login),
-// we log and fall through to the last persisted forecast so the push still runs.
-function runHeadlessRefresh() {
+// Recompute the forecast server-side by running scripts/net-cash-forecast-compute.cjs, which
+// fetches fresh NetSuite + Snowflake data, runs the SHARED forecast engine (the same module the
+// browser runs), and re-writes data/net-cash-forecast.json. This is how the nightly job
+// "recomputes on the backend" with no browser and no login. Runs to completion BEFORE the push
+// reads the file. Never throws — if it fails, we log and fall through to the last persisted
+// forecast so the push still runs.
+function runServerCompute() {
   return new Promise((resolve) => {
     const { spawn } = require('child_process');
-    const script = path.resolve(__dirname, 'refresh-forecast-headless.cjs');
-    console.log('[net-cash] --refresh: recomputing forecast via headless dashboard (server-side)...');
+    const script = path.resolve(__dirname, 'net-cash-forecast-compute.cjs');
+    console.log('[net-cash] --refresh: recomputing forecast server-side (no browser)...');
     let child;
     try {
       child = spawn(process.execPath, [script], { stdio: 'inherit', env: process.env });
     } catch (e) {
-      console.warn(`[net-cash] headless refresh failed to start: ${e && e.message ? e.message : e}`);
+      console.warn(`[net-cash] server compute failed to start: ${e && e.message ? e.message : e}`);
       return resolve(1);
     }
-    child.on('error', (e) => { console.warn(`[net-cash] headless refresh error: ${e && e.message ? e.message : e}`); resolve(1); });
-    child.on('exit', (code) => { console.log(`[net-cash] headless refresh finished (exit ${code}).`); resolve(code); });
+    child.on('error', (e) => { console.warn(`[net-cash] server compute error: ${e && e.message ? e.message : e}`); resolve(1); });
+    child.on('exit', (code) => { console.log(`[net-cash] server compute finished (exit ${code}).`); resolve(code); });
   });
 }
 
@@ -344,10 +346,10 @@ async function main() {
   const syncTs = `${dateOnly} ${nowParts.time}`;    // DATE value = sync timestamp incl. hour
   const asOf = prevMonthEnd(dateOnly);              // bank balance as-of = previous month-end
 
-  // --refresh: recompute the forecast server-side (headless dashboard) BEFORE reading the file,
+  // --refresh: recompute the forecast server-side (no browser) BEFORE reading the file,
   // so the pushed FORECAST_EUR is fresh — no one's browser needed. Skipped for describe/show.
   if (args.refresh && !args.describe && !args.show) {
-    await runHeadlessRefresh();
+    await runServerCompute();
   }
 
   const { path: snapPath, data: persisted } = readPersistedForecast();
