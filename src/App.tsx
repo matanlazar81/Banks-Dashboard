@@ -1604,6 +1604,8 @@ export default function App() {
     try { return localStorage.getItem('banks-active-scenario') || null; } catch { return null; }
   });
   const [scenarioMenuOpen, setScenarioMenuOpen] = useState(false);
+  // Live save-status chip next to the scenario name so edits give instant confirmation.
+  const [scenarioSaveStatus, setScenarioSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [scenarioNameEdit, setScenarioNameEdit] = useState<string | null>(null);
   const [scenarioNewName, setScenarioNewName] = useState('');
   const [compareScenarioId, setCompareScenarioId] = useState<string | null>(null);
@@ -1916,15 +1918,17 @@ useEffect(() => {
 
   const _syncSave = useCallback((id: string, name: string, data: ScenarioData) => {
     if (!_srvRef.current) return;
+    setScenarioSaveStatus('saving');
     fetch('/api/scenarios', { method: 'POST', headers: {'Content-Type':'application/json'}, credentials: 'include', body: JSON.stringify({id, name, data, company: activeCompany}) })
-      .then(r => { if (!r.ok) console.warn(`[Scenarios] SAVE (POST) ${id} FAILED: ${r.status} ${r.statusText}`); else console.info(`[Scenarios] saved (POST) ${id} -> ${r.status}`); })
-      .catch(e => console.warn(`[Scenarios] SAVE (POST) ${id} network error:`, e && e.message ? e.message : e));
+      .then(r => { if (!r.ok) { console.warn(`[Scenarios] SAVE (POST) ${id} FAILED: ${r.status} ${r.statusText}`); setScenarioSaveStatus('error'); } else { console.info(`[Scenarios] saved (POST) ${id} -> ${r.status}`); setScenarioSaveStatus('saved'); } })
+      .catch(e => { console.warn(`[Scenarios] SAVE (POST) ${id} network error:`, e && e.message ? e.message : e); setScenarioSaveStatus('error'); });
   }, [activeCompany]);
   const _syncUpdate = useCallback((id: string, updates: {name?: string; data?: ScenarioData}) => {
     if (!_srvRef.current) return;
+    setScenarioSaveStatus('saving');
     fetch('/api/scenarios/' + id, { method: 'PUT', headers: {'Content-Type':'application/json'}, credentials: 'include', body: JSON.stringify(updates) })
-      .then(r => { if (!r.ok) console.warn(`[Scenarios] UPDATE (PUT) ${id} FAILED: ${r.status} ${r.statusText}`); else console.info(`[Scenarios] updated (PUT) ${id} -> ${r.status}`); })
-      .catch(e => console.warn(`[Scenarios] UPDATE (PUT) ${id} network error:`, e && e.message ? e.message : e));
+      .then(r => { if (!r.ok) { console.warn(`[Scenarios] UPDATE (PUT) ${id} FAILED: ${r.status} ${r.statusText}`); setScenarioSaveStatus('error'); } else { console.info(`[Scenarios] updated (PUT) ${id} -> ${r.status}`); setScenarioSaveStatus('saved'); } })
+      .catch(e => { console.warn(`[Scenarios] UPDATE (PUT) ${id} network error:`, e && e.message ? e.message : e); setScenarioSaveStatus('error'); });
   }, []);
   const _syncDelete = useCallback((id: string) => {
     if (!_srvRef.current) return;
@@ -7014,6 +7018,15 @@ useEffect(() => {
                     {activeScenario ? activeScenario.name : 'Scenarios'}
                     <span className="text-[9px]">▾</span>
                   </button>
+                  {activeScenario && scenarioSaveStatus !== 'idle' && (
+                    <span className={`ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full font-medium align-middle ${
+                      scenarioSaveStatus === 'saving' ? 'bg-amber-100 text-amber-700'
+                        : scenarioSaveStatus === 'saved' ? 'bg-green-100 text-green-700'
+                        : 'bg-red-100 text-red-700'
+                    }`}>
+                      {scenarioSaveStatus === 'saving' ? 'Saving…' : scenarioSaveStatus === 'saved' ? 'Saved ✓' : 'Save failed'}
+                    </span>
+                  )}
                   {scenarioMenuOpen && (
                     <div className="absolute right-0 top-full mt-1 bg-white border border-gray-200 rounded-xl shadow-xl z-50 min-w-[380px] max-h-[500px] overflow-y-auto">
                       {/* Save current state as new scenario */}
