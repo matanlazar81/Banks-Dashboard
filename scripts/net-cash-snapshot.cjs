@@ -141,7 +141,19 @@ async function sendEmail({ enabled, wrote, dryRun, syncTs, totalBankEur, forecas
   let transport = null;
   let from = process.env.NET_CASH_EMAIL_FROM || to;
   if (smtpUrl) {
-    transport = smtpUrl;
+    // Parse the URL into an options object so we can also set the EHLO name below.
+    try {
+      const u = new URL(smtpUrl);
+      const secure = u.protocol === 'smtps:';
+      transport = {
+        host: u.hostname,
+        port: u.port ? parseInt(u.port, 10) : (secure ? 465 : 587),
+        secure,
+        auth: u.username
+          ? { user: decodeURIComponent(u.username), pass: decodeURIComponent(u.password || '') }
+          : undefined,
+      };
+    } catch { transport = smtpUrl; }
   } else if (process.env.SMTP_HOST) {
     const port = parseInt(process.env.SMTP_PORT || '587', 10);
     transport = {
@@ -152,6 +164,13 @@ async function sendEmail({ enabled, wrote, dryRun, syncTs, totalBankEur, forecas
         ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } : undefined,
     };
     from = process.env.NET_CASH_EMAIL_FROM || process.env.SMTP_USER || to;
+  }
+  // EHLO/HELO name — the Workspace SMTP relay (no-auth path) requires the server to present
+  // one of your domains here. Default to the sender's domain (e.g. lsports.eu); override with
+  // NET_CASH_SMTP_HELO. Only applies when transport is an options object (not a raw URL string).
+  if (transport && typeof transport === 'object') {
+    const helo = process.env.NET_CASH_SMTP_HELO || (from && from.includes('@') ? from.split('@').pop() : null);
+    if (helo) transport.name = helo;
   }
   const fmtEur = (v) => (Number.isFinite(Number(v)) && v != null ? `EUR ${Math.round(Number(v)).toLocaleString('en-US')}` : 'MISSING');
   const statusLine = error ? 'FAILED'

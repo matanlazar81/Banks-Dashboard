@@ -208,7 +208,14 @@ NET_CASH_EMAIL_TO=matan.l@lsports.eu
 # OR override with an explicit URL instead of SMTP_*:
 # NET_CASH_SMTP_URL=smtp://smtp-relay.gmail.com:587                                   # relay, no password
 # NET_CASH_SMTP_URL=smtps://finance%40lsports.eu:APP_PASSWORD@smtp.gmail.com:465      # or an app password
+# NET_CASH_SMTP_HELO=lsports.eu     # EHLO name — required by the Workspace relay; defaults to the sender's domain
 ```
+
+**Workspace SMTP relay:** if you use `smtp-relay.gmail.com` with no auth, Google requires the server
+to present one of your domains in the EHLO greeting and to send from that domain. The script sets the
+EHLO name to the sender's domain automatically (from `NET_CASH_EMAIL_TO`/`FROM`), so
+`NET_CASH_EMAIL_TO=matan.l@lsports.eu` → EHLO `lsports.eu`. Override with `NET_CASH_SMTP_HELO` if needed.
+The relay only accepts senders in your registered domain, and only from the allowlisted server IP.
 
 Install the mailer once (added to `package.json`): `npm i nodemailer`.
 
