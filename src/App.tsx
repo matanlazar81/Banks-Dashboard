@@ -2006,9 +2006,16 @@ useEffect(() => {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
+  // Drop half-typed / blank entries ('' or '-') from per-month numeric maps, so a mid-edit
+  // input never persists as a blank that reloads to 0 and silently wipes the real value.
+  const cleanNumMap = (m: any): any => {
+    const out: any = {};
+    for (const k of Object.keys(m || {})) { const v = m[k]; if (typeof v === 'number' && Number.isFinite(v)) out[k] = v; }
+    return out;
+  };
   const getCurrentScenarioData = useCallback((): ScenarioData => ({
-    salaryAdjPctByMonth: { ...salaryAdjPctByMonth },
-    collPctByMonth: { ...collPctByMonth },
+    salaryAdjPctByMonth: cleanNumMap(salaryAdjPctByMonth),
+    collPctByMonth: cleanNumMap(collPctByMonth),
     salaryDeptAdj: JSON.parse(JSON.stringify(salaryDeptAdj)),
     vendorCatAdj: JSON.parse(JSON.stringify(vendorCatAdj)),
     vendorDetailAdj: JSON.parse(JSON.stringify(vendorDetailAdj)),
@@ -2016,11 +2023,11 @@ useEffect(() => {
     headcountAdj: JSON.parse(JSON.stringify(headcountAdj)),
     pipelineMinProb,
     currencyDefensePct,
-    currencyDefensePctByMonth: { ...currencyDefensePctByMonth },
+    currencyDefensePctByMonth: cleanNumMap(currencyDefensePctByMonth),
     salaryProjectionMode,
     revenueMethodology,
-    salaryManualILS: { ...salaryManualILS },
-    pipelineAdjPctByMonth: { ...pipelineAdjPctByMonth },
+    salaryManualILS: cleanNumMap(salaryManualILS),
+    pipelineAdjPctByMonth: cleanNumMap(pipelineAdjPctByMonth),
     churnOverride: { ...churnOverride },
     year: activeYear,
     fxRateByYear: { ...fxRateByYear },
