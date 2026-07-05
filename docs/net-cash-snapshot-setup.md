@@ -161,46 +161,54 @@ June26 scenario**, the frontend POSTs `forecastEur` (currently €7,048,154) to 
 writes `data/net-cash-forecast.json`. The nightly cron then picks it up automatically — no more
 seeding. Other scenarios do not overwrite the file.
 
-## 6. Same-night forecast refresh (headless, optional) — `scripts/refresh-forecast-headless.cjs`
+## 6. Server-side forecast recompute (no browser) — `scripts/net-cash-forecast-compute.cjs`
 
 Without this, `FORECAST_EUR` only changes when someone opens the dashboard on Exit plan June26
-(the persist). To capture plan changes automatically each night with **no one's laptop open**,
-run a headless browser on the server at **22:50** (10 min before the 23:00 write). It runs the
-real dashboard, so the number matches the UI exactly.
+(the persist). To recompute it automatically with **no browser and no login**, this script
+fetches fresh NetSuite + Snowflake data, runs the **shared forecast engine**
+(`src/forecast/forecast-core.mjs` — the exact module the dashboard runs), loads the "Exit plan
+June26" scenario knobs, forces **Revenue: Pipeline + Salary: Last-Actual**, and rewrites
+`data/net-cash-forecast.json`. Because it runs the same engine on the same inputs the browser
+builds, the number cannot diverge from the on-screen forecast.
 
-One-time setup:
+The scenario knobs (dept salary cuts, vendor cuts, currency-defense %) are NOT data feeds — they
+come from the saved scenario. In prod, scenarios live in finance-it-backend, so point the job at
+that store (first match wins):
 ```bash
-# a) A bot user with the BANK_DASHBOARD role + a password (finance-it-backend has
-#    create-admin/reset-admin scripts). Then log in as the bot ONCE and select
-#    LSports · 2026 · "Exit plan June26" so /api/user-pref remembers it for headless loads.
-# b) Playwright + Chromium on the server:
+#   NET_CASH_SCENARIO_FILE=/path/to/exit-plan.json    # a single ScenarioData (or a {data}/record)
+#   NET_CASH_SCENARIOS_PATH=/path/to/scenarios.json   # the backend's scenarios array (matched by name)
+#   NET_CASH_SCENARIO_NAME="Exit plan June26"         # name to match (default)
+# If none resolves, the job runs the BASE plan (no savings) and says so — the number will be too high.
+```
+
+Verify it (credential-full run, on the server):
+```bash
 cd /home/ubuntu/finance-it/extra-apps/bank-dashboard
-npm i playwright && npx playwright install chromium
-# c) Add the bot creds to .env (never committed):
-#    DASHBOARD_BOT_EMAIL=...      DASHBOARD_BOT_PASSWORD=...
+node scripts/net-cash-forecast-compute.cjs --dry-run       # fetch + compute + print 12 rows, no write
+node scripts/net-cash-forecast-compute.cjs --dump-inputs   # also write data/net-cash-inputs.json
+node scripts/net-cash-forecast-compute.cjs                 # compute + write data/net-cash-forecast.json
 ```
+Compare the printed **December closing** to a live dashboard load of Exit plan June26 (Pipeline +
+Last-Actual). To debug any gap, open the dashboard with `?fccapture=1`, copy `window.__fcInputs` from
+the console, and diff it against the `--dump-inputs` output field by field (see
+`docs/forecast-core-golden-test.md`).
 
-Test the refresh alone first, then run the **combined** job:
-```bash
-node scripts/refresh-forecast-headless.cjs        # expect: login → 200, "forecast re-persisted"
+### Schedule — 06:00 recompute (silent) + 23:00 recompute-and-push
 
-# One command = recompute (headless) → push (Snowflake) → send (Slack/email):
-node scripts/net-cash-snapshot.cjs --refresh --dry-run   # refresh + preview, no write
-node scripts/net-cash-snapshot.cjs --refresh             # refresh + real push + notify
-```
-
-**Schedule it as ONE nightly cron** (replaces the push-only 23:00 line — don't run both, or you
-get a stale push at 23:00 too). Runs refresh → push → send in sequence, so no NetSuite concurrency
-clash and no race on the file:
 ```cron
 CRON_TZ=Asia/Jerusalem
-50 22 * * * cd /home/ubuntu/finance-it/extra-apps/bank-dashboard && /usr/bin/node scripts/net-cash-snapshot.cjs --refresh >> /var/log/net-cash.log 2>&1
+# 06:00 — recompute only. Refreshes data/net-cash-forecast.json. NO Snowflake write, NO Slack.
+0 6 * * * cd /home/ubuntu/finance-it/extra-apps/bank-dashboard && /usr/bin/node scripts/net-cash-forecast-compute.cjs >> /var/log/net-cash.log 2>&1
+# 23:00 — recompute → push to Snowflake → Slack summary (ONE command; no file race, no NS concurrency clash).
+0 23 * * * cd /home/ubuntu/finance-it/extra-apps/bank-dashboard && /usr/bin/node scripts/net-cash-snapshot.cjs --refresh >> /var/log/net-cash.log 2>&1
 ```
+`--refresh` runs the compute script first, then reads the freshly written
+`data/net-cash-forecast.json` and pushes it. If the compute can't run (e.g. a feed is down),
+`--refresh` logs it and still pushes the last persisted forecast, so the nightly row is never
+skipped. A **manual browser refresh keeps working** and produces the identical number (same engine).
 
-Login is `POST /api/auth/login` with `{email, password}` (passport-local, `usernameField:'email'`).
-If that returns 403 (CSRF), the script needs a token-fetch step — see its header. If the headless
-refresh can't run (missing bot creds / Playwright), `--refresh` logs it and still pushes the last
-persisted forecast, so the nightly row is never skipped.
+> The old headless-browser refresh (`scripts/refresh-forecast-headless.cjs`) is **superseded** by
+> this and no longer needed — no bot user, no Playwright, no login.
 
 ## 7. Run summary (email and/or Slack) + on/off switch
 
