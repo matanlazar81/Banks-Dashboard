@@ -1,5 +1,5 @@
 // ============================================================================
-// forecast-core.cjs — the cashflow forecast engine, extracted verbatim.
+// forecast-core.mjs — the cashflow forecast engine, extracted verbatim.
 //
 // This is a faithful 1:1 port of the `cashflowForecast` useMemo in
 // src/App.tsx (the ~470-line block that produces the 12 monthly rows).
@@ -595,4 +595,4 @@ function computeCashflowForecast(inputs) {
   return rows;
 }
 
-module.exports = { computeCashflowForecast };
+export { computeCashflowForecast };

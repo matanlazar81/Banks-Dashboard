@@ -29,7 +29,9 @@
 
 const fs = require('fs');
 const path = require('path');
-const { computeCashflowForecast } = require('../src/forecast/forecast-core.cjs');
+const { pathToFileURL } = require('url');
+// The engine is an ESM module (.mjs); load it via dynamic import (works from CJS).
+let computeCashflowForecast;
 
 let failures = 0;
 const fail = (msg) => { failures++; console.error('  ✗ ' + msg); };
@@ -252,9 +254,14 @@ function runSmoke() {
 }
 
 // ── main ──────────────────────────────────────────────────────────────────
-console.log('=== forecast-core golden/smoke test ===\n');
-runGolden();
-runSmoke();
-console.log('');
-if (failures === 0) { console.log('✅ PASS — all checks green.'); process.exit(0); }
-else { console.error(`❌ FAIL — ${failures} check(s) failed.`); process.exit(1); }
+async function main() {
+  const coreUrl = pathToFileURL(path.join(__dirname, '..', 'src', 'forecast', 'forecast-core.mjs')).href;
+  ({ computeCashflowForecast } = await import(coreUrl));
+  console.log('=== forecast-core golden/smoke test ===\n');
+  runGolden();
+  runSmoke();
+  console.log('');
+  if (failures === 0) { console.log('✅ PASS — all checks green.'); process.exit(0); }
+  else { console.error(`❌ FAIL — ${failures} check(s) failed.`); process.exit(1); }
+}
+main().catch((e) => { console.error('❌ FAIL — test harness threw:', e.stack || e); process.exit(1); });
