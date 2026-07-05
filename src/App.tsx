@@ -4369,9 +4369,15 @@ useEffect(() => {
   // fired at all). If strict single-scenario enforcement is needed, apply it in the cron script,
   // where the persisted scenario tag is available.
   const lastNetCashSigRef = useRef<string>('');
+  const netCashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Clear any pending persist on unmount only (not on every re-render).
+  useEffect(() => () => { if (netCashTimerRef.current) clearTimeout(netCashTimerRef.current); }, []);
   useEffect(() => {
     if (activeCompany !== 'lsports') return;
     if ((activeYears[activeCompany] || currentYear) !== currentYear) return; // current year only
+    // Don't persist while the main data load is in flight — the forecast is still assembling
+    // from async sources (pipeline / actuals / reval / FX). Cancel any pending write too.
+    if (isLoading) { if (netCashTimerRef.current) clearTimeout(netCashTimerRef.current); return; }
     if (!cashflowForecast || cashflowForecast.length === 0) return;
     // Canonical basis for the nightly Snowflake push: Revenue = Pipeline, Salary = Actual.
     // Any other view (Win-rate / Budget) must NOT overwrite the persisted forecast, or the
@@ -4392,15 +4398,23 @@ useEffect(() => {
     const now = new Date();
     const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     const sig = `${dateStr}|${totalBankEur}|${forecastEur}`;
-    if (lastNetCashSigRef.current === sig) return;
+    if (sig === lastNetCashSigRef.current) return; // this exact value already scheduled/persisted — don't reset the debounce
     lastNetCashSigRef.current = sig;
-    fetch('/api/net-cash-forecast', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include', // send the session cookie (iframe / bankRole auth)
-      body: JSON.stringify({ date: dateStr, company: 'lsports', scenario: activeName, totalBankEur, totalBankIls, forecastEur, forecastIls, revenueBasis: 'pipeline', salaryBasis: 'actual' }),
-    }).catch(() => { lastNetCashSigRef.current = ''; });
-  }, [activeCompany, activeYears, currentYear, cashflowForecast, totalPrimaryBalance, totalLocalBalance, scenarios, activeScenarioId, revenueMethodology, salaryProjectionMode]);
+    // Debounce: the forecast recomputes repeatedly as async data settles. Persist only after it
+    // stops changing for a few seconds, so the nightly row captures the FINAL figure — not a
+    // mid-load partial value (which is what made FORECAST_EUR swing 5M↔66M between runs).
+    const payload = { date: dateStr, company: 'lsports', scenario: activeName, totalBankEur, totalBankIls, forecastEur, forecastIls, revenueBasis: 'pipeline', salaryBasis: 'actual' };
+    if (netCashTimerRef.current) clearTimeout(netCashTimerRef.current);
+    netCashTimerRef.current = setTimeout(() => {
+      console.log(`[net-cash] persisting settled forecast EUR ${forecastEur.toLocaleString('en-US')} (bank EUR ${totalBankEur.toLocaleString('en-US')})`);
+      fetch('/api/net-cash-forecast', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include', // send the session cookie (iframe / bankRole auth)
+        body: JSON.stringify(payload),
+      }).catch(() => { lastNetCashSigRef.current = ''; });
+    }, 6000);
+  }, [activeCompany, activeYears, currentYear, isLoading, cashflowForecast, totalPrimaryBalance, totalLocalBalance, scenarios, activeScenarioId, revenueMethodology, salaryProjectionMode]);
 
   const sendChatMessage = useCallback(async () => {
     // Read from whichever input has text (header or panel)
