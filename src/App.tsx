@@ -1916,11 +1916,15 @@ useEffect(() => {
 
   const _syncSave = useCallback((id: string, name: string, data: ScenarioData) => {
     if (!_srvRef.current) return;
-    fetch('/api/scenarios', { method: 'POST', headers: {'Content-Type':'application/json'}, credentials: 'include', body: JSON.stringify({id, name, data, company: activeCompany}) }).catch(() => {});
+    fetch('/api/scenarios', { method: 'POST', headers: {'Content-Type':'application/json'}, credentials: 'include', body: JSON.stringify({id, name, data, company: activeCompany}) })
+      .then(r => { if (!r.ok) console.warn(`[Scenarios] SAVE (POST) ${id} FAILED: ${r.status} ${r.statusText}`); else console.info(`[Scenarios] saved (POST) ${id} -> ${r.status}`); })
+      .catch(e => console.warn(`[Scenarios] SAVE (POST) ${id} network error:`, e && e.message ? e.message : e));
   }, [activeCompany]);
   const _syncUpdate = useCallback((id: string, updates: {name?: string; data?: ScenarioData}) => {
     if (!_srvRef.current) return;
-    fetch('/api/scenarios/' + id, { method: 'PUT', headers: {'Content-Type':'application/json'}, credentials: 'include', body: JSON.stringify(updates) }).catch(() => {});
+    fetch('/api/scenarios/' + id, { method: 'PUT', headers: {'Content-Type':'application/json'}, credentials: 'include', body: JSON.stringify(updates) })
+      .then(r => { if (!r.ok) console.warn(`[Scenarios] UPDATE (PUT) ${id} FAILED: ${r.status} ${r.statusText}`); else console.info(`[Scenarios] updated (PUT) ${id} -> ${r.status}`); })
+      .catch(e => console.warn(`[Scenarios] UPDATE (PUT) ${id} network error:`, e && e.message ? e.message : e));
   }, []);
   const _syncDelete = useCallback((id: string) => {
     if (!_srvRef.current) return;
