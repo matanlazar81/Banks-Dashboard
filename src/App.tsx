@@ -2122,10 +2122,14 @@ useEffect(() => {
     fetch('/api/user-pref', { credentials: 'include' })
       .then(r => r.ok ? r.json() : null)
       .then(d => {
-        const remoteId = d?.data?.activeScenarioId as string | undefined;
+        // Restore the remembered scenario AND apply its saved data on load — falling back to the
+        // localStorage id if user-pref has none. We intentionally apply even when the id already
+        // matches activeScenarioId (restored from localStorage): on a fresh reload the id is set
+        // but the SAVED adjustments (reval %, dept/vendor overrides) haven't been applied yet, so
+        // skipping left the view on defaults (e.g. a saved -30% reval snapping back to 30 on reload).
+        const remoteId = (d?.data?.activeScenarioId as string | undefined) || activeScenarioId || undefined;
         const remoteSharedOwner = d?.data?.activeSharedOwner as string | undefined;
         if (!remoteId) return;
-        if (remoteId === activeScenarioId) return;
         const own = scenarios.find(s => s.id === remoteId);
         const shared = _shared.find((s: any) => s.id === remoteId);
         const sc = own || shared;
