@@ -44,9 +44,20 @@
  *   NET_CASH_SUBSIDIARY      (optional) NS subsidiary for the bank balance (default 3 = LSports)
  *   NET_CASH_TOTAL_BANK_EUR / NET_CASH_FORECAST_EUR  (optional manual overrides)
  *   NET_CASH_NO_NS=1         (optional) skip the live NetSuite bank fetch
+ *   NET_CASH_SYNC_ENABLED    (optional) 'false' stops the sync (no Snowflake write); default 'true'
+ *   NET_CASH_EMAIL_TO        (optional) recipient(s) for the per-run summary, comma-separated
+ *   NET_CASH_SMTP_URL        (optional) SMTP connection URL (relay = no creds; or smtps://user:pw@host)
+ *   NET_CASH_EMAIL_FROM      (optional) sender address (defaults to NET_CASH_EMAIL_TO)
  *
  * APPEND-ONLY: every run inserts a NEW row. Nothing is overwritten, deduped, or deleted —
  * each update is preserved as its own row (a full history), keyed by the DATE sync timestamp.
+ *
+ * NOTIFICATIONS / CONTROL:
+ *   • After each run it emails a summary (the data pushed + the ACTIVE flag) to NET_CASH_EMAIL_TO
+ *     when NET_CASH_EMAIL_TO + NET_CASH_SMTP_URL are set; otherwise it logs what it would send.
+ *   • NET_CASH_SYNC_ENABLED=false stops the write entirely (and emails a DISABLED notice), so you
+ *     can pause/resume the sync any time by editing .env — no code change, no restart.
+ *   • The pushed FORECAST_EUR is the dashboard's Revenue:Pipeline + Salary:Actual year-end close.
  *
  * Flags
  * ─────
@@ -112,6 +123,61 @@ function readPersistedForecast() {
   catch { return { path: p, data: null }; }
 }
 
+// ── Email notification (optional, env-driven) ──────────────────────────────
+// Emails a summary of what was pushed (or skipped) to NET_CASH_EMAIL_TO via the SMTP
+// connection URL NET_CASH_SMTP_URL. Both must be set or the email is skipped (the sync
+// still runs and logs the body). NO credentials live in code — the URL sits in .env only.
+//   NET_CASH_SMTP_URL  e.g.  smtp://smtp-relay.gmail.com:587        (IP-allowlisted relay, no auth)
+//                      or     smtps://user%40lsports.eu:APP_PW@smtp.gmail.com:465
+//   NET_CASH_EMAIL_TO  recipient(s), comma-separated
+//   NET_CASH_EMAIL_FROM optional sender (defaults to NET_CASH_EMAIL_TO)
+async function sendEmail({ enabled, wrote, dryRun, syncTs, totalBankEur, forecastEur, tableName, error }) {
+  const to = process.env.NET_CASH_EMAIL_TO;
+  const smtpUrl = process.env.NET_CASH_SMTP_URL;
+  const from = process.env.NET_CASH_EMAIL_FROM || to;
+  const fmtEur = (v) => (Number.isFinite(Number(v)) && v != null ? `EUR ${Math.round(Number(v)).toLocaleString('en-US')}` : 'MISSING');
+  const statusLine = error ? 'FAILED'
+    : !enabled ? 'DISABLED — no row written'
+    : dryRun ? 'DRY RUN — no row written'
+    : wrote ? 'row written' : 'no row written';
+  const subject = `[Net-Cash -> Snowflake] ${statusLine} — ${syncTs}`;
+  const lines = [
+    'Net-Cash daily sync',
+    `Run (Asia/Jerusalem): ${syncTs}`,
+    '',
+    `Sync ACTIVE flag : ${enabled ? 'TRUE' : 'FALSE'}`,
+    '   to stop  : set NET_CASH_SYNC_ENABLED=false in .env',
+    '   to resume: set NET_CASH_SYNC_ENABLED=true  in .env',
+    '',
+    `Status           : ${statusLine}`,
+    `Table            : ${tableName}`,
+    '',
+    `DATE             : ${syncTs}`,
+    `TOTAL_BANK_EUR   : ${fmtEur(totalBankEur)}`,
+    `FORECAST_EUR     : ${fmtEur(forecastEur)}`,
+    '',
+    'Revenue basis    : Pipeline',
+    'Salary basis     : Actual',
+  ];
+  if (error) lines.push('', `Error            : ${error}`);
+  const text = lines.join('\n');
+  if (!to || !smtpUrl) {
+    console.log('[net-cash] email not sent (set NET_CASH_EMAIL_TO + NET_CASH_SMTP_URL to enable). Would have sent:');
+    console.log(text.split('\n').map((l) => `[net-cash]   ${l}`).join('\n'));
+    return;
+  }
+  let nodemailer;
+  try { nodemailer = require('nodemailer'); }
+  catch { console.warn('[net-cash] nodemailer not installed (run: npm i nodemailer) — email skipped.'); return; }
+  try {
+    const transporter = nodemailer.createTransport(smtpUrl);
+    await transporter.sendMail({ from, to, subject, text });
+    console.log(`[net-cash] email sent to ${to}`);
+  } catch (e) {
+    console.warn(`[net-cash] email send failed: ${e && e.message ? e.message : e}`);
+  }
+}
+
 // Total EUR bank balance (all BANK/CredCard accounts, primary book) as of a given date.
 async function fetchBankAsOf(asOfDate) {
   if (process.env.NET_CASH_NO_NS === '1') return null;
@@ -166,6 +232,7 @@ const CREATE_DDL = `CREATE TABLE IF NOT EXISTS ${TABLE} (
 
 async function main() {
   const args = parseArgs(process.argv);
+  const syncEnabled = String(process.env.NET_CASH_SYNC_ENABLED ?? 'true').trim().toLowerCase() !== 'false';
   const nowParts = israelNowParts();
   const dateOnly = args.date || nowParts.date;      // calendar day (dedupe key)
   const syncTs = `${dateOnly} ${nowParts.time}`;    // DATE value = sync timestamp incl. hour
@@ -198,6 +265,14 @@ async function main() {
     }
     console.log('[net-cash] --dry-run: not writing. Would insert:');
     console.log(`[net-cash]   DATE=TO_TIMESTAMP_NTZ('${syncTs}'), TOTAL_BANK_EUR=${Number.isFinite(totalBankEur) ? Math.round(totalBankEur) : 'null'}, FORECAST_EUR=${Number.isFinite(forecastEur) ? Math.round(forecastEur) : 'null'} (+ SRC_UPDATED_AT=CURRENT_TIMESTAMP() and IS_APPROVED=FALSE if those columns exist)`);
+    process.exit(0);
+  }
+
+  // ── Enable flag: pause/resume the whole sync via NET_CASH_SYNC_ENABLED ──
+  if (!syncEnabled) {
+    reportRow();
+    console.log('[net-cash] NET_CASH_SYNC_ENABLED=false → sync DISABLED, not writing to Snowflake.');
+    await sendEmail({ enabled: false, wrote: false, dryRun: false, syncTs, totalBankEur, forecastEur, tableName: TABLE });
     process.exit(0);
   }
 
@@ -276,9 +351,12 @@ async function main() {
     // DATE sync timestamp). Rows are never overwritten or deleted by this job.
     await exec(conn, adaptedSql, binds);
     console.log(`[net-cash] ✓ Appended 1 row for ${syncTs} (columns: ${used.map((c) => c.name).join(', ')}).`);
+    await sendEmail({ enabled: true, wrote: true, dryRun: false, syncTs, totalBankEur, forecastEur, tableName: TABLE });
     process.exit(0);
   } catch (e) {
-    console.error(`[net-cash] ERROR: ${e && e.message ? e.message : e}`);
+    const msg = e && e.message ? e.message : String(e);
+    console.error(`[net-cash] ERROR: ${msg}`);
+    try { await sendEmail({ enabled: syncEnabled, wrote: false, dryRun: false, syncTs, totalBankEur, forecastEur, tableName: TABLE, error: msg }); } catch { /* ignore */ }
     process.exit(1);
   } finally {
     if (conn) { try { conn.destroy(() => {}); } catch { /* ignore */ } }

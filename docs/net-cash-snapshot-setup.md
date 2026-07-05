@@ -21,11 +21,13 @@ Cron @ 23:00 Asia/Jerusalem
   **as of the end of the previous month** — every day in July reports the Jun 30 balance,
   every day in August reports Jul 31, etc. Fetched live from NetSuite
   (`fetchBankAccountListAsOf`), so it needs no dashboard. Override with `NET_CASH_TOTAL_BANK_EUR`.
-- `FORECAST_EUR` = the **"Exit plan June26"** year-end (December) closing, after savings
-  (currently €7,048,154). Computed client-side, so it is persisted from the UI, **gated to the
-  Exit-plan-June26 scenario** (other scenarios don't overwrite it). Fallback chain: env override
-  → persisted snapshot → **carry-forward** (reuse the last row's `FORECAST_EUR`). The first run
-  has no prior row, so seed it once with `NET_CASH_FORECAST_EUR`.
+- `FORECAST_EUR` = the year-end (December) closing balance, after savings. Computed client-side
+  on the **Revenue:Pipeline + Salary:Actual** basis (the agreed methodology), so it is persisted
+  from the UI. The persist is **gated to that basis** — a dashboard viewed in Win-rate or Budget
+  mode does **not** overwrite the file (it logs `persist skipped` and moves on), so the shipped
+  figure never drifts from Pipeline/Actual. Fallback chain: env override → persisted snapshot →
+  **carry-forward** (reuse the last row's `FORECAST_EUR`). The first run has no prior row, so seed
+  it once with `NET_CASH_FORECAST_EUR`.
 - `SRC_UPDATED_AT` = `CURRENT_TIMESTAMP()` at insert (the load time; the live column is spelled
   `SRC_UPDATED_AT`, with a "D"). `IS_APPROVED_UPDATED_AT` = **NOT written** — set by the external
   approval automation.
@@ -75,6 +77,12 @@ SNOWFLAKE_WAREHOUSE=finance_wh
 # SNOWFLAKE_WRITE_USER=...
 # SNOWFLAKE_WRITE_PRIVATE_KEY_PATH=/abs/path/to/write-key.pem
 # SNOWFLAKE_WRITE_ROLE=<WRITE_ROLE>
+
+# on/off switch + email summary (see §7):
+# NET_CASH_SYNC_ENABLED=true            # set false to pause the write; email still fires
+# NET_CASH_EMAIL_TO=matan.l@lsports.eu
+# NET_CASH_SMTP_URL=smtp://smtp-relay.gmail.com:587   # IP-allowlisted relay (no creds) OR smtps://user:app_pw@smtp.gmail.com:465
+# NET_CASH_EMAIL_FROM=finance-bot@lsports.eu          # optional; defaults to NET_CASH_EMAIL_TO
 ```
 
 ## 3. Verify before scheduling
@@ -181,6 +189,37 @@ node scripts/refresh-forecast-headless.cjs        # expect: login → 200, "fore
 
 Login is `POST /api/auth/login` with `{email, password}` (passport-local, `usernameField:'email'`).
 If that returns 403 (CSRF), the script needs a token-fetch step — see its header.
+
+## 7. Email summary + on/off switch
+
+Every run emails a one-page summary of exactly what it pushed, so you get a nightly receipt and
+an easy kill-switch. Nothing is hard-coded — the transport and recipient live in `.env`.
+
+```
+# .env — email transport (pick ONE style for NET_CASH_SMTP_URL)
+NET_CASH_EMAIL_TO=matan.l@lsports.eu
+NET_CASH_SMTP_URL=smtp://smtp-relay.gmail.com:587            # Workspace relay, server IP allowlisted → NO password
+# NET_CASH_SMTP_URL=smtps://finance-bot%40lsports.eu:APP_PASSWORD@smtp.gmail.com:465   # or an app password
+NET_CASH_EMAIL_FROM=finance-bot@lsports.eu                  # optional; defaults to NET_CASH_EMAIL_TO
+```
+
+Install the mailer once (added to `package.json`): `npm i nodemailer`.
+
+The email contains: run timestamp, the **ACTIVE flag (TRUE/FALSE)**, status (row written / disabled /
+failed), `DATE` / `TOTAL_BANK_EUR` / `FORECAST_EUR`, and the basis (Revenue: Pipeline, Salary: Actual).
+If `NET_CASH_EMAIL_TO` + `NET_CASH_SMTP_URL` aren't set, the job just **logs** the body (no send) and
+still writes Snowflake — so email is strictly additive.
+
+**Stop / activate whenever you want** — no code change, no restart (the cron re-reads `.env` each run):
+
+```bash
+# pause the sync (no Snowflake write; you still get a "DISABLED" email as confirmation):
+#   set in .env →  NET_CASH_SYNC_ENABLED=false
+# resume:
+#   set in .env →  NET_CASH_SYNC_ENABLED=true   (or delete the line — default is on)
+```
+
+A disabled run also doubles as an email test: it sends the summary without writing a row.
 
 ## Notes
 
