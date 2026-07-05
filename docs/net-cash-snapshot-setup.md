@@ -180,15 +180,27 @@ npm i playwright && npx playwright install chromium
 #    DASHBOARD_BOT_EMAIL=...      DASHBOARD_BOT_PASSWORD=...
 ```
 
-Test it, then schedule:
+Test the refresh alone first, then run the **combined** job:
 ```bash
 node scripts/refresh-forecast-headless.cjs        # expect: login → 200, "forecast re-persisted"
-# crontab -e — add BEFORE the 23:00 line:
-# 50 22 * * * cd /home/ubuntu/finance-it/extra-apps/bank-dashboard && /usr/bin/node scripts/refresh-forecast-headless.cjs >> /var/log/net-cash-refresh.log 2>&1
+
+# One command = recompute (headless) → push (Snowflake) → send (Slack/email):
+node scripts/net-cash-snapshot.cjs --refresh --dry-run   # refresh + preview, no write
+node scripts/net-cash-snapshot.cjs --refresh             # refresh + real push + notify
+```
+
+**Schedule it as ONE nightly cron** (replaces the push-only 23:00 line — don't run both, or you
+get a stale push at 23:00 too). Runs refresh → push → send in sequence, so no NetSuite concurrency
+clash and no race on the file:
+```cron
+CRON_TZ=Asia/Jerusalem
+50 22 * * * cd /home/ubuntu/finance-it/extra-apps/bank-dashboard && /usr/bin/node scripts/net-cash-snapshot.cjs --refresh >> /var/log/net-cash.log 2>&1
 ```
 
 Login is `POST /api/auth/login` with `{email, password}` (passport-local, `usernameField:'email'`).
-If that returns 403 (CSRF), the script needs a token-fetch step — see its header.
+If that returns 403 (CSRF), the script needs a token-fetch step — see its header. If the headless
+refresh can't run (missing bot creds / Playwright), `--refresh` logs it and still pushes the last
+persisted forecast, so the nightly row is never skipped.
 
 ## 7. Run summary (email and/or Slack) + on/off switch
 
