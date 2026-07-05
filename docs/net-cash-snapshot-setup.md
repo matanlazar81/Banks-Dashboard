@@ -195,20 +195,27 @@ If that returns 403 (CSRF), the script needs a token-fetch step — see its head
 Every run emails a one-page summary of exactly what it pushed, so you get a nightly receipt and
 an easy kill-switch. Nothing is hard-coded — the transport and recipient live in `.env`.
 
+Transport is resolved in this order:
+1. `NET_CASH_SMTP_URL` — an explicit connection URL, if you set one.
+2. **else the app's existing `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS`** — reuse the
+   backend's already-working mailer, so you add **no new credentials**. This is the recommended path.
+
 ```
-# .env — email transport (pick ONE style for NET_CASH_SMTP_URL)
+# .env — recommended: just set the recipient and let it reuse the backend's SMTP_* creds
 NET_CASH_EMAIL_TO=matan.l@lsports.eu
-NET_CASH_SMTP_URL=smtp://smtp-relay.gmail.com:587            # Workspace relay, server IP allowlisted → NO password
-# NET_CASH_SMTP_URL=smtps://finance-bot%40lsports.eu:APP_PASSWORD@smtp.gmail.com:465   # or an app password
-NET_CASH_EMAIL_FROM=finance-bot@lsports.eu                  # optional; defaults to NET_CASH_EMAIL_TO
+# NET_CASH_EMAIL_FROM=finance@lsports.eu     # optional; defaults to SMTP_USER, then NET_CASH_EMAIL_TO
+
+# OR override with an explicit URL instead of SMTP_*:
+# NET_CASH_SMTP_URL=smtp://smtp-relay.gmail.com:587                                   # relay, no password
+# NET_CASH_SMTP_URL=smtps://finance%40lsports.eu:APP_PASSWORD@smtp.gmail.com:465      # or an app password
 ```
 
 Install the mailer once (added to `package.json`): `npm i nodemailer`.
 
 The email contains: run timestamp, the **ACTIVE flag (TRUE/FALSE)**, status (row written / disabled /
 failed), `DATE` / `TOTAL_BANK_EUR` / `FORECAST_EUR`, and the basis (Revenue: Pipeline, Salary: Actual).
-If `NET_CASH_EMAIL_TO` + `NET_CASH_SMTP_URL` aren't set, the job just **logs** the body (no send) and
-still writes Snowflake — so email is strictly additive.
+If neither `NET_CASH_SMTP_URL` nor `SMTP_HOST` is set (or `NET_CASH_EMAIL_TO` is missing), the job
+just **logs** the body (no send) and still writes Snowflake — so email is strictly additive.
 
 **Stop / activate whenever you want** — no code change, no restart (the cron re-reads `.env` each run):
 
