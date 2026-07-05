@@ -153,6 +153,35 @@ June26 scenario**, the frontend POSTs `forecastEur` (currently €7,048,154) to 
 writes `data/net-cash-forecast.json`. The nightly cron then picks it up automatically — no more
 seeding. Other scenarios do not overwrite the file.
 
+## 6. Same-night forecast refresh (headless, optional) — `scripts/refresh-forecast-headless.cjs`
+
+Without this, `FORECAST_EUR` only changes when someone opens the dashboard on Exit plan June26
+(the persist). To capture plan changes automatically each night with **no one's laptop open**,
+run a headless browser on the server at **22:50** (10 min before the 23:00 write). It runs the
+real dashboard, so the number matches the UI exactly.
+
+One-time setup:
+```bash
+# a) A bot user with the BANK_DASHBOARD role + a password (finance-it-backend has
+#    create-admin/reset-admin scripts). Then log in as the bot ONCE and select
+#    LSports · 2026 · "Exit plan June26" so /api/user-pref remembers it for headless loads.
+# b) Playwright + Chromium on the server:
+cd /home/ubuntu/finance-it/extra-apps/bank-dashboard
+npm i playwright && npx playwright install chromium
+# c) Add the bot creds to .env (never committed):
+#    DASHBOARD_BOT_EMAIL=...      DASHBOARD_BOT_PASSWORD=...
+```
+
+Test it, then schedule:
+```bash
+node scripts/refresh-forecast-headless.cjs        # expect: login → 200, "forecast re-persisted"
+# crontab -e — add BEFORE the 23:00 line:
+# 50 22 * * * cd /home/ubuntu/finance-it/extra-apps/bank-dashboard && /usr/bin/node scripts/refresh-forecast-headless.cjs >> /var/log/net-cash-refresh.log 2>&1
+```
+
+Login is `POST /api/auth/login` with `{email, password}` (passport-local, `usernameField:'email'`).
+If that returns 403 (CSRF), the script needs a token-fetch step — see its header.
+
 ## Notes
 
 - `IS_APPROVED` is written `FALSE` and `SRC_UPDATED_AT` is stamped with the insert time (both if
