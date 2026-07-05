@@ -3505,9 +3505,33 @@ useEffect(() => {
       //  - Current / future months: forecast only (currency defense budget × pct). Partial-month NS reval
       //    is ignored because the month isn't closed -- using opening-balance-only reval would project
       //    a misleading large gain/loss onto the row.
-      const revalHasBothEnds = bcm ? true : (isPastMonth ? (monthlyReval.byMonth?.[mKey]?.hasBothEnds || false) : false);
-      let revalImpact = bcm ? bcm.reval.eur : (isPastMonth && revalHasBothEnds ? (monthlyReval.byMonth?.[mKey]?.eur || 0) : 0);
-      let revalImpactILS = bcm ? bcm.reval.ils : (isPastMonth && revalHasBothEnds ? (monthlyReval.byMonth?.[mKey]?.ils || 0) : 0);
+      // ── Reval both-ends guard ──
+      // A month's FX-reval cycle = an opening reversal (posted the 1st, reversing the prior
+      // month's mark) + a new month-end mark (last day). We only recognize a PAST month's reval
+      // when BOTH ends are present (monthlyReval.hasBothEnds → reval txns on >=2 distinct dates).
+      // This stops a stale/mid-month snapshot that captured only the opening reversal from posting
+      // a phantom one-sided swing (e.g. June showing -€2.53M, which was just May's mark being
+      // reversed, with June's own +€2.75M month-end mark not yet in the snapshot).
+      const revalHasBothEnds = isPastMonth ? (monthlyReval.byMonth?.[mKey]?.hasBothEnds || false) : false;
+      const monthlyRevalEur = monthlyReval.byMonth?.[mKey]?.eur || 0;
+      const monthlyRevalIls = monthlyReval.byMonth?.[mKey]?.ils || 0;
+      // Prefer the bank-classified reval (bcm) — it's the FX impact on the bank accounts
+      // specifically — but only when it's a complete cycle AND consistent with the P&L reval.
+      // If bcm is absent, or diverges from the P&L reval by far more than a normal month's
+      // ~€50-100K gap (a stale single-sided snapshot), fall back to the guarded P&L monthly reval
+      // so the row can never show a one-sided phantom.
+      let revalImpact = 0, revalImpactILS = 0;
+      if (revalHasBothEnds) {
+        if (bcm && Math.abs(bcm.reval.eur - monthlyRevalEur) < 500000) {
+          // bcm present and consistent with the P&L reval → use the bank-side figure.
+          revalImpact = bcm.reval.eur;
+          revalImpactILS = bcm.reval.ils || 0;
+        } else {
+          // bcm absent or a stale single-sided snapshot → use the guarded P&L monthly reval.
+          revalImpact = monthlyRevalEur;
+          revalImpactILS = monthlyRevalIls;
+        }
+      }
       // Current + future: currency defense budget × pct
       if (!isPastMonth) {
         const monthPct = currencyDefensePctByMonth[i] ?? currencyDefensePct; // per-month override or global default
