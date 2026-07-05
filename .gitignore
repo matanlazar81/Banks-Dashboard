@@ -6,3 +6,4 @@ data/
 *.db
 *.log
 chat-history.json
+scripts/fixtures/forecast-golden.json
