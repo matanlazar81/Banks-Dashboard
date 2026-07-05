@@ -3534,8 +3534,11 @@ useEffect(() => {
       }
       // Current + future: currency defense budget × pct
       if (!isPastMonth) {
-        const monthPct = currencyDefensePctByMonth[i] ?? currencyDefensePct; // per-month override or global default
-        if (monthPct > 0) {
+        // Coerce (the per-month input may hold '' or '-' mid-edit) and allow NEGATIVE pct so the
+        // reval projection can be set to a loss: defBudget is positive, so a negative pct yields a
+        // negative defenseAmount → negative reval. Number.isFinite guards against '' / '-'.
+        const monthPct = Number(currencyDefensePctByMonth[i] ?? currencyDefensePct);
+        if (Number.isFinite(monthPct) && monthPct !== 0) {
           let defBudget = 0;
           if (sfFinanceBudget[mKey] && sfFinanceBudget[mKey].eur !== 0) {
             defBudget = Math.abs(sfFinanceBudget[mKey].eur);
@@ -6880,10 +6883,10 @@ useEffect(() => {
             <span className="text-[10px] text-gray-500">Budget ~{fmt(avgFinBudget)}/mo</span>
             <span className="text-[10px] text-gray-400">Default:</span>
             <div className="flex items-center gap-1.5">
-              <button onClick={() => setCurrencyDefensePct(Math.max(0, currencyDefensePct - 10))}
+              <button onClick={() => setCurrencyDefensePct(Math.max(-100, currencyDefensePct - 10))}
                 className="w-5 h-5 rounded bg-white hover:bg-amber-100 text-amber-700 text-xs font-bold flex items-center justify-center border border-amber-300">−</button>
-              <input type="number" value={currencyDefensePct} min={0} max={100} step={10}
-                onChange={(e) => setCurrencyDefensePct(Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))}
+              <input type="number" value={currencyDefensePct} min={-100} max={100} step={10}
+                onChange={(e) => setCurrencyDefensePct(Math.min(100, Math.max(-100, parseInt(e.target.value) || 0)))}
                 className="w-12 text-center text-xs font-semibold text-amber-800 border border-amber-300 rounded px-1 py-0.5 bg-white" />
               <span className="text-xs text-amber-600">%</span>
               <button onClick={() => setCurrencyDefensePct(Math.min(100, currencyDefensePct + 10))}
