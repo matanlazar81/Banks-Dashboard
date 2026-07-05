@@ -88,6 +88,22 @@ async function tryFetch(label, fn, fallback) {
   }
 }
 
+// Concurrency-limited map — runs `worker` over `items` with at most `limit` in
+// flight. Used to throttle NetSuite so a burst of SuiteQL calls doesn't trip its
+// per-integration concurrency governor (HTTP 429).
+async function mapLimit(items, limit, worker) {
+  const results = new Array(items.length);
+  let next = 0;
+  async function run() {
+    while (next < items.length) {
+      const idx = next++;
+      results[idx] = await worker(items[idx], idx);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, run));
+  return results;
+}
+
 // ── scenario loading ─────────────────────────────────────────────────────
 function loadScenarioData(scenarioName) {
   // 1. explicit single-scenario file
@@ -158,42 +174,55 @@ async function gatherInputs(ns, sf, year) {
     payrollAccounts = new Set((rows || []).map((r) => r.GL_ACCOUNT_NUMBER));
   } catch (e) { console.warn(`[compute]   ! payroll-accounts query failed: ${e.message}`); }
 
-  // Fire the remaining independent feeds concurrently (retry on 429 is built into netsuite-api).
+  // Fire the feeds concurrently, but THROTTLE NetSuite. Firing every NS SuiteQL at
+  // once trips NetSuite's per-integration concurrency governor (HTTP 429 "Concurrent
+  // request limit exceeded") — a storm that wide the retry can't clear, so feeds like
+  // the bank balance drop out and the run turns non-deterministic. Cap NS to a small
+  // pool (NET_CASH_NS_CONCURRENCY, default 3); Snowflake takes full parallelism fine.
+  const NS_CONCURRENCY = parseInt(process.env.NET_CASH_NS_CONCURRENCY || '3', 10) || 3;
+  const nsTasks = [
+    ['ns.fetchSalaryData', () => ns.fetchSalaryData(), []],
+    ['ns.fetchVendorBills', () => ns.fetchVendorBills(), []],
+    ['ns.fetchVendorActuals', () => ns.fetchVendorActuals(), []],
+    ['ns.fetchVendorPaymentHistory', () => ns.fetchVendorPaymentHistory(), []],
+    ['ns.fetchPaymentsByCategory', () => ns.fetchPaymentsByCategory(), { byMonth: {}, categories: [] }],
+    ['ns.fetchPaidVendorsYearly', () => ns.fetchPaidVendorsYearly(year), { accounts: [], months: [], grid: {} }],
+    ['ns.fetchMonthlyRevaluation', () => ns.fetchMonthlyRevaluation(), { byMonth: {}, preYear: { eur: 0, ils: 0 } }],
+    ['ns.fetchCurrencyDefenseBudget', () => ns.fetchCurrencyDefenseBudget(), {}],
+    ['ns.fetchBankBalance', () => ns.fetchBankBalance(), { primary: null, local: null }],
+    ['ns.fetchBankAccountListAsOf(yearStart)', () => ns.fetchBankAccountListAsOf(`${year - 1}-12-31`), []],
+    ['ns.fetchBankAccountListAsOf(prevMonthEnd)', () => ns.fetchBankAccountListAsOf(prevMonthEndDate()), []],
+    ['ns.fetchBankClassifiedYearly', () => ns.fetchBankClassifiedYearly(year), { byMonth: {} }],
+    ['collections (income-credits SQL)', () => fetchCollections(ns, year), {}],
+    ['ns.fetchRevenueActuals', () => ns.fetchRevenueActuals(), []],
+    ['ns.fetchCustomerCashReceipts', () => ns.fetchCustomerCashReceipts(), {}],
+  ];
+  const sfTasks = [
+    ['sf.fetchMonthlyActualsSplit', () => sf.fetchMonthlyActualsSplit(), {}],
+    ['sf.fetchSalaryBudget', () => sf.fetchSalaryBudget(year), {}],
+    ['sf.fetchBudgetByCategory', () => sf.fetchBudgetByCategory(year), { byMonth: {}, totalByMonth: {}, financeBudget: {} }],
+    ['sf.fetchRevenueProjection', () => sf.fetchRevenueProjection(year), { budget: {}, actuals: {}, targets: {} }],
+    ['sf.fetchMonthlyRevenuePaid', () => sf.fetchMonthlyRevenuePaid(year), {}],
+    ['sf.fetchOpenPipeline', () => sf.fetchOpenPipeline(year), []],
+    ['sf.fetchConversionAnalysis', () => sf.fetchConversionAnalysis(), { yearly: [] }],
+    ['sf.fetchPipelineMethodology', () => sf.fetchPipelineMethodology(year), { byMonth: {} }],
+    ['sf.fetchChurnAnalysis', () => sf.fetchChurnAnalysis(), { yearly: [], recentMonthlyAvg: 0 }],
+    ['sf.fetchQuarterlyChurnMRR', () => sf.fetchQuarterlyChurnMRR(), []],
+  ];
+  console.log(`[compute] fetching ${nsTasks.length} NetSuite feeds (≤${NS_CONCURRENCY} concurrent) + ${sfTasks.length} Snowflake feeds…`);
+  const [nsResults, sfResults] = await Promise.all([
+    mapLimit(nsTasks, NS_CONCURRENCY, ([label, fn, fb]) => tryFetch(label, fn, fb)),
+    Promise.all(sfTasks.map(([label, fn, fb]) => tryFetch(label, fn, fb))),
+  ]);
   const [
     salaryData, vendorBills, vendorActuals, vendorHistory, expenseCategories, paidVendorsRaw,
     monthlyReval, sfFinanceBudget, bankBal, ysAccts, pmAccts, bankClassifiedRaw, collections,
     revenueActuals, customerReceipts,
+  ] = nsResults;
+  const [
     sfActualsSplit, salBudgetBase, sfBudgetBase, sfRevenue, sfRevenuePaid, sfPipeline,
     sfConversion, pipelineMethodology, churnAnalysis, sfChurnQuarterly,
-  ] = await Promise.all([
-    // NetSuite
-    tryFetch('ns.fetchSalaryData', () => ns.fetchSalaryData(), []),
-    tryFetch('ns.fetchVendorBills', () => ns.fetchVendorBills(), []),
-    tryFetch('ns.fetchVendorActuals', () => ns.fetchVendorActuals(), []),
-    tryFetch('ns.fetchVendorPaymentHistory', () => ns.fetchVendorPaymentHistory(), []),
-    tryFetch('ns.fetchPaymentsByCategory', () => ns.fetchPaymentsByCategory(), { byMonth: {}, categories: [] }),
-    tryFetch('ns.fetchPaidVendorsYearly', () => ns.fetchPaidVendorsYearly(year), { accounts: [], months: [], grid: {} }),
-    tryFetch('ns.fetchMonthlyRevaluation', () => ns.fetchMonthlyRevaluation(), { byMonth: {}, preYear: { eur: 0, ils: 0 } }),
-    tryFetch('ns.fetchCurrencyDefenseBudget', () => ns.fetchCurrencyDefenseBudget(), {}),
-    tryFetch('ns.fetchBankBalance', () => ns.fetchBankBalance(), { primary: null, local: null }),
-    tryFetch('ns.fetchBankAccountListAsOf(yearStart)', () => ns.fetchBankAccountListAsOf(`${year - 1}-12-31`), []),
-    tryFetch('ns.fetchBankAccountListAsOf(prevMonthEnd)', () => ns.fetchBankAccountListAsOf(prevMonthEndDate()), []),
-    tryFetch('ns.fetchBankClassifiedYearly', () => ns.fetchBankClassifiedYearly(year), { byMonth: {} }),
-    tryFetch('collections (income-credits SQL)', () => fetchCollections(ns, year), {}),
-    tryFetch('ns.fetchRevenueActuals', () => ns.fetchRevenueActuals(), []),
-    tryFetch('ns.fetchCustomerCashReceipts', () => ns.fetchCustomerCashReceipts(), {}),
-    // Snowflake
-    tryFetch('sf.fetchMonthlyActualsSplit', () => sf.fetchMonthlyActualsSplit(), {}),
-    tryFetch('sf.fetchSalaryBudget', () => sf.fetchSalaryBudget(year), {}),
-    tryFetch('sf.fetchBudgetByCategory', () => sf.fetchBudgetByCategory(year), { byMonth: {}, totalByMonth: {}, financeBudget: {} }),
-    tryFetch('sf.fetchRevenueProjection', () => sf.fetchRevenueProjection(year), { budget: {}, actuals: {}, targets: {} }),
-    tryFetch('sf.fetchMonthlyRevenuePaid', () => sf.fetchMonthlyRevenuePaid(year), {}),
-    tryFetch('sf.fetchOpenPipeline', () => sf.fetchOpenPipeline(year), []),
-    tryFetch('sf.fetchConversionAnalysis', () => sf.fetchConversionAnalysis(), { yearly: [] }),
-    tryFetch('sf.fetchPipelineMethodology', () => sf.fetchPipelineMethodology(year), { byMonth: {} }),
-    tryFetch('sf.fetchChurnAnalysis', () => sf.fetchChurnAnalysis(), { yearly: [], recentMonthlyAvg: 0 }),
-    tryFetch('sf.fetchQuarterlyChurnMRR', () => sf.fetchQuarterlyChurnMRR(), []),
-  ]);
+  ] = sfResults;
 
   // Dependent: cumulative headcount impact needs lastActualSalaryMonth.
   const monthlyHCImpact = await tryFetch('sf.fetchMonthlyHCImpact', () => sf.fetchMonthlyHCImpact(year, lastActualSalaryMonth), {});
