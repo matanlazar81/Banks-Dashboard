@@ -47,22 +47,46 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
     return 'OAuth realm="' + ACCOUNT_ID + '", ' + Object.keys(oauthParams).sort().map(k => k + '="' + encodeURIComponent(oauthParams[k]) + '"').join(', ');
   }
 
-  async function suiteql(query, timeoutMs = 60000) {
-    const auth = genAuth('POST', BASE_URL);
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    const resp = await fetch(BASE_URL, {
-      method: 'POST',
-      headers: { 'Authorization': auth, 'Content-Type': 'application/json', 'Prefer': 'transient' },
-      body: JSON.stringify({ q: query }),
-      signal: controller.signal,
-    });
-    clearTimeout(timer);
-    if (!resp.ok) {
+  // POST a SuiteQL page with retry on 429 (NS concurrency limit) + transient 5xx / network
+  // errors — fresh OAuth per attempt, exponential backoff + jitter. Without this, a burst of
+  // dashboard queries trips NS's concurrency cap and calls fail intermittently, which made
+  // past-month reval and other actuals randomly appear/disappear between loads.
+  async function _nsFetchWithRetry(url, query, signal) {
+    const maxRetries = 4;
+    for (let attempt = 0; ; attempt++) {
+      let resp;
+      try {
+        resp = await fetch(url, {
+          method: 'POST',
+          headers: { 'Authorization': genAuth('POST', url), 'Content-Type': 'application/json', 'Prefer': 'transient' },
+          body: JSON.stringify({ q: query }),
+          signal,
+        });
+      } catch (e) {
+        if ((e && e.name === 'AbortError') || attempt >= maxRetries) throw e;
+        await new Promise((r) => setTimeout(r, Math.min(8000, 400 * 2 ** attempt) + Math.floor(Math.random() * 250)));
+        continue;
+      }
+      if (resp.ok) return resp;
+      if ((resp.status === 429 || resp.status >= 500) && attempt < maxRetries) {
+        console.warn(`[NS API] ${resp.status} (concurrency/transient) — retry ${attempt + 1}/${maxRetries}`);
+        await new Promise((r) => setTimeout(r, Math.min(8000, 400 * 2 ** attempt) + Math.floor(Math.random() * 250)));
+        continue;
+      }
       const err = await resp.text();
       throw new Error(`SuiteQL ${resp.status}: ${err.substring(0, 300)}`);
     }
-    return resp.json();
+  }
+
+  async function suiteql(query, timeoutMs = 60000) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const resp = await _nsFetchWithRetry(BASE_URL, query, controller.signal);
+      return await resp.json();
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   // Paginated SuiteQL — fetches all results using NS REST URL pagination.
@@ -80,16 +104,7 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
 
     while (true) {
       const url = `${BASE_URL}?limit=${pageSize}&offset=${offset}`;
-      const auth = genAuth('POST', url);
-      const resp = await fetch(url, {
-        method: 'POST',
-        headers: { 'Authorization': auth, 'Content-Type': 'application/json', 'Prefer': 'transient' },
-        body: JSON.stringify({ q: cleanQuery }),
-      });
-      if (!resp.ok) {
-        const err = await resp.text();
-        throw new Error(`SuiteQL ${resp.status}: ${err.substring(0, 300)}`);
-      }
+      const resp = await _nsFetchWithRetry(url, cleanQuery);
       const result = await resp.json();
       const items = result.items || [];
       allItems = allItems.concat(items);
