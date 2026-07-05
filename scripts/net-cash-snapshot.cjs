@@ -66,6 +66,10 @@
  * Flags
  * ─────
  *   --dry-run           resolve + print the row and SQL, do NOT write to Snowflake (no creds needed)
+ *   --refresh           recompute the forecast server-side (headless dashboard) BEFORE pushing, so
+ *                       the pushed FORECAST_EUR is fresh with no browser open. Needs the bot creds
+ *                       (DASHBOARD_BOT_EMAIL/PASSWORD) + Playwright; falls through to the last
+ *                       persisted forecast if the refresh can't run. One command = refresh+push+send.
  *   --date=YYYY-MM-DD   override the snapshot date (time portion stays the live sync time)
  *   --describe          print the table's actual columns and exit
  *   --show              print the last 10 rows and exit
@@ -84,15 +88,38 @@ const REPO_ROOT = path.resolve(__dirname, '..');
 const TABLE = 'RAW.LANDING_FINANCE.NET_CASH_ACTUAL_AND_FORECAST';
 
 function parseArgs(argv) {
-  const a = { dryRun: false, createTable: false, describe: false, show: false, date: null };
+  const a = { dryRun: false, createTable: false, describe: false, show: false, date: null, refresh: false };
   for (const arg of argv.slice(2)) {
     if (arg === '--dry-run') a.dryRun = true;
     else if (arg === '--create-table') a.createTable = true;
     else if (arg === '--describe') a.describe = true;
     else if (arg === '--show') a.show = true;                 // print recent rows and exit
+    else if (arg === '--refresh') a.refresh = true;           // recompute forecast (headless) before pushing
     else if (arg.startsWith('--date=')) a.date = arg.slice('--date='.length);
   }
   return a;
+}
+
+// Recompute the forecast server-side by running the REAL dashboard in a headless browser
+// (scripts/refresh-forecast-headless.cjs), which re-persists data/net-cash-forecast.json. This is
+// how the nightly job "recomputes on the backend" with no one's laptop open. Runs to completion
+// BEFORE the push reads the file. Never throws — if it fails (no bot creds / Playwright / login),
+// we log and fall through to the last persisted forecast so the push still runs.
+function runHeadlessRefresh() {
+  return new Promise((resolve) => {
+    const { spawn } = require('child_process');
+    const script = path.resolve(__dirname, 'refresh-forecast-headless.cjs');
+    console.log('[net-cash] --refresh: recomputing forecast via headless dashboard (server-side)...');
+    let child;
+    try {
+      child = spawn(process.execPath, [script], { stdio: 'inherit', env: process.env });
+    } catch (e) {
+      console.warn(`[net-cash] headless refresh failed to start: ${e && e.message ? e.message : e}`);
+      return resolve(1);
+    }
+    child.on('error', (e) => { console.warn(`[net-cash] headless refresh error: ${e && e.message ? e.message : e}`); resolve(1); });
+    child.on('exit', (code) => { console.log(`[net-cash] headless refresh finished (exit ${code}).`); resolve(code); });
+  });
 }
 
 function numOrNull(v) {
@@ -316,6 +343,12 @@ async function main() {
   const dateOnly = args.date || nowParts.date;      // calendar day (dedupe key)
   const syncTs = `${dateOnly} ${nowParts.time}`;    // DATE value = sync timestamp incl. hour
   const asOf = prevMonthEnd(dateOnly);              // bank balance as-of = previous month-end
+
+  // --refresh: recompute the forecast server-side (headless dashboard) BEFORE reading the file,
+  // so the pushed FORECAST_EUR is fresh — no one's browser needed. Skipped for describe/show.
+  if (args.refresh && !args.describe && !args.show) {
+    await runHeadlessRefresh();
+  }
 
   const { path: snapPath, data: persisted } = readPersistedForecast();
 
