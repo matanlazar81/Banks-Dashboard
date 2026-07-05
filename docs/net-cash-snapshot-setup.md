@@ -190,7 +190,25 @@ node scripts/refresh-forecast-headless.cjs        # expect: login → 200, "fore
 Login is `POST /api/auth/login` with `{email, password}` (passport-local, `usernameField:'email'`).
 If that returns 403 (CSRF), the script needs a token-fetch step — see its header.
 
-## 7. Email summary + on/off switch
+## 7. Run summary (email and/or Slack) + on/off switch
+
+Every run sends a one-page summary of exactly what it pushed to **email and/or Slack** — whichever
+is configured, independently. You get a nightly receipt and an easy kill-switch. Nothing is
+hard-coded — tokens and recipients live in `.env`.
+
+### Slack (recommended here — reuses the backend's bot token, no SMTP/Google auth)
+
+```
+SLACK_BOT_TOKEN=...                 # already present in the backend .env
+NET_CASH_SLACK_CHANNEL=cash_flow_sync   # channel name or ID; default is cash_flow_sync
+```
+
+The bot must be a **member of the channel** — in Slack, open `#cash_flow_sync` and
+`/invite @<bot>` (or add it via the channel's Integrations). If a post fails with
+`channel_not_found` / `not_in_channel`, invite the bot or set `NET_CASH_SLACK_CHANNEL` to the
+channel **ID**.
+
+### Email (optional)
 
 Every run emails a one-page summary of exactly what it pushed, so you get a nightly receipt and
 an easy kill-switch. Nothing is hard-coded — the transport and recipient live in `.env`.

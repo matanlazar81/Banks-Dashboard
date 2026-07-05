@@ -45,17 +45,21 @@
  *   NET_CASH_TOTAL_BANK_EUR / NET_CASH_FORECAST_EUR  (optional manual overrides)
  *   NET_CASH_NO_NS=1         (optional) skip the live NetSuite bank fetch
  *   NET_CASH_SYNC_ENABLED    (optional) 'false' stops the sync (no Snowflake write); default 'true'
- *   NET_CASH_EMAIL_TO        (optional) recipient(s) for the per-run summary, comma-separated
+ *   NET_CASH_EMAIL_TO        (optional) email recipient(s) for the per-run summary, comma-separated
  *   NET_CASH_SMTP_URL        (optional) SMTP connection URL (relay = no creds; or smtps://user:pw@host)
- *   NET_CASH_EMAIL_FROM      (optional) sender address (defaults to NET_CASH_EMAIL_TO)
+ *   NET_CASH_EMAIL_FROM      (optional) sender address (defaults to SMTP_USER, then NET_CASH_EMAIL_TO)
+ *   NET_CASH_SMTP_HELO       (optional) EHLO name for the Workspace relay (defaults to sender domain)
+ *   SLACK_BOT_TOKEN          (optional) post the summary to Slack (reuses the backend's bot token)
+ *   NET_CASH_SLACK_CHANNEL   (optional) Slack channel name or ID (default 'cash_flow_sync')
  *
  * APPEND-ONLY: every run inserts a NEW row. Nothing is overwritten, deduped, or deleted —
  * each update is preserved as its own row (a full history), keyed by the DATE sync timestamp.
  *
  * NOTIFICATIONS / CONTROL:
- *   • After each run it emails a summary (the data pushed + the ACTIVE flag) to NET_CASH_EMAIL_TO
- *     when NET_CASH_EMAIL_TO + NET_CASH_SMTP_URL are set; otherwise it logs what it would send.
- *   • NET_CASH_SYNC_ENABLED=false stops the write entirely (and emails a DISABLED notice), so you
+ *   • After each run it sends a summary (the data pushed + the ACTIVE flag) to email and/or Slack,
+ *     whichever is configured (email needs NET_CASH_EMAIL_TO + a transport; Slack needs
+ *     SLACK_BOT_TOKEN). If neither is set it just logs the body.
+ *   • NET_CASH_SYNC_ENABLED=false stops the write entirely (and sends a DISABLED notice), so you
  *     can pause/resume the sync any time by editing .env — no code change, no restart.
  *   • The pushed FORECAST_EUR is the dashboard's Revenue:Pipeline + Salary:Actual year-end close.
  *
@@ -123,19 +127,46 @@ function readPersistedForecast() {
   catch { return { path: p, data: null }; }
 }
 
-// ── Email notification (optional, env-driven) ──────────────────────────────
-// Emails a summary of what was pushed (or skipped) to NET_CASH_EMAIL_TO. Transport is
-// resolved in this order (NO credentials live in code — they sit in .env only):
-//   1. NET_CASH_SMTP_URL  — an explicit connection URL, e.g.
-//        smtp://smtp-relay.gmail.com:587   (IP-allowlisted relay, no auth)  or
-//        smtps://user%40lsports.eu:APP_PW@smtp.gmail.com:465
-//   2. else the app's existing SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS (reuse the
-//        backend's already-working mailer — no new credentials needed).
-// Email is skipped (body just logged) if neither a URL nor SMTP_HOST is set.
-//   NET_CASH_EMAIL_TO   recipient(s), comma-separated
-//   NET_CASH_EMAIL_FROM optional sender (defaults to SMTP_USER, then NET_CASH_EMAIL_TO)
-async function sendEmail({ enabled, wrote, dryRun, syncTs, totalBankEur, forecastEur, tableName, error }) {
+// ── Notifications (optional, env-driven) ───────────────────────────────────
+// A run summary can go to email and/or Slack — both optional and independent; whichever is
+// configured fires. NO credentials live in code — they sit in .env only.
+//   Email:  NET_CASH_EMAIL_TO (required) + transport:
+//             1. NET_CASH_SMTP_URL (smtp://host:port  or  smtps://user:pw@host:465), else
+//             2. the backend's existing SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS.
+//           NET_CASH_EMAIL_FROM optional sender; NET_CASH_SMTP_HELO optional relay EHLO name.
+//   Slack:  SLACK_BOT_TOKEN (required) + NET_CASH_SLACK_CHANNEL (name or ID; default cash_flow_sync).
+//           The bot must be a member of the channel.
+function buildSummary({ enabled, wrote, dryRun, syncTs, totalBankEur, forecastEur, tableName, error }) {
+  const fmtEur = (v) => (v != null && Number.isFinite(Number(v)) ? `EUR ${Math.round(Number(v)).toLocaleString('en-US')}` : 'MISSING');
+  const statusLine = error ? 'FAILED'
+    : !enabled ? 'DISABLED — no row written'
+    : dryRun ? 'DRY RUN — no row written'
+    : wrote ? 'row written' : 'no row written';
+  const lines = [
+    'Net-Cash daily sync',
+    `Run (Asia/Jerusalem): ${syncTs}`,
+    '',
+    `Sync ACTIVE flag : ${enabled ? 'TRUE' : 'FALSE'}`,
+    '   to stop  : set NET_CASH_SYNC_ENABLED=false in .env',
+    '   to resume: set NET_CASH_SYNC_ENABLED=true  in .env',
+    '',
+    `Status           : ${statusLine}`,
+    `Table            : ${tableName}`,
+    '',
+    `DATE             : ${syncTs}`,
+    `TOTAL_BANK_EUR   : ${fmtEur(totalBankEur)}`,
+    `FORECAST_EUR     : ${fmtEur(forecastEur)}`,
+    '',
+    'Revenue basis    : Pipeline',
+    'Salary basis     : Actual',
+  ];
+  if (error) lines.push('', `Error            : ${error}`);
+  return { statusLine, subject: `[Net-Cash -> Snowflake] ${statusLine} — ${syncTs}`, text: lines.join('\n') };
+}
+
+async function sendEmail(payload) {
   const to = process.env.NET_CASH_EMAIL_TO;
+  if (!to) return; // email not configured — skip (Slack may still fire)
   // Transport: explicit URL override, else reuse the app's existing SMTP_* settings.
   const smtpUrl = process.env.NET_CASH_SMTP_URL;
   let transport = null;
@@ -172,34 +203,9 @@ async function sendEmail({ enabled, wrote, dryRun, syncTs, totalBankEur, forecas
     const helo = process.env.NET_CASH_SMTP_HELO || (from && from.includes('@') ? from.split('@').pop() : null);
     if (helo) transport.name = helo;
   }
-  const fmtEur = (v) => (Number.isFinite(Number(v)) && v != null ? `EUR ${Math.round(Number(v)).toLocaleString('en-US')}` : 'MISSING');
-  const statusLine = error ? 'FAILED'
-    : !enabled ? 'DISABLED — no row written'
-    : dryRun ? 'DRY RUN — no row written'
-    : wrote ? 'row written' : 'no row written';
-  const subject = `[Net-Cash -> Snowflake] ${statusLine} — ${syncTs}`;
-  const lines = [
-    'Net-Cash daily sync',
-    `Run (Asia/Jerusalem): ${syncTs}`,
-    '',
-    `Sync ACTIVE flag : ${enabled ? 'TRUE' : 'FALSE'}`,
-    '   to stop  : set NET_CASH_SYNC_ENABLED=false in .env',
-    '   to resume: set NET_CASH_SYNC_ENABLED=true  in .env',
-    '',
-    `Status           : ${statusLine}`,
-    `Table            : ${tableName}`,
-    '',
-    `DATE             : ${syncTs}`,
-    `TOTAL_BANK_EUR   : ${fmtEur(totalBankEur)}`,
-    `FORECAST_EUR     : ${fmtEur(forecastEur)}`,
-    '',
-    'Revenue basis    : Pipeline',
-    'Salary basis     : Actual',
-  ];
-  if (error) lines.push('', `Error            : ${error}`);
-  const text = lines.join('\n');
-  if (!to || !transport) {
-    console.log('[net-cash] email not sent (need NET_CASH_EMAIL_TO + either NET_CASH_SMTP_URL or SMTP_HOST/PORT/USER/PASS). Would have sent:');
+  const { subject, text } = buildSummary(payload);
+  if (!transport) {
+    console.log('[net-cash] email not sent (set NET_CASH_SMTP_URL or SMTP_HOST/PORT/USER/PASS). Would have sent:');
     console.log(text.split('\n').map((l) => `[net-cash]   ${l}`).join('\n'));
     return;
   }
@@ -213,6 +219,42 @@ async function sendEmail({ enabled, wrote, dryRun, syncTs, totalBankEur, forecas
   } catch (e) {
     console.warn(`[net-cash] email send failed: ${e && e.message ? e.message : e}`);
   }
+}
+
+// Post the run summary to Slack via chat.postMessage (Bot token). The bot must be a member
+// of the target channel. Channel from NET_CASH_SLACK_CHANNEL (name or ID); default cash_flow_sync.
+async function sendSlack(payload) {
+  const token = process.env.SLACK_BOT_TOKEN;
+  if (!token) return; // Slack not configured — skip
+  const channel = process.env.NET_CASH_SLACK_CHANNEL || 'cash_flow_sync';
+  const { statusLine, text } = buildSummary(payload);
+  const body = {
+    channel,
+    text: `Net-Cash → Snowflake — ${statusLine}`, // fallback / notification text
+    blocks: [
+      { type: 'section', text: { type: 'mrkdwn', text: `*Net-Cash → Snowflake* — ${statusLine}` } },
+      { type: 'section', text: { type: 'mrkdwn', text: '```\n' + text + '\n```' } },
+    ],
+    unfurl_links: false,
+  };
+  try {
+    const res = await fetch('https://slack.com/api/chat.postMessage', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (data && data.ok) console.log(`[net-cash] Slack message posted to #${channel}`);
+    else console.warn(`[net-cash] Slack post failed: ${(data && data.error) || 'unknown'} (channel: ${channel}). If channel_not_found/not_in_channel, invite the bot to the channel or set NET_CASH_SLACK_CHANNEL to its ID.`);
+  } catch (e) {
+    console.warn(`[net-cash] Slack post error: ${e && e.message ? e.message : e}`);
+  }
+}
+
+// Fan the run summary out to whichever channels are configured (email + Slack); one failing
+// never blocks the other, and never aborts the sync itself.
+async function notify(payload) {
+  await Promise.allSettled([sendEmail(payload), sendSlack(payload)]);
 }
 
 // Total EUR bank balance (all BANK/CredCard accounts, primary book) as of a given date.
@@ -309,7 +351,7 @@ async function main() {
   if (!syncEnabled) {
     reportRow();
     console.log('[net-cash] NET_CASH_SYNC_ENABLED=false → sync DISABLED, not writing to Snowflake.');
-    await sendEmail({ enabled: false, wrote: false, dryRun: false, syncTs, totalBankEur, forecastEur, tableName: TABLE });
+    await notify({ enabled: false, wrote: false, dryRun: false, syncTs, totalBankEur, forecastEur, tableName: TABLE });
     process.exit(0);
   }
 
@@ -388,12 +430,12 @@ async function main() {
     // DATE sync timestamp). Rows are never overwritten or deleted by this job.
     await exec(conn, adaptedSql, binds);
     console.log(`[net-cash] ✓ Appended 1 row for ${syncTs} (columns: ${used.map((c) => c.name).join(', ')}).`);
-    await sendEmail({ enabled: true, wrote: true, dryRun: false, syncTs, totalBankEur, forecastEur, tableName: TABLE });
+    await notify({ enabled: true, wrote: true, dryRun: false, syncTs, totalBankEur, forecastEur, tableName: TABLE });
     process.exit(0);
   } catch (e) {
     const msg = e && e.message ? e.message : String(e);
     console.error(`[net-cash] ERROR: ${msg}`);
-    try { await sendEmail({ enabled: syncEnabled, wrote: false, dryRun: false, syncTs, totalBankEur, forecastEur, tableName: TABLE, error: msg }); } catch { /* ignore */ }
+    try { await notify({ enabled: syncEnabled, wrote: false, dryRun: false, syncTs, totalBankEur, forecastEur, tableName: TABLE, error: msg }); } catch { /* ignore */ }
     process.exit(1);
   } finally {
     if (conn) { try { conn.destroy(() => {}); } catch { /* ignore */ } }
