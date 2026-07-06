@@ -489,10 +489,10 @@ function computeCashflowForecast(inputs) {
     // between that and the bank-side collections bucket (interest journals, AR-adjustments
     // that the modal classifies separately) is absorbed into 'other' so the closing balance
     // still reconciles to the actual NS bank delta.
-    // Past-month override: salary/vendors/collections stay as already computed
-    // (NS actuals for salary, SF accrual for vendors, NS collections); the
-    // bank-line residual is classified into 'other' so closing balance still
-    // reconciles to the NS month-end bank delta.
+    // Past-month `other` = the bank-line residual (−bcm.other). For a COMPLETE bcm month the
+    // salary/vendors/collections buckets are also switched to bank-side cash further below (see
+    // the "Closed-month reconciliation" block), so closing reconciles to the NS bank delta by
+    // construction; when bcm is absent/incomplete they stay on the accrual/receipt feeds.
     let other = 0;
     let otherILS = 0;
     if (bcm) {
@@ -529,10 +529,37 @@ function computeCashflowForecast(inputs) {
     else if (isClosed && sfActualsSplit[mKey]?.salaryILS > 0) salaryILS = sfActualsSplit[mKey].salaryILS;
     else salaryILS = Math.round(salary * eurIlsRatio);
     let vendorsILS = Math.round(vendors * eurIlsRatio); // vendors uses SF Actuals × ratio (matches modal)
-    const collectionsILS = Math.round(collections * eurIlsRatio); // always derive from displayed collections × ratio
+    let collectionsILS = Math.round(collections * eurIlsRatio); // always derive from displayed collections × ratio
     // otherILS already set from bcm.other.ils above; no collections-gap adjustment.
     let totalOutflowILS = salaryILS + vendorsILS + Math.max(0, otherILS);
     let netILS = collectionsILS - salaryILS - vendorsILS - otherILS + pipelineWeightedILS - churnDeductionILS;
+    // ── Closed-month reconciliation to the actual NS bank (cash basis) ──
+    // When the bank-classified feed (bcm) is COMPLETE for this closed month, drive the cash
+    // buckets from bank-side truth (cash actually in/out) instead of the accrual/receipt feeds,
+    // so the month's closing == the NS bank delta by construction (net + reval == bcm.total).
+    // bcm.salary/vendors are signed cash-out (negative), bcm.collections signed cash-in; `other`
+    // (= −bcm.other) and `reval` (= bcm.reval, below) already come from bcm. Guard on materially
+    // populated cash buckets so a not-yet-closed month or a stale single-sided seed month (≈0
+    // salary, e.g. a bank-classified seed generated before the month closed) falls through to the
+    // accrual/receipt feeds — graceful, never worse than the pre-reconciliation behavior. For a
+    // complete month the accrual feeds already ≈ these, so this only removes the accrual-vs-cash
+    // timing residual (the ~€1.43M Jan–Jun vendor gap that pushed the model's closing above NS).
+    const bcmCashValid = !!bcm && Math.abs((bcm.salary && bcm.salary.eur) || 0) > 50000
+      && ((bcm.collections && bcm.collections.eur) || 0) > 50000
+      && Number.isFinite(bcm.other && bcm.other.eur);
+    if (bcmCashValid) {
+      collections = Math.round(bcm.collections.eur);
+      salary = Math.round(-bcm.salary.eur);
+      vendors = Math.round(-bcm.vendors.eur);
+      salaryBase = salary; vendorsBase = vendors; // past month: no scenario adj → no phantom delta
+      collectionsILS = Math.round((bcm.collections.ils) || 0);
+      salaryILS = Math.round(-((bcm.salary.ils) || 0));
+      vendorsILS = Math.round(-((bcm.vendors.ils) || 0));
+      totalOutflow = salary + vendors + Math.max(0, other);
+      totalOutflowILS = salaryILS + vendorsILS + Math.max(0, otherILS);
+      net = collections - salary - vendors - other;       // past month: pipeline & churn are 0
+      netILS = collectionsILS - salaryILS - vendorsILS - otherILS;
+    }
     runningBalance += net;
     runningBalanceILS += netILS;
 
