@@ -516,7 +516,7 @@ function createSnowflakeClient(env) {
     `);
 
     console.log(`[Snowflake] Budget detail: ${rows.length} rows for ${category} in ${month}`);
-    return rows.map(r => ({
+    const detail = rows.map(r => ({
       department: r.DEPT || 'Unassigned',
       account: r.ACCT_NUM,
       accountId: r.ACCT_ID,
@@ -524,6 +524,46 @@ function createSnowflakeClient(env) {
       amountEUR: Math.round(r.BUDGET_EUR || 0),
       amountILS: Math.round(r.BUDGET_ILS || 0),
     }));
+
+    // Reconcile to the category-list total. The /api/sf-budget rollup merges FCT_EXPENSE
+    // future-cost overrides/increments into each category total, but this raw FCT_BUDGET detail
+    // does not include them — so the drill-down sums LOW (e.g. Cloud Infra & DevOps showed
+    // €434,942 in the drill-down vs €606,371 in the category list, a €171,429 forward-cost
+    // increment). Append ONE reconciliation row for the override delta, mirroring the merge in
+    // server/api-routes.cjs (/api/sf-budget), so the detail sums to the figure shown in the list.
+    try {
+      const year = String(month).slice(0, 4);
+      const [catData, overrides] = await Promise.all([
+        fetchBudgetByCategory(year),
+        fetchBudgetOverrides().catch(() => []),
+      ]);
+      let catTotal = (catData && catData.byMonth && catData.byMonth[month] && catData.byMonth[month][category]) || 0;
+      for (const ov of overrides) {
+        const ovCat = ov.category || `Acct ${(ov.account || '').substring(0, 3)}`;
+        if (ovCat !== category || ov.month !== month || ovCat === 'Payroll') continue;
+        catTotal = ov.mode === 'Override' ? ov.amountEUR : catTotal + ov.amountEUR;
+      }
+      const detailSum = detail.reduce((s, r) => s + (r.amountEUR || 0), 0);
+      const detailSumIls = detail.reduce((s, r) => s + (r.amountILS || 0), 0);
+      const adj = Math.round(catTotal - detailSum);
+      if (Math.abs(adj) > 1) {
+        const ilsRate = detailSum > 0 ? detailSumIls / detailSum : 3.68;
+        detail.push({
+          department: 'Future-cost override',
+          account: '',
+          accountId: null,
+          name: 'Forward-cost override / increment (not in base budget)',
+          amountEUR: adj,
+          amountILS: Math.round(adj * ilsRate),
+          isOverride: true,
+        });
+        console.log(`[Snowflake] Budget detail: +reconciliation row ${adj} EUR (catTotal ${catTotal} − detailSum ${detailSum}) for ${category} ${month}`);
+      }
+    } catch (e) {
+      console.warn(`[Snowflake] Budget detail override merge failed: ${e && e.message ? e.message : e}`);
+    }
+
+    return detail;
   }
 
   // ── Budget overrides from FCT_EXPENSE (source = future_cost_override / future_cost_increment) ──
