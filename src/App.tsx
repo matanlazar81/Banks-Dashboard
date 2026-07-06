@@ -10280,7 +10280,20 @@ useEffect(() => {
                             <td className="py-1.5 pr-2 text-violet-600 hover:text-violet-800 underline">{cat}{(sfBudget.overrides || []).some(o => o.mKey === forecastDrilldown.mKey && o.category === cat) && <span className="ml-1 inline-block w-2 h-2 rounded-full bg-orange-500" title="Has Google Sheets override"></span>}{(_detailByCat[cat] || 0) !== 0 && <span className="ml-1 inline-block w-2 h-2 rounded-full bg-amber-500 align-middle" title="Has a per-line (GL-account) adjustment — click to view/edit"></span>}</td>
                             <td className="py-1.5 pr-2 text-right font-medium text-violet-700">{fmt(amt)}</td>
                             <td className="py-1.5 pr-2 text-right text-gray-400">{_catTotal > 0 ? (Math.abs(typeof amt === 'number' ? amt : 0) / _catTotal * 100).toFixed(1) + '%' : '—'}</td>
-                            {_isFutureCat && <td className="py-1.5 pr-2" onClick={e => e.stopPropagation()}>
+                            {_isFutureCat && (() => {
+                              const _perLine = _detailByCat[cat] || 0;
+                              const _plPct = (typeof amt === 'number' && amt !== 0) ? Math.round((_perLine / amt) * 100) : 0;
+                              // Driven purely by per-line (GL-account) edits: no category-wide % here.
+                              // Show the effective % gray + read-only (it comes from the content inside),
+                              // and hide the editable category stepper for this row.
+                              const _drivenByPerLine = vcPct === 0 && _perLine !== 0;
+                              return (
+                            <td className="py-1.5 pr-2" onClick={e => e.stopPropagation()}>
+                              {_drivenByPerLine ? (
+                                <div className="flex items-center justify-center gap-0.5" title="Set by per-line (GL-account) adjustments inside this category — click the row to view or edit them.">
+                                  <span className="w-14 text-center text-[11px] font-semibold text-gray-400 bg-gray-100 border border-gray-200 rounded px-0.5 py-0.5">{_plPct > 0 ? '+' : ''}{_plPct}%</span>
+                                </div>
+                              ) : (
                               <div className="flex items-center justify-center gap-0.5">
                                 <button onClick={() => setVendorCatAdj(prev => ({ ...prev, [forecastDrilldown.mKey]: { ...(prev[forecastDrilldown.mKey] || {}), [cat]: vcPct - 1 } }))}
                                         className="w-5 h-5 rounded bg-white hover:bg-teal-100 text-gray-500 text-xs flex items-center justify-center font-bold border border-teal-200">−</button>
@@ -10323,16 +10336,16 @@ useEffect(() => {
                                   ) : null;
                                 })()}
                               </div>
+                              )}
                               {vcInherited && vcPct !== 0 && <div className="text-[9px] text-teal-400 text-center mt-0.5">from {new Date(vcAdj.fromMonth + '-01').toLocaleDateString('en-GB', { month: 'short' })}</div>}
-                              {(() => {
-                                const perLine = _detailByCat[cat] || 0;
-                                if (perLine === 0 || typeof amt !== 'number' || amt === 0) return null;
-                                const plPct = Math.round((perLine / amt) * 100);
-                                // Effective category-level rate from per-line (GL-account) edits. The input above
+                              {_perLine !== 0 && typeof amt === 'number' && amt !== 0 && (
+                                // Effective category-level rate from per-line (GL-account) edits. The stepper above
                                 // stays the category-level manual %; this is the per-line contribution, click to edit.
-                                return <div className="text-[9px] text-amber-600 text-center mt-0.5" title="Effective rate from per-line (GL-account) adjustments inside this category. Click the category row to view or edit them.">{plPct > 0 ? '+' : ''}{plPct}% per-line</div>;
-                              })()}
-                            </td>}
+                                <div className="text-[9px] text-amber-600 text-center mt-0.5" title="Effective rate from per-line (GL-account) adjustments inside this category. Click the category row to view or edit them.">{_plPct > 0 ? '+' : ''}{_plPct}% per-line</div>
+                              )}
+                            </td>
+                              );
+                            })()}
                             {_isFutureCat && (() => {
                               const perLine = _detailByCat[cat] || 0;
                               const combined = vcImpact + perLine;
