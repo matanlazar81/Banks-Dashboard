@@ -7,13 +7,18 @@ Appends one row per run into `RAW.LANDING_FINANCE.NET_CASH_ACTUAL_AND_FORECAST`
 ## Data flow
 
 ```
-Dashboard (LSports, current year, "Exit plan June26" scenario, on load)
-   └─ POST /api/net-cash-forecast  →  data/net-cash-forecast.json   { forecastEur, scenario, ... }
+Server compute (cron 06:00 & 23:00, NO browser) — the primary path
+   └─ node scripts/net-cash-forecast-compute.cjs
+        • gathers NetSuite + Snowflake feeds; loads "Exit plan June26" from Postgres (user_scenarios)
+        • runs the shared engine (src/forecast/forecast-core.mjs — the exact module the dashboard runs)
+        └─ writes data/net-cash-forecast.json   { forecastEur, scenario, ... }
+Dashboard (same engine, client-side) — also persists the file whenever it's opened/refreshed
 Cron @ 23:00 Asia/Jerusalem
-   └─ node scripts/net-cash-snapshot.cjs
+   └─ node scripts/net-cash-snapshot.cjs --refresh
+        • runs the compute above first, then:
         • TOTAL_BANK_EUR ← live NetSuite balance as of previous month-end
-        • FORECAST_EUR   ← persisted snapshot (or carry-forward)
-        └─ INSERT one row into Snowflake
+        • FORECAST_EUR   ← the freshly computed data/net-cash-forecast.json (or carry-forward)
+        └─ INSERT one row into Snowflake  →  Slack summary
 ```
 
 - `DATE` = the **sync timestamp incl. the hour**, in Asia/Jerusalem (e.g. `2026-07-01 23:00:07`).
@@ -172,14 +177,20 @@ June26" scenario knobs, forces **Revenue: Pipeline + Salary: Last-Actual**, and 
 builds, the number cannot diverge from the on-screen forecast.
 
 The scenario knobs (dept salary cuts, vendor cuts, currency-defense %) are NOT data feeds — they
-come from the saved scenario. In prod, scenarios live in finance-it-backend, so point the job at
-that store (first match wins):
+come from the saved scenario. In prod, scenarios live in **Postgres** (`user_scenarios.data`), which
+the job reads **automatically** via the backend's `DATABASE_URL` (already in `.env`) using `psql` —
+**no configuration needed**. Resolution order (first match wins):
 ```bash
-#   NET_CASH_SCENARIO_FILE=/path/to/exit-plan.json    # a single ScenarioData (or a {data}/record)
-#   NET_CASH_SCENARIOS_PATH=/path/to/scenarios.json   # the backend's scenarios array (matched by name)
-#   NET_CASH_SCENARIO_NAME="Exit plan June26"         # name to match (default)
+#   NET_CASH_SCENARIO_FILE=/path/to/exit-plan.json   # (test override) a single ScenarioData or {data}/record
+#   (default) Postgres user_scenarios via DATABASE_URL — matched by name; NO config needed
+#   NET_CASH_SCENARIOS_PATH=/path/to/scenarios.json  # (dev only) a scenarios-array file, matched by name
+#   NET_CASH_SCENARIO_NAME="Exit plan June26"        # name to match (default)
+#   NET_CASH_SCENARIO_OWNER=<owner-email>            # optional: pin the owner if a name is shared across users
 # If none resolves, the job runs the BASE plan (no savings) and says so — the number will be too high.
 ```
+The connection string is never logged (any `postgres://…` URI is redacted from errors). NetSuite feeds
+are throttled to stay under NetSuite's concurrency governor (HTTP 429); tune with
+**`NET_CASH_NS_CONCURRENCY`** (default 3 — lower to 2 if you still see repeated 429 retries).
 
 Verify it (credential-full run, on the server):
 ```bash
