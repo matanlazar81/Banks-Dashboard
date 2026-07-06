@@ -71,9 +71,20 @@ processes would write the same `data/*.json` files).
 | `DEV_USER_EMAIL` | — | Identity fallback when no proxy injects `X-User-Email` |
 | `SYNC_ALLOWLIST` | `matan.l@lsports.eu` | Who may use the Sync button |
 
-## Known trade-off: user identity
+## User identity: LAN-trust model (accepted, by design)
 
-Without the finance-it parent proxy, nothing injects `X-User-Email`, so all users share the
-`DEV_USER_EMAIL` identity (affects per-user prefs and the Sync-button allowlist). If per-user
-identity matters, front this server with the existing finance-it proxy (it already injects
-the header) — the routes trust `X-User-Email` either way.
+There is deliberately **no login layer** on this server. Nothing injects `X-User-Email`, so
+everyone shares one identity. The `DEV_USER_EMAIL` setting decides what that means:
+
+- **Unset (recommended default):** `getUserEmail()` resolves to empty → the **Sync button is
+  disabled for everyone** on the shared server (nobody can push budget targets to Snowflake
+  from the shared URL). Syncs still work from a local `npm run dev` or the scripts. Prefs and
+  scenarios are shared under one anonymous identity — consistent with "everyone sees the same
+  data".
+- **Set (e.g. `DEV_USER_EMAIL=matan.l@lsports.eu`):** everyone who can reach the server passes
+  the `SYNC_ALLOWLIST` check and can press Sync. Only for a network where everyone is trusted
+  with that button.
+
+If real per-user identity is ever needed, two upgrade paths (no route changes required —
+they already trust `X-User-Email`): front this server with the existing finance-it proxy
+(it injects the header), or add Google Workspace sign-in to the dashboard.
