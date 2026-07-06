@@ -154,10 +154,13 @@ during IST (winter, UTC+2).
 With just the cron, the **bank** figure is fully automatic (live from NetSuite) and the
 **forecast** carries forward from the last row. To also **auto-refresh the forecast** as the
 Exit-plan-June26 plan changes, the production dashboard must be able to persist it — which
-needs the `/api/net-cash-forecast` route on the prod `/api/*` host. **If you deploy the
-repo's own standalone server (`server.cjs` — see `docs/standalone-server.md`), this route is
-already included** (it serves the same `server/api-routes.cjs` module as dev) and this whole
-step can be skipped. The `finance-it-backend` copy below is only for the parent-app setup.
+needs the `/api/net-cash-forecast` route on the prod `/api/*` host. **This route ships inside
+the shared module `server/api-routes.cjs`**, so it is already included if you either
+(a) deploy the repo's own standalone server (`server.cjs` — see `docs/standalone-server.md`),
+or (b) mount the shared module in `finance-it-backend` via
+`docs/backend-bank-dashboard-api.ts` (one `mountBankDashboardApi(app)` call — the preferred
+path for the finance-it.lsports.eu setup, replacing all per-route copies including this one).
+The single-route copy below remains only as the legacy/manual fallback.
 
 Install it (you are root on the server):
 
