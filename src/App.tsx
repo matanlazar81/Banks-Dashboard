@@ -759,6 +759,9 @@ function BudgetTargetsDrawer({
     }
     return pct;
   };
+  // Returns the effective per-account entry (latest month ≤ mKey), INCLUDING an explicit 0
+  // (0 = "this account is exempt from the category %", which is a real override, not absence).
+  // Callers use `null` to mean "no per-account entry → follow the category".
   const effectiveDetail = (key: string, mKey: string): { pct: number; base: number } | null => {
     if (!vendorDetailAdj) return null;
     let last: { pct: number; base: number } | null = null;
@@ -766,7 +769,7 @@ function BudgetTargetsDrawer({
     const keys = Object.keys(vendorDetailAdj).filter(k => k <= mKey && k.slice(0, 4) === yr).sort();
     for (const k of keys) {
       const v = vendorDetailAdj[k]?.[key];
-      if (v !== undefined) last = v.pct !== 0 ? v : null;
+      if (v !== undefined) last = v; // keep explicit 0 too
     }
     return last;
   };
@@ -781,16 +784,16 @@ function BudgetTargetsDrawer({
     for (const k of monthKeys) {
       for (const fullKey of Object.keys(vendorDetailAdj[k] || {})) {
         if (fullKey.endsWith(suffix)) {
-          const v = vendorDetailAdj[k][fullKey];
-          last = v.pct !== 0 ? v : null;
+          last = vendorDetailAdj[k][fullKey]; // keep explicit 0 too (exemption)
         }
       }
     }
     return last;
   };
-  // Per-row scenario factor + EUR delta for a given month. Matches the cashflow math:
+  // Per-row scenario factor for a given month. Matches the cashflow engine:
   //   • 76xxx (salary):  base × (1 + manualPct/100 + deptPct/100)
-  //   • Non-76xxx:       base × (1 + catPct/100) + perLineBase × perLinePct/100
+  //   • Non-76xxx:       a per-account % REPLACES the category % for that account (0 = exempt);
+  //                      an account with no per-account entry follows the category %.
   const monthScenario = (r: BudgetTargetRow, mk: string): { factor: number; deltaEur: number } => {
     const acct = String(r.ACCOUNT_NUMBER || '');
     const moNum = parseInt(mk, 10) - 1; // mk is 'MM' (01..12); month index 0..11 for the per-month maps
@@ -807,8 +810,9 @@ function BudgetTargetsDrawer({
     // Fallback: row has no CATEGORY yet (pre-Sync after PR #74). Try suffix match so
     // auto-applied HR_VENDOR_ACCOUNTS entries still apply to the right row.
     if (!det && !r.CATEGORY) det = effectiveDetailBySuffix(`||${r.ACCOUNT_NAME || ''}||${acct}`, fullMk);
-    const deltaEur = det ? Math.round(det.base * det.pct / 100) : 0;
-    return { factor: 1 + catPct / 100, deltaEur };
+    // Per-account entry (incl explicit 0) replaces the category %; otherwise use the category %.
+    const pct = det ? det.pct : catPct;
+    return { factor: 1 + pct / 100, deltaEur: 0 };
   };
   // Per-row, scenario-adjusted monthly value (factor + per-line delta only — no column scaling yet).
   const monthScenarioCcy = (r: BudgetTargetRow, mk: string): number | null => {
@@ -7903,34 +7907,22 @@ useEffect(() => {
           const p = detailClearPrompt;
           const clear = (scope: 'month' | 'future') => {
             const yr = parseInt(p.mKey.split('-')[0]); const mo = parseInt(p.mKey.split('-')[1]);
-            if (p.fromCat) {
-              // Value is inherited from the category level → clear the category adjustment.
-              setVendorCatAdj(prev => {
-                const u = { ...prev };
-                u[p.mKey] = { ...(u[p.mKey] || {}), [p.cat]: 0 };
-                if (scope === 'future') for (let m = mo + 1; m <= 12; m++) { const mk = `${yr}-${String(m).padStart(2, '0')}`; u[mk] = { ...(u[mk] || {}), [p.cat]: 0 }; }
-                return u;
-              });
-            } else {
-              // Own per-account override → clear the detail entry (explicit 0 overrides inheritance).
-              setVendorDetailAdj(prev => {
-                const u = { ...prev };
-                u[p.mKey] = { ...(u[p.mKey] || {}), [p.detKey]: { pct: 0, base: p.base } };
-                if (scope === 'future') for (let m = mo + 1; m <= 12; m++) { const mk = `${yr}-${String(m).padStart(2, '0')}`; u[mk] = { ...(u[mk] || {}), [p.detKey]: { pct: 0, base: p.base } }; }
-                return u;
-              });
-            }
+            // Force THIS account to 0% (explicit per-account entry that replaces the category %).
+            setVendorDetailAdj(prev => {
+              const u = { ...prev };
+              u[p.mKey] = { ...(u[p.mKey] || {}), [p.detKey]: { pct: 0, base: p.base } };
+              if (scope === 'future') for (let m = mo + 1; m <= 12; m++) { const mk = `${yr}-${String(m).padStart(2, '0')}`; u[mk] = { ...(u[mk] || {}), [p.detKey]: { pct: 0, base: p.base } }; }
+              return u;
+            });
             setDetailClearPrompt(null);
           };
           const monthLabel = new Date(p.mKey + '-01').toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
           return (
             <div className="fixed inset-0 bg-black/50 z-[110] flex items-center justify-center p-4" onClick={() => setDetailClearPrompt(null)}>
               <div className="bg-white rounded-xl shadow-2xl border w-full max-w-sm p-5" onClick={e => e.stopPropagation()}>
-                <div className="text-sm font-semibold text-gray-800 mb-1">Clear adjustment</div>
+                <div className="text-sm font-semibold text-gray-800 mb-1">Set to 0%</div>
                 <div className="text-xs text-gray-600 mb-4">
-                  {p.fromCat
-                    ? <>This reduction comes from the <span className="font-medium">{p.cat}</span> category. Clearing removes it for the whole category.</>
-                    : <>Clear the adjustment for <span className="font-medium">{p.label}</span>.</>}
+                  Set <span className="font-medium">{p.label}</span> to 0% (no reduction) — this account is exempted from the category adjustment.
                 </div>
                 <div className="flex flex-col gap-2">
                   <button onClick={() => clear('month')} className="w-full px-3 py-2 rounded-lg bg-red-50 hover:bg-red-100 text-red-700 text-xs font-semibold border border-red-200">This month only ({monthLabel})</button>
@@ -9666,21 +9658,23 @@ useEffect(() => {
                           {_isProjected && <td className="py-1.5 pr-2 text-right text-gray-400">{(() => { const tot = forecastDrilldown.data.reduce((s: number, x: any) => s + Math.abs(x.amountEUR || 0), 0); return tot > 0 ? (Math.abs(r.amountEUR || 0) / tot * 100).toFixed(1) + '%' : '—'; })()}</td>}
                           {_isProjected && (() => {
                             const detKey = `${_catName}||${r.name || ''}||${r.account || ''}`;
-                            // Compute effective detail adj (cascading)
+                            // Compute effective adj (cascading). A per-account entry — incl an
+                            // explicit 0 — REPLACES the category %; only fall back to the category
+                            // when this account has NO per-account entry at all.
                             let _detPct = 0;
                             let _detInherited = false;
                             let _detFromMonth = '';
                             let _detFromCatLevel = false;
+                            let _hasOwnDetail = false;
                             const _allDetMKeys = Object.keys(vendorDetailAdj).filter(k => k <= forecastDrilldown.mKey && k.slice(0,4) === forecastDrilldown.mKey.slice(0,4)).sort();
                             for (const adjMK of _allDetMKeys) {
                               const v = vendorDetailAdj[adjMK]?.[detKey];
-                              if (v && v.pct !== 0) { _detPct = v.pct; _detInherited = adjMK !== forecastDrilldown.mKey; _detFromMonth = adjMK; _detFromCatLevel = false; }
-                              else if (v && v.pct === 0) { _detPct = 0; _detInherited = false; _detFromCatLevel = false; }
+                              if (v !== undefined) { _detPct = v.pct; _hasOwnDetail = true; _detInherited = adjMK !== forecastDrilldown.mKey; _detFromMonth = adjMK; _detFromCatLevel = false; }
                             }
-                            // Fall back to category-level adjustment if no detail-level override
-                            if (_detPct === 0 && _catName) {
+                            // Fall back to the category % ONLY when there's no per-account entry.
+                            if (!_hasOwnDetail && _catName) {
                               const _allCatMKeys = Object.keys(vendorCatAdj).filter(k => k <= forecastDrilldown.mKey && k.slice(0,4) === forecastDrilldown.mKey.slice(0,4)).sort();
-                              for (const ck of _allCatMKeys) { const cv = vendorCatAdj[ck]?.[_catName]; if (cv && cv !== 0) { _detPct = cv; _detInherited = true; _detFromCatLevel = true; } else if (cv === 0) { _detPct = 0; } }
+                              for (const ck of _allCatMKeys) { const cv = vendorCatAdj[ck]?.[_catName]; if (cv && cv !== 0) { _detPct = cv; _detInherited = true; _detFromCatLevel = true; } else if (cv === 0) { _detPct = 0; _detInherited = false; _detFromCatLevel = false; } }
                             }
                             const _detImpact = Math.round((r.amountEUR || 0) * (_detPct / 100));
                             return (<>
