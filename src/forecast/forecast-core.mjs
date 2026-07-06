@@ -339,8 +339,13 @@ function computeCashflowForecast(inputs) {
     }
     let vendorsBase = vendors; // base vendors BEFORE scenario adjustments (reassigned by bank-classified override for past months)
 
-    // Apply per-category vendor adjustments from scenario (includes auto-set HR categories from salary dept adj)
-    if (!isPastMonth && Object.keys(vendorCatAdj).length > 0) {
+    // Apply per-category + per-account vendor adjustments from scenario.
+    // MODEL: a per-account (detail) entry — including an explicit 0 — REPLACES the category %
+    // for that account. So the category % applies only to the portion of the category budget
+    // NOT covered by an explicit per-account entry, and each explicit account uses its own %
+    // (0 = exempt). Accounts with no entry follow the category %.
+    if (!isPastMonth && (Object.keys(vendorCatAdj).length > 0 || Object.keys(vendorDetailAdj).length > 0)) {
+      // Effective per-category % (latest non-zero wins; explicit 0 clears the category).
       const effectiveVendorAdj = {};
       const allVendorAdjMonths = Object.keys(vendorCatAdj).filter(k => k <= mKey && k.slice(0,4) === mKey.slice(0,4)).sort();
       for (const adjM of allVendorAdjMonths) {
@@ -349,38 +354,35 @@ function computeCashflowForecast(inputs) {
           else delete effectiveVendorAdj[cat];
         }
       }
-      if (Object.keys(effectiveVendorAdj).length > 0) {
-        const catData = sfBudget.byMonth?.[mKey] || nsBudget.byMonth[mKey]?.categories || expenseCategories.byMonth?.[mKey] || {};
-        let vendorDelta = 0;
-        for (const [cat, pct] of Object.entries(effectiveVendorAdj)) {
-          const catBudget = catData[cat] || 0;
-          const p = Number(pct); // pct may be a mid-typing string ('' / '-') from the input
-          if (Number.isFinite(catBudget) && Number.isFinite(p)) vendorDelta += Math.round(catBudget * (p / 100));
-        }
-        vendors += vendorDelta;
-      }
-    }
-
-    // Apply per-department vendor detail adjustments from scenario
-    if (!isPastMonth && Object.keys(vendorDetailAdj).length > 0) {
-      const effectiveDetailAdj = {};
+      // Effective per-account entries, KEEPING explicit 0 (0 = "this account is exempt", not absent).
+      // Keyed `${category}||${accountName}||${accountNumber}` — the first segment is the category.
+      const effDetail = {}; // key -> { pct, base, cat }
       const allDetailAdjMonths = Object.keys(vendorDetailAdj).filter(k => k <= mKey && k.slice(0,4) === mKey.slice(0,4)).sort();
       for (const adjM of allDetailAdjMonths) {
         for (const [key, val] of Object.entries(vendorDetailAdj[adjM])) {
-          if (val.pct !== 0) effectiveDetailAdj[key] = val;
-          else delete effectiveDetailAdj[key];
+          // base / pct can be non-numeric mid-typing ('' / '-'); skip non-finite so one bad
+          // line can't poison the vendor total (and cascade NaN into closing balances).
+          const base = Number(val.base);
+          const pct = Number(val.pct);
+          if (Number.isFinite(base) && Number.isFinite(pct)) effDetail[key] = { pct, base, cat: String(key).split('||')[0] };
         }
       }
-      let detailDelta = 0;
-      for (const [, val] of Object.entries(effectiveDetailAdj)) {
-        // base / pct can be non-numeric if a scenario stored a mid-typing value
-        // (e.g. pct '-' → '-'/100 = NaN). Skip non-finite so one bad line can't
-        // poison the whole vendor total (and cascade NaN into closing balances).
-        const base = Number(val.base);
-        const pct = Number(val.pct);
-        if (Number.isFinite(base) && Number.isFinite(pct)) detailDelta += Math.round(base * (pct / 100));
+      // Sum of overridden account bases per category (subtracted from the category budget below).
+      const overriddenByCat = {};
+      for (const k of Object.keys(effDetail)) { const d = effDetail[k]; overriddenByCat[d.cat] = (overriddenByCat[d.cat] || 0) + d.base; }
+
+      const catData = sfBudget.byMonth?.[mKey] || nsBudget.byMonth[mKey]?.categories || expenseCategories.byMonth?.[mKey] || {};
+      let vendorDelta = 0;
+      // Category % on the NON-overridden portion of each category's budget.
+      for (const [cat, pct] of Object.entries(effectiveVendorAdj)) {
+        const catBudget = catData[cat] || 0;
+        const nonOverridden = Math.max(0, catBudget - (overriddenByCat[cat] || 0));
+        const p = Number(pct);
+        if (Number.isFinite(nonOverridden) && Number.isFinite(p)) vendorDelta += Math.round(nonOverridden * (p / 100));
       }
-      if (detailDelta !== 0) vendors += detailDelta;
+      // Each explicit account by its OWN % (0 contributes 0 → the account is fully exempt).
+      for (const k of Object.keys(effDetail)) { const d = effDetail[k]; vendorDelta += Math.round(d.base * (d.pct / 100)); }
+      vendors += vendorDelta;
     }
 
     // ── INFLOWS: NS collections for past/current, SF REVENUE_AMOUNT_EUR for future ──
