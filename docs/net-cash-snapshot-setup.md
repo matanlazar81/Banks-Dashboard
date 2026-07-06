@@ -16,8 +16,10 @@ Dashboard (same engine, client-side) — also persists the file whenever it's op
 Cron @ 23:00 Asia/Jerusalem
    └─ node scripts/net-cash-snapshot.cjs --refresh
         • runs the compute above first, then:
-        • TOTAL_BANK_EUR ← live NetSuite balance as of previous month-end
+        • TOTAL_BANK_EUR ← live NetSuite balance as of the last CLOSED month-end
+        •                  (reval-closed guard: steps back if the month-end FX reval isn't posted)
         • FORECAST_EUR   ← the freshly computed data/net-cash-forecast.json (or carry-forward)
+        • MODEL_CLOSING_EUR ← the model's flow-forward closing of the last completed month
         └─ INSERT one row into Snowflake  →  Slack summary
 ```
 
@@ -26,6 +28,16 @@ Cron @ 23:00 Asia/Jerusalem
   **as of the end of the previous month** — every day in July reports the Jun 30 balance,
   every day in August reports Jul 31, etc. Fetched live from NetSuite
   (`fetchBankAccountListAsOf`), so it needs no dashboard. Override with `NET_CASH_TOTAL_BANK_EUR`.
+  **Reval-closed guard**: a month-end is only trusted once NetSuite carries the **posted**
+  month-end FX revaluation dated on that day (`hasPostedMonthEndReval`). If June 30's reval
+  isn't posted yet, the job steps back to May 31 (max 2 steps) and flags the fallback in the
+  Slack/email summary — so a partially-posted month is never reported as final.
+- `MODEL_CLOSING_EUR` = the dashboard model's **flow-forward closing of the last completed
+  month** (from `data/net-cash-forecast.json`, field `modelClosingEur`, written by the compute).
+  This is the model-side twin of `TOTAL_BANK_EUR`: the same month-end seen through the
+  cashflow model instead of the posted ledger — the difference is bookkeeping not yet posted.
+  Written only if the column exists; add it once with
+  `ALTER TABLE RAW.LANDING_FINANCE.NET_CASH_ACTUAL_AND_FORECAST ADD COLUMN MODEL_CLOSING_EUR FLOAT;`
 - `FORECAST_EUR` = the year-end (December) closing balance, after savings. Computed client-side
   on the **Revenue:Pipeline + Salary:Actual** basis (the agreed methodology), so it is persisted
   from the UI. The persist is **gated to that basis** — a dashboard viewed in Win-rate or Budget
@@ -37,7 +49,8 @@ Cron @ 23:00 Asia/Jerusalem
   `SRC_UPDATED_AT`, with a "D"). `IS_APPROVED_UPDATED_AT` = **NOT written** — set by the external
   approval automation.
 - The INSERT **adapts to the table's actual columns**: it always writes `DATE` /
-  `TOTAL_BANK_EUR` / `FORECAST_EUR`, and adds `IS_APPROVED=FALSE` only if that column exists.
+  `TOTAL_BANK_EUR` / `FORECAST_EUR`, and adds `MODEL_CLOSING_EUR` and `IS_APPROVED=FALSE`
+  only if those columns exist.
 
 ## 1. Snowflake write access
 
@@ -62,6 +75,7 @@ CREATE TABLE IF NOT EXISTS RAW.LANDING_FINANCE.NET_CASH_ACTUAL_AND_FORECAST (
   DATE                   TIMESTAMP_NTZ,
   TOTAL_BANK_EUR         FLOAT,
   FORECAST_EUR           FLOAT,
+  MODEL_CLOSING_EUR      FLOAT,
   SRC_UPDATE_AT          TIMESTAMP_NTZ,
   IS_APPROVED            BOOLEAN,
   IS_APPROVED_UPDATED_AT TIMESTAMP_NTZ
@@ -140,8 +154,10 @@ during IST (winter, UTC+2).
 With just the cron, the **bank** figure is fully automatic (live from NetSuite) and the
 **forecast** carries forward from the last row. To also **auto-refresh the forecast** as the
 Exit-plan-June26 plan changes, the production dashboard must be able to persist it — which
-needs the `/api/net-cash-forecast` route in `finance-it-backend` (the prod `/api/*` host;
-the vite route only serves local dev).
+needs the `/api/net-cash-forecast` route on the prod `/api/*` host. **If you deploy the
+repo's own standalone server (`server.cjs` — see `docs/standalone-server.md`), this route is
+already included** (it serves the same `server/api-routes.cjs` module as dev) and this whole
+step can be skipped. The `finance-it-backend` copy below is only for the parent-app setup.
 
 Install it (you are root on the server):
 

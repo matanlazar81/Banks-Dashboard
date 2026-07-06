@@ -1371,8 +1371,14 @@ export default function App() {
   const [expandedChart, setExpandedChart] = useState<string | null>(null);
   const [burnOverride, setBurnOverride] = useState<number | null>(null);
   const [churnOverride, setChurnOverride] = useState<Record<string, number>>({});
-  const [currencyDefensePct, setCurrencyDefensePct] = useState(30); // default % — used when no per-month override
-  const [currencyDefensePctByMonth, setCurrencyDefensePctByMonth] = useState<Record<number, number>>({}); // per-month % override (month index 0-11)
+  const [currencyDefensePct, setCurrencyDefensePct] = useState(() => { // default % — used when no per-month override
+    try { const v = parseFloat(localStorage.getItem('banks-currency-defense-pct') || ''); return isFinite(v) ? v : 30; } catch { return 30; }
+  });
+  useEffect(() => { try { localStorage.setItem('banks-currency-defense-pct', String(currencyDefensePct)); } catch {} }, [currencyDefensePct]);
+  const [currencyDefensePctByMonth, setCurrencyDefensePctByMonth] = useState<Record<number, number>>(() => { // per-month % override (month index 0-11)
+    try { const s = localStorage.getItem('banks-currency-defense-pct-by-month'); return s ? JSON.parse(s) : {}; } catch { return {}; }
+  });
+  useEffect(() => { try { localStorage.setItem('banks-currency-defense-pct-by-month', JSON.stringify(currencyDefensePctByMonth)); } catch {} }, [currencyDefensePctByMonth]);
   // Per-year EUR→ILS rate override (EUR is the base; ILS is derived as EUR × rate). Lets the
   // user set the planning rate for a projection year. Empty → use the bank-derived rate.
   const [fxRateByYear, setFxRateByYear] = useState<Record<number, number>>(() => {
@@ -2207,7 +2213,9 @@ useEffect(() => {
         || Object.keys(currentData.salaryDeptAdj).length > 0
         || Object.keys(currentData.vendorCatAdj).length > 0
         || Object.keys(currentData.vendorDetailAdj).length > 0
-        || Object.keys(currentData.headcountAdj).length > 0;
+        || Object.keys(currentData.headcountAdj).length > 0
+        || currentData.currencyDefensePct !== 30
+        || Object.keys(currentData.currencyDefensePctByMonth || {}).length > 0;
       // No early return on "no adjustments": an active scenario must also capture pure
       // view changes (a toggle flip, a year switch) so they broadcast to everyone sharing it.
       if (activeScenarioId && _activeSharedOwnerRef.current) {

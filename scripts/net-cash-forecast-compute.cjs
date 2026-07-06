@@ -455,6 +455,18 @@ async function main() {
   const forecastEur = Math.round(dec.closingBalance);
   const forecastIls = Math.round(dec.closingBalanceILS);
 
+  // Flow-forward closing of the last COMPLETED month (the dashboard's "ACTUAL" closing row,
+  // e.g. June's €6.9M when running in July) — the model-side twin of the posted-GL month-end
+  // balance the 23:00 snapshot reports as TOTAL_BANK_EUR. Pushed to Snowflake alongside it
+  // (MODEL_CLOSING_EUR) so both the ledger view and the model view are tracked.
+  const nowD = inputs.now;
+  const lastDoneIdx = year < nowD.getFullYear() ? 11
+    : year === nowD.getFullYear() ? nowD.getMonth() - 1
+    : -1;
+  const lastDone = lastDoneIdx >= 0 ? rows[lastDoneIdx] : null;
+  const modelClosingEur = lastDone ? Math.round(lastDone.closingBalance) : null;
+  const modelClosingMonth = lastDone ? lastDone.mKey : null;
+
   // Report the 12 rows.
   console.log('\n[compute] month      opening        salary      vendors  collections     net       reval       closing');
   for (const r of rows) {
@@ -462,6 +474,7 @@ async function main() {
     console.log(`[compute] ${r.mKey}  ${p(r.openingBalance, 12)} ${p(r.salary, 11)} ${p(r.vendors, 11)} ${p(r.collections, 12)} ${p(r.net, 10)} ${p(r.revalImpact, 10)} ${p(r.closingBalance, 13)}`);
   }
   console.log(`\n[compute] → December closing (FORECAST_EUR): ${fmtEur(forecastEur)}  (ILS ${forecastIls.toLocaleString()})`);
+  if (lastDone) console.log(`[compute] → ${modelClosingMonth} model closing (MODEL_CLOSING_EUR): ${fmtEur(modelClosingEur)}`);
   if (scenarioSource.startsWith('NONE')) {
     console.warn('[compute] ⚠ scenario NOT loaded — this is the BASE plan (no savings). The real Exit-plan number is lower.');
   }
@@ -474,6 +487,8 @@ async function main() {
     totalBankIls: Math.round(meta.adjIls) || 0,
     forecastEur,
     forecastIls,
+    modelClosingEur,
+    modelClosingMonth,
     source: 'server-compute',
     revenueMethodology: 'pipeline',
     salaryProjectionMode: 'lastActual',

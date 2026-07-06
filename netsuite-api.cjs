@@ -2484,7 +2484,29 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
     return null;
   }
 
-  return { suiteql, suiteqlAll, fetchAgingData, fetchCollectionData, buildCollectionJson, fetchClientAnomalies, fetchAllSOsByBillingPeriod, fetchRevenueData, fetchMRRData, fetchBankBalance, fetchVendorBills, fetchVendorPaymentHistory, fetchBankAccountList, fetchBankAccountListAsOf, fetchSalaryData, fetchVendorActuals, fetchRevenueActuals, fetchCustomerCashReceipts, fetchCashflowHistory, fetchExpenseCategoryData, fetchPaymentsByCategory, fetchCashflowBreakdown, fetchCashflowTransactions, fetchExpenseTransactions, fetchSalaryBreakdown, fetchInvoiceBasedProjection, fetchMonthlyRevaluation, fetchVendorBillsByAccount, fetchNSBudget, fetchCurrencyDefenseBudget, fetchPaidVendorsYearly, fetchBankClassifiedYearly, fetchLatestFxRate };
+  // ── Posted month-end FX revaluation check ──
+  // True when NetSuite already carries the POSTED month-end FxReval mark dated exactly
+  // `dateStr` (the positive month-end entry on Bank/CredCard accounts, EUR primary book).
+  // The 1st-of-month reversal alone is negative and does NOT count. Used to decide whether
+  // a month can be treated as "closed" when reading an as-of month-end balance: until the
+  // closing reval posts, the as-of sum is a partially-posted (misleading) figure.
+  async function hasPostedMonthEndReval(dateStr) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateStr))) throw new Error(`hasPostedMonthEndReval: bad date "${dateStr}" (want YYYY-MM-DD)`);
+    const rows = await suiteqlAll(`
+      SELECT SUM(tal.amount) AS reval_impact
+      FROM transactionaccountingline tal
+      JOIN transaction t ON tal.transaction = t.id
+      JOIN account a ON tal.account = a.id
+      WHERE a.accttype IN ('Bank', 'CredCard') AND t.subsidiary = ${subsidiaryId}
+        AND tal.posting = 'T' AND tal.accountingbook = 1
+        AND t.type = 'FxReval'
+        AND t.trandate = TO_DATE('${dateStr}', 'YYYY-MM-DD')
+    `);
+    const impact = parseFloat(rows?.[0]?.reval_impact);
+    return Number.isFinite(impact) && impact > 0;
+  }
+
+  return { suiteql, suiteqlAll, fetchAgingData, fetchCollectionData, buildCollectionJson, fetchClientAnomalies, fetchAllSOsByBillingPeriod, fetchRevenueData, fetchMRRData, fetchBankBalance, fetchVendorBills, fetchVendorPaymentHistory, fetchBankAccountList, fetchBankAccountListAsOf, fetchSalaryData, fetchVendorActuals, fetchRevenueActuals, fetchCustomerCashReceipts, fetchCashflowHistory, fetchExpenseCategoryData, fetchPaymentsByCategory, fetchCashflowBreakdown, fetchCashflowTransactions, fetchExpenseTransactions, fetchSalaryBreakdown, fetchInvoiceBasedProjection, fetchMonthlyRevaluation, fetchVendorBillsByAccount, fetchNSBudget, fetchCurrencyDefenseBudget, fetchPaidVendorsYearly, fetchBankClassifiedYearly, fetchLatestFxRate, hasPostedMonthEndReval };
 }
 
 
