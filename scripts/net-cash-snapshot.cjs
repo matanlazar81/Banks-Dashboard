@@ -15,6 +15,10 @@
  *                     reports the Jun 30 balance; every day in August reports Jul 31; etc.
  *                     Sourced live from NetSuite (fetchBankAccountListAsOf), so it needs
  *                     no dashboard. Override with env NET_CASH_TOTAL_BANK_EUR.
+ *                     REVAL-CLOSED GUARD: a month-end is only trusted once NetSuite carries
+ *                     the POSTED month-end FX revaluation for that date. If it isn't posted
+ *                     yet, the as-of date steps back one month-end (max 2 steps, with a
+ *                     warning in the summary) so we never report a partially-posted month.
  *   FORECAST_EUR    = the "Exit plan June26" year-end (Dec) closing balance, after savings,
  *                     persisted from the dashboard (POST /api/net-cash-forecast →
  *                     data/net-cash-forecast.json, gated to that scenario). Fallback chain:
@@ -25,8 +29,13 @@
  * ───────────
  *   DATE           = the SYNC TIMESTAMP (Asia/Jerusalem), incl. the hour, e.g.
  *                    2026-07-01 23:00:07. (--date overrides the date part; time stays live.)
- *   TOTAL_BANK_EUR = prev-month-end bank balance, EUR
+ *   TOTAL_BANK_EUR = prev-month-end bank balance, EUR (posted GL, reval-closed guard above)
  *   FORECAST_EUR   = Exit-plan-June26 year-end closing, EUR
+ *   MODEL_CLOSING_EUR = the dashboard model's flow-forward closing of the last COMPLETED
+ *                    month (from data/net-cash-forecast.json, written by the compute).
+ *                    Ledger vs model view of the same month-end — the difference is
+ *                    bookkeeping not yet posted. Only written if the column exists
+ *                    (one-time DDL: ALTER TABLE ... ADD COLUMN MODEL_CLOSING_EUR FLOAT).
  *   IS_APPROVED    = FALSE (only if the column exists)
  *   SRC_UPDATED_AT = CURRENT_TIMESTAMP() at insert (the load time; only if the column exists).
  *   IS_APPROVED_UPDATED_AT = NOT written here — external approval automation.
@@ -165,7 +174,7 @@ function readPersistedForecast() {
 //           NET_CASH_EMAIL_FROM optional sender; NET_CASH_SMTP_HELO optional relay EHLO name.
 //   Slack:  SLACK_BOT_TOKEN (required) + NET_CASH_SLACK_CHANNEL (name or ID; default cash_flow_sync).
 //           The bot must be a member of the channel.
-function buildSummary({ enabled, wrote, dryRun, syncTs, totalBankEur, forecastEur, tableName, error }) {
+function buildSummary({ enabled, wrote, dryRun, syncTs, totalBankEur, forecastEur, modelClosingEur, modelClosingMonth, bankAsOf, asOfNote, tableName, error }) {
   const fmtEur = (v) => (v != null && Number.isFinite(Number(v)) ? `EUR ${Math.round(Number(v)).toLocaleString('en-US')}` : 'MISSING');
   const statusLine = error ? 'FAILED'
     : !enabled ? 'DISABLED — no row written'
@@ -183,12 +192,16 @@ function buildSummary({ enabled, wrote, dryRun, syncTs, totalBankEur, forecastEu
     `Table            : ${tableName}`,
     '',
     `DATE             : ${syncTs}`,
-    `TOTAL_BANK_EUR   : ${fmtEur(totalBankEur)}`,
+    `TOTAL_BANK_EUR   : ${fmtEur(totalBankEur)}${bankAsOf ? ` (posted GL as of ${bankAsOf})` : ''}`,
     `FORECAST_EUR     : ${fmtEur(forecastEur)}`,
+  ];
+  if (modelClosingEur != null) lines.push(`MODEL_CLOSING_EUR: ${fmtEur(modelClosingEur)}${modelClosingMonth ? ` (model closing for ${modelClosingMonth})` : ''}`);
+  if (asOfNote) lines.push(`⚠ Reval guard    : ${asOfNote}`);
+  lines.push(
     '',
     'Revenue basis    : Pipeline',
     'Salary basis     : Actual',
-  ];
+  );
   if (error) lines.push('', `Error            : ${error}`);
   return { statusLine, subject: `[Net-Cash -> Snowflake] ${statusLine} — ${syncTs}`, text: lines.join('\n') };
 }
@@ -286,19 +299,56 @@ async function notify(payload) {
   await Promise.allSettled([sendEmail(payload), sendSlack(payload)]);
 }
 
-// Total EUR bank balance (all BANK/CredCard accounts, primary book) as of a given date.
-async function fetchBankAsOf(asOfDate) {
+// Shared NetSuite client (created once per run; null when NET_CASH_NO_NS=1).
+let _ns = null;
+function getNs() {
   if (process.env.NET_CASH_NO_NS === '1') return null;
-  try {
+  if (!_ns) {
     const { createNetSuiteClient } = require(path.resolve(REPO_ROOT, 'netsuite-api.cjs'));
     const sub = parseInt(process.env.NET_CASH_SUBSIDIARY || '3', 10);
-    const ns = createNetSuiteClient(process.env, sub);
+    _ns = createNetSuiteClient(process.env, sub);
+  }
+  return _ns;
+}
+
+// Total EUR bank balance (all BANK/CredCard accounts, primary book) as of a given date.
+async function fetchBankAsOf(asOfDate) {
+  const ns = getNs();
+  if (!ns) return null;
+  try {
     const accounts = await ns.fetchBankAccountListAsOf(asOfDate);
     const eur = (accounts || []).reduce((s, a) => s + (Number(a.primaryBalance) || 0), 0);
     return Number.isFinite(eur) ? Math.round(eur) : null;
   } catch (e) {
     console.warn(`[net-cash] NetSuite bank fetch failed: ${e && e.message ? e.message : e}`);
     return null;
+  }
+}
+
+// Reval-closed guard: a month-end balance is only "final" once NetSuite carries the POSTED
+// month-end FX revaluation mark dated on that month-end. Until then the as-of sum is a
+// partially-posted figure. Step back one month-end at a time (max 2 steps) to the last
+// closed month; if none of the candidates is closed, keep the last one and flag it.
+async function resolveClosedMonthEnd(asOf) {
+  const ns = getNs();
+  if (!ns) return { asOf, note: '' };
+  let candidate = asOf;
+  try {
+    for (let step = 0; step < 3; step++) {
+      if (await ns.hasPostedMonthEndReval(candidate)) {
+        if (step > 0) console.log(`[net-cash] reval-closed guard: using ${candidate} (fell back from ${asOf}).`);
+        return { asOf: candidate, note: step > 0 ? `month-end reval not posted for ${asOf} — fell back to ${candidate}` : '' };
+      }
+      if (step === 2) break;
+      const prev = prevMonthEnd(candidate);
+      console.warn(`[net-cash] month-end FX reval NOT posted for ${candidate} — stepping back to ${prev}.`);
+      candidate = prev;
+    }
+    console.warn(`[net-cash] no closed month-end found within 2 steps of ${asOf} — using ${candidate} anyway.`);
+    return { asOf: candidate, note: `no posted month-end reval found near ${asOf} — using ${candidate} UNVERIFIED` };
+  } catch (e) {
+    console.warn(`[net-cash] reval check failed (${e && e.message ? e.message : e}) — using ${asOf}.`);
+    return { asOf, note: '' };
   }
 }
 
@@ -333,6 +383,7 @@ const CREATE_DDL = `CREATE TABLE IF NOT EXISTS ${TABLE} (
   DATE TIMESTAMP_NTZ,
   TOTAL_BANK_EUR FLOAT,
   FORECAST_EUR FLOAT,
+  MODEL_CLOSING_EUR FLOAT,
   SRC_UPDATED_AT TIMESTAMP_NTZ,
   IS_APPROVED BOOLEAN,
   IS_APPROVED_UPDATED_AT TIMESTAMP_NTZ
@@ -344,7 +395,8 @@ async function main() {
   const nowParts = israelNowParts();
   const dateOnly = args.date || nowParts.date;      // calendar day (dedupe key)
   const syncTs = `${dateOnly} ${nowParts.time}`;    // DATE value = sync timestamp incl. hour
-  const asOf = prevMonthEnd(dateOnly);              // bank balance as-of = previous month-end
+  let asOf = prevMonthEnd(dateOnly);                // bank balance as-of = previous month-end
+  let asOfNote = '';                                // set when the reval-closed guard falls back
 
   // --refresh: recompute the forecast server-side (no browser) BEFORE reading the file,
   // so the pushed FORECAST_EUR is fresh — no one's browser needed. Skipped for describe/show.
@@ -354,21 +406,33 @@ async function main() {
 
   const { path: snapPath, data: persisted } = readPersistedForecast();
 
-  // ── TOTAL_BANK_EUR: env override → live NetSuite balance as of previous month-end ──
+  // ── TOTAL_BANK_EUR: env override → live NetSuite balance as of the last CLOSED month-end ──
   let totalBankEur = numOrNull(process.env.NET_CASH_TOTAL_BANK_EUR);
   let bankSrc = 'env';
-  if (totalBankEur == null) { totalBankEur = await fetchBankAsOf(asOf); bankSrc = `NetSuite as of ${asOf}`; }
+  if (totalBankEur == null) {
+    ({ asOf, note: asOfNote } = await resolveClosedMonthEnd(asOf)); // reval-closed guard
+    totalBankEur = await fetchBankAsOf(asOf);
+    bankSrc = `NetSuite as of ${asOf}`;
+  }
 
   // ── FORECAST_EUR: env → persisted snapshot (Snowflake carry-forward tried on a real run) ──
   let forecastEur = numOrNull(process.env.NET_CASH_FORECAST_EUR);
   let forecastSrc = 'env';
   if (forecastEur == null && persisted) { forecastEur = numOrNull(persisted.forecastEur); forecastSrc = `dashboard snapshot (${persisted.scenario || 'scenario?'})`; }
 
+  // ── MODEL_CLOSING_EUR: the model's flow-forward closing of the last completed month ──
+  // (optional — written only when resolved AND the Snowflake column exists)
+  let modelClosingEur = persisted ? numOrNull(persisted.modelClosingEur) : null;
+  if (modelClosingEur != null) modelClosingEur = Math.round(modelClosingEur);
+  const modelClosingMonth = (persisted && persisted.modelClosingMonth) || null;
+
   const reportRow = () => {
     console.log('[net-cash] Resolved row:');
     console.log(`[net-cash]   DATE           = ${syncTs}  (Asia/Jerusalem)`);
     console.log(`[net-cash]   TOTAL_BANK_EUR = ${Number.isFinite(totalBankEur) ? Math.round(totalBankEur).toLocaleString() : 'MISSING'}  (src: ${bankSrc})`);
     console.log(`[net-cash]   FORECAST_EUR   = ${Number.isFinite(forecastEur) ? Math.round(forecastEur).toLocaleString() : 'MISSING'}  (src: ${forecastSrc})`);
+    console.log(`[net-cash]   MODEL_CLOSING_EUR = ${modelClosingEur != null ? modelClosingEur.toLocaleString() : '(not resolved — column skipped)'}${modelClosingMonth ? `  (model closing for ${modelClosingMonth})` : ''}`);
+    if (asOfNote) console.warn(`[net-cash]   ⚠ ${asOfNote}`);
   };
 
   // ── Dry-run: credential-free. Show what resolved; do NOT touch Snowflake. ──
@@ -378,7 +442,7 @@ async function main() {
       console.warn('[net-cash] FORECAST_EUR unresolved from env/snapshot — a real run would carry forward the last Snowflake row.');
     }
     console.log('[net-cash] --dry-run: not writing. Would insert:');
-    console.log(`[net-cash]   DATE=TO_TIMESTAMP_NTZ('${syncTs}'), TOTAL_BANK_EUR=${Number.isFinite(totalBankEur) ? Math.round(totalBankEur) : 'null'}, FORECAST_EUR=${Number.isFinite(forecastEur) ? Math.round(forecastEur) : 'null'} (+ SRC_UPDATED_AT=CURRENT_TIMESTAMP() and IS_APPROVED=FALSE if those columns exist)`);
+    console.log(`[net-cash]   DATE=TO_TIMESTAMP_NTZ('${syncTs}'), TOTAL_BANK_EUR=${Number.isFinite(totalBankEur) ? Math.round(totalBankEur) : 'null'}, FORECAST_EUR=${Number.isFinite(forecastEur) ? Math.round(forecastEur) : 'null'}${modelClosingEur != null ? `, MODEL_CLOSING_EUR=${modelClosingEur}` : ''} (+ SRC_UPDATED_AT=CURRENT_TIMESTAMP() and IS_APPROVED=FALSE if those columns exist)`);
     process.exit(0);
   }
 
@@ -386,7 +450,7 @@ async function main() {
   if (!syncEnabled) {
     reportRow();
     console.log('[net-cash] NET_CASH_SYNC_ENABLED=false → sync DISABLED, not writing to Snowflake.');
-    await notify({ enabled: false, wrote: false, dryRun: false, syncTs, totalBankEur, forecastEur, tableName: TABLE });
+    await notify({ enabled: false, wrote: false, dryRun: false, syncTs, totalBankEur, forecastEur, modelClosingEur, modelClosingMonth, bankAsOf: asOf, asOfNote, tableName: TABLE });
     process.exit(0);
   }
 
@@ -446,6 +510,7 @@ async function main() {
       { name: 'DATE', expr: 'TO_TIMESTAMP_NTZ(?)', bind: syncTs },
       { name: 'TOTAL_BANK_EUR', expr: '?', bind: totalBankEur },
       { name: 'FORECAST_EUR', expr: '?', bind: forecastEur },
+      ...(modelClosingEur != null ? [{ name: 'MODEL_CLOSING_EUR', expr: '?', bind: modelClosingEur }] : []),
       { name: 'SRC_UPDATED_AT', expr: 'CURRENT_TIMESTAMP()' },
       { name: 'IS_APPROVED', expr: 'FALSE' },
     ];
@@ -465,12 +530,12 @@ async function main() {
     // DATE sync timestamp). Rows are never overwritten or deleted by this job.
     await exec(conn, adaptedSql, binds);
     console.log(`[net-cash] ✓ Appended 1 row for ${syncTs} (columns: ${used.map((c) => c.name).join(', ')}).`);
-    await notify({ enabled: true, wrote: true, dryRun: false, syncTs, totalBankEur, forecastEur, tableName: TABLE });
+    await notify({ enabled: true, wrote: true, dryRun: false, syncTs, totalBankEur, forecastEur, modelClosingEur, modelClosingMonth, bankAsOf: asOf, asOfNote, tableName: TABLE });
     process.exit(0);
   } catch (e) {
     const msg = e && e.message ? e.message : String(e);
     console.error(`[net-cash] ERROR: ${msg}`);
-    try { await notify({ enabled: syncEnabled, wrote: false, dryRun: false, syncTs, totalBankEur, forecastEur, tableName: TABLE, error: msg }); } catch { /* ignore */ }
+    try { await notify({ enabled: syncEnabled, wrote: false, dryRun: false, syncTs, totalBankEur, forecastEur, modelClosingEur, modelClosingMonth, bankAsOf: asOf, asOfNote, tableName: TABLE, error: msg }); } catch { /* ignore */ }
     process.exit(1);
   } finally {
     if (conn) { try { conn.destroy(() => {}); } catch { /* ignore */ } }

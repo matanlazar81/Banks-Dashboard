@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite --host --port 5176",
     "build": "vite build",
+    "serve": "node server.cjs",
+    "start": "npm run build && node server.cjs",
     "lint": "eslint .",
     "preview": "vite preview",
     "populate:budget-targets": "node scripts/populate-budget-targets.cjs"
