@@ -22,9 +22,11 @@
  * hardcodes SUBSIDIARY_ID=3 — matching the dashboard for the live current-year run.
  *
  * Scenario source (knobs like dept salary cuts, vendor cuts, currency-defense %):
- *   1. NET_CASH_SCENARIO_FILE   — a JSON file holding one ScenarioData (or {data}/record).
- *   2. NET_CASH_SCENARIOS_PATH  — a scenarios.json array; matched by name.
- *   3. data/scenarios.json      — dev default; matched by name.
+ *   1. NET_CASH_SCENARIO_FILE   — a JSON file holding one ScenarioData (or {data}/record). Test override.
+ *   2. Postgres user_scenarios  — the PRODUCTION store (via psql + DATABASE_URL from .env); read live
+ *                                 each run so plan edits reflect immediately. NET_CASH_SCENARIO_OWNER
+ *                                 pins the owner email if two scenarios share a name.
+ *   3. NET_CASH_SCENARIOS_PATH / data/scenarios.json — scenarios-array file fallbacks (dev).
  *   Name from NET_CASH_SCENARIO_NAME (default "Exit plan June26"). If none is
  *   found the job runs the BASE plan (no adjustments) and says so loudly — the
  *   number will be too high because the savings are missing.
@@ -105,31 +107,57 @@ async function mapLimit(items, limit, worker) {
 }
 
 // ── scenario loading ─────────────────────────────────────────────────────
+// Load the ScenarioData straight from Postgres (user_scenarios.data) — the production
+// store the dashboard persists to. Uses psql with the backend's DATABASE_URL (already in
+// the shared .env), so there's no new npm dependency and the plan is read LIVE each run
+// (edits reflect in the next figure). Matches by name; NET_CASH_SCENARIO_OWNER pins the
+// owner email if two scenarios share a name. Returns null if psql/DATABASE_URL is missing
+// or no row matches (caller falls through to the file sources).
+function loadScenarioFromPostgres(scenarioName) {
+  const conn = process.env.NET_CASH_DATABASE_URL || process.env.DATABASE_URL;
+  if (!conn) return null;
+  const owner = process.env.NET_CASH_SCENARIO_OWNER;
+  let sql = "SELECT data::text FROM user_scenarios WHERE name = :'nm' AND COALESCE(company, 'lsports') = 'lsports'";
+  const vArgs = ['-v', `nm=${scenarioName}`];
+  if (owner) { sql += " AND LOWER(TRIM(user_email)) = LOWER(TRIM(:'ow'))"; vArgs.push('-v', `ow=${owner}`); }
+  sql += ' ORDER BY updated_at DESC LIMIT 1';
+  try {
+    const { execFileSync } = require('child_process');
+    const out = execFileSync('psql', ['-d', conn, '-X', '-t', '-A', '-v', 'ON_ERROR_STOP=1', ...vArgs, '-c', sql],
+      { encoding: 'utf-8', timeout: 20000 }).trim();
+    if (!out) { console.warn(`[compute] Postgres: no scenario named "${scenarioName}" in user_scenarios.`); return null; }
+    return { data: JSON.parse(out), source: `Postgres user_scenarios (name="${scenarioName}"${owner ? `, owner=${owner}` : ''})` };
+  } catch (e) {
+    console.warn(`[compute] Postgres scenario load failed: ${e && e.message ? e.message : e}`);
+    return null;
+  }
+}
+
 function loadScenarioData(scenarioName) {
-  // 1. explicit single-scenario file
+  // 1. explicit single-scenario file (test override).
   const single = process.env.NET_CASH_SCENARIO_FILE;
   if (single) {
     try {
       const raw = JSON.parse(fs.readFileSync(path.resolve(single), 'utf-8'));
-      const data = raw.data || raw; // {data} record, or a bare ScenarioData
-      return { data, source: `NET_CASH_SCENARIO_FILE (${single})` };
+      return { data: raw.data || raw, source: `NET_CASH_SCENARIO_FILE (${single})` }; // {data} record or bare ScenarioData
     } catch (e) {
       console.warn(`[compute] NET_CASH_SCENARIO_FILE unreadable: ${e.message}`);
     }
   }
-  // 2/3. scenarios array (env path or dev default), matched by name
-  const arrPath = process.env.NET_CASH_SCENARIOS_PATH
-    ? path.resolve(process.env.NET_CASH_SCENARIOS_PATH)
-    : path.resolve(REPO_ROOT, 'data', 'scenarios.json');
+  // 2. Postgres — the production store the dashboard writes to (primary prod source).
+  const pg = loadScenarioFromPostgres(scenarioName);
+  if (pg && pg.data && Object.keys(pg.data).length) return pg;
+  // 3. scenarios array file: explicit NET_CASH_SCENARIOS_PATH, else the dev default.
+  const arrPathEnv = process.env.NET_CASH_SCENARIOS_PATH;
+  const arrPath = arrPathEnv ? path.resolve(arrPathEnv) : path.resolve(REPO_ROOT, 'data', 'scenarios.json');
   try {
     const arr = JSON.parse(fs.readFileSync(arrPath, 'utf-8'));
     const list = Array.isArray(arr) ? arr : (Array.isArray(arr.data) ? arr.data : []);
-    const rec = list.find((s) => s && s.name === scenarioName)
-      || list.find((s) => s && s.name === scenarioName && (s.company || 'lsports') === 'lsports');
+    const rec = list.find((s) => s && s.name === scenarioName);
     if (rec && rec.data) return { data: rec.data, source: `${arrPath} (name="${scenarioName}")` };
     console.warn(`[compute] scenario "${scenarioName}" not found in ${arrPath} (${list.length} scenarios).`);
   } catch (e) {
-    console.warn(`[compute] scenarios file unreadable (${arrPath}): ${e.message}`);
+    if (arrPathEnv) console.warn(`[compute] scenarios file unreadable (${arrPath}): ${e.message}`);
   }
   return { data: {}, source: 'NONE — base plan, no adjustments (forecast will be too high)' };
 }
