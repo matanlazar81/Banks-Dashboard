@@ -3182,7 +3182,11 @@ useEffect(() => {
       const cAllAdjM = Object.keys(cd.salaryDeptAdj || {}).filter(k => k <= mKey).sort();
       for (const ak of cAllAdjM) { for (const [dep, p] of Object.entries(cd.salaryDeptAdj[ak])) { if (p !== 0) cEffDept[dep] = p; else delete cEffDept[dep]; } }
       let cDeptDelta = 0;
-      const cUseLastActual = salaryProjectionMode === 'lastActual' && lastActualSalaryMonth && salaryActualsByDept[lastActualSalaryMonth] && mKey > lastActualSalaryMonth;
+      // Match forecast-core.mjs: the Last-Actual basis must be MATERIAL (guard against a partially-
+      // loaded by-dept month collapsing the projection to ~€0); else fall through to Budget.
+      const _cLaBasis = (salaryProjectionMode === 'lastActual' && lastActualSalaryMonth) ? salaryActualsByDept[lastActualSalaryMonth] : null;
+      const _cLaSum = _cLaBasis ? Object.values(_cLaBasis).reduce((s, v) => s + (((v as { eur: number })?.eur) || 0), 0) : 0;
+      const cUseLastActual = !!_cLaBasis && _cLaSum > 50000 && mKey > lastActualSalaryMonth;
       const cDeptBasis = cUseLastActual ? Object.fromEntries(Object.entries(salaryActualsByDept[lastActualSalaryMonth]).map(([d, v]) => [d, (v as { eur: number }).eur])) : salaryDeptBudgets[mKey];
       if (Object.keys(cEffDept).length > 0 && cDeptBasis) {
         for (const [dep, p] of Object.entries(cEffDept)) { cDeptDelta += Math.round((cDeptBasis[dep] || 0) * (p / 100)); }
