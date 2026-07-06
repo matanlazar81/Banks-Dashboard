@@ -253,6 +253,57 @@ function runSmoke() {
   console.log(`\n  → December closing (pushed FORECAST_EUR): €${Math.round(rows[11].closingBalance).toLocaleString()}`);
 }
 
+// ── Mode 3: BANK-RECONCILE (closed-month cash-basis override) ────────────────
+// Proves that when the bank-classified feed (bcm) is COMPLETE for a closed month, the engine drives
+// salary/vendors/collections from bank-side cash (not the accrual/receipt feeds) and the month's
+// closing reconciles to the NS bank delta by construction (net + reval == bcm.total). Also proves a
+// BROKEN pre-close month (≈0 salary, e.g. a seed generated before the month closed) falls back to
+// the accrual feeds instead of collapsing the month.
+function runBankReconcile() {
+  console.log('\nBANK-RECONCILE: closed-month bcm cash-basis override');
+  const inputs = buildSyntheticInputs();
+  // Jan/Feb: COMPLETE bcm whose cash deliberately DIFFERS from the accrual/receipt feeds
+  // (salary 3.0M accrual vs 2.4M cash-paid; vendors 1.4M accrual vs 1.9M paid; receipts 5.05M vs
+  // 5.10M bank). Mar: BROKEN pre-close bcm (~0 salary) → must fall back to accrual.
+  const complete = (coll, sal, ven, other, reval) => ({
+    collections: { eur: coll,  ils: Math.round(coll * 3.75) },
+    salary:      { eur: sal,   ils: Math.round(sal  * 3.75) }, // signed cash-out (negative)
+    vendors:     { eur: ven,   ils: Math.round(ven  * 3.75) },
+    other:       { eur: other, ils: Math.round(other * 3.75) },
+    reval:       { eur: reval, ils: Math.round(reval * 3.59) },
+    total:       { eur: coll + sal + ven + other + reval, ils: 0 },
+  });
+  inputs.nsBankClassified = { byMonth: {
+    '2026-01': complete(5_100_000, -2_400_000, -1_900_000, -50_000, 300_000),
+    '2026-02': complete(5_120_000, -2_450_000, -1_950_000,  30_000,  90_000),
+    '2026-03': { collections: { eur: 400_000, ils: 1_500_000 }, salary: { eur: 0, ils: 0 },
+      vendors: { eur: -200_000, ils: -750_000 }, other: { eur: -1_000, ils: -3_750 },
+      reval: { eur: -2_000_000, ils: -7_180_000 }, total: { eur: -1_801_000, ils: 0 } },
+  } };
+  // Reval both-ends so the guard can adopt bcm.reval for Jan/Feb (consistent with P&L reval).
+  inputs.monthlyReval = { preYear: { eur: 0, ils: 0 }, byMonth: {
+    '2026-01': { eur: 300_000, ils: 1_077_000, hasBothEnds: true },
+    '2026-02': { eur: 90_000,  ils: 323_100,  hasBothEnds: true },
+    '2026-03': { eur: -2_000_000, ils: -7_180_000, hasBothEnds: true },
+  } };
+  const rows = computeCashflowForecast(inputs);
+  const jan = rows[0], feb = rows[1], mar = rows[2];
+
+  if (Math.round(jan.salary) === 2_400_000) ok('Jan salary = bank cash-paid (2,400,000, not 3.0M accrual)'); else fail(`Jan salary ${jan.salary} != 2,400,000`);
+  if (Math.round(jan.vendors) === 1_900_000) ok('Jan vendors = bank cash-paid (1,900,000, not 1.4M accrual)'); else fail(`Jan vendors ${jan.vendors} != 1,900,000`);
+  if (Math.round(jan.collections) === 5_100_000) ok('Jan collections = bank cash-in (5,100,000, not 5.05M receipts)'); else fail(`Jan collections ${jan.collections} != 5,100,000`);
+  const janTotal = 5_100_000 - 2_400_000 - 1_900_000 - 50_000 + 300_000; // = 1,050,000 (bcm.total)
+  if (Math.round(jan.closingBalance) === Math.round(inputs.yearStartBalance.eur + janTotal)) ok(`Jan closing == opening + bank delta (${(inputs.yearStartBalance.eur + janTotal).toLocaleString()})`); else fail(`Jan closing ${Math.round(jan.closingBalance)} != ${inputs.yearStartBalance.eur + janTotal}`);
+  const febTotal = 5_120_000 - 2_450_000 - 1_950_000 + 30_000 + 90_000; // = 840,000
+  for (const [r, tot, lbl] of [[jan, janTotal, 'Jan'], [feb, febTotal, 'Feb']]) {
+    if (Math.round(r.net + r.revalImpact) === Math.round(tot)) ok(`${lbl} net+reval == bcm.total (${Math.round(tot).toLocaleString()})`); else fail(`${lbl} net+reval ${Math.round(r.net + r.revalImpact)} != bcm.total ${Math.round(tot)}`);
+  }
+  // ILS twin also driven from bcm (not derived via ratio)
+  if (Math.round(jan.salaryILS) === Math.round(2_400_000 * 3.75)) ok('Jan salaryILS = bank cash-paid ILS (9,000,000)'); else fail(`Jan salaryILS ${jan.salaryILS} != ${Math.round(2_400_000 * 3.75)}`);
+  // Mar: BROKEN bcm (≈0 salary) → falls back to the accrual feed (3.1M), does NOT collapse
+  if (Math.round(mar.salary) === 3_100_000) ok('Mar (broken bcm) salary falls back to accrual (3,100,000)'); else fail(`Mar salary ${mar.salary} != 3,100,000 (fallback broke)`);
+}
+
 // ── main ──────────────────────────────────────────────────────────────────
 async function main() {
   const coreUrl = pathToFileURL(path.join(__dirname, '..', 'src', 'forecast', 'forecast-core.mjs')).href;
@@ -260,6 +311,7 @@ async function main() {
   console.log('=== forecast-core golden/smoke test ===\n');
   runGolden();
   runSmoke();
+  runBankReconcile();
   console.log('');
   if (failures === 0) { console.log('✅ PASS — all checks green.'); process.exit(0); }
   else { console.error(`❌ FAIL — ${failures} check(s) failed.`); process.exit(1); }
