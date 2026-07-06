@@ -30,6 +30,17 @@ any Refresh.
 | `server/warm-cache.cjs` | Keep-warm loop: re-pulls the hot endpoints every `WARM_INTERVAL_MIN` minutes so the cache is always fresh. |
 | `ecosystem.config.cjs` | pm2 config (`pm2 start ecosystem.config.cjs`). |
 
+## Production at finance-it.lsports.eu (the current setup)
+
+The live dashboard at `https://finance-it.lsports.eu/business-tools/bank-dashboard` is served
+by the **finance-it parent app**: its deploy pipeline builds this repo's static assets, and
+`/api/*` is answered by **finance-it-backend** — not by `server.cjs`. To get the shared
+routes + caching upgrades there, mount the shared module in finance-it-backend using the
+ready-made template **`docs/backend-bank-dashboard-api.ts`** (one file to copy + one
+`mountBankDashboardApi(app)` call; ordering rules and verification steps are in the
+template's header). `server.cjs` below remains the self-contained alternative for hosting
+without the parent app.
+
 ## Deploy / run
 
 ```bash
