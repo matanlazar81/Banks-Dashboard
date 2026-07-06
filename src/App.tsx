@@ -9541,12 +9541,28 @@ useEffect(() => {
                   const _isProjected = forecastDrilldown.mKey >= _curMKey;
                   // Category-level adjustment for this detail view
                   const _catName = forecastDrilldown.categoryName || '';
+                  // Resolve a per-account (detail) key by ACCOUNT NUMBER within this category, so a
+                  // legacy entry (keyed by department before the account-name key change) is matched
+                  // and edited IN PLACE. Prefers the canonical name key; else reuses any existing key
+                  // in the cascade whose category + account-number segments match (no duplicate key).
+                  const _resolveDetailKey = (name: string, account: string): string => {
+                    const canonical = `${_catName}||${name || ''}||${account || ''}`;
+                    if (!account) return canonical;
+                    const months = Object.keys(vendorDetailAdj).filter(k => k <= forecastDrilldown.mKey && k.slice(0, 4) === forecastDrilldown.mKey.slice(0, 4)).sort();
+                    let legacy = '';
+                    for (const m of months) {
+                      const map = vendorDetailAdj[m] || {};
+                      if (map[canonical] !== undefined) return canonical; // canonical wins if it exists anywhere
+                      for (const kk of Object.keys(map)) { const p = kk.split('||'); if (p[0] === _catName && p[p.length - 1] === String(account)) legacy = kk; }
+                    }
+                    return legacy || canonical;
+                  };
                   // Compute the "all departments" adjustment by checking if all detail rows share the same %
                   const _effCatAdj: { pct: number; inherited: boolean; fromMonth?: string; mixed: boolean } = { pct: 0, inherited: false, mixed: false };
                   if (_isProjected && _catName && Array.isArray(forecastDrilldown.data)) {
                     const detPcts: number[] = [];
                     for (const row of forecastDrilldown.data as any[]) {
-                      const dk = `${_catName}||${row.name || ''}||${row.account || ''}`;
+                      const dk = _resolveDetailKey(row.name, row.account);
                       let dp = 0;
                       const adms = Object.keys(vendorDetailAdj).filter(k => k <= forecastDrilldown.mKey && k.slice(0,4) === forecastDrilldown.mKey.slice(0,4)).sort();
                       for (const am of adms) { const v = vendorDetailAdj[am]?.[dk]; if (v && v.pct !== 0) dp = v.pct; else if (v && v.pct === 0) dp = 0; }
@@ -9572,7 +9588,7 @@ useEffect(() => {
                           setVendorDetailAdj(prev => {
                             const updated = { ...prev, [mKey]: { ...(prev[mKey] || {}) } };
                             for (const row of rows) {
-                              const dk = `${_catName}||${row.name || ''}||${row.account || ''}`;
+                              const dk = _resolveDetailKey(row.name, row.account);
                               // Get current effective pct for this row
                               let curPct = 0;
                               const adms = Object.keys(prev).filter(k => k <= mKey).sort();
@@ -9590,7 +9606,7 @@ useEffect(() => {
                           setVendorDetailAdj(prev => {
                             const updated = { ...prev, [mKey]: { ...(prev[mKey] || {}) } };
                             for (const row of rows) {
-                              const dk = `${_catName}||${row.name || ''}||${row.account || ''}`;
+                              const dk = _resolveDetailKey(row.name, row.account);
                               updated[mKey][dk] = { pct: newPct, base: row.amountEUR || 0 };
                             }
                             return updated;
@@ -9657,7 +9673,7 @@ useEffect(() => {
                           <td className="py-1.5 pr-2 text-right text-blue-500">{fmtILS(r.amountILS)}</td>
                           {_isProjected && <td className="py-1.5 pr-2 text-right text-gray-400">{(() => { const tot = forecastDrilldown.data.reduce((s: number, x: any) => s + Math.abs(x.amountEUR || 0), 0); return tot > 0 ? (Math.abs(r.amountEUR || 0) / tot * 100).toFixed(1) + '%' : '—'; })()}</td>}
                           {_isProjected && (() => {
-                            const detKey = `${_catName}||${r.name || ''}||${r.account || ''}`;
+                            const detKey = _resolveDetailKey(r.name, r.account);
                             // Compute effective adj (cascading). A per-account entry — incl an
                             // explicit 0 — REPLACES the category %; only fall back to the category
                             // when this account has NO per-account entry at all.
@@ -9760,7 +9776,7 @@ useEffect(() => {
                         {_isProjected && <td className="py-1.5 text-center"></td>}
                         {_isProjected && (() => {
                           const totalDetailImpact = forecastDrilldown.data.reduce((s: number, r: any) => {
-                            const dk = `${_catName}||${r.name || ''}||${r.account || ''}`;
+                            const dk = _resolveDetailKey(r.name, r.account);
                             let dp = 0;
                             const adms = Object.keys(vendorDetailAdj).filter(k => k <= forecastDrilldown.mKey && k.slice(0,4) === forecastDrilldown.mKey.slice(0,4)).sort();
                             for (const am of adms) { const v = vendorDetailAdj[am]?.[dk]; if (v && v.pct !== 0) dp = v.pct; else if (v && v.pct === 0) dp = 0; }
