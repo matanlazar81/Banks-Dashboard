@@ -9507,7 +9507,7 @@ useEffect(() => {
                   if (_isProjected && _catName && Array.isArray(forecastDrilldown.data)) {
                     const detPcts: number[] = [];
                     for (const row of forecastDrilldown.data as any[]) {
-                      const dk = `${_catName}||${row.department || ''}||${row.account || ''}`;
+                      const dk = `${_catName}||${row.name || ''}||${row.account || ''}`;
                       let dp = 0;
                       const adms = Object.keys(vendorDetailAdj).filter(k => k <= forecastDrilldown.mKey && k.slice(0,4) === forecastDrilldown.mKey.slice(0,4)).sort();
                       for (const am of adms) { const v = vendorDetailAdj[am]?.[dk]; if (v && v.pct !== 0) dp = v.pct; else if (v && v.pct === 0) dp = 0; }
@@ -9533,7 +9533,7 @@ useEffect(() => {
                           setVendorDetailAdj(prev => {
                             const updated = { ...prev, [mKey]: { ...(prev[mKey] || {}) } };
                             for (const row of rows) {
-                              const dk = `${_catName}||${row.department || ''}||${row.account || ''}`;
+                              const dk = `${_catName}||${row.name || ''}||${row.account || ''}`;
                               // Get current effective pct for this row
                               let curPct = 0;
                               const adms = Object.keys(prev).filter(k => k <= mKey).sort();
@@ -9551,7 +9551,7 @@ useEffect(() => {
                           setVendorDetailAdj(prev => {
                             const updated = { ...prev, [mKey]: { ...(prev[mKey] || {}) } };
                             for (const row of rows) {
-                              const dk = `${_catName}||${row.department || ''}||${row.account || ''}`;
+                              const dk = `${_catName}||${row.name || ''}||${row.account || ''}`;
                               updated[mKey][dk] = { pct: newPct, base: row.amountEUR || 0 };
                             }
                             return updated;
@@ -9618,7 +9618,7 @@ useEffect(() => {
                           <td className="py-1.5 pr-2 text-right text-blue-500">{fmtILS(r.amountILS)}</td>
                           {_isProjected && <td className="py-1.5 pr-2 text-right text-gray-400">{(() => { const tot = forecastDrilldown.data.reduce((s: number, x: any) => s + Math.abs(x.amountEUR || 0), 0); return tot > 0 ? (Math.abs(r.amountEUR || 0) / tot * 100).toFixed(1) + '%' : '—'; })()}</td>}
                           {_isProjected && (() => {
-                            const detKey = `${_catName}||${r.department || ''}||${r.account || ''}`;
+                            const detKey = `${_catName}||${r.name || ''}||${r.account || ''}`;
                             // Compute effective detail adj (cascading)
                             let _detPct = 0;
                             let _detInherited = false;
@@ -9731,7 +9731,7 @@ useEffect(() => {
                         {_isProjected && <td className="py-1.5 text-center"></td>}
                         {_isProjected && (() => {
                           const totalDetailImpact = forecastDrilldown.data.reduce((s: number, r: any) => {
-                            const dk = `${_catName}||${r.department || ''}||${r.account || ''}`;
+                            const dk = `${_catName}||${r.name || ''}||${r.account || ''}`;
                             let dp = 0;
                             const adms = Object.keys(vendorDetailAdj).filter(k => k <= forecastDrilldown.mKey && k.slice(0,4) === forecastDrilldown.mKey.slice(0,4)).sort();
                             for (const am of adms) { const v = vendorDetailAdj[am]?.[dk]; if (v && v.pct !== 0) dp = v.pct; else if (v && v.pct === 0) dp = 0; }
