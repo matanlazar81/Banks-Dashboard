@@ -3531,6 +3531,9 @@ useEffect(() => {
   const [showBankBreakdown, setShowBankBreakdown] = useState(false);
   const [bankBreakdownAsOf, setBankBreakdownAsOf] = useState<{ date: string; label: string; accounts: BankAccount[] | 'loading' } | null>(null);
   const [forecastDrilldown, setForecastDrilldown] = useState<{ type: 'vendors' | 'salary' | 'inflows' | 'pipeline' | 'churn' | 'other'; month: string; mKey: string; data: any; categoryData?: Record<string, number>; categoryName?: string; adjPct?: number } | null>(null);
+  // In-app confirmation for clearing a per-account vendor adjustment. Replaces window.confirm(),
+  // which is blocked inside the finance-it sandboxed iframe (so the ✕ appeared to do nothing).
+  const [detailClearPrompt, setDetailClearPrompt] = useState<{ mKey: string; detKey: string; base: number; fromCat: boolean; cat: string; label: string } | null>(null);
   const [wonOppsDrilldown, setWonOppsDrilldown] = useState<{ year: number; type: 'new' | 'upgrades'; data: any[] | 'loading' } | null>(null);
   const totalPrimaryBalance = bankAccounts.reduce((s, a) => s + a.primaryBalance, 0);
   const totalLocalBalance = bankAccounts.reduce((s, a) => s + a.localBalance, 0);
@@ -7895,6 +7898,50 @@ useEffect(() => {
           </div>
         )}
 
+        {/* Clear per-account vendor adjustment — in-app confirm (window.confirm is blocked in the iframe) */}
+        {detailClearPrompt && (() => {
+          const p = detailClearPrompt;
+          const clear = (scope: 'month' | 'future') => {
+            const yr = parseInt(p.mKey.split('-')[0]); const mo = parseInt(p.mKey.split('-')[1]);
+            if (p.fromCat) {
+              // Value is inherited from the category level → clear the category adjustment.
+              setVendorCatAdj(prev => {
+                const u = { ...prev };
+                u[p.mKey] = { ...(u[p.mKey] || {}), [p.cat]: 0 };
+                if (scope === 'future') for (let m = mo + 1; m <= 12; m++) { const mk = `${yr}-${String(m).padStart(2, '0')}`; u[mk] = { ...(u[mk] || {}), [p.cat]: 0 }; }
+                return u;
+              });
+            } else {
+              // Own per-account override → clear the detail entry (explicit 0 overrides inheritance).
+              setVendorDetailAdj(prev => {
+                const u = { ...prev };
+                u[p.mKey] = { ...(u[p.mKey] || {}), [p.detKey]: { pct: 0, base: p.base } };
+                if (scope === 'future') for (let m = mo + 1; m <= 12; m++) { const mk = `${yr}-${String(m).padStart(2, '0')}`; u[mk] = { ...(u[mk] || {}), [p.detKey]: { pct: 0, base: p.base } }; }
+                return u;
+              });
+            }
+            setDetailClearPrompt(null);
+          };
+          const monthLabel = new Date(p.mKey + '-01').toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+          return (
+            <div className="fixed inset-0 bg-black/50 z-[110] flex items-center justify-center p-4" onClick={() => setDetailClearPrompt(null)}>
+              <div className="bg-white rounded-xl shadow-2xl border w-full max-w-sm p-5" onClick={e => e.stopPropagation()}>
+                <div className="text-sm font-semibold text-gray-800 mb-1">Clear adjustment</div>
+                <div className="text-xs text-gray-600 mb-4">
+                  {p.fromCat
+                    ? <>This reduction comes from the <span className="font-medium">{p.cat}</span> category. Clearing removes it for the whole category.</>
+                    : <>Clear the adjustment for <span className="font-medium">{p.label}</span>.</>}
+                </div>
+                <div className="flex flex-col gap-2">
+                  <button onClick={() => clear('month')} className="w-full px-3 py-2 rounded-lg bg-red-50 hover:bg-red-100 text-red-700 text-xs font-semibold border border-red-200">This month only ({monthLabel})</button>
+                  <button onClick={() => clear('future')} className="w-full px-3 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-semibold">All remaining months (this month → December)</button>
+                  <button onClick={() => setDetailClearPrompt(null)} className="w-full px-3 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold">Cancel</button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
         {/* Forecast Cell Drilldown Modal */}
         {forecastDrilldown && (
           <div className="fixed inset-0 bg-black/40 z-50 flex items-start justify-center pt-4 px-4" onClick={() => setForecastDrilldown(null)}>
@@ -9649,20 +9696,8 @@ useEffect(() => {
                                   <button onClick={() => setVendorDetailAdj(prev => ({ ...prev, [forecastDrilldown.mKey]: { ...(prev[forecastDrilldown.mKey] || {}), [detKey]: { pct: _detPct + 1, base: r.amountEUR || 0 } } }))}
                                           className="w-5 h-5 rounded bg-white hover:bg-teal-100 text-gray-500 text-xs flex items-center justify-center font-bold border border-teal-200">+</button>
                                   {_detPct !== 0 && (
-                                    <button onClick={() => {
-                                      const mKey = forecastDrilldown.mKey;
-                                      const copyToNext = confirm('Also clear for remaining months?');
-                                      setVendorDetailAdj(prev => {
-                                        const u = { ...prev };
-                                        // Set explicit 0 to override any inherited value
-                                        u[mKey] = { ...(u[mKey] || {}), [detKey]: { pct: 0, base: r.amountEUR || 0 } };
-                                        if (copyToNext) {
-                                          const yr = parseInt(mKey.split('-')[0]); const mo = parseInt(mKey.split('-')[1]);
-                                          for (let m = mo + 1; m <= 12; m++) { const mk = `${yr}-${String(m).padStart(2, '0')}`; u[mk] = { ...(u[mk] || {}), [detKey]: { pct: 0, base: r.amountEUR || 0 } }; }
-                                        }
-                                        return u;
-                                      });
-                                    }} className="w-4 h-4 rounded bg-red-50 hover:bg-red-100 text-red-400 hover:text-red-600 text-[10px] flex items-center justify-center font-bold leading-none" title="Clear adjustment">✕</button>
+                                    <button onClick={() => setDetailClearPrompt({ mKey: forecastDrilldown.mKey, detKey, base: r.amountEUR || 0, fromCat: _detFromCatLevel, cat: _catName || '', label: r.name || r.account || '' })}
+                                            className="w-4 h-4 rounded bg-red-50 hover:bg-red-100 text-red-400 hover:text-red-600 text-[10px] flex items-center justify-center font-bold leading-none" title="Clear adjustment">✕</button>
                                   )}
                                   {_detPct !== 0 && (() => {
                                     const mo = parseInt(forecastDrilldown.mKey.split('-')[1]);
