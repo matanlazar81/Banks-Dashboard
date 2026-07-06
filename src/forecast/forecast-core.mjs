@@ -227,7 +227,14 @@ function computeCashflowForecast(inputs) {
     }
     // Dept adjustment delta — uses last-actual dept amounts when in lastActual mode
     let deptAdjDelta = 0;
-    const useLastActual = salaryProjectionMode === 'lastActual' && lastActualSalaryMonth && salaryActualsByDept[lastActualSalaryMonth] && mKey > lastActualSalaryMonth;
+    // "Last Actual" basis must be MATERIAL. The by-dept mart (FCT_EXPENSE) can lag and present a
+    // just-closed month with only a token amount posted (e.g. ~€300 vs the real ~€2.4M); projecting
+    // from that collapses future salary to ~€0. If the basis month's total isn't material, treat it
+    // as no-basis so the salary logic falls through to the Budget branch instead of ~€0. (50k floor:
+    // any real monthly payroll is well above it; a partially-loaded month is a few hundred €.)
+    const _laBasis = (salaryProjectionMode === 'lastActual' && lastActualSalaryMonth) ? salaryActualsByDept[lastActualSalaryMonth] : null;
+    const _laBasisSum = _laBasis ? Object.values(_laBasis).reduce((s, v) => s + ((v && v.eur) || 0), 0) : 0;
+    const useLastActual = !!_laBasis && _laBasisSum > 50000 && mKey > lastActualSalaryMonth;
     const deptBasis = useLastActual ? salaryActualsByDept[lastActualSalaryMonth] : null;
     if (Object.keys(effectiveDeptAdj).length > 0) {
       const deptSource = deptBasis

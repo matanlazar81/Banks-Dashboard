@@ -1668,16 +1668,34 @@ function createSnowflakeClient(env) {
     const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
     const byMonth = {};
-    let lastActualMonth = '';
+    const monthTotals = {};
     for (const r of rows) {
       const m = (r.MONTH_STR || '').substring(0, 7);
       if (!byMonth[m]) byMonth[m] = {};
       const dept = r.DEPT || 'Unassigned';
-      byMonth[m][dept] = { eur: Math.round(r.AMOUNT_EUR || 0), ils: Math.round(r.AMOUNT_ILS || 0) };
-      if (m < currentMonth && m > lastActualMonth) lastActualMonth = m;
+      const eur = Math.round(r.AMOUNT_EUR || 0);
+      byMonth[m][dept] = { eur, ils: Math.round(r.AMOUNT_ILS || 0) };
+      monthTotals[m] = (monthTotals[m] || 0) + eur;
     }
 
-    console.log(`[Snowflake] Salary actuals by dept: ${Object.keys(byMonth).length} months, last=${lastActualMonth} (current month ${currentMonth} excluded as partial)`);
+    // Pick the "last actual" basis = the latest CLOSED month (< current) whose payroll total is
+    // MATERIAL. FCT_EXPENSE can lag: a just-closed month is sometimes present with only a token
+    // amount posted (e.g. ~€300 vs the real ~€2.4M). Choosing that half-loaded month collapses the
+    // whole forward projection to ~€0, so require a month to be at least half the largest month
+    // before it can be the basis. Self-heals to the newest month as the mart fills in.
+    const maxTotal = Math.max(0, ...Object.values(monthTotals));
+    const material = maxTotal * 0.5;
+    let lastActualMonth = '';
+    for (const m of Object.keys(monthTotals)) {
+      if (m < currentMonth && monthTotals[m] >= material && m > lastActualMonth) lastActualMonth = m;
+    }
+    // Fallback: if nothing cleared the bar (e.g. every month is partially loaded), keep the latest
+    // present closed month so there's still a basis (the engine has its own zero-basis guard too).
+    if (!lastActualMonth) {
+      for (const m of Object.keys(byMonth)) { if (m < currentMonth && m > lastActualMonth) lastActualMonth = m; }
+    }
+
+    console.log(`[Snowflake] Salary actuals by dept: ${Object.keys(byMonth).length} months, last=${lastActualMonth} (basis total EUR ${Math.round(monthTotals[lastActualMonth] || 0).toLocaleString()}; current month ${currentMonth} excluded as partial)`);
     return { byMonth, lastActualMonth };
   }
 
