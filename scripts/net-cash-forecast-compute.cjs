@@ -117,18 +117,24 @@ function loadScenarioFromPostgres(scenarioName) {
   const conn = process.env.NET_CASH_DATABASE_URL || process.env.DATABASE_URL;
   if (!conn) return null;
   const owner = process.env.NET_CASH_SCENARIO_OWNER;
-  let sql = "SELECT data::text FROM user_scenarios WHERE name = :'nm' AND COALESCE(company, 'lsports') = 'lsports'";
-  const vArgs = ['-v', `nm=${scenarioName}`];
-  if (owner) { sql += " AND LOWER(TRIM(user_email)) = LOWER(TRIM(:'ow'))"; vArgs.push('-v', `ow=${owner}`); }
+  // Embed name/owner as escaped SQL literals — psql's :'var' interpolation is NOT applied to
+  // -c commands on all versions (it errors "syntax error at or near :"). Values are config /
+  // defaults (not web input); single quotes are doubled to stay injection-safe.
+  const lit = (s) => `'${String(s).replace(/'/g, "''")}'`;
+  let sql = `SELECT data::text FROM user_scenarios WHERE name = ${lit(scenarioName)} AND COALESCE(company, 'lsports') = 'lsports'`;
+  if (owner) sql += ` AND LOWER(TRIM(user_email)) = LOWER(TRIM(${lit(owner)}))`;
   sql += ' ORDER BY updated_at DESC LIMIT 1';
   try {
     const { execFileSync } = require('child_process');
-    const out = execFileSync('psql', ['-d', conn, '-X', '-t', '-A', '-v', 'ON_ERROR_STOP=1', ...vArgs, '-c', sql],
-      { encoding: 'utf-8', timeout: 20000 }).trim();
+    const out = execFileSync('psql', ['-d', conn, '-X', '-t', '-A', '-v', 'ON_ERROR_STOP=1', '-c', sql],
+      { encoding: 'utf-8', timeout: 20000, maxBuffer: 10 * 1024 * 1024 }).trim();
     if (!out) { console.warn(`[compute] Postgres: no scenario named "${scenarioName}" in user_scenarios.`); return null; }
     return { data: JSON.parse(out), source: `Postgres user_scenarios (name="${scenarioName}"${owner ? `, owner=${owner}` : ''})` };
   } catch (e) {
-    console.warn(`[compute] Postgres scenario load failed: ${e && e.message ? e.message : e}`);
+    // NEVER log the connection string (it carries the DB password) — redact any URI, keep the DB error.
+    const raw = (e && e.stderr) ? String(e.stderr) : (e && e.message ? String(e.message) : String(e));
+    const detail = raw.replace(/postgres(?:ql)?:\/\/[^\s'"]+/gi, 'postgresql://<redacted>').trim().split('\n')[0];
+    console.warn(`[compute] Postgres scenario load failed: ${detail}`);
     return null;
   }
 }
