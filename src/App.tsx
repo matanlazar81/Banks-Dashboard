@@ -8190,6 +8190,18 @@ useEffect(() => {
                   const sfOverrideTotal = monthOverrides.reduce((s, o) => s + (o.mode === 'Override' ? (o.newVal - o.oldVal) : o.amountEUR), 0);
                   const hasSfOverrides = monthOverrides.length > 0;
                   const actualTotal = d.actuals.reduce((s: number, r: any) => s + (r.amountEUR || 0), 0);
+                  const actualTotalILS = d.actuals.reduce((s: number, r: any) => s + (r.amountILS || 0), 0);
+                  // Reconcile the accrual (GL-76xxx) breakdown to the CASH figure the forecast row shows.
+                  // Past reconciled months drive Salary from bank cash, which can exceed the accrual when
+                  // payroll liabilities / severance / one-time payments settle in cash. Append one
+                  // reconciliation line so this drill-down sums to the number in the main table. Gated on
+                  // isPast + a material delta so the current/future month never shows a spurious line.
+                  const _fcSalRow = cashflowForecast.find((r) => r.mKey === forecastDrilldown.mKey);
+                  const _salCashEur = _fcSalRow && Number.isFinite(_fcSalRow.salary) ? Math.round(_fcSalRow.salary) : actualTotal;
+                  const _salCashIls = _fcSalRow && Number.isFinite(_fcSalRow.salaryILS) ? Math.round(_fcSalRow.salaryILS) : actualTotalILS;
+                  const _salReconEur = Math.round(_salCashEur - actualTotal);
+                  const _salReconIls = Math.round(_salCashIls - actualTotalILS);
+                  const _salHasRecon = hasActuals && !!_fcSalRow?.isPast && Math.abs(_salReconEur) > 1;
                   const finalBudget = adjustedTotal; // already includes SF overrides (applied server-side) + manual adj
                   const ilsRate = adjustedCurrent > 0 ? adjustedCurrentLocal / adjustedCurrent : 3.7;
                   const toILS = (eur: number) => Math.round(eur * ilsRate);
@@ -9359,11 +9371,21 @@ useEffect(() => {
                                 </Fragment>
                                 );
                               })}
+                              {_salHasRecon && (
+                                <tr className="border-b border-gray-50 bg-violet-50/50">
+                                  <td className="py-1.5 pr-2 text-violet-700" colSpan={3}>
+                                    <span className="font-medium">Bank cash reconciliation</span>
+                                    <span className="text-gray-400 ml-1">— payroll liabilities / severance / timing settled in cash (vs accrual)</span>
+                                  </td>
+                                  <td className="py-1.5 pr-2 text-right font-medium text-violet-700">{fmt(_salReconEur)}</td>
+                                  <td className="py-1.5 pr-2 text-right text-blue-500">{fmtILS(_salReconIls)}</td>
+                                </tr>
+                              )}
                             </tbody>
                             <tfoot><tr className="border-t-2 font-bold">
-                              <td className="py-1.5" colSpan={3}>Total</td>
-                              <td className="py-1.5 pr-2 text-right text-amber-800">{fmt(actualTotal)}</td>
-                              <td className="py-1.5 pr-2 text-right text-blue-700">{fmtILS(d.actuals.reduce((s: number, r: any) => s + (r.amountILS || 0), 0))}</td>
+                              <td className="py-1.5" colSpan={3}>Total{_salHasRecon ? ' — bank cash (matches forecast)' : ''}</td>
+                              <td className="py-1.5 pr-2 text-right text-amber-800">{fmt(_salHasRecon ? _salCashEur : actualTotal)}</td>
+                              <td className="py-1.5 pr-2 text-right text-blue-700">{fmtILS(_salHasRecon ? _salCashIls : actualTotalILS)}</td>
                             </tr></tfoot>
                           </table>
                         </div>
@@ -10213,6 +10235,15 @@ useEffect(() => {
                       const _isFutureCat = forecastDrilldown.mKey > _curMKey3;
                       const _catEntries = Object.entries(forecastDrilldown.data as Record<string, number>).filter(([k]) => !k.startsWith('__'));
                       const _catTotal = _catEntries.reduce((s, [, v]) => s + Math.abs(typeof v === 'number' ? v : 0), 0);
+                      // Reconcile the (SF accrual) category breakdown to the CASH figure shown in the
+                      // forecast row for PAST months (vendors are driven from bank cash there, which differs
+                      // from the accrual by payment timing). Append one line so the drill-down sums to the
+                      // main table. Gated on past + vendors + a material delta; future/current unaffected.
+                      const _catSumSigned = _catEntries.reduce((s, [, v]) => s + (typeof v === 'number' ? v : 0), 0);
+                      const _fcCashRow = cashflowForecast.find((r) => r.mKey === forecastDrilldown.mKey);
+                      const _bucketCashRaw = (forecastDrilldown.type === 'vendors' && _fcCashRow && Number.isFinite(_fcCashRow.vendors)) ? Math.abs(Math.round(_fcCashRow.vendors)) : null;
+                      const _bucketReconEur = (!_isFutureCat && !!_fcCashRow?.isPast && _bucketCashRaw != null) ? Math.round(_bucketCashRaw - _catSumSigned) : 0;
+                      const _bucketHasRecon = Math.abs(_bucketReconEur) > 1;
                       // Compute effective vendor category adjustments (cascading)
                       const _effVendorAdj: Record<string, { pct: number; inherited: boolean; fromMonth?: string }> = {};
                       if (_isFutureCat) {
@@ -10374,10 +10405,17 @@ useEffect(() => {
                           </tr>
                           );
                         })}
+                      {_bucketHasRecon && (
+                        <tr className="border-b border-gray-50 bg-violet-50/50">
+                          <td className="py-1.5 pr-2 text-violet-700"><span className="font-medium">Bank cash reconciliation</span><span className="text-gray-400 ml-1">— vendor payments vs SF accrual (cash timing)</span></td>
+                          <td className="py-1.5 pr-2 text-right font-medium text-violet-700">{fmt(_bucketReconEur)}</td>
+                          <td className="py-1.5 pr-2 text-right text-gray-400">—</td>
+                        </tr>
+                      )}
                       </tbody>
                       <tfoot><tr className="border-t-2 font-bold">
-                        <td className="py-1.5">Total</td>
-                        <td className="py-1.5 pr-2 text-right text-violet-800">{fmt(Object.entries(forecastDrilldown.data as Record<string, any>).filter(([k]) => !k.startsWith('__')).reduce((s, [, v]) => s + (typeof v === 'number' ? v : 0), 0))}</td>
+                        <td className="py-1.5">Total{_bucketHasRecon ? ' — bank cash (matches forecast)' : ''}</td>
+                        <td className="py-1.5 pr-2 text-right text-violet-800">{fmt(_catSumSigned + _bucketReconEur)}</td>
                         <td className="py-1.5 pr-2 text-right text-gray-500 font-bold">100%</td>
                         {_isFutureCat && <td className="py-1.5 text-center">
                           {(_hasAnyVcAdj || _detailAdjBd !== 0) && <button onClick={() => { setVendorCatAdj({}); setVendorDetailAdj({}); }} className="text-[9px] text-red-500 hover:text-red-700 underline" title="Clear category AND per-line vendor adjustments (all months)">reset all</button>}
