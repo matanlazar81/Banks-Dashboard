@@ -2439,6 +2439,51 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
     return { byMonth };
   }
 
+  // ── Dividend distributions on the bank (memo-based) ──
+  // Identifies dividend CASH by transaction memo ("div distribution" / "dividend"), Bank/CredCard only,
+  // EUR primary book, posted. Returns per-month signed bank deltas (negative = cash out):
+  //   distributionEUR — shareholder payments (VendPymt/BillPmt; these otherwise land in the Vendors bucket)
+  //   whtEUR          — withholding-tax journals (these otherwise land in the Other bucket)
+  //   totalEUR        — distributionEUR + whtEUR
+  // Used by the owner-only closing↔NS reconciliation panel to strip the distribution out of the
+  // operating view and show it as the reconciling line. Memo match is precise: "%div%distribution%"
+  // needs "div" before "distribution" (so it won't catch e.g. "Distribution sales").
+  async function fetchDividendDistributions(year) {
+    const y = parseInt(year);
+    if (!y || y < 2000 || y > 2100) return { byMonth: {}, total: { distributionEUR: 0, whtEUR: 0, totalEUR: 0 } };
+    const startDate = `${y}-01-01`, endDate = `${y}-12-31`;
+    const rows = await suiteqlAll(`
+      SELECT TO_CHAR(t.trandate, 'YYYY-MM') AS month,
+             t.type AS tx_type,
+             ROUND(SUM(COALESCE(tal.debit, 0)) - SUM(COALESCE(tal.credit, 0))) AS delta
+      FROM transactionaccountingline tal
+      JOIN transaction t ON t.id = tal.transaction
+      JOIN account a ON a.id = tal.account
+      WHERE a.accttype IN ('Bank', 'CredCard')
+        AND t.subsidiary = ${subsidiaryId}
+        AND tal.posting = 'T' AND tal.accountingbook = 1
+        AND t.trandate >= TO_DATE('${startDate}', 'YYYY-MM-DD')
+        AND t.trandate <= TO_DATE('${endDate}', 'YYYY-MM-DD')
+        AND (LOWER(t.memo) LIKE '%div%distribution%' OR LOWER(t.memo) LIKE '%dividend%')
+      GROUP BY TO_CHAR(t.trandate, 'YYYY-MM'), t.type
+    `);
+    const byMonth = {};
+    const total = { distributionEUR: 0, whtEUR: 0, totalEUR: 0 };
+    for (const r of rows || []) {
+      const m = r.month;
+      if (!m) continue;
+      const delta = Math.round(parseFloat(r.delta) || 0); // signed; negative = cash out
+      if (!byMonth[m]) byMonth[m] = { distributionEUR: 0, whtEUR: 0, totalEUR: 0 };
+      if (r.tx_type === 'Journal') byMonth[m].whtEUR += delta; else byMonth[m].distributionEUR += delta;
+      byMonth[m].totalEUR += delta;
+      total.distributionEUR += (r.tx_type === 'Journal' ? 0 : delta);
+      total.whtEUR += (r.tx_type === 'Journal' ? delta : 0);
+      total.totalEUR += delta;
+    }
+    console.log(`[NS API] Dividend distributions ${y}: ${Object.keys(byMonth).length} month(s), total EUR ${total.totalEUR}`);
+    return { byMonth, total };
+  }
+
   // ── Latest EUR→ILS exchange rate from NetSuite ──
   // Tries currencyrate (daily ECB-fed) first; falls back to the most recent ILS
   // transaction's exchangerate. Always returns the rate as "ILS per 1 EUR" so the
@@ -2506,7 +2551,7 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
     return Number.isFinite(impact) && impact > 0;
   }
 
-  return { suiteql, suiteqlAll, fetchAgingData, fetchCollectionData, buildCollectionJson, fetchClientAnomalies, fetchAllSOsByBillingPeriod, fetchRevenueData, fetchMRRData, fetchBankBalance, fetchVendorBills, fetchVendorPaymentHistory, fetchBankAccountList, fetchBankAccountListAsOf, fetchSalaryData, fetchVendorActuals, fetchRevenueActuals, fetchCustomerCashReceipts, fetchCashflowHistory, fetchExpenseCategoryData, fetchPaymentsByCategory, fetchCashflowBreakdown, fetchCashflowTransactions, fetchExpenseTransactions, fetchSalaryBreakdown, fetchInvoiceBasedProjection, fetchMonthlyRevaluation, fetchVendorBillsByAccount, fetchNSBudget, fetchCurrencyDefenseBudget, fetchPaidVendorsYearly, fetchBankClassifiedYearly, fetchLatestFxRate, hasPostedMonthEndReval };
+  return { suiteql, suiteqlAll, fetchAgingData, fetchCollectionData, buildCollectionJson, fetchClientAnomalies, fetchAllSOsByBillingPeriod, fetchRevenueData, fetchMRRData, fetchBankBalance, fetchVendorBills, fetchVendorPaymentHistory, fetchBankAccountList, fetchBankAccountListAsOf, fetchSalaryData, fetchVendorActuals, fetchRevenueActuals, fetchCustomerCashReceipts, fetchCashflowHistory, fetchExpenseCategoryData, fetchPaymentsByCategory, fetchCashflowBreakdown, fetchCashflowTransactions, fetchExpenseTransactions, fetchSalaryBreakdown, fetchInvoiceBasedProjection, fetchMonthlyRevaluation, fetchVendorBillsByAccount, fetchNSBudget, fetchCurrencyDefenseBudget, fetchPaidVendorsYearly, fetchBankClassifiedYearly, fetchDividendDistributions, fetchLatestFxRate, hasPostedMonthEndReval };
 }
 
 

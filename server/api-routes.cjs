@@ -385,6 +385,38 @@ function registerApiRoutes(app     ) {
         }
       });
 
+      // ── GET /api/dividend-distributions — OWNER ONLY. Dividend cash by month (memo-based), so the
+      // owner's Closing↔NS reconciliation panel can strip the distribution out of the operating view
+      // and show it as the reconciling line. Gated to the SYNC allowlist via the upstream x-user-email
+      // header (same enforcement as POST /api/sync-budget-targets); non-owners get 403.
+      use('/api/dividend-distributions', async (req, res) => {
+        try {
+          const email = getUserEmail(req);
+          if (!canUserSync(email)) {
+            res.statusCode = 403;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: 'forbidden', byMonth: {} }));
+            return;
+          }
+          const url = new URL(req.url || '', `http://${req.headers.host}`);
+          const sub = parseInt(url.searchParams.get('subsidiary') || '3') || 3;
+          const year = parseInt(url.searchParams.get('year') || '') || new Date().getFullYear();
+          const ns = getNsClient(sub);
+          if (!ns || !ns.fetchDividendDistributions) {
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ byMonth: {}, error: 'endpoint not available' }));
+            return;
+          }
+          const data = await queueNsCall(() => ns.fetchDividendDistributions(year));
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify(data));
+        } catch (e     ) {
+          console.error('[NS API] Dividend distributions failed:', e.message);
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ byMonth: {}, error: e.message }));
+        }
+      });
+
       // ── GET /api/ns-paid-vendors-yearly — NS paid vendor bills for a year, grouped by month + GL account
       use('/api/ns-paid-vendors-yearly', async (req, res) => {
         try {

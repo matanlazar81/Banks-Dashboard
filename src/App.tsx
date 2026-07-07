@@ -1371,6 +1371,13 @@ export default function App() {
   const [consElimExpanded, setConsElimExpanded] = useState(true);
   const [consElimDetailMonth, setConsElimDetailMonth] = useState<string | null>(null);
   const [consDrilldown, setConsDrilldown] = useState<{ type: string; title: string; rows: { label: string; ls: number; st: number; total: number; color?: string }[]; accounts?: { ls: { account: string; name: string; amount: number }[]; st: { account: string; name: string; amount: number }[] }; loading?: boolean } | null>(null);
+  // Owner-only "Closing ↔ NS bank" reconciliation panel (dividend excluded). Gated to the owner via
+  // the whoami email; dividend cash comes from the owner-gated /api/dividend-distributions endpoint.
+  const [reconOpen, setReconOpen] = useState(false);
+  const [reconDividend, setReconDividend] = useState<{ byMonth: Record<string, { distributionEUR: number; whtEUR: number; totalEUR: number }>; total: { distributionEUR: number; whtEUR: number; totalEUR: number } } | null>(null);
+  const [reconMonthSel, setReconMonthSel] = useState<string>('current');
+  const [reconExcludeWht, setReconExcludeWht] = useState<boolean>(true);
+  const [reconAsOf, setReconAsOf] = useState<{ mKey: string; eur: number } | null>(null);
   const [consBankExpanded, setConsBankExpanded] = useState<'ls' | 'st' | null>(null);
   const [expandedChart, setExpandedChart] = useState<string | null>(null);
   const [burnOverride, setBurnOverride] = useState<number | null>(null);
@@ -6201,6 +6208,67 @@ useEffect(() => {
         )}
 
         {/* ── Consolidated Drilldown Modal ── */}
+        {reconOpen && budgetViewerEmail === 'matan.l@lsports.eu' && (() => {
+          const rows = cashflowForecast;
+          const curRow = rows.find(r => r.isCurrent) || rows[rows.length - 1];
+          const selMonth = reconMonthSel === 'current' ? (curRow ? curRow.mKey : '') : reconMonthSel;
+          const selRow = rows.find(r => r.mKey === selMonth) || curRow;
+          const dashClosing = Math.round((selRow && selRow.closingBalance) || 0);
+          const div = reconDividend
+            ? Object.entries(reconDividend.byMonth).filter(([m]) => m <= selMonth)
+                .reduce((s, [, v]) => ({ dist: s.dist + (v.distributionEUR || 0), wht: s.wht + (v.whtEUR || 0) }), { dist: 0, wht: 0 })
+            : { dist: 0, wht: 0 };
+          const distMag = Math.round(-div.dist);            // signed→positive add-back
+          const whtMag = Math.round(-div.wht);
+          const dividendMag = distMag + (reconExcludeWht ? whtMag : 0);
+          const operatingClosing = dashClosing + dividendMag;
+          const nsBank = reconMonthSel === 'current'
+            ? Math.round(totalPrimaryBalance)
+            : (reconAsOf && reconAsOf.mKey === selMonth ? reconAsOf.eur : null);
+          const residual = nsBank != null ? (dashClosing - nsBank) : null;
+          const pastMonths = rows.filter(r => r.isPast || r.isCurrent).map(r => r.mKey);
+          const divMonths = Object.keys((reconDividend && reconDividend.byMonth) || {}).sort();
+          return (
+          <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center" onClick={() => setReconOpen(false)}>
+            <div className="bg-white rounded-xl shadow-xl max-w-lg w-full mx-4 max-h-[85vh] overflow-y-auto p-5" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-bold text-gray-800">⚖ Closing ↔ NetSuite bank reconciliation</h3>
+                <button onClick={() => setReconOpen(false)} className="text-gray-400 hover:text-gray-600 text-lg leading-none">✕</button>
+              </div>
+              <div className="flex items-center gap-2 mb-3 text-xs">
+                <span className="text-gray-500">Month:</span>
+                <select value={reconMonthSel} className="border border-gray-200 rounded px-2 py-1"
+                  onChange={e => {
+                    const v = e.target.value; setReconMonthSel(v);
+                    if (v !== 'current') {
+                      const [yy, mm] = v.split('-'); const endD = new Date(Number(yy), Number(mm), 0).getDate();
+                      const dateStr = `${v}-${String(endD).padStart(2, '0')}`;
+                      fetch(`/api/ns-bank-accounts-asof?date=${dateStr}&subsidiary=${companyConfig.subsidiary}`, { credentials: 'include' })
+                        .then(r => r.json()).then(j => { const eur = (j.data || []).reduce((s: number, a: any) => s + (a.primaryBalance || 0), 0); setReconAsOf({ mKey: v, eur: Math.round(eur) }); }).catch(() => {});
+                    }
+                  }}>
+                  <option value="current">Current position (live)</option>
+                  {pastMonths.map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
+                <label className="ml-auto flex items-center gap-1 text-gray-500"><input type="checkbox" checked={reconExcludeWht} onChange={e => setReconExcludeWht(e.target.checked)} /> exclude WHT</label>
+              </div>
+              <table className="w-full text-xs">
+                <tbody>
+                  <tr className="border-b"><td className="py-1.5 text-gray-600">NetSuite bank {reconMonthSel === 'current' ? '(live, raw)' : `(as of ${selMonth} month-end)`}</td><td className="py-1.5 text-right font-medium">{nsBank != null ? fmt(nsBank) : '…'}</td></tr>
+                  <tr className="border-b"><td className="py-1.5 text-gray-600">Dashboard closing ({selMonth || '—'})</td><td className="py-1.5 text-right font-medium">{fmt(dashClosing)}</td></tr>
+                  <tr className="border-b"><td className="py-1.5 text-gray-500">Residual (dashboard − NS)</td><td className={`py-1.5 text-right ${residual != null && Math.abs(residual) < 5000 ? 'text-green-600' : 'text-amber-600'}`}>{residual != null ? fmt(residual) : '—'}</td></tr>
+                  <tr><td className="pt-3 pb-1 text-gray-400 uppercase text-[10px]" colSpan={2}>Dividend distribution — excluded from operating view</td></tr>
+                  <tr className="border-b"><td className="py-1.5 text-gray-600">Shareholder distribution (in Vendors)</td><td className="py-1.5 text-right text-violet-700">{fmt(distMag)}</td></tr>
+                  <tr className="border-b"><td className="py-1.5 text-gray-600">Withholding tax (in Other){reconExcludeWht ? '' : ' — kept as cost'}</td><td className="py-1.5 text-right text-violet-700">{fmt(whtMag)}</td></tr>
+                  <tr className="border-b-2 font-bold"><td className="py-1.5 text-gray-800">Operating closing (excl. dividend)</td><td className="py-1.5 text-right text-blue-700">{fmt(operatingClosing)}</td></tr>
+                  <tr className="font-bold"><td className="py-2 text-gray-800">Operating closing − NS bank (= dividend)</td><td className={`py-2 text-right ${nsBank != null ? 'text-violet-800' : 'text-gray-400'}`}>{nsBank != null ? fmt(operatingClosing - nsBank) : '—'}</td></tr>
+                </tbody>
+              </table>
+              <p className="text-[11px] text-gray-400 mt-3">Your operating closing excludes the {fmt(dividendMag)} dividend distribution{divMonths.length ? ` (paid ${divMonths.join(', ')})` : ''} and reconciles to the NetSuite bank within {residual != null ? fmt(Math.abs(residual)) : '—'}. Personal view — not saved to the shared model or the nightly push.{!reconDividend ? ' Loading dividend data…' : ''}</p>
+            </div>
+          </div>
+          );
+        })()}
         {consDrilldown && (
           <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center" onClick={() => setConsDrilldown(null)}>
             <div className={`bg-white rounded-xl shadow-2xl border border-gray-200 p-5 w-full mx-4 max-h-[80vh] overflow-y-auto ${consDrilldown.accounts ? 'max-w-2xl' : 'max-w-lg'}`} onClick={e => e.stopPropagation()}>
@@ -6569,6 +6637,18 @@ useEffect(() => {
                       >ⓘ</button>
                     )}
                   </div>
+                )}
+                {budgetViewerEmail === 'matan.l@lsports.eu' && (
+                  <button
+                    onClick={() => {
+                      setReconOpen(true);
+                      if (!reconDividend) {
+                        fetch(`/api/dividend-distributions?year=${activeYear}&subsidiary=${companyConfig.subsidiary}`, { credentials: 'include' })
+                          .then(r => r.json()).then(j => { if (j && j.byMonth) setReconDividend(j); }).catch(() => {});
+                      }
+                    }}
+                    className="text-xs text-indigo-600 hover:text-indigo-800 bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-1.5 whitespace-nowrap"
+                    title="Reconcile the dashboard closing balance to the NetSuite bank (dividend distribution excluded). Visible to you only.">⚖ Reconcile vs NS</button>
                 )}
                 {(Object.values(salaryAdjPctByMonth).some(v => v !== 0) || Object.keys(collPctByMonth).length > 0 || Object.keys(salaryDeptAdj).length > 0) && (() => {
                   const hasSalary = Object.values(salaryAdjPctByMonth).some(v => v !== 0);
