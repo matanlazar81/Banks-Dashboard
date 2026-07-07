@@ -8171,11 +8171,20 @@ useEffect(() => {
                 {/* ── Other bank cash itemized (bank-side classification residual) ── */}
                 {forecastDrilldown.type === 'other' && Array.isArray(forecastDrilldown.data) && (() => {
                   const items = forecastDrilldown.data as { label: string; bucket: string; eur: number; ils: number }[];
-                  const onlyOther = items.filter(it => it.bucket === 'other');
+                  // Operating view excludes the dividend withholding tax from Other (the forecast row's Other
+                  // cell has it stripped). Drop the one WHT line whose EUR equals this month's dividend whtEUR
+                  // so the itemized total ties to the cell. The owner "show actual" view keeps it (raw bank).
+                  const _divWht = (isOwner && showActualDividend) ? 0 : Math.round((reconDividend?.byMonth?.[forecastDrilldown.mKey]?.whtEUR) || 0);
+                  let _whtRemoved = false;
+                  const onlyOther = items.filter(it => it.bucket === 'other').filter(it => {
+                    if (!_whtRemoved && _divWht !== 0 && Math.abs(Math.round(it.eur) - _divWht) <= 2) { _whtRemoved = true; return false; }
+                    return true;
+                  });
                   const total = onlyOther.reduce((s, it) => s + it.eur, 0);
                   return (
                     <div className="space-y-3">
                       <p className="text-xs text-gray-500">Bank-side transactions not classified as Salary, Vendors, Collections, or Reval. Sourced from NetSuite <code>transactionaccountingline</code> on Bank/CC accounts, classified by tx type and (for Journals) by dominant contra account.</p>
+                      {_whtRemoved && <p className="text-[11px] text-violet-600">Dividend withholding tax ({fmt(Math.abs(_divWht))}) is excluded here to match the operating Other figure. Toggle "show actual" to include it.</p>}
                       <table className="w-full text-xs">
                         <thead>
                           <tr className="text-left text-gray-400 uppercase border-b">
