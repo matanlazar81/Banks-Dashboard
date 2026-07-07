@@ -7148,8 +7148,8 @@ useEffect(() => {
                     <th className="pb-2 px-0.5 text-right text-violet-600 whitespace-nowrap">Vendors</th>
                     <th className="pb-2 px-0.5 text-right text-slate-500 whitespace-nowrap">Other<div className="text-[8px] font-normal normal-case text-gray-400">tax / IC / fees</div></th>
                     <th className="pb-2 px-0.5 text-right text-red-600 whitespace-nowrap">Total Outflow</th>
-                    <th className="pb-2 px-0.5 text-right whitespace-nowrap">Net</th>
                     <th className="pb-2 px-0.5 text-right text-amber-500 whitespace-nowrap">Reval</th>
+                    <th className="pb-2 px-0.5 text-right whitespace-nowrap">Net<div className="text-[8px] font-normal normal-case text-gray-400">incl. reval</div></th>
                     <th className="pb-2 px-0.5 text-right text-blue-700 whitespace-nowrap">Closing Balance</th>
                   </tr>
                 </thead>
@@ -7501,7 +7501,6 @@ useEffect(() => {
                         {r.other === 0 ? '-' : (r.other > 0 ? `-${fmtC(r.other, r.otherILS)}` : `+${fmtC(-r.other, -r.otherILS)}`)}
                       </td>
                       <td className="py-2.5 px-0.5 text-right text-red-600 font-bold">-{fmtC(r.totalOutflow, r.totalOutflowILS)}</td>
-                      <td className={`py-2.5 px-0.5 text-right font-bold ${r.net >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtC(r.net, r.netILS)}</td>
                       <td className={`py-2.5 px-0.5 text-right font-medium ${r.revalImpact === 0 ? 'text-gray-300' : r.revalImpact > 0 ? 'text-amber-600' : 'text-amber-700'}`}>
                         {r.revalImpact !== 0 ? fmtC(r.revalImpact, r.revalImpactILS) : '-'}
                         {!r.isPast && (() => {
@@ -7532,6 +7531,7 @@ useEffect(() => {
                           );
                         })()}
                       </td>
+                      <td className={`py-2.5 px-0.5 text-right font-bold ${(r.net + r.revalImpact) >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtC(r.net + r.revalImpact, r.netILS + r.revalImpactILS)}</td>
                       <td className={`py-2.5 px-0.5 text-right font-bold whitespace-nowrap ${r.closingBalance >= 0 ? 'text-blue-700' : 'text-red-600'}`}>
                         {fmtCFull(r.closingBalance, r.closingBalanceILS)}
                         {r.isPast && Math.abs(r.wcDelta || 0) > 100 && (
@@ -7608,11 +7608,11 @@ useEffect(() => {
                       const closingBeforeSavings = hasSavings ? finalClosing - (salSavings + venSavings) : finalClosing;
                       const closingBeforeSavingsILS = hasSavings ? finalClosingILS - Math.round((salSavings + venSavings) * ilsRateForSavings) : finalClosingILS;
                       return (<>
-                        <td className={`py-2.5 px-0.5 text-right ${totalNet >= 0 ? 'text-green-700' : 'text-red-700'}`}>
-                          {fmtC(totalNet, totalNetILS)}
-                        </td>
                         <td className="py-2.5 px-0.5 text-right text-amber-600">
                           {fmtC(totalReval, totalRevalILS)}
+                        </td>
+                        <td className={`py-2.5 px-0.5 text-right ${(totalNet + totalReval) >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                          {fmtC(totalNet + totalReval, totalNetILS + totalRevalILS)}
                         </td>
                         <td className={`py-2.5 px-0.5 text-right font-bold whitespace-nowrap ${closingBeforeSavings >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
                           {fmtC(closingBeforeSavings, closingBeforeSavingsILS)}
@@ -7656,8 +7656,8 @@ useEffect(() => {
                         <td className={`py-2 pr-1 text-right ${totalVendorSaving > 0 ? 'text-green-700' : totalVendorSaving < 0 ? 'text-red-600' : 'text-gray-400'}`}>{fmtC(totalVendorSaving, totalVendorSavingILS)}</td>
                         <td className="py-2 pr-1 text-right"></td>
                         <td className={`py-2 pr-1 text-right ${totalSaving > 0 ? 'text-green-700' : totalSaving < 0 ? 'text-red-600' : 'text-gray-400'}`}>{fmtC(totalSaving, totalSavingILS)}</td>
-                        <td className={`py-2 pr-1 text-right ${totalSaving > 0 ? 'text-green-700' : totalSaving < 0 ? 'text-red-600' : 'text-gray-400'}`}>{fmtC(totalSaving, totalSavingILS)}</td>
                         <td className="py-2 pr-1 text-right"></td>
+                        <td className={`py-2 pr-1 text-right ${totalSaving > 0 ? 'text-green-700' : totalSaving < 0 ? 'text-red-600' : 'text-gray-400'}`}>{fmtC(totalSaving, totalSavingILS)}</td>
                         <td className={`py-2 pr-1 text-right ${totalSaving > 0 ? 'text-green-700' : totalSaving < 0 ? 'text-red-600' : 'text-gray-400'}`}>{fmtC(totalSaving, totalSavingILS)}</td>
                       </tr>
                       <tr className="bg-emerald-50 font-bold text-emerald-800 whitespace-nowrap">
@@ -7666,8 +7666,8 @@ useEffect(() => {
                         <td className="py-2 pr-1 text-right">-{fmtC(totalVendorAfter, totalVendorAfterILS)}</td>
                         <td className={`py-2 pr-1 text-right ${otherTotalAfter === 0 ? 'text-gray-300' : otherTotalAfter > 0 ? 'text-slate-700' : 'text-emerald-700'}`}>{otherTotalAfter === 0 ? '-' : (otherTotalAfter > 0 ? `-${fmtC(otherTotalAfter, otherTotalAfterILS)}` : `+${fmtC(-otherTotalAfter, -otherTotalAfterILS)}`)}</td>
                         <td className="py-2 pr-1 text-right">-{fmtC(totalOutflowAfter, totalOutflowAfterILS)}</td>
-                        <td className={`py-2 pr-1 text-right ${totalNetAfter >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtC(totalNetAfter, totalNetAfterILS)}</td>
                         <td className="py-2 pr-1 text-right text-amber-600">{fmtC(totalRevalAfter, totalRevalAfterILS)}</td>
+                        <td className={`py-2 pr-1 text-right ${(totalNetAfter + totalRevalAfter) >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtC(totalNetAfter + totalRevalAfter, totalNetAfterILS + totalRevalAfterILS)}</td>
                         <td className={`py-2 pr-1 text-right ${finalClosing >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
                           {fmtC(finalClosing, finalClosingILS)}
                           {(() => {
