@@ -2450,37 +2450,52 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
   // needs "div" before "distribution" (so it won't catch e.g. "Distribution sales").
   async function fetchDividendDistributions(year) {
     const y = parseInt(year);
-    if (!y || y < 2000 || y > 2100) return { byMonth: {}, total: { distributionEUR: 0, whtEUR: 0, totalEUR: 0 } };
+    const emptyTotal = { distributionEUR: 0, whtEUR: 0, totalEUR: 0, distributionILS: 0, whtILS: 0, totalILS: 0 };
+    if (!y || y < 2000 || y > 2100) return { byMonth: {}, total: { ...emptyTotal } };
     const startDate = `${y}-01-01`, endDate = `${y}-12-31`;
-    const rows = await suiteqlAll(`
-      SELECT TO_CHAR(t.trandate, 'YYYY-MM') AS month,
-             t.type AS tx_type,
-             ROUND(SUM(COALESCE(tal.debit, 0)) - SUM(COALESCE(tal.credit, 0))) AS delta
-      FROM transactionaccountingline tal
-      JOIN transaction t ON t.id = tal.transaction
-      JOIN account a ON a.id = tal.account
-      WHERE a.accttype IN ('Bank', 'CredCard')
-        AND t.subsidiary = ${subsidiaryId}
-        AND tal.posting = 'T' AND tal.accountingbook = 1
-        AND t.trandate >= TO_DATE('${startDate}', 'YYYY-MM-DD')
-        AND t.trandate <= TO_DATE('${endDate}', 'YYYY-MM-DD')
-        AND (LOWER(t.memo) LIKE '%div%distribution%' OR LOWER(t.memo) LIKE '%dividend%')
-      GROUP BY TO_CHAR(t.trandate, 'YYYY-MM'), t.type
-    `);
-    const byMonth = {};
-    const total = { distributionEUR: 0, whtEUR: 0, totalEUR: 0 };
-    for (const r of rows || []) {
-      const m = r.month;
-      if (!m) continue;
-      const delta = Math.round(parseFloat(r.delta) || 0); // signed; negative = cash out
-      if (!byMonth[m]) byMonth[m] = { distributionEUR: 0, whtEUR: 0, totalEUR: 0 };
-      if (r.tx_type === 'Journal') byMonth[m].whtEUR += delta; else byMonth[m].distributionEUR += delta;
-      byMonth[m].totalEUR += delta;
-      total.distributionEUR += (r.tx_type === 'Journal' ? 0 : delta);
-      total.whtEUR += (r.tx_type === 'Journal' ? delta : 0);
-      total.totalEUR += delta;
+    // Query book 1 (EUR primary) and book 2 (ILS local) so the engine can shift both closings.
+    async function q(bookId) {
+      return (await suiteqlAll(`
+        SELECT TO_CHAR(t.trandate, 'YYYY-MM') AS month,
+               t.type AS tx_type,
+               ROUND(SUM(COALESCE(tal.debit, 0)) - SUM(COALESCE(tal.credit, 0))) AS delta
+        FROM transactionaccountingline tal
+        JOIN transaction t ON t.id = tal.transaction
+        JOIN account a ON a.id = tal.account
+        WHERE a.accttype IN ('Bank', 'CredCard')
+          AND t.subsidiary = ${subsidiaryId}
+          AND tal.posting = 'T' AND tal.accountingbook = ${bookId}
+          AND t.trandate >= TO_DATE('${startDate}', 'YYYY-MM-DD')
+          AND t.trandate <= TO_DATE('${endDate}', 'YYYY-MM-DD')
+          AND (LOWER(t.memo) LIKE '%div%distribution%' OR LOWER(t.memo) LIKE '%dividend%')
+        GROUP BY TO_CHAR(t.trandate, 'YYYY-MM'), t.type
+      `)) || [];
     }
-    console.log(`[NS API] Dividend distributions ${y}: ${Object.keys(byMonth).length} month(s), total EUR ${total.totalEUR}`);
+    const [eurRows, ilsRows] = await Promise.all([q(1), q(2)]);
+    const byMonth = {};
+    const ensure = (m) => (byMonth[m] || (byMonth[m] = { distributionEUR: 0, whtEUR: 0, totalEUR: 0, distributionILS: 0, whtILS: 0, totalILS: 0 }));
+    // VendPymt/BillPmt = shareholder distribution (→ Vendors); Journal = withholding tax (→ Other).
+    for (const r of eurRows) {
+      if (!r.month) continue;
+      const d = Math.round(parseFloat(r.delta) || 0); // signed; negative = cash out
+      const c = ensure(r.month);
+      if (r.tx_type === 'Journal') c.whtEUR += d; else c.distributionEUR += d;
+      c.totalEUR += d;
+    }
+    for (const r of ilsRows) {
+      if (!r.month) continue;
+      const d = Math.round(parseFloat(r.delta) || 0);
+      const c = ensure(r.month);
+      if (r.tx_type === 'Journal') c.whtILS += d; else c.distributionILS += d;
+      c.totalILS += d;
+    }
+    const total = { ...emptyTotal };
+    for (const m in byMonth) {
+      const c = byMonth[m];
+      total.distributionEUR += c.distributionEUR; total.whtEUR += c.whtEUR; total.totalEUR += c.totalEUR;
+      total.distributionILS += c.distributionILS; total.whtILS += c.whtILS; total.totalILS += c.totalILS;
+    }
+    console.log(`[NS API] Dividend distributions ${y}: ${Object.keys(byMonth).length} month(s), total EUR ${total.totalEUR} / ILS ${total.totalILS}`);
     return { byMonth, total };
   }
 

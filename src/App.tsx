@@ -1371,13 +1371,30 @@ export default function App() {
   const [consElimExpanded, setConsElimExpanded] = useState(true);
   const [consElimDetailMonth, setConsElimDetailMonth] = useState<string | null>(null);
   const [consDrilldown, setConsDrilldown] = useState<{ type: string; title: string; rows: { label: string; ls: number; st: number; total: number; color?: string }[]; accounts?: { ls: { account: string; name: string; amount: number }[]; st: { account: string; name: string; amount: number }[] }; loading?: boolean } | null>(null);
-  // Owner-only "Closing ↔ NS bank" reconciliation panel (dividend excluded). Gated to the owner via
-  // the whoami email; dividend cash comes from the owner-gated /api/dividend-distributions endpoint.
+  // Dividend distribution is excluded from Vendors/Other for EVERYONE (engine-level), so the
+  // operating closing rises by that amount and the pushed FORECAST_EUR matches the screen. The
+  // amounts come from /api/dividend-distributions (amounts only, no payee names). The owner gets a
+  // personal "show actual" toggle to view the with-dividend figures + the ⚖ Reconcile-vs-NS panel.
+  const isOwner = budgetViewerEmail.toLowerCase() === 'matan.l@lsports.eu';
   const [reconOpen, setReconOpen] = useState(false);
-  const [reconDividend, setReconDividend] = useState<{ byMonth: Record<string, { distributionEUR: number; whtEUR: number; totalEUR: number }>; total: { distributionEUR: number; whtEUR: number; totalEUR: number } } | null>(null);
+  const [reconDividend, setReconDividend] = useState<{ byMonth: Record<string, { distributionEUR: number; whtEUR: number; totalEUR: number; distributionILS?: number; whtILS?: number; totalILS?: number }>; total: { distributionEUR: number; whtEUR: number; totalEUR: number } } | null>(null);
+  const [showActualDividend, setShowActualDividend] = useState<boolean>(false); // owner-only: show with-dividend (actual) figures
   const [reconMonthSel, setReconMonthSel] = useState<string>('current');
-  const [reconExcludeWht, setReconExcludeWht] = useState<boolean>(true);
   const [reconAsOf, setReconAsOf] = useState<{ mKey: string; eur: number } | null>(null);
+  // Fetch the dividend distribution amounts for the active company/year — for EVERYONE (the shared
+  // engine strips them from Vendors/Other so the operating closing rises and the pushed FORECAST_EUR
+  // matches the screen). Amounts only, no payee names. Empty byMonth (a subsidiary with no dividend,
+  // or the prod route not yet deployed → 404) is a safe no-op: the forecast is unchanged.
+  useEffect(() => {
+    if (activeCompany === 'consolidated') { setReconDividend(null); return; }
+    let cancelled = false;
+    setReconDividend(null);
+    fetch(`/api/dividend-distributions?year=${activeYear}&subsidiary=${companyConfig.subsidiary}`, { credentials: 'include' })
+      .then(r => (r.ok ? r.json() : null))
+      .then(j => { if (!cancelled && j && j.byMonth) setReconDividend(j); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [activeYear, companyConfig.subsidiary, activeCompany]);
   const [consBankExpanded, setConsBankExpanded] = useState<'ls' | 'st' | null>(null);
   const [expandedChart, setExpandedChart] = useState<string | null>(null);
   const [burnOverride, setBurnOverride] = useState<number | null>(null);
@@ -3139,25 +3156,36 @@ useEffect(() => {
   }, [adjustedCurrent, adjustedCurrentLocal]);
 
   // Monthly cashflow forecast — Snowflake as single source of truth for actuals + projections
-  const cashflowForecast = useMemo(() => {
-    // Forecast math lives in the shared pure engine (src/forecast/forecast-core.mjs)
-    // so the browser and the nightly server-side job compute the identical number.
-    // This memo only gathers inputs from component state and delegates. Deriving
-    // adjustedCurrent/adjustedCurrentLocal now happens inside the engine (from book/
-    // bookLocal); `now` is passed so the engine has no wall-clock of its own.
-    const inputs = {
-      activeYear, currentYear, now: new Date(), asOfDate, ilsRevalRate: 3.59,
-      book, bookLocal, yearStartBalance, prevMonthEndBalance, liveFxRate, fxRateByYear,
-      salaryData, salaryProjectionMode, lastActualSalaryMonth, salaryActualsByDept,
-      salaryDeptBudgets, salaryDeptAdj, salaryAdjPctByMonth, sfSalaryOverrides,
-      sfSalaryBudget, salaryManualILS, monthlyHCImpact, sfActualsSplit,
-      vendorBills, vendorActuals, nsPaidVendors, vendorHistory, sfBudget, nsBudget,
-      expenseCategories, vendorCatAdj, vendorDetailAdj,
-      sfRevenuePaid, actualCollections, collPctByMonth, sfRevenue, revenueActuals, customerReceipts,
-      sfPipeline, pipelineMinProb, sfConversion, pipelineAdjPctByMonth, revenueMethodology, pipelineMethodology,
-      sfChurnQuarterly, churnData, churnMonthlyAvg, churnOverride,
-      monthlyReval, nsBankClassified, currencyDefensePct, currencyDefensePctByMonth, sfFinanceBudget,
-    };
+  // Dividend exclusions handed to the engine: strip the shareholder dividend distribution out of
+  // Vendors/Other so the operating closing rises by that amount. Applied for EVERYONE (screen ==
+  // server); null when there is no dividend (or the amounts haven't loaded) → engine no-op.
+  const dividendExclusions = useMemo(
+    () => (reconDividend && reconDividend.byMonth && Object.keys(reconDividend.byMonth).length ? { byMonth: reconDividend.byMonth } : null),
+    [reconDividend]
+  );
+
+  // Base inputs for the shared pure engine (src/forecast/forecast-core.mjs) — everything EXCEPT the
+  // dividend exclusion. Assembled once and reused by both the canonical (excluded) and the owner-only
+  // (actual) forecasts so the two can never drift. `now` is passed so the engine has no wall-clock.
+  const forecastInputsBase = useMemo(() => ({
+    activeYear, currentYear, now: new Date(), asOfDate, ilsRevalRate: 3.59,
+    book, bookLocal, yearStartBalance, prevMonthEndBalance, liveFxRate, fxRateByYear,
+    salaryData, salaryProjectionMode, lastActualSalaryMonth, salaryActualsByDept,
+    salaryDeptBudgets, salaryDeptAdj, salaryAdjPctByMonth, sfSalaryOverrides,
+    sfSalaryBudget, salaryManualILS, monthlyHCImpact, sfActualsSplit,
+    vendorBills, vendorActuals, nsPaidVendors, vendorHistory, sfBudget, nsBudget,
+    expenseCategories, vendorCatAdj, vendorDetailAdj,
+    sfRevenuePaid, actualCollections, collPctByMonth, sfRevenue, revenueActuals, customerReceipts,
+    sfPipeline, pipelineMinProb, sfConversion, pipelineAdjPctByMonth, revenueMethodology, pipelineMethodology,
+    sfChurnQuarterly, churnData, churnMonthlyAvg, churnOverride,
+    monthlyReval, nsBankClassified, currencyDefensePct, currencyDefensePctByMonth, sfFinanceBudget,
+  }), [vendorBills, salaryData, vendorActuals, revenueActuals, vendorHistory, expenseCategories, book, bookLocal, actualCollections, sfBudget, sfRevenue, sfActualsSplit, nsPaidVendors, nsBankClassified, salaryAdjPctByMonth, collPctByMonth, monthlyReval, sfSalaryBudget, sfRevenuePaid, sfPipeline, pipelineMinProb, sfConversion, salaryDeptAdj, salaryDeptBudgets, vendorCatAdj, vendorDetailAdj, prevMonthEndBalance, yearStartBalance, churnMonthlyAvg, churnData, sfChurnQuarterly, churnOverride, asOfDate, nsBudget, activeYear, sfFinanceBudget, currencyDefensePct, currencyDefensePctByMonth, pipelineAdjPctByMonth, salaryProjectionMode, salaryActualsByDept, lastActualSalaryMonth, monthlyHCImpact, salaryManualILS, revenueMethodology, pipelineMethodology, fxRateByYear, currentYear, liveFxRate, customerReceipts, sfSalaryOverrides]);
+
+  // Canonical forecast — dividend EXCLUDED. This is what everyone sees by default AND what is
+  // persisted / rolled forward / synced to budget targets (screen == server). The golden-test
+  // capture hook mirrors this (the persisted inputs).
+  const excludedForecast = useMemo(() => {
+    const inputs = { ...forecastInputsBase, dividendExclusions };
     const rows = computeCashflowForecast(inputs);
     // Capture hook for the golden test (docs/forecast-core-golden-test.md). On in dev,
     // and opt-in on prod via ?fccapture=1 so the real dashboard's inputs can be snapshotted.
@@ -3166,14 +3194,30 @@ useEffect(() => {
       (window as any).__fcRows = rows;
     }
     return rows;
-  }, [vendorBills, salaryData, vendorActuals, revenueActuals, vendorHistory, expenseCategories, book, bookLocal, actualCollections, sfBudget, sfRevenue, sfActualsSplit, nsPaidVendors, nsBankClassified, salaryAdjPctByMonth, collPctByMonth, monthlyReval, sfSalaryBudget, sfRevenuePaid, sfPipeline, pipelineMinProb, sfConversion, salaryDeptAdj, salaryDeptBudgets, vendorCatAdj, vendorDetailAdj, prevMonthEndBalance, yearStartBalance, churnMonthlyAvg, churnData, sfChurnQuarterly, churnOverride, asOfDate, nsBudget, activeYear, sfFinanceBudget, currencyDefensePct, currencyDefensePctByMonth, pipelineAdjPctByMonth, salaryProjectionMode, salaryActualsByDept, lastActualSalaryMonth, monthlyHCImpact, salaryManualILS, revenueMethodology, pipelineMethodology, fxRateByYear, currentYear, liveFxRate, customerReceipts, sfSalaryOverrides]);
+  }, [forecastInputsBase, dividendExclusions]);
+
+  // Owner-only "show actual" view — the same forecast WITHOUT the dividend exclusion (dividend back
+  // in Vendors/Other). Never persisted. Identical to the canonical forecast when there is no
+  // dividend, so it shares that reference (avoids a redundant engine run).
+  const actualForecast = useMemo(
+    () => (dividendExclusions ? computeCashflowForecast({ ...forecastInputsBase, dividendExclusions: null }) : excludedForecast),
+    [forecastInputsBase, dividendExclusions, excludedForecast]
+  );
+
+  // The forecast the DISPLAY uses (table / cards / charts / exports). Only the owner, and only while
+  // they toggle "show actual", sees the with-dividend figures; everyone else always sees excluded.
+  // Persist / roll-forward / budget-sync deliberately read `excludedForecast`, never this alias — so
+  // the owner's personal toggle can never change the pushed FORECAST_EUR.
+  const cashflowForecast = (isOwner && showActualDividend) ? actualForecast : excludedForecast;
 
   // ── Capture current-year cashflow for propagation to next year ──
+  // Use the canonical (excluded) forecast so next year's opening basis never flips with the owner's
+  // personal "show actual" toggle.
   useEffect(() => {
-    if (activeYear === currentYear && cashflowForecast?.length === 12 && activeCompany !== 'consolidated') {
-      sourceYearCashflowRef.current[activeCompany] = cashflowForecast;
+    if (activeYear === currentYear && excludedForecast?.length === 12 && activeCompany !== 'consolidated') {
+      sourceYearCashflowRef.current[activeCompany] = excludedForecast;
     }
-  }, [cashflowForecast, activeYear, currentYear, activeCompany]);
+  }, [excludedForecast, activeYear, currentYear, activeCompany]);
 
   // ── Compute cashflow for any ScenarioData ──
   const computeScenarioCashflow = useCallback((cd: ScenarioData) => {
@@ -3261,8 +3305,20 @@ useEffect(() => {
       runBal += revalImpact;
       rows.push({ salary, vendors, collections, totalOutflow, net, closingBalance: runBal });
     }
+    // Match the main table's basis: strip the dividend distribution from the running closing
+    // (everyone, unless the owner is viewing "actual") so the header scenario-compare delta reflects
+    // only scenario differences — not a phantom dividend-sized gap. Mirrors the engine's cumulative
+    // offset (forecast-core.mjs) by month index for the active year.
+    if (dividendExclusions && !(isOwner && showActualDividend)) {
+      let cum = 0;
+      for (let mi = 0; mi < rows.length; mi++) {
+        const dd = dividendExclusions.byMonth[`${activeYear}-${String(mi + 1).padStart(2, '0')}`];
+        if (dd) cum += Math.round(Math.abs(dd.distributionEUR || 0)) + Math.round(Math.abs(dd.whtEUR || 0));
+        rows[mi].closingBalance += cum;
+      }
+    }
     return rows;
-  }, [salaryData, vendorBills, book, bookLocal, adjustedCurrent, adjustedCurrentLocal, monthlyReval, sfActualsSplit, sfSalaryBudget, sfBudget, sfRevenue, sfRevenuePaid, actualCollections, salaryDeptBudgets, sfPipeline, prevMonthEndBalance, salaryProjectionMode, salaryActualsByDept, lastActualSalaryMonth, monthlyHCImpact, activeYear, currentYear, fxRateByYear, liveFxRate]);
+  }, [salaryData, vendorBills, book, bookLocal, adjustedCurrent, adjustedCurrentLocal, monthlyReval, sfActualsSplit, sfSalaryBudget, sfBudget, sfRevenue, sfRevenuePaid, actualCollections, salaryDeptBudgets, sfPipeline, prevMonthEndBalance, salaryProjectionMode, salaryActualsByDept, lastActualSalaryMonth, monthlyHCImpact, activeYear, currentYear, fxRateByYear, liveFxRate, dividendExclusions, isOwner, showActualDividend]);
 
   // Compare scenario cashflow (inline header delta)
   const compareCashflow = useMemo(() => {
@@ -3985,7 +4041,7 @@ useEffect(() => {
     // Don't persist while the main data load is in flight — the forecast is still assembling
     // from async sources (pipeline / actuals / reval / FX). Cancel any pending write too.
     if (isLoading) { if (netCashTimerRef.current) clearTimeout(netCashTimerRef.current); return; }
-    if (!cashflowForecast || cashflowForecast.length === 0) return;
+    if (!excludedForecast || excludedForecast.length === 0) return;
     // Canonical basis for the nightly Snowflake push: Revenue = Pipeline, Salary = Actual.
     // Any other view (Win-rate / Budget) must NOT overwrite the persisted forecast, or the
     // number the cron ships would drift from the agreed methodology. Logged (not silent) so a
@@ -3995,7 +4051,7 @@ useEffect(() => {
       return;
     }
     const activeName = scenarios.find((s: any) => s.id === activeScenarioId)?.name || '';
-    const dec = cashflowForecast[cashflowForecast.length - 1]; // December (after-savings closing)
+    const dec = excludedForecast[excludedForecast.length - 1]; // December (after-savings closing) — canonical (dividend-excluded), never the owner's toggle
     if (!dec) return;
     const forecastEur = Math.round(dec.closingBalance || 0);
     const forecastIls = Math.round(dec.closingBalanceILS || 0);
@@ -4021,7 +4077,7 @@ useEffect(() => {
         body: JSON.stringify(payload),
       }).catch(() => { lastNetCashSigRef.current = ''; });
     }, 6000);
-  }, [activeCompany, activeYears, currentYear, isLoading, cashflowForecast, totalPrimaryBalance, totalLocalBalance, scenarios, activeScenarioId, revenueMethodology, salaryProjectionMode]);
+  }, [activeCompany, activeYears, currentYear, isLoading, excludedForecast, totalPrimaryBalance, totalLocalBalance, scenarios, activeScenarioId, revenueMethodology, salaryProjectionMode]);
 
   const sendChatMessage = useCallback(async () => {
     // Read from whichever input has text (header or panel)
@@ -4165,25 +4221,25 @@ useEffect(() => {
         dashboardOutflowByMonth={(() => {
           // After-savings outflow per month (salary + vendors + other), from the live dashboard.
           const m: Record<string, { eur: number; ils: number }> = {};
-          for (const r of cashflowForecast || []) m[r.mKey] = { eur: r.salary + r.vendors + Math.max(0, r.other), ils: r.salaryILS + r.vendorsILS + Math.max(0, r.otherILS) };
+          for (const r of excludedForecast || []) m[r.mKey] = { eur: r.salary + r.vendors + Math.max(0, r.other), ils: r.salaryILS + r.vendorsILS + Math.max(0, r.otherILS) };
           return m;
         })()}
         dashboardSalaryByMonth={(() => {
           // Salary outflow per month from the live dashboard — drives row-level scaling for
           // 76xxx rows in Targets so Σ salary rows per month = dashboard salary.
           const m: Record<string, { eur: number; ils: number }> = {};
-          for (const r of cashflowForecast || []) m[r.mKey] = { eur: r.salary, ils: r.salaryILS };
+          for (const r of excludedForecast || []) m[r.mKey] = { eur: r.salary, ils: r.salaryILS };
           return m;
         })()}
         dashboardVendorByMonth={(() => {
           // Vendor outflow per month — drives row-level scaling for non-76xxx rows so Σ
           // vendor rows per month = dashboard vendors (incl. seasonality + scenario savings).
           const m: Record<string, { eur: number; ils: number }> = {};
-          for (const r of cashflowForecast || []) m[r.mKey] = { eur: r.vendors + Math.max(0, r.other), ils: r.vendorsILS + Math.max(0, r.otherILS) };
+          for (const r of excludedForecast || []) m[r.mKey] = { eur: r.vendors + Math.max(0, r.other), ils: r.vendorsILS + Math.max(0, r.otherILS) };
           return m;
         })()}
         dashboardOutflowAnnual={(() => {
-          const arr = cashflowForecast || [];
+          const arr = excludedForecast || [];
           return { eur: arr.reduce((s, r) => s + r.salary + r.vendors + Math.max(0, r.other), 0), ils: arr.reduce((s, r) => s + r.salaryILS + r.vendorsILS + Math.max(0, r.otherILS), 0) };
         })()}
         scenarioName={activeScenario?.name || null}
@@ -4420,7 +4476,7 @@ useEffect(() => {
                       const resp = await fetch('/api/budget-snapshot', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ sourceYear: srcYear, targetYear: nextYear, company: co, clientDecClosing: cashflowForecast?.[11]?.closingBalance }),
+                        body: JSON.stringify({ sourceYear: srcYear, targetYear: nextYear, company: co, clientDecClosing: excludedForecast?.[11]?.closingBalance }),
                       });
                       const result = await resp.json();
                       if (result.success) {
@@ -4503,11 +4559,12 @@ useEffect(() => {
                   setBudgetSyncMsg('');
                   try {
                     // Send the active scenario's adjustments plus the per-month bucket totals
-                    // from cashflowForecast. Backend scales GL account lines so Targets bucket
-                    // totals = dashboard by construction. `other` is intentionally zero — the
-                    // Excel grand total must equal Salary AFTER SAVINGS + Vendors AFTER SAVINGS.
+                    // from the canonical (dividend-excluded) forecast. Backend scales GL account
+                    // lines so Targets bucket totals = dashboard by construction. `other` is
+                    // intentionally zero — the Excel grand total must equal Salary AFTER SAVINGS +
+                    // Vendors AFTER SAVINGS. (excludedForecast, never the owner's toggle.)
                     const dashboardTotals: Record<string, { salary: { eur: number; ils: number }; vendors: { eur: number; ils: number }; other: { eur: number; ils: number } }> = {};
-                    for (const r of cashflowForecast) {
+                    for (const r of excludedForecast) {
                       if (!r.mKey) continue;
                       dashboardTotals[r.mKey] = {
                         salary:  { eur: Math.round(r.salary),  ils: Math.round(r.salaryILS) },
@@ -6208,24 +6265,28 @@ useEffect(() => {
         )}
 
         {/* ── Consolidated Drilldown Modal ── */}
-        {reconOpen && budgetViewerEmail === 'matan.l@lsports.eu' && (() => {
-          const rows = cashflowForecast;
+        {reconOpen && isOwner && (() => {
+          // Reconcile the CANONICAL operating (dividend-excluded) closing — the number everyone sees
+          // and the one pushed to Snowflake — against the live/as-of NetSuite bank. The dividend is
+          // the bridge: operating closing excludes it, the bank has it paid out, so adding it back
+          // lands on the bank.
+          const rows = excludedForecast;
           const curRow = rows.find(r => r.isCurrent) || rows[rows.length - 1];
           const selMonth = reconMonthSel === 'current' ? (curRow ? curRow.mKey : '') : reconMonthSel;
           const selRow = rows.find(r => r.mKey === selMonth) || curRow;
-          const dashClosing = Math.round((selRow && selRow.closingBalance) || 0);
+          const operatingClosing = Math.round((selRow && selRow.closingBalance) || 0); // already excludes the dividend
           const div = reconDividend
             ? Object.entries(reconDividend.byMonth).filter(([m]) => m <= selMonth)
                 .reduce((s, [, v]) => ({ dist: s.dist + (v.distributionEUR || 0), wht: s.wht + (v.whtEUR || 0) }), { dist: 0, wht: 0 })
             : { dist: 0, wht: 0 };
-          const distMag = Math.round(-div.dist);            // signed→positive add-back
+          const distMag = Math.round(-div.dist);            // signed → positive magnitude (cash out)
           const whtMag = Math.round(-div.wht);
-          const dividendMag = distMag + (reconExcludeWht ? whtMag : 0);
-          const operatingClosing = dashClosing + dividendMag;
+          const dividendMag = distMag + whtMag;              // engine excludes BOTH (distribution + WHT)
+          const modelActual = operatingClosing - dividendMag; // add the dividend back → should match the bank
           const nsBank = reconMonthSel === 'current'
             ? Math.round(totalPrimaryBalance)
             : (reconAsOf && reconAsOf.mKey === selMonth ? reconAsOf.eur : null);
-          const residual = nsBank != null ? (dashClosing - nsBank) : null;
+          const residual = nsBank != null ? (modelActual - nsBank) : null;
           const pastMonths = rows.filter(r => r.isPast || r.isCurrent).map(r => r.mKey);
           const divMonths = Object.keys((reconDividend && reconDividend.byMonth) || {}).sort();
           return (
@@ -6250,21 +6311,23 @@ useEffect(() => {
                   <option value="current">Current position (live)</option>
                   {pastMonths.map(m => <option key={m} value={m}>{m}</option>)}
                 </select>
-                <label className="ml-auto flex items-center gap-1 text-gray-500"><input type="checkbox" checked={reconExcludeWht} onChange={e => setReconExcludeWht(e.target.checked)} /> exclude WHT</label>
+                <label className="ml-auto flex items-center gap-1 text-gray-500" title="Show the with-dividend (actual) figures across the whole dashboard — your screen only. The pushed FORECAST_EUR is unchanged.">
+                  <input type="checkbox" checked={showActualDividend} onChange={e => setShowActualDividend(e.target.checked)} /> show actual (incl. dividend)
+                </label>
               </div>
               <table className="w-full text-xs">
                 <tbody>
                   <tr className="border-b"><td className="py-1.5 text-gray-600">NetSuite bank {reconMonthSel === 'current' ? '(live, raw)' : `(as of ${selMonth} month-end)`}</td><td className="py-1.5 text-right font-medium">{nsBank != null ? fmt(nsBank) : '…'}</td></tr>
-                  <tr className="border-b"><td className="py-1.5 text-gray-600">Dashboard closing ({selMonth || '—'})</td><td className="py-1.5 text-right font-medium">{fmt(dashClosing)}</td></tr>
-                  <tr className="border-b"><td className="py-1.5 text-gray-500">Residual (dashboard − NS)</td><td className={`py-1.5 text-right ${residual != null && Math.abs(residual) < 5000 ? 'text-green-600' : 'text-amber-600'}`}>{residual != null ? fmt(residual) : '—'}</td></tr>
-                  <tr><td className="pt-3 pb-1 text-gray-400 uppercase text-[10px]" colSpan={2}>Dividend distribution — excluded from operating view</td></tr>
-                  <tr className="border-b"><td className="py-1.5 text-gray-600">Shareholder distribution (in Vendors)</td><td className="py-1.5 text-right text-violet-700">{fmt(distMag)}</td></tr>
-                  <tr className="border-b"><td className="py-1.5 text-gray-600">Withholding tax (in Other){reconExcludeWht ? '' : ' — kept as cost'}</td><td className="py-1.5 text-right text-violet-700">{fmt(whtMag)}</td></tr>
+                  <tr className="border-b"><td className="py-1.5 text-gray-600">Model actual closing (operating − dividend)</td><td className="py-1.5 text-right font-medium">{fmt(modelActual)}</td></tr>
+                  <tr className="border-b"><td className="py-1.5 text-gray-500">Residual (model actual − NS)</td><td className={`py-1.5 text-right ${residual != null && Math.abs(residual) < 5000 ? 'text-green-600' : 'text-amber-600'}`}>{residual != null ? fmt(residual) : '—'}</td></tr>
+                  <tr><td className="pt-3 pb-1 text-gray-400 uppercase text-[10px]" colSpan={2}>Dividend distribution — excluded from the operating forecast (everyone)</td></tr>
+                  <tr className="border-b"><td className="py-1.5 text-gray-600">Shareholder distribution (was in Vendors)</td><td className="py-1.5 text-right text-violet-700">{fmt(distMag)}</td></tr>
+                  <tr className="border-b"><td className="py-1.5 text-gray-600">Withholding tax (was in Other)</td><td className="py-1.5 text-right text-violet-700">{fmt(whtMag)}</td></tr>
                   <tr className="border-b-2 font-bold"><td className="py-1.5 text-gray-800">Operating closing (excl. dividend)</td><td className="py-1.5 text-right text-blue-700">{fmt(operatingClosing)}</td></tr>
                   <tr className="font-bold"><td className="py-2 text-gray-800">Operating closing − NS bank (= dividend)</td><td className={`py-2 text-right ${nsBank != null ? 'text-violet-800' : 'text-gray-400'}`}>{nsBank != null ? fmt(operatingClosing - nsBank) : '—'}</td></tr>
                 </tbody>
               </table>
-              <p className="text-[11px] text-gray-400 mt-3">Your operating closing excludes the {fmt(dividendMag)} dividend distribution{divMonths.length ? ` (paid ${divMonths.join(', ')})` : ''} and reconciles to the NetSuite bank within {residual != null ? fmt(Math.abs(residual)) : '—'}. Personal view — not saved to the shared model or the nightly push.{!reconDividend ? ' Loading dividend data…' : ''}</p>
+              <p className="text-[11px] text-gray-400 mt-3">The forecast excludes the {fmt(dividendMag)} dividend distribution{divMonths.length ? ` (paid ${divMonths.join(', ')})` : ''} for everyone, so the operating closing sits above the NetSuite bank by that amount — this is the pushed FORECAST_EUR (screen == server). Adding it back reconciles to the bank within {residual != null ? fmt(Math.abs(residual)) : '—'}. Toggle <em>show actual</em> to view the with-dividend figures on your screen only (the pushed number is unchanged).{!reconDividend ? ' Loading dividend data…' : ''}</p>
             </div>
           </div>
           );
@@ -6638,18 +6701,25 @@ useEffect(() => {
                     )}
                   </div>
                 )}
-                {budgetViewerEmail === 'matan.l@lsports.eu' && (
-                  <button
-                    onClick={() => {
-                      setReconOpen(true);
-                      if (!reconDividend) {
-                        fetch(`/api/dividend-distributions?year=${activeYear}&subsidiary=${companyConfig.subsidiary}`, { credentials: 'include' })
-                          .then(r => r.json()).then(j => { if (j && j.byMonth) setReconDividend(j); }).catch(() => {});
-                      }
-                    }}
-                    className="text-xs text-indigo-600 hover:text-indigo-800 bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-1.5 whitespace-nowrap"
-                    title="Reconcile the dashboard closing balance to the NetSuite bank (dividend distribution excluded). Visible to you only.">⚖ Reconcile vs NS</button>
-                )}
+                {isOwner ? (
+                  <>
+                    <button
+                      onClick={() => setReconOpen(true)}
+                      className="text-xs text-indigo-600 hover:text-indigo-800 bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-1.5 whitespace-nowrap"
+                      title="Reconcile the operating closing to the NetSuite bank, with the dividend distribution as the bridge. Visible to you only.">⚖ Reconcile vs NS</button>
+                    {dividendExclusions && (
+                      <button
+                        onClick={() => setShowActualDividend(v => !v)}
+                        className={`text-xs rounded-lg px-3 py-1.5 whitespace-nowrap border ${showActualDividend ? 'text-amber-700 bg-amber-50 border-amber-300' : 'text-gray-500 bg-gray-50 border-gray-200 hover:text-gray-700'}`}
+                        title="Toggle your view between operating (dividend excluded — what everyone sees and what is pushed to Snowflake) and actual (with the dividend). Your screen only; the pushed FORECAST_EUR is unchanged.">
+                        {showActualDividend ? 'Showing: actual (incl. dividend)' : 'Showing: operating (excl. dividend)'}
+                      </button>
+                    )}
+                  </>
+                ) : (dividendExclusions && (
+                  <span className="text-xs text-gray-400 bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5 whitespace-nowrap"
+                    title="The dividend distribution is excluded from the operating forecast, so the closing sits above the NetSuite bank by that amount.">Operating (excl. dividend)</span>
+                ))}
                 {(Object.values(salaryAdjPctByMonth).some(v => v !== 0) || Object.keys(collPctByMonth).length > 0 || Object.keys(salaryDeptAdj).length > 0) && (() => {
                   const hasSalary = Object.values(salaryAdjPctByMonth).some(v => v !== 0);
                   const hasInflows = Object.keys(collPctByMonth).length > 0;
