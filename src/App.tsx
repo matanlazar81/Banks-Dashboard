@@ -3597,7 +3597,7 @@ useEffect(() => {
 
   const [showBankBreakdown, setShowBankBreakdown] = useState(false);
   const [bankBreakdownAsOf, setBankBreakdownAsOf] = useState<{ date: string; label: string; accounts: BankAccount[] | 'loading' } | null>(null);
-  const [forecastDrilldown, setForecastDrilldown] = useState<{ type: 'vendors' | 'salary' | 'inflows' | 'pipeline' | 'churn' | 'other'; month: string; mKey: string; data: any; categoryData?: Record<string, number>; categoryName?: string; adjPct?: number } | null>(null);
+  const [forecastDrilldown, setForecastDrilldown] = useState<{ type: 'vendors' | 'salary' | 'inflows' | 'pipeline' | 'churn' | 'other'; month: string; mKey: string; data: any; categoryData?: Record<string, number>; categoryName?: string; adjPct?: number; plug?: boolean } | null>(null);
   // In-app confirmation for clearing a per-account vendor adjustment. Replaces window.confirm(),
   // which is blocked inside the finance-it sandboxed iframe (so the ✕ appeared to do nothing).
   const [detailClearPrompt, setDetailClearPrompt] = useState<{ mKey: string; detKey: string; base: number; fromCat: boolean; cat: string; label: string } | null>(null);
@@ -8092,7 +8092,7 @@ useEffect(() => {
                 <div className="flex items-center gap-3">
                   <button onClick={() => {
                     if (Array.isArray(forecastDrilldown.data) && forecastDrilldown.categoryData) {
-                      setForecastDrilldown(prev => prev ? { ...prev, data: prev.categoryData, categoryData: undefined } : null);
+                      setForecastDrilldown(prev => prev ? { ...prev, data: prev.categoryData, categoryData: undefined, plug: false, categoryName: undefined } : null);
                     } else {
                       setForecastDrilldown(null);
                     }
@@ -8108,6 +8108,56 @@ useEffect(() => {
                 {forecastDrilldown.data === 'loading' && (
                   <div className="flex items-center gap-2 py-8 justify-center text-gray-400"><Loader2 className="w-5 h-5 animate-spin" /> Loading from Snowflake...</div>
                 )}
+                {/* ── Vendor cash-timing breakdown: the "Bank cash reconciliation" plug, by bill month → category → vendor ── */}
+                {forecastDrilldown.type === 'vendors' && forecastDrilldown.plug && Array.isArray(forecastDrilldown.data) && (() => {
+                  const rows = forecastDrilldown.data as { billMonth: string; category: string; vendor: string; vendorName: string; amountEUR: number }[];
+                  const _fc = cashflowForecast.find(r => r.mKey === forecastDrilldown.mKey);
+                  const bankCashVendors = _fc ? Math.abs(Math.round(_fc.vendors)) : 0;
+                  const linkedTotal = rows.reduce((s, r) => s + (r.amountEUR || 0), 0);
+                  const residual = Math.round(bankCashVendors - linkedTotal);
+                  const drillMonth = forecastDrilldown.mKey;
+                  const byMonth: Record<string, typeof rows> = {};
+                  for (const r of rows) { (byMonth[r.billMonth] = byMonth[r.billMonth] || []).push(r); }
+                  const months = Object.keys(byMonth).sort((a, b) => b.localeCompare(a));
+                  const priorTotal = rows.filter(r => r.billMonth < drillMonth).reduce((s, r) => s + r.amountEUR, 0);
+                  return (
+                    <div className="space-y-3">
+                      <p className="text-xs text-gray-500">Vendor cash actually paid in <span className="font-medium">{forecastDrilldown.month}</span>, grouped by the month each bill was accrued. Cash paid now for bills accrued in <span className="font-medium text-violet-700">earlier months</span> is the cash-timing difference vs this month's SF accrual (about {fmt(priorTotal)}). Linked vendor-bill payments only (dividend excluded); journal / direct payments show as a residual below, so the table foots to the forecast vendors cell.</p>
+                      {months.length === 0 && (<p className="text-xs text-gray-400 py-4 text-center">No linked vendor-bill payment detail available for this month.</p>)}
+                      {months.map(m => {
+                        const mRows = byMonth[m];
+                        const mTot = mRows.reduce((s, r) => s + r.amountEUR, 0);
+                        const isDrill = m === drillMonth;
+                        return (
+                          <div key={m} className="border border-gray-100 rounded-lg overflow-hidden">
+                            <div className={`flex items-center justify-between px-3 py-1.5 text-xs font-medium ${isDrill ? 'bg-gray-50 text-gray-600' : 'bg-violet-50 text-violet-700'}`}>
+                              <span>{m} bills {isDrill ? '(this month — ties to accrual)' : '(earlier — cash timing)'}</span>
+                              <span>{fmt(mTot)}</span>
+                            </div>
+                            <table className="w-full text-xs">
+                              <tbody>
+                                {mRows.map((r, i) => (
+                                  <tr key={i} className="border-t border-gray-50">
+                                    <td className="py-1 px-3 text-gray-500 align-top" style={{ width: '11rem' }}>{r.category}</td>
+                                    <td className="py-1 px-2 text-gray-700">{r.vendorName}<span className="text-gray-300 ml-1">{r.vendor}</span></td>
+                                    <td className="py-1 px-3 text-right text-gray-700 whitespace-nowrap">{fmt(r.amountEUR)}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        );
+                      })}
+                      <table className="w-full text-xs border-t pt-1">
+                        <tbody>
+                          <tr><td className="py-1 text-gray-500">Linked vendor-bill payments</td><td className="py-1 text-right font-medium">{fmt(linkedTotal)}</td></tr>
+                          {Math.abs(residual) > 1 && (<tr><td className="py-1 text-gray-500">Journal / direct payments (not bill-linked)</td><td className="py-1 text-right text-gray-500">{fmt(residual)}</td></tr>)}
+                          <tr className="border-t font-bold"><td className="py-1.5 text-gray-800">Total vendor cash (matches forecast)</td><td className="py-1.5 text-right text-violet-800">{fmt(bankCashVendors)}</td></tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })()}
                 {/* ── Other bank cash itemized (bank-side classification residual) ── */}
                 {forecastDrilldown.type === 'other' && Array.isArray(forecastDrilldown.data) && (() => {
                   const items = forecastDrilldown.data as { label: string; bucket: string; eur: number; ils: number }[];
@@ -9707,7 +9757,7 @@ useEffect(() => {
                     </div>
                   );
                 })()}
-                {forecastDrilldown.type !== 'other' && Array.isArray(forecastDrilldown.data) && forecastDrilldown.data.length > 0 && (() => {
+                {forecastDrilldown.type !== 'other' && !forecastDrilldown.plug && Array.isArray(forecastDrilldown.data) && forecastDrilldown.data.length > 0 && (() => {
                   const _now = new Date();
                   const _curMKey = `${_now.getFullYear()}-${String(_now.getMonth()+1).padStart(2,'0')}`;
                   const _isProjected = forecastDrilldown.mKey >= _curMKey;
@@ -10458,7 +10508,7 @@ useEffect(() => {
                           <tr key={cat} className={`border-b border-gray-50 cursor-pointer hover:bg-violet-50 ${vcInherited && vcPct !== 0 ? 'bg-teal-50/50' : ''}`}
                               onClick={() => {
                                 const savedCategories = forecastDrilldown.data as Record<string, number>;
-                                setForecastDrilldown(prev => prev ? { ...prev, data: 'loading', categoryData: savedCategories, categoryName: cat } : null);
+                                setForecastDrilldown(prev => prev ? { ...prev, data: 'loading', categoryData: savedCategories, categoryName: cat, plug: false } : null);
                                 if (_isFutureCat) {
                                   // Future months: budget detail per category
                                   fetch(`/api/sf-budget-detail?month=${forecastDrilldown.mKey}&category=${encodeURIComponent(cat)}`)
@@ -10556,10 +10606,19 @@ useEffect(() => {
                           );
                         })}
                       {_bucketHasRecon && (
-                        <tr className="border-b border-gray-50 bg-violet-50/50">
-                          <td className="py-1.5 pr-2 text-violet-700"><span className="font-medium">Bank cash reconciliation</span><span className="text-gray-400 ml-1">— vendor payments vs SF accrual (cash timing)</span></td>
+                        <tr className="border-b border-gray-50 bg-violet-50/50 cursor-pointer hover:bg-violet-100"
+                            title="Click to break down the vendor cash by the month each bill was accrued (the cash-timing gap)"
+                            onClick={() => {
+                              const savedCategories = forecastDrilldown.data as Record<string, number>;
+                              setForecastDrilldown(prev => prev ? { ...prev, data: 'loading', categoryData: savedCategories, categoryName: 'Bank cash reconciliation — cash timing', plug: true } : null);
+                              fetch(`/api/ns-vendor-payments-detail?month=${forecastDrilldown.mKey}&subsidiary=${companyConfig.subsidiary}`)
+                                .then(r => r.json())
+                                .then(r => setForecastDrilldown(prev => prev ? { ...prev, data: (r.rows || []) } : null))
+                                .catch(() => setForecastDrilldown(prev => prev ? { ...prev, data: [] } : null));
+                            }}>
+                          <td className="py-1.5 pr-2 text-violet-700"><span className="font-medium underline">Bank cash reconciliation</span><span className="text-gray-400 ml-1">— vendor payments vs SF accrual (cash timing)</span></td>
                           <td className="py-1.5 pr-2 text-right font-medium text-violet-700">{fmt(_bucketReconEur)}</td>
-                          <td className="py-1.5 pr-2 text-right text-gray-400">—</td>
+                          <td className="py-1.5 pr-2 text-right text-gray-400">›</td>
                         </tr>
                       )}
                       </tbody>

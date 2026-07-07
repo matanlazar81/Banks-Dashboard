@@ -432,6 +432,31 @@ function registerApiRoutes(app     ) {
         }
       });
 
+      // ── GET /api/ns-vendor-payments-detail — vendor payments made in a month, grouped by bill month +
+      // category + vendor. Powers the "cash timing" plug-row breakdown in the Vendors drilldown (why the
+      // month's vendor CASH ≠ that month's SF accrual). Amounts + vendor names only. Serves all bank-role
+      // users, same as the /api/sf-vendor-breakdown that feeds the same modal.
+      use('/api/ns-vendor-payments-detail', async (req, res) => {
+        try {
+          const url = new URL(req.url || '', `http://${req.headers.host}`);
+          const sub = parseInt(url.searchParams.get('subsidiary') || '3') || 3;
+          const month = url.searchParams.get('month') || '';
+          const ns = getNsClient(sub);
+          if (!ns || !ns.fetchVendorPaymentsDetail) {
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ month, rows: [], linkedTotal: 0, error: 'endpoint not available' }));
+            return;
+          }
+          const data = await queueNsCall(() => ns.fetchVendorPaymentsDetail(month));
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify(data));
+        } catch (e     ) {
+          console.error('[NS API] Vendor payments detail failed:', e.message);
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ month: '', rows: [], linkedTotal: 0, error: e.message }));
+        }
+      });
+
       // ── GET /api/ns-vendor-bills — vendor bills for specific account + month ──
       use('/api/ns-vendor-bills', async (req, res) => {
         try {
