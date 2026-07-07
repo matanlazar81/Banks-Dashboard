@@ -174,7 +174,7 @@ function readPersistedForecast() {
 //           NET_CASH_EMAIL_FROM optional sender; NET_CASH_SMTP_HELO optional relay EHLO name.
 //   Slack:  SLACK_BOT_TOKEN (required) + NET_CASH_SLACK_CHANNEL (name or ID; default cash_flow_sync).
 //           The bot must be a member of the channel.
-function buildSummary({ enabled, wrote, dryRun, syncTs, totalBankEur, forecastEur, modelClosingEur, modelClosingMonth, bankAsOf, asOfNote, tableName, error }) {
+function buildSummary({ enabled, wrote, dryRun, syncTs, totalBankEur, forecastEur, modelClosingEur, modelClosingMonth, bankAsOf, asOfNote, tableName, error, currentBankEur, currentBankReval, currentBankRevalOk, currentBankDate }) {
   const fmtEur = (v) => (v != null && Number.isFinite(Number(v)) ? `EUR ${Math.round(Number(v)).toLocaleString('en-US')}` : 'MISSING');
   const statusLine = error ? 'FAILED'
     : !enabled ? 'DISABLED — no row written'
@@ -192,7 +192,8 @@ function buildSummary({ enabled, wrote, dryRun, syncTs, totalBankEur, forecastEu
     `Table            : ${tableName}`,
     '',
     `DATE             : ${syncTs}`,
-    `TOTAL_BANK_EUR   : ${fmtEur(totalBankEur)}${bankAsOf ? ` (posted GL as of ${bankAsOf})` : ''}`,
+    `TOTAL_BANK_EUR   : ${fmtEur(totalBankEur)}${bankAsOf ? ` (prev month-end, posted GL as of ${bankAsOf})` : ''}`,
+    ...(currentBankEur != null ? [`CURRENT_BANK_EUR : ${fmtEur(currentBankEur)} (live as of ${currentBankDate}${currentBankRevalOk ? (currentBankReval ? `; open-month reval ${fmtEur(currentBankReval)} excluded until month-end` : '') : '; reval NOT neutralized — lookup failed'})`] : []),
     `FORECAST_EUR     : ${fmtEur(forecastEur)}`,
   ];
   if (modelClosingEur != null) lines.push(`MODEL_CLOSING_EUR: ${fmtEur(modelClosingEur)}${modelClosingMonth ? ` (model closing for ${modelClosingMonth})` : ''}`);
@@ -325,6 +326,33 @@ async function fetchBankAsOf(asOfDate) {
   }
 }
 
+// Live bank balance as of TODAY, with the OPEN month's FX reval neutralized.
+// The raw as-of-today sum carries a one-sided reval swing — the prior month-end mark is
+// reversed on the 1st, but this month's month-end mark isn't posted until the month closes —
+// which distorts the live figure (e.g. a -€2.75M July phantom). Subtract the current-month
+// reval (the same bank-classified figure the dashboard uses) so the number reflects real cash
+// until the month closes and reval can be shown correctly. Best-effort: if the reval can't be
+// determined, returns the raw balance and flags revalOk=false.
+async function fetchCurrentBankExReval(dateOnly) {
+  const ns = getNs();
+  if (!ns) return { eur: null, revalEur: 0, revalOk: false };
+  const raw = await fetchBankAsOf(dateOnly);
+  if (raw == null) return { eur: null, revalEur: 0, revalOk: false };
+  let revalEur = 0, revalOk = false;
+  try {
+    if (typeof ns.fetchBankClassifiedYearly === 'function') {
+      const year = parseInt(String(dateOnly).slice(0, 4), 10);
+      const mKey = String(dateOnly).slice(0, 7);
+      const bc = await ns.fetchBankClassifiedYearly(year);
+      revalEur = Math.round((bc && bc.byMonth && bc.byMonth[mKey] && bc.byMonth[mKey].reval && bc.byMonth[mKey].reval.eur) || 0);
+      revalOk = true;
+    }
+  } catch (e) {
+    console.warn(`[net-cash] current-month reval lookup failed (${e && e.message ? e.message : e}) — current balance shown WITH the open-month FX swing.`);
+  }
+  return { eur: Math.round(raw - revalEur), revalEur, revalOk };
+}
+
 // Reval-closed guard: a month-end balance is only "final" once NetSuite carries the POSTED
 // month-end FX revaluation mark dated on that month-end. Until then the as-of sum is a
 // partially-posted figure. Step back one month-end at a time (max 2 steps) to the last
@@ -426,10 +454,14 @@ async function main() {
   if (modelClosingEur != null) modelClosingEur = Math.round(modelClosingEur);
   const modelClosingMonth = (persisted && persisted.modelClosingMonth) || null;
 
+  // ── CURRENT_BANK_EUR: live balance as of today, open-month FX reval neutralized (notification only) ──
+  const currentBank = await fetchCurrentBankExReval(dateOnly);
+
   const reportRow = () => {
     console.log('[net-cash] Resolved row:');
     console.log(`[net-cash]   DATE           = ${syncTs}  (Asia/Jerusalem)`);
     console.log(`[net-cash]   TOTAL_BANK_EUR = ${Number.isFinite(totalBankEur) ? Math.round(totalBankEur).toLocaleString() : 'MISSING'}  (src: ${bankSrc})`);
+    console.log(`[net-cash]   CURRENT_BANK_EUR = ${currentBank.eur != null ? Math.round(currentBank.eur).toLocaleString() : '(n/a)'}  (live as of ${dateOnly}${currentBank.revalOk && currentBank.revalEur ? `, open-month reval ${Math.round(currentBank.revalEur).toLocaleString()} excluded` : ''})`);
     console.log(`[net-cash]   FORECAST_EUR   = ${Number.isFinite(forecastEur) ? Math.round(forecastEur).toLocaleString() : 'MISSING'}  (src: ${forecastSrc})`);
     console.log(`[net-cash]   MODEL_CLOSING_EUR = ${modelClosingEur != null ? modelClosingEur.toLocaleString() : '(not resolved — column skipped)'}${modelClosingMonth ? `  (model closing for ${modelClosingMonth})` : ''}`);
     if (asOfNote) console.warn(`[net-cash]   ⚠ ${asOfNote}`);
@@ -450,7 +482,7 @@ async function main() {
   if (!syncEnabled) {
     reportRow();
     console.log('[net-cash] NET_CASH_SYNC_ENABLED=false → sync DISABLED, not writing to Snowflake.');
-    await notify({ enabled: false, wrote: false, dryRun: false, syncTs, totalBankEur, forecastEur, modelClosingEur, modelClosingMonth, bankAsOf: asOf, asOfNote, tableName: TABLE });
+    await notify({ enabled: false, wrote: false, dryRun: false, syncTs, totalBankEur, forecastEur, modelClosingEur, modelClosingMonth, bankAsOf: asOf, asOfNote, currentBankEur: currentBank.eur, currentBankReval: currentBank.revalEur, currentBankRevalOk: currentBank.revalOk, currentBankDate: dateOnly, tableName: TABLE });
     process.exit(0);
   }
 
@@ -530,12 +562,12 @@ async function main() {
     // DATE sync timestamp). Rows are never overwritten or deleted by this job.
     await exec(conn, adaptedSql, binds);
     console.log(`[net-cash] ✓ Appended 1 row for ${syncTs} (columns: ${used.map((c) => c.name).join(', ')}).`);
-    await notify({ enabled: true, wrote: true, dryRun: false, syncTs, totalBankEur, forecastEur, modelClosingEur, modelClosingMonth, bankAsOf: asOf, asOfNote, tableName: TABLE });
+    await notify({ enabled: true, wrote: true, dryRun: false, syncTs, totalBankEur, forecastEur, modelClosingEur, modelClosingMonth, bankAsOf: asOf, asOfNote, currentBankEur: currentBank.eur, currentBankReval: currentBank.revalEur, currentBankRevalOk: currentBank.revalOk, currentBankDate: dateOnly, tableName: TABLE });
     process.exit(0);
   } catch (e) {
     const msg = e && e.message ? e.message : String(e);
     console.error(`[net-cash] ERROR: ${msg}`);
-    try { await notify({ enabled: syncEnabled, wrote: false, dryRun: false, syncTs, totalBankEur, forecastEur, modelClosingEur, modelClosingMonth, bankAsOf: asOf, asOfNote, tableName: TABLE, error: msg }); } catch { /* ignore */ }
+    try { await notify({ enabled: syncEnabled, wrote: false, dryRun: false, syncTs, totalBankEur, forecastEur, modelClosingEur, modelClosingMonth, bankAsOf: asOf, asOfNote, currentBankEur: currentBank.eur, currentBankReval: currentBank.revalEur, currentBankRevalOk: currentBank.revalOk, currentBankDate: dateOnly, tableName: TABLE, error: msg }); } catch { /* ignore */ }
     process.exit(1);
   } finally {
     if (conn) { try { conn.destroy(() => {}); } catch { /* ignore */ } }
