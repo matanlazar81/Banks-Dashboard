@@ -12,9 +12,9 @@ figures (view-only — never the pushed number).
 `GET /api/dividend-distributions?year=YYYY&subsidiary=N` →
 ```json
 { "byMonth": { "2026-06": { "distributionEUR": -500112, "whtEUR": -90019, "totalEUR": -590131,
-                            "distributionILS": -2035000, "whtILS": -366000, "totalILS": -2401000 } },
+                            "distributionILS": -1694011, "whtILS": -305991, "totalILS": -2000002 } },
   "total":   { "distributionEUR": -500112, "whtEUR": -90019, "totalEUR": -590131,
-               "distributionILS": -2035000, "whtILS": -366000, "totalILS": -2401000 } }
+               "distributionILS": -1694011, "whtILS": -305991, "totalILS": -2000002 } }
 ```
 Amounts are **signed bank deltas** (negative = cash out), **amounts only — no payee names / PII**.
 `distributionEUR/ILS` = shareholder payments (VendPymt/BillPmt; these otherwise land in the **Vendors**
