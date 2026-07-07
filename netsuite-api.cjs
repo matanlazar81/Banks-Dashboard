@@ -1520,6 +1520,67 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
     return { byMonth: cached, categories, monthlyTotals, categoryMapping: EXPENSE_CATEGORIES };
   }
 
+  // Vendor payment detail for ONE month — powers the "cash timing" plug-row breakdown in the Vendors
+  // drilldown. For bank vendor payments (VendPymt) made in `month`, link to the bills they settled
+  // (previousTransactionLineLink, exactly like fetchPaymentsByCategory) and return each bill's expense
+  // grouped by (bill month, category, vendor) — so the UI can show WHAT the month's vendor cash paid
+  // for and WHEN it was accrued (the cash-timing gap: e.g. June cash settling May bills). Amounts +
+  // vendor names only. Shareholder dividend vendors (V001281–V001286) are excluded so this matches the
+  // ex-dividend vendors bucket. Caveat: linked VendPymt→Bill cash only (a partial bill payment
+  // attributes the full bill expense; journal/direct payments aren't linked here) — this EXPLAINS the
+  // plug (the timing composition), it does not foot to it to the euro.
+  async function fetchVendorPaymentsDetail(month) {
+    if (!/^\d{4}-\d{2}$/.test(month || '')) return { month, rows: [], linkedTotal: 0 };
+    const [yy, mm] = month.split('-').map(Number);
+    const startDate = `${month}-01`;
+    const lastDay = new Date(yy, mm, 0).getDate();          // day 0 of next month = last day of `month`
+    const endDate = `${month}-${String(lastDay).padStart(2, '0')}`;
+    const DIV_VENDORS = "'V001281','V001282','V001283','V001284','V001285','V001286'";
+    console.log(`[NS API] Fetching vendor payment detail for ${month}...`);
+    const raw = await suiteqlAll(`
+      SELECT TO_CHAR(vb.trandate, 'YYYY-MM') AS bill_month,
+             a.acctnumber AS acctnumber,
+             v.entityid AS vendor, v.companyname AS vendor_name,
+             ROUND(SUM(COALESCE(tal.debit, 0)) - SUM(COALESCE(tal.credit, 0))) AS amount_eur
+      FROM previousTransactionLineLink ptll
+      JOIN transaction vp ON ptll.nextdoc = vp.id
+      JOIN transaction vb ON ptll.previousdoc = vb.id
+      JOIN vendor v ON vb.entity = v.id
+      JOIN transactionaccountingline tal ON tal.transaction = vb.id
+        AND tal.posting = 'T' AND tal.accountingbook = 1
+      JOIN account a ON tal.account = a.id
+        AND a.accttype IN ('Expense', 'OthExpense', 'COGS')
+        AND a.acctnumber NOT LIKE '76%' AND a.acctnumber NOT LIKE '800%'
+        AND a.acctnumber NOT IN ('780502')
+      WHERE ptll.nexttype = 'VendPymt' AND ptll.previoustype = 'VendBill'
+        AND ptll.linktype = 'Payment'
+        AND vp.subsidiary = ${subsidiaryId}
+        AND vp.trandate >= TO_DATE('${startDate}', 'YYYY-MM-DD')
+        AND vp.trandate <= TO_DATE('${endDate}', 'YYYY-MM-DD')
+        AND v.entityid NOT IN (${DIV_VENDORS})
+      GROUP BY TO_CHAR(vb.trandate, 'YYYY-MM'), a.acctnumber, v.entityid, v.companyname
+      HAVING ABS(SUM(COALESCE(tal.debit, 0)) - SUM(COALESCE(tal.credit, 0))) > 1
+    `) || [];
+    // Collapse account-level rows to (billMonth, category, vendor); many GL accounts map to one
+    // category (e.g. 620001/620009/620013 → "Software").
+    const agg = new Map();
+    let linkedTotal = 0;
+    for (const r of raw) {
+      const amt = Math.round(parseFloat(r.amount_eur) || 0);
+      if (!amt) continue;
+      const prefix = (r.acctnumber || '').substring(0, 3);
+      const category = EXPENSE_CATEGORIES[prefix] || `Other (${prefix})`;
+      const key = `${r.bill_month}|${category}|${r.vendor}`;
+      const cur = agg.get(key) || { billMonth: r.bill_month, category, vendor: r.vendor, vendorName: r.vendor_name || r.vendor, amountEUR: 0 };
+      cur.amountEUR += amt;
+      agg.set(key, cur);
+      linkedTotal += amt;
+    }
+    const rows = [...agg.values()].sort((a, b) => b.billMonth.localeCompare(a.billMonth) || (b.amountEUR - a.amountEUR));
+    console.log(`[NS API] Vendor payment detail ${month}: ${rows.length} grouped rows (${raw.length} raw), linked EUR ${Math.round(linkedTotal).toLocaleString()}`);
+    return { month, rows, linkedTotal: Math.round(linkedTotal) };
+  }
+
   // ── Cashflow breakdown by transaction type for a specific month ──
   async function fetchCashflowBreakdown(month) {
     console.log(`[NS API] Fetching cashflow breakdown for ${month}...`);
@@ -2566,7 +2627,7 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
     return Number.isFinite(impact) && impact > 0;
   }
 
-  return { suiteql, suiteqlAll, fetchAgingData, fetchCollectionData, buildCollectionJson, fetchClientAnomalies, fetchAllSOsByBillingPeriod, fetchRevenueData, fetchMRRData, fetchBankBalance, fetchVendorBills, fetchVendorPaymentHistory, fetchBankAccountList, fetchBankAccountListAsOf, fetchSalaryData, fetchVendorActuals, fetchRevenueActuals, fetchCustomerCashReceipts, fetchCashflowHistory, fetchExpenseCategoryData, fetchPaymentsByCategory, fetchCashflowBreakdown, fetchCashflowTransactions, fetchExpenseTransactions, fetchSalaryBreakdown, fetchInvoiceBasedProjection, fetchMonthlyRevaluation, fetchVendorBillsByAccount, fetchNSBudget, fetchCurrencyDefenseBudget, fetchPaidVendorsYearly, fetchBankClassifiedYearly, fetchDividendDistributions, fetchLatestFxRate, hasPostedMonthEndReval };
+  return { suiteql, suiteqlAll, fetchAgingData, fetchCollectionData, buildCollectionJson, fetchClientAnomalies, fetchAllSOsByBillingPeriod, fetchRevenueData, fetchMRRData, fetchBankBalance, fetchVendorBills, fetchVendorPaymentHistory, fetchBankAccountList, fetchBankAccountListAsOf, fetchSalaryData, fetchVendorActuals, fetchRevenueActuals, fetchCustomerCashReceipts, fetchCashflowHistory, fetchExpenseCategoryData, fetchPaymentsByCategory, fetchCashflowBreakdown, fetchCashflowTransactions, fetchExpenseTransactions, fetchSalaryBreakdown, fetchInvoiceBasedProjection, fetchMonthlyRevaluation, fetchVendorBillsByAccount, fetchNSBudget, fetchCurrencyDefenseBudget, fetchPaidVendorsYearly, fetchBankClassifiedYearly, fetchDividendDistributions, fetchVendorPaymentsDetail, fetchLatestFxRate, hasPostedMonthEndReval };
 }
 
 
