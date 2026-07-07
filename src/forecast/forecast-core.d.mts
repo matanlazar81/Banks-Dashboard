@@ -25,6 +25,21 @@ export interface Book {
 
 export interface EurIls { eur: number; ils: number }
 
+/** Per-month dividend distribution amounts (signed bank deltas; negative = cash out). The engine
+ *  strips these out of Vendors (distribution) / Other (withholding tax) so the operating closing
+ *  rises by the total, for the dividend month and every later month. Amounts only — no payee names. */
+export interface DividendMonth {
+  distributionEUR?: number;
+  whtEUR?: number;
+  totalEUR?: number;
+  distributionILS?: number;
+  whtILS?: number;
+  totalILS?: number;
+}
+export interface DividendExclusions {
+  byMonth: Record<string, DividendMonth>;
+}
+
 /**
  * Every input the forecast engine reads. All optional except `activeYear`;
  * Node/tests should also pass `now` + `currentYear` for determinism (the
@@ -103,6 +118,11 @@ export interface ForecastInputs {
   currencyDefensePct?: number;
   currencyDefensePctByMonth?: Record<number, number>;
   sfFinanceBudget?: Record<string, { eur: number }>;
+
+  // dividend
+  /** Dividend distribution to strip out of Vendors/Other so the operating closing rises by the
+   *  total (everyone; screen == server). null/undefined = no-op (backward compatible). */
+  dividendExclusions?: DividendExclusions | null;
 }
 
 /** One monthly forecast row (12 per year, Jan..Dec of activeYear). */
@@ -152,6 +172,8 @@ export interface ForecastRow {
   wcDeltaILS: number;
   isCurrent: boolean;
   isPast: boolean;
+  /** Total dividend (EUR) stripped from this month's buckets by the exclusion pass, if any. */
+  dividendExcluded?: number;
 }
 
 export function computeCashflowForecast(inputs: ForecastInputs): ForecastRow[];

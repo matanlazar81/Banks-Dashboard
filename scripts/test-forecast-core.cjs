@@ -304,6 +304,33 @@ function runBankReconcile() {
   if (Math.round(mar.salary) === 3_100_000) ok('Mar (broken bcm) salary falls back to accrual (3,100,000)'); else fail(`Mar salary ${mar.salary} != 3,100,000 (fallback broke)`);
 }
 
+// ── Mode 4: DIVIDEND-EXCLUSION (operating view) ──
+// A dividend in a past month is stripped from Vendors/Other and added back to closing for that month
+// and every later month (cumulative), surviving the current-month re-anchor. The cascade identity
+// closing = opening + net + reval must still hold. No-op when the input is absent.
+function runDividendExclusion() {
+  console.log('\nDIVIDEND-EXCLUSION: strip from Vendors/Other → closing rises, carries to year-end');
+  const base = buildSyntheticInputs();               // now = 2026-04-15 → Feb (idx1) past, Apr (idx3) current
+  const withDiv = computeCashflowForecast(base);
+  const excl = { byMonth: { '2026-02': { distributionEUR: -300_000, whtEUR: -50_000, distributionILS: -1_100_000, whtILS: -180_000 } } };
+  const opView = computeCashflowForecast({ ...base, dividendExclusions: excl });
+  const T = 350_000; // distribution 300k + WHT 50k
+  const d = (arr, i, k) => Math.round(opView[i][k] - withDiv[i][k]);
+  if (Math.round(withDiv[1].vendors - opView[1].vendors) === 300_000) ok('Feb vendors −300,000'); else fail(`Feb vendors Δ ${Math.round(withDiv[1].vendors - opView[1].vendors)} != 300,000`);
+  if (Math.round(withDiv[1].other - opView[1].other) === 50_000) ok('Feb other −50,000'); else fail(`Feb other Δ ${Math.round(withDiv[1].other - opView[1].other)} != 50,000`);
+  if (d(opView, 1, 'net') === T) ok('Feb net +350,000'); else fail(`Feb net Δ ${d(opView,1,'net')} != 350,000`);
+  if (d(opView, 1, 'closingBalance') === T) ok('Feb closing +350,000'); else fail(`Feb closing Δ ${d(opView,1,'closingBalance')} != 350,000`);
+  if (d(opView, 2, 'closingBalance') === T) ok('Mar closing +350,000 (carries)'); else fail(`Mar closing Δ ${d(opView,2,'closingBalance')} != 350,000`);
+  if (d(opView, 11, 'closingBalance') === T) ok('Dec closing +350,000 (survives Apr re-anchor → year-end)'); else fail(`Dec closing Δ ${d(opView,11,'closingBalance')} != 350,000`);
+  if (d(opView, 0, 'closingBalance') === 0) ok('Jan (pre-dividend) unchanged'); else fail(`Jan closing Δ ${d(opView,0,'closingBalance')} != 0`);
+  let bad = 0;
+  for (const r of opView) if (Math.round(r.closingBalance) !== Math.round(r.openingBalance + r.net + r.revalImpact)) bad++;
+  if (bad === 0) ok('cascade closing = opening + net + reval holds after exclusion'); else fail(`${bad} cascade break(s) after exclusion`);
+  // no-op guard: absent input → identical to base
+  const noop = computeCashflowForecast({ ...base, dividendExclusions: null });
+  if (Math.round(noop[11].closingBalance) === Math.round(withDiv[11].closingBalance)) ok('null dividendExclusions is a no-op'); else fail('null dividendExclusions changed output');
+}
+
 // ── main ──────────────────────────────────────────────────────────────────
 async function main() {
   const coreUrl = pathToFileURL(path.join(__dirname, '..', 'src', 'forecast', 'forecast-core.mjs')).href;
@@ -312,6 +339,7 @@ async function main() {
   runGolden();
   runSmoke();
   runBankReconcile();
+  runDividendExclusion();
   console.log('');
   if (failures === 0) { console.log('✅ PASS — all checks green.'); process.exit(0); }
   else { console.error(`❌ FAIL — ${failures} check(s) failed.`); process.exit(1); }

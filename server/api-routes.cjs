@@ -385,19 +385,12 @@ function registerApiRoutes(app     ) {
         }
       });
 
-      // ── GET /api/dividend-distributions — OWNER ONLY. Dividend cash by month (memo-based), so the
-      // owner's Closing↔NS reconciliation panel can strip the distribution out of the operating view
-      // and show it as the reconciling line. Gated to the SYNC allowlist via the upstream x-user-email
-      // header (same enforcement as POST /api/sync-budget-targets); non-owners get 403.
+      // ── GET /api/dividend-distributions — dividend cash by month (memo-based). Serves ALL bank-role
+      // users because the dividend is now excluded from Vendors for everyone (the forecast engine
+      // consumes these amounts). Returns amounts only — no payee names / PII. (Was owner-gated when it
+      // only fed the owner's reconciliation panel; un-gated once the exclusion became shared.)
       use('/api/dividend-distributions', async (req, res) => {
         try {
-          const email = getUserEmail(req);
-          if (!canUserSync(email)) {
-            res.statusCode = 403;
-            res.setHeader('Content-Type', 'application/json');
-            res.end(JSON.stringify({ error: 'forbidden', byMonth: {} }));
-            return;
-          }
           const url = new URL(req.url || '', `http://${req.headers.host}`);
           const sub = parseInt(url.searchParams.get('subsidiary') || '3') || 3;
           const year = parseInt(url.searchParams.get('year') || '') || new Date().getFullYear();

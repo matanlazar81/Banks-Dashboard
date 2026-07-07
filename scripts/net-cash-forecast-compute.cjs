@@ -230,6 +230,7 @@ async function gatherInputs(ns, sf, year) {
     ['collections (income-credits SQL)', () => fetchCollections(ns, year), {}],
     ['ns.fetchRevenueActuals', () => ns.fetchRevenueActuals(), []],
     ['ns.fetchCustomerCashReceipts', () => ns.fetchCustomerCashReceipts(), {}],
+    ['ns.fetchDividendDistributions', () => ns.fetchDividendDistributions(year), { byMonth: {}, total: {} }],
   ];
   const sfTasks = [
     ['sf.fetchMonthlyActualsSplit', () => sf.fetchMonthlyActualsSplit(), {}],
@@ -251,7 +252,7 @@ async function gatherInputs(ns, sf, year) {
   const [
     salaryData, vendorBills, vendorActuals, vendorHistory, expenseCategories, paidVendorsRaw,
     monthlyReval, sfFinanceBudget, bankBal, ysAccts, pmAccts, bankClassifiedRaw, collections,
-    revenueActuals, customerReceipts,
+    revenueActuals, customerReceipts, dividendRaw,
   ] = nsResults;
   const [
     sfActualsSplit, salBudgetBase, sfBudgetBase, sfRevenue, sfRevenuePaid, sfPipeline,
@@ -317,6 +318,13 @@ async function gatherInputs(ns, sf, year) {
     catch { /* no seed */ }
   }
 
+  // dividendExclusions: strip the shareholder dividend distribution out of Vendors/Other
+  // so the operating closing rises by that amount (screen == server — the engine applies
+  // the same exclusion the dashboard does). Amounts only; no payee names.
+  const dividendExclusions = { byMonth: (dividendRaw && dividendRaw.byMonth) || {} };
+  const divTot = Object.values(dividendExclusions.byMonth).reduce((s, d) => s + Math.abs((d.distributionEUR || 0) + (d.whtEUR || 0)), 0);
+  if (divTot) console.log(`[compute]   → dividendExclusions: €${Math.round(divTot).toLocaleString()} excluded from operating (closing +€${Math.round(divTot).toLocaleString()})`);
+
   // salaryDeptBudgets: only needed as the non-lastActual fallback; fetch the breakdown
   // for months carrying a dept adjustment (mirrors App.tsx's lazy per-month fetch).
   const salaryDeptBudgets = {};
@@ -344,7 +352,7 @@ async function gatherInputs(ns, sf, year) {
       sfRevenuePaid, actualCollections: collections, sfRevenue, revenueActuals, customerReceipts,
       sfPipeline, sfConversion, pipelineMethodology,
       sfChurnQuarterly, churnData: churnAnalysis.yearly || [], churnMonthlyAvg: churnAnalysis.recentMonthlyAvg || 0,
-      monthlyReval, nsBankClassified, sfFinanceBudget,
+      monthlyReval, nsBankClassified, sfFinanceBudget, dividendExclusions,
       book, bookLocal, yearStartBalance, prevMonthEndBalance, liveFxRate,
     },
     meta: { lastActualSalaryMonth, overridesApplied: sfSalaryOverrides.length, adjEur, adjIls },

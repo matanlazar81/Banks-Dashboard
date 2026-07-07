@@ -105,6 +105,12 @@ function computeCashflowForecast(inputs) {
     currencyDefensePct = 0,
     currencyDefensePctByMonth = {},
     sfFinanceBudget = {},
+
+    // ── dividend exclusion (operating view) ──
+    // { byMonth: { 'YYYY-MM': { distributionEUR, whtEUR, distributionILS, whtILS } } } (signed bank
+    // deltas). When present, the dividend is stripped from Vendors/Other in its month and added back to
+    // opening/closing for that month onward. null/absent → no-op (backward compatible).
+    dividendExclusions = null,
   } = inputs;
 
   // Injected "now": the frontend passes asOfDate-derived or real Date; the
@@ -628,6 +634,40 @@ function computeCashflowForecast(inputs) {
     const wcDeltaILS = 0;
     rows.push({ month: label, mKey, openingBalance, openingBalanceILS, salary, salaryBase, salaryILS, vendors, vendorsBase, vendorsILS, other, otherILS, otherDetails: bcm?.details || [], totalOutflow, totalOutflowILS, collections, collectionsILS, collectionsActual, collectionsRemaining, collectionsForecast, collectionsRevenue, collectionsUnpaidCarry, collectionsUnpaidCarryMonth, collectionsPipeline, customers, pipelineWeighted, pipelineWeightedILS, pipelineTotal, pipelineCount, pipelineOpps, pipelineHistWinRate, pipelineDelayMonths, churnDeduction, churnDeductionILS, net, netILS, revalImpact, revalImpactILS, revalHasBothEnds, closingBalance: runningBalance, closingBalanceILS: runningBalanceILS, wcDelta, wcDeltaILS, isCurrent: isCurMonth, isPast: isPastMonth });
   }
+
+  // ── Dividend exclusion (operating view) ──
+  // Strip the dividend distribution out of the bucket it lands in (distribution → Vendors, WHT →
+  // Other) and add it back to opening/closing for the payment month and every later month (a
+  // cumulative offset). Applied to the FINAL rows so it survives the current-month re-anchor
+  // (runningBalance is reset to prevMonthEndBalance at the current month, which already reflects the
+  // dividend leaving the bank — adding the offset here restores the operating view). No-op when
+  // dividendExclusions is absent → engine stays backward-compatible and golden-safe.
+  if (dividendExclusions && dividendExclusions.byMonth) {
+    let cumEur = 0, cumIls = 0;
+    for (const r of rows) {
+      const d = dividendExclusions.byMonth[r.mKey];
+      const distEur = d ? Math.round(Math.abs(d.distributionEUR || 0)) : 0;
+      const whtEur  = d ? Math.round(Math.abs(d.whtEUR || 0)) : 0;
+      const distIls = d ? Math.round(Math.abs(d.distributionILS || 0)) : 0;
+      const whtIls  = d ? Math.round(Math.abs(d.whtILS || 0)) : 0;
+      const mEur = distEur + whtEur, mIls = distIls + whtIls;
+      // opening carries the offset accumulated BEFORE this month
+      r.openingBalance += cumEur;
+      r.openingBalanceILS += cumIls;
+      if (mEur || mIls) {
+        r.vendors -= distEur; r.vendorsILS -= distIls;   // vendors/other are positive outflow magnitudes
+        r.other -= whtEur; r.otherILS -= whtIls;
+        r.net += mEur; r.netILS += mIls;                  // removing an outflow raises net
+        r.totalOutflow = r.salary + r.vendors + Math.max(0, r.other);
+        r.totalOutflowILS = r.salaryILS + r.vendorsILS + Math.max(0, r.otherILS);
+        r.dividendExcluded = mEur;                        // marker for the reconciliation panel
+      }
+      cumEur += mEur; cumIls += mIls;
+      r.closingBalance += cumEur;
+      r.closingBalanceILS += cumIls;
+    }
+  }
+
   return rows;
 }
 
