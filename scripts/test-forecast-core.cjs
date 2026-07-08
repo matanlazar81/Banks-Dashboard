@@ -320,6 +320,9 @@ function runDividendExclusion() {
   if (Math.round(withDiv[1].other - opView[1].other) === 50_000) ok('Feb other −50,000'); else fail(`Feb other Δ ${Math.round(withDiv[1].other - opView[1].other)} != 50,000`);
   if (d(opView, 1, 'net') === T) ok('Feb net +350,000'); else fail(`Feb net Δ ${d(opView,1,'net')} != 350,000`);
   if (d(opView, 1, 'closingBalance') === T) ok('Feb closing +350,000'); else fail(`Feb closing Δ ${d(opView,1,'closingBalance')} != 350,000`);
+  // dividend must drop vendorsBase too, so it is NOT mis-counted as a vendor "saving" (Σ(vendorsBase − vendors))
+  if (Math.round(withDiv[1].vendorsBase - opView[1].vendorsBase) === 300_000) ok('Feb vendorsBase −300,000 (base excludes dividend)'); else fail(`Feb vendorsBase Δ ${Math.round(withDiv[1].vendorsBase - opView[1].vendorsBase)} != 300,000`);
+  if (Math.round(opView[1].vendorsBase - opView[1].vendors) === 0) ok('Feb vendors === vendorsBase (no phantom saving)'); else fail(`Feb base−after ${Math.round(opView[1].vendorsBase - opView[1].vendors)} != 0`);
   if (d(opView, 2, 'closingBalance') === T) ok('Mar closing +350,000 (carries)'); else fail(`Mar closing Δ ${d(opView,2,'closingBalance')} != 350,000`);
   if (d(opView, 11, 'closingBalance') === T) ok('Dec closing +350,000 (survives Apr re-anchor → year-end)'); else fail(`Dec closing Δ ${d(opView,11,'closingBalance')} != 350,000`);
   if (d(opView, 0, 'closingBalance') === 0) ok('Jan (pre-dividend) unchanged'); else fail(`Jan closing Δ ${d(opView,0,'closingBalance')} != 0`);
