@@ -4879,9 +4879,10 @@ useEffect(() => {
             if (!cashflowForecast || cashflowForecast.length === 0) {
               return <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-10 text-center text-gray-400">No forecast data loaded yet — switch to Dashboard, let it load, then come back.</div>;
             }
-            const ytd = cashflowForecast.filter((r) => r.isPast || r.isCurrent);
+            // Completed months only — exclude the current, still-partial month (July → Jan–Jun).
+            const ytd = cashflowForecast.filter((r) => r.isPast);
             if (ytd.length === 0) {
-              return <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-10 text-center text-gray-400">No completed months yet this year — the bridge needs at least one actual month.</div>;
+              return <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-10 text-center text-gray-400">No completed months yet this year — the bridge needs at least one closed month.</div>;
             }
             const completedMonths = ytd.length;
             const lastMonthKey: string = ytd[ytd.length - 1].mKey;
@@ -4907,15 +4908,14 @@ useEffect(() => {
             // Start anchor: budgeted YTD net cash (what the plan expected to generate so far).
             const budgetYtd = revBudTot - salBudTot - venBudTot;
 
-            // End anchor: actual YTD net cash growth — identical basis to the KR5 OKR card.
+            // End anchor: actual net cash growth THROUGH THE LAST COMPLETED MONTH. For past months
+            // the model closing is calibrated to the actual NetSuite bank delta (operating basis,
+            // same basis as the buckets), so the walk still ties. This intentionally runs through the
+            // last closed month, so it differs from the live KR5 OKR card by the current partial month.
             const netCashTarget = activeCompany === 'consolidated' ? 9500000 : (companyConfig.hasSF ? 8500000 : 1000000);
             const janOpening = cashflowForecast[0].openingBalance;
-            const dividendYtdAddback = (isOwner && showActualDividend) ? 0
-              : Object.entries((dividendExclusions && dividendExclusions.byMonth) || {})
-                  .filter(([m]) => m <= lastMonthKey)
-                  .reduce((s: number, [, v]) => s + Math.abs(((v as { distributionEUR?: number; whtEUR?: number }).distributionEUR || 0) + ((v as { distributionEUR?: number; whtEUR?: number }).whtEUR || 0)), 0);
-            const latestClosing = displayTotalEUR > 0 ? (displayTotalEUR + dividendYtdAddback) : ytd[ytd.length - 1].closingBalance;
-            const actualYtd = latestClosing - janOpening;   // === netCashGrowth
+            const latestClosing = ytd[ytd.length - 1].closingBalance;
+            const actualYtd = latestClosing - janOpening;
 
             // Reconciling residual so the waterfall closes exactly on the dashboard's actual.
             const residual = actualYtd - (budgetYtd + revVar + salVar + venVar);
