@@ -4877,7 +4877,7 @@ useEffect(() => {
             if (!cashflowForecast || cashflowForecast.length === 0) {
               return <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-10 text-center text-gray-400">No forecast data loaded yet — switch to Dashboard, let it load, then come back.</div>;
             }
-            const ytd = cashflowForecast.filter((r: any) => r.isPast || r.isCurrent);
+            const ytd = cashflowForecast.filter((r) => r.isPast || r.isCurrent);
             if (ytd.length === 0) {
               return <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-10 text-center text-gray-400">No completed months yet this year — the bridge needs at least one actual month.</div>;
             }
@@ -4892,12 +4892,12 @@ useEffect(() => {
 
             // Per-bucket YTD budget vs actual. Actuals come from the engine rows so the End anchor
             // ties to the dashboard's Net Cash Growth. Favorable (adds cash) = positive.
-            const revBudTot = ytd.reduce((s: number, r: any) => s + revBud(r.mKey), 0);
-            const revActTot = ytd.reduce((s: number, r: any) => s + r.collections, 0);
-            const salBudTot = ytd.reduce((s: number, r: any) => s + salBud(r.mKey), 0);
-            const salActTot = ytd.reduce((s: number, r: any) => s + r.salary, 0);
-            const venBudTot = ytd.reduce((s: number, r: any) => s + venBud(r.mKey), 0);
-            const venActTot = ytd.reduce((s: number, r: any) => s + r.vendors, 0);
+            const revBudTot = ytd.reduce((s: number, r) => s + revBud(r.mKey), 0);
+            const revActTot = ytd.reduce((s: number, r) => s + r.collections, 0);
+            const salBudTot = ytd.reduce((s: number, r) => s + salBud(r.mKey), 0);
+            const salActTot = ytd.reduce((s: number, r) => s + r.salary, 0);
+            const venBudTot = ytd.reduce((s: number, r) => s + venBud(r.mKey), 0);
+            const venActTot = ytd.reduce((s: number, r) => s + r.vendors, 0);
             const revVar = revActTot - revBudTot;   // collected more than planned → +
             const salVar = salBudTot - salActTot;   // spent less on salary → +
             const venVar = venBudTot - venActTot;   // spent less on vendors → +
@@ -4911,7 +4911,7 @@ useEffect(() => {
             const dividendYtdAddback = (isOwner && showActualDividend) ? 0
               : Object.entries((dividendExclusions && dividendExclusions.byMonth) || {})
                   .filter(([m]) => m <= lastMonthKey)
-                  .reduce((s: number, [, v]: any) => s + Math.abs(((v as any).distributionEUR || 0) + ((v as any).whtEUR || 0)), 0);
+                  .reduce((s: number, [, v]) => s + Math.abs(((v as { distributionEUR?: number; whtEUR?: number }).distributionEUR || 0) + ((v as { distributionEUR?: number; whtEUR?: number }).whtEUR || 0)), 0);
             const latestClosing = displayTotalEUR > 0 ? (displayTotalEUR + dividendYtdAddback) : ytd[ytd.length - 1].closingBalance;
             const actualYtd = latestClosing - janOpening;   // === netCashGrowth
 
@@ -4919,7 +4919,7 @@ useEffect(() => {
             const residual = actualYtd - (budgetYtd + revVar + salVar + venVar);
 
             const proratedTarget = Math.round(netCashTarget * (completedMonths / 12));
-            const projNetCashGrowth = cashflowForecast.reduce((s: number, r: any) => s + r.net + r.revalImpact, 0);
+            const projNetCashGrowth = cashflowForecast.reduce((s: number, r) => s + r.net + r.revalImpact, 0);
             const gapVsBudget = actualYtd - budgetYtd;
             const gapVsTarget = actualYtd - proratedTarget;
             const onTrackYtd = actualYtd >= proratedTarget;
@@ -4947,7 +4947,7 @@ useEffect(() => {
               const lo = Math.min(start, end), hi = Math.max(start, end);
               return { name: st.label, base: Math.round(lo / 1000), bar: Math.round((hi - lo) / 1000), sign: st.value >= 0 ? 'up' : 'down', raw: st.value, label: labelK(st.value, true) };
             });
-            const barColor = (b: any) => b.sign === 'anchor' ? '#475569' : b.sign === 'up' ? '#10b981' : '#ef4444';
+            const barColor = (b: { sign: string }) => b.sign === 'anchor' ? '#475569' : b.sign === 'up' ? '#10b981' : '#ef4444';
 
             const rows = [
               { label: 'Revenue / collections', bud: revBudTot, act: revActTot, variance: revVar },
@@ -5011,7 +5011,7 @@ useEffect(() => {
                       <CartesianGrid strokeDasharray="3 3" vertical={false} />
                       <XAxis dataKey="name" tick={{ fontSize: 11 }} angle={-15} textAnchor="end" interval={0} height={50} />
                       <YAxis tick={{ fontSize: 11 }} tickFormatter={(v: number) => `${v.toLocaleString()}K`} />
-                      <Tooltip formatter={(_v: any, _n: any, p: any) => [labelK(p?.payload?.raw ?? 0, p?.payload?.sign !== 'anchor'), p?.payload?.name]} />
+                      <Tooltip formatter={(_v, _n, p) => [labelK((p as { payload?: { raw?: number } })?.payload?.raw ?? 0, (p as { payload?: { sign?: string } })?.payload?.sign !== 'anchor'), (p as { payload?: { name?: string } })?.payload?.name]} />
                       <ReferenceLine y={Math.round(proratedTarget / 1000)} stroke="#6366f1" strokeDasharray="5 4" label={{ value: 'Target (YTD)', position: 'right', fontSize: 10, fill: '#6366f1' }} />
                       <Bar dataKey="base" stackId="w" fill="transparent" />
                       <Bar dataKey="bar" stackId="w" radius={[3, 3, 0, 0]}>
@@ -8578,10 +8578,10 @@ useEffect(() => {
                   const useLastActualInDrill = !!(drillBasisMonth && salaryActualsByDept[drillBasisMonth]);
                   const budgetTotal = useLastActualInDrill
                     ? Object.values(salaryActualsByDept[drillBasisMonth!]).reduce((s, v) => s + (v as { eur: number }).eur, 0)
-                    : d.budget.reduce((s: number, r: any) => s + (r.amountEUR || 0), 0);
+                    : d.budget.reduce((s: number, r) => s +(r.amountEUR || 0), 0);
                   const budgetTotalILS = useLastActualInDrill
                     ? Object.values(salaryActualsByDept[drillBasisMonth!]).reduce((s, v) => s + (v as { eur: number; ils: number }).ils, 0)
-                    : d.budget.reduce((s: number, r: any) => s + (r.amountILS || 0), 0);
+                    : d.budget.reduce((s: number, r) => s +(r.amountILS || 0), 0);
                   const adjustedTotal = Math.round(budgetTotal * multiplier);
                   const adjustedTotalILS = Math.round(budgetTotalILS * multiplier);
                   // Compute per-department lever deltas from per-employee overrides
@@ -8624,8 +8624,8 @@ useEffect(() => {
                   const monthOverrides = sfSalaryOverrides.filter(o => o.mKey === forecastDrilldown.mKey);
                   const sfOverrideTotal = monthOverrides.reduce((s, o) => s + (o.mode === 'Override' ? (o.newVal - o.oldVal) : o.amountEUR), 0);
                   const hasSfOverrides = monthOverrides.length > 0;
-                  const actualTotal = d.actuals.reduce((s: number, r: any) => s + (r.amountEUR || 0), 0);
-                  const actualTotalILS = d.actuals.reduce((s: number, r: any) => s + (r.amountILS || 0), 0);
+                  const actualTotal = d.actuals.reduce((s: number, r) => s +(r.amountEUR || 0), 0);
+                  const actualTotalILS = d.actuals.reduce((s: number, r) => s +(r.amountILS || 0), 0);
                   // Reconcile the accrual (GL-76xxx) breakdown to the CASH figure the forecast row shows.
                   // Past reconciled months drive Salary from bank cash, which can exceed the accrual when
                   // payroll liabilities / severance / one-time payments settle in cash. Append one
@@ -9982,9 +9982,9 @@ useEffect(() => {
                             </tbody>
                             <tfoot><tr className="border-t-2 font-bold">
                               <td className="py-1.5">Total (top {d.breakdown.length})</td>
-                              <td className="py-1.5 pr-2 text-right text-blue-800">{fmt(d.breakdown.reduce((s: number, r: any) => s + r.revenue, 0))}</td>
-                              <td className="py-1.5 pr-2 text-right text-green-700">{fmt(d.breakdown.reduce((s: number, r: any) => s + r.paid, 0))}</td>
-                              <td className="py-1.5 pr-2 text-right text-amber-700">{fmt(d.breakdown.reduce((s: number, r: any) => s + r.unpaid, 0))}</td>
+                              <td className="py-1.5 pr-2 text-right text-blue-800">{fmt(d.breakdown.reduce((s: number, r) => s +r.revenue, 0))}</td>
+                              <td className="py-1.5 pr-2 text-right text-green-700">{fmt(d.breakdown.reduce((s: number, r) => s +r.paid, 0))}</td>
+                              <td className="py-1.5 pr-2 text-right text-amber-700">{fmt(d.breakdown.reduce((s: number, r) => s +r.unpaid, 0))}</td>
                             </tr></tfoot>
                           </table>
                         </div>
@@ -10227,8 +10227,8 @@ useEffect(() => {
                     <tfoot>
                       <tr className="border-t-2 font-bold">
                         <td className="py-1.5" colSpan={forecastDrilldown.data[0]?.department || forecastDrilldown.data[0]?.category ? 3 : 2}>Total</td>
-                        <td className="py-1.5 pr-2 text-right text-violet-800">{fmt(forecastDrilldown.data.reduce((s: number, r: any) => s + r.amountEUR, 0))}</td>
-                        <td className="py-1.5 pr-2 text-right text-blue-700">{fmtILS(forecastDrilldown.data.reduce((s: number, r: any) => s + r.amountILS, 0))}</td>
+                        <td className="py-1.5 pr-2 text-right text-violet-800">{fmt(forecastDrilldown.data.reduce((s: number, r) => s +r.amountEUR, 0))}</td>
+                        <td className="py-1.5 pr-2 text-right text-blue-700">{fmtILS(forecastDrilldown.data.reduce((s: number, r) => s +r.amountILS, 0))}</td>
                         {_isProjected && <td className="py-1.5 pr-2 text-right text-gray-500 font-bold">100%</td>}
                         {_isProjected && <td className="py-1.5 text-center"></td>}
                         {_isProjected && (() => {
