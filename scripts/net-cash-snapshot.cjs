@@ -174,7 +174,7 @@ function readPersistedForecast() {
 //           NET_CASH_EMAIL_FROM optional sender; NET_CASH_SMTP_HELO optional relay EHLO name.
 //   Slack:  SLACK_BOT_TOKEN (required) + NET_CASH_SLACK_CHANNEL (name or ID; default cash_flow_sync).
 //           The bot must be a member of the channel.
-function buildSummary({ enabled, wrote, dryRun, syncTs, totalBankEur, forecastEur, modelClosingEur, modelClosingMonth, bankAsOf, asOfNote, tableName, error, currentBankEur, currentBankReval, currentBankRevalOk, currentBankDate }) {
+function buildSummary({ enabled, wrote, dryRun, syncTs, totalBankEur, forecastEur, modelClosingEur, modelClosingMonth, bankAsOf, asOfNote, tableName, error, currentBankEur, currentBankReval, currentBankRevalOk, currentBankDate, dividendExcludedEur, currentBankDividendExcl }) {
   const fmtEur = (v) => (v != null && Number.isFinite(Number(v)) ? `EUR ${Math.round(Number(v)).toLocaleString('en-US')}` : 'MISSING');
   const statusLine = error ? 'FAILED'
     : !enabled ? 'DISABLED — no row written'
@@ -192,8 +192,8 @@ function buildSummary({ enabled, wrote, dryRun, syncTs, totalBankEur, forecastEu
     `Table            : ${tableName}`,
     '',
     `DATE             : ${syncTs}`,
-    `TOTAL_BANK_EUR   : ${fmtEur(totalBankEur)}${bankAsOf ? ` (prev month-end, posted GL as of ${bankAsOf})` : ''}`,
-    ...(currentBankEur != null ? [`CURRENT_BANK_EUR : ${fmtEur(currentBankEur)} (live as of ${currentBankDate}${currentBankRevalOk ? (currentBankReval ? `; open-month reval ${fmtEur(currentBankReval)} excluded until month-end` : '') : '; reval NOT neutralized — lookup failed'})`] : []),
+    `TOTAL_BANK_EUR   : ${fmtEur(totalBankEur)}${bankAsOf ? ` (prev month-end GL as of ${bankAsOf}${dividendExcludedEur ? `; dividend ${fmtEur(dividendExcludedEur)} excluded → operating` : ''})` : ''}`,
+    ...(currentBankEur != null ? [`CURRENT_BANK_EUR : ${fmtEur(currentBankEur)} (live as of ${currentBankDate}${currentBankRevalOk ? (currentBankReval ? `; open-month reval ${fmtEur(currentBankReval)} excluded until month-end` : '') : '; reval NOT neutralized — lookup failed'}${currentBankDividendExcl ? `; dividend ${fmtEur(currentBankDividendExcl)} excluded` : ''})`] : []),
     `FORECAST_EUR     : ${fmtEur(forecastEur)}`,
   ];
   if (modelClosingEur != null) lines.push(`MODEL_CLOSING_EUR: ${fmtEur(modelClosingEur)}${modelClosingMonth ? ` (model closing for ${modelClosingMonth})` : ''}`);
@@ -326,6 +326,29 @@ async function fetchBankAsOf(asOfDate) {
   }
 }
 
+// Realized dividend distribution by month (magnitude EUR: |distribution| + |WHT|, both legs left the
+// bank) for the given years. Used to EXCLUDE the dividend from the bank figures: the live bank reflects
+// the dividend cash-out, so adding it back yields the operating balance (matching FORECAST_EUR /
+// MODEL_CLOSING_EUR, which already exclude it). Best-effort: returns {} (with a warning) if the lookup
+// fails or the method is absent, so the bank figure simply stays raw and the sync never breaks.
+async function fetchDividendByMonth(years) {
+  const ns = getNs();
+  if (!ns || typeof ns.fetchDividendDistributions !== 'function') return {};
+  const out = {};
+  try {
+    for (const y of years) {
+      const d = await ns.fetchDividendDistributions(parseInt(y, 10));
+      for (const [m, v] of Object.entries((d && d.byMonth) || {})) {
+        out[m] = Math.round(Math.abs(v.distributionEUR || 0) + Math.abs(v.whtEUR || 0));
+      }
+    }
+  } catch (e) {
+    console.warn(`[net-cash] dividend lookup failed (${e && e.message ? e.message : e}) — bank figures left raw (dividend NOT excluded).`);
+    return {};
+  }
+  return out;
+}
+
 // Live bank balance as of TODAY, with the OPEN month's FX reval neutralized.
 // The raw as-of-today sum carries a one-sided reval swing — the prior month-end mark is
 // reversed on the 1st, but this month's month-end mark isn't posted until the month closes —
@@ -443,6 +466,23 @@ async function main() {
     bankSrc = `NetSuite as of ${asOf}`;
   }
 
+  // ── Exclude the dividend from the bank figures (operating basis) ──
+  // The bank reflects the dividend cash-out; add the realized dividend back so TOTAL_BANK_EUR matches
+  // FORECAST_EUR / MODEL_CLOSING_EUR (which already exclude it). Skipped when TOTAL_BANK_EUR came from
+  // the NET_CASH_TOTAL_BANK_EUR env override (that value is taken as-is). Also applied to the alert's
+  // CURRENT_BANK_EUR below. Fetched once (both years, for a Jan boundary); {} on failure → no add-back.
+  const divYears = [...new Set([String(asOf).slice(0, 4), String(dateOnly).slice(0, 4)])];
+  const divByMonth = await fetchDividendByMonth(divYears);
+  const divThrough = (mk) => Object.entries(divByMonth).reduce((s, [m, v]) => s + (m <= mk ? v : 0), 0);
+  let dividendExcludedEur = 0;
+  if (bankSrc.startsWith('NetSuite') && Number.isFinite(totalBankEur)) {
+    dividendExcludedEur = divThrough(String(asOf).slice(0, 7));
+    if (dividendExcludedEur) {
+      totalBankEur += dividendExcludedEur;
+      console.log(`[net-cash] TOTAL_BANK_EUR: +€${dividendExcludedEur.toLocaleString()} (dividend excluded → operating basis).`);
+    }
+  }
+
   // ── FORECAST_EUR: env → persisted snapshot (Snowflake carry-forward tried on a real run) ──
   let forecastEur = numOrNull(process.env.NET_CASH_FORECAST_EUR);
   let forecastSrc = 'env';
@@ -456,6 +496,9 @@ async function main() {
 
   // ── CURRENT_BANK_EUR: live balance as of today, open-month FX reval neutralized (notification only) ──
   const currentBank = await fetchCurrentBankExReval(dateOnly);
+  // Exclude the dividend here too (alert consistency): add the dividend realized through today.
+  const currentBankDividendExcl = currentBank.eur != null ? divThrough(String(dateOnly).slice(0, 7)) : 0;
+  if (currentBankDividendExcl) currentBank.eur += currentBankDividendExcl;
 
   const reportRow = () => {
     console.log('[net-cash] Resolved row:');
@@ -482,7 +525,7 @@ async function main() {
   if (!syncEnabled) {
     reportRow();
     console.log('[net-cash] NET_CASH_SYNC_ENABLED=false → sync DISABLED, not writing to Snowflake.');
-    await notify({ enabled: false, wrote: false, dryRun: false, syncTs, totalBankEur, forecastEur, modelClosingEur, modelClosingMonth, bankAsOf: asOf, asOfNote, currentBankEur: currentBank.eur, currentBankReval: currentBank.revalEur, currentBankRevalOk: currentBank.revalOk, currentBankDate: dateOnly, tableName: TABLE });
+    await notify({ enabled: false, wrote: false, dryRun: false, syncTs, totalBankEur, forecastEur, modelClosingEur, modelClosingMonth, bankAsOf: asOf, asOfNote, currentBankEur: currentBank.eur, currentBankReval: currentBank.revalEur, currentBankRevalOk: currentBank.revalOk, currentBankDate: dateOnly, dividendExcludedEur, currentBankDividendExcl, tableName: TABLE });
     process.exit(0);
   }
 
@@ -562,12 +605,12 @@ async function main() {
     // DATE sync timestamp). Rows are never overwritten or deleted by this job.
     await exec(conn, adaptedSql, binds);
     console.log(`[net-cash] ✓ Appended 1 row for ${syncTs} (columns: ${used.map((c) => c.name).join(', ')}).`);
-    await notify({ enabled: true, wrote: true, dryRun: false, syncTs, totalBankEur, forecastEur, modelClosingEur, modelClosingMonth, bankAsOf: asOf, asOfNote, currentBankEur: currentBank.eur, currentBankReval: currentBank.revalEur, currentBankRevalOk: currentBank.revalOk, currentBankDate: dateOnly, tableName: TABLE });
+    await notify({ enabled: true, wrote: true, dryRun: false, syncTs, totalBankEur, forecastEur, modelClosingEur, modelClosingMonth, bankAsOf: asOf, asOfNote, currentBankEur: currentBank.eur, currentBankReval: currentBank.revalEur, currentBankRevalOk: currentBank.revalOk, currentBankDate: dateOnly, dividendExcludedEur, currentBankDividendExcl, tableName: TABLE });
     process.exit(0);
   } catch (e) {
     const msg = e && e.message ? e.message : String(e);
     console.error(`[net-cash] ERROR: ${msg}`);
-    try { await notify({ enabled: syncEnabled, wrote: false, dryRun: false, syncTs, totalBankEur, forecastEur, modelClosingEur, modelClosingMonth, bankAsOf: asOf, asOfNote, currentBankEur: currentBank.eur, currentBankReval: currentBank.revalEur, currentBankRevalOk: currentBank.revalOk, currentBankDate: dateOnly, tableName: TABLE, error: msg }); } catch { /* ignore */ }
+    try { await notify({ enabled: syncEnabled, wrote: false, dryRun: false, syncTs, totalBankEur, forecastEur, modelClosingEur, modelClosingMonth, bankAsOf: asOf, asOfNote, currentBankEur: currentBank.eur, currentBankReval: currentBank.revalEur, currentBankRevalOk: currentBank.revalOk, currentBankDate: dateOnly, dividendExcludedEur, currentBankDividendExcl, tableName: TABLE, error: msg }); } catch { /* ignore */ }
     process.exit(1);
   } finally {
     if (conn) { try { conn.destroy(() => {}); } catch { /* ignore */ } }
