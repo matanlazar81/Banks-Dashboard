@@ -195,7 +195,7 @@ function buildSummary({ enabled, wrote, dryRun, syncTs, totalBankEur, forecastEu
     '',
     `DATE             : ${syncTs}`,
     `TOTAL_BANK_EUR   : ${fmtEur(totalBankEur)}${bankAsOf ? ` (prev month-end, posted GL as of ${bankAsOf})` : ''}`,
-    ...(currentBankEur != null ? [`CURRENT_BANK_EUR : ${fmtEur(currentBankEur)} (live as of ${currentBankDate}${currentBankRevalOk ? (currentBankReval ? `; open-month reval ${fmtEur(currentBankReval)} excluded until month-end` : '') : '; reval NOT neutralized — lookup failed'}${currentBankDividendExcl ? `; dividend ${fmtEur(currentBankDividendExcl)} excluded` : ''})`] : []),
+    ...(currentBankEur != null ? [`CURRENT_BANK_EUR : ${fmtEur(currentBankEur)} (live as of ${currentBankDate}${currentBankRevalOk ? (currentBankReval ? `; open-month reval ${fmtEur(currentBankReval)} excluded until month-end` : '') : '; reval NOT neutralized — lookup failed'})`] : []),
     `FORECAST_EUR     : ${fmtEur(forecastEur)}`,
   ];
   if (modelClosingEur != null) lines.push(`MODEL_CLOSING_EUR: ${fmtEur(modelClosingEur)}${modelClosingMonth ? ` (model closing for ${modelClosingMonth})` : ''}`);
