@@ -648,6 +648,37 @@ function createSnowflakeClient(env) {
     return byMonth;
   }
 
+  // ── Revenue budget per month (Income / 4xxxxx accounts from FCT_BUDGET) ──
+  // The GL revenue budget (e.g. NetSuite account 400001 "REVENUES"), NOT the Salesforce
+  // forecast/target. Income lines are stored as credits (often negative), so ABS the monthly
+  // sum to read the budget as a positive inflow.
+  async function fetchRevenueBudget(year) {
+    const yr = year || 2026;
+    console.log(`[Snowflake] Fetching revenue budget (Income accounts) by month for ${yr}...`);
+    const rows = await query(`
+      SELECT BUDGET_MONTH_DATE::VARCHAR AS MONTH_STR,
+             ROUND(SUM(b.AMOUNT_EUR_CC)) AS BUDGET_EUR,
+             ROUND(SUM(b.AMOUNT_ILS_CC)) AS BUDGET_ILS
+      FROM DL_PRODUCTION.FINANCE.FCT_BUDGET b
+      JOIN DL_PRODUCTION.FINANCE.DIM_GL_ACCOUNT g ON b.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
+      WHERE b.SUBSIDIARY_ID = 3
+        AND g.GL_ACCOUNT_TYPE = 'Income'
+        AND b.BUDGET_MONTH_DATE >= '${yr}-01-01'
+        AND b.BUDGET_MONTH_DATE <= '${yr}-12-31'
+      GROUP BY BUDGET_MONTH_DATE::VARCHAR
+      ORDER BY MONTH_STR
+    `);
+
+    const byMonth = {};
+    for (const r of rows) {
+      const month = (r.MONTH_STR || '').substring(0, 7);
+      byMonth[month] = { eur: Math.abs(Math.round(r.BUDGET_EUR || 0)), ils: Math.abs(Math.round(r.BUDGET_ILS || 0)) };
+    }
+
+    console.log(`[Snowflake] Revenue budget: ${Object.keys(byMonth).length} months, sample: ${JSON.stringify(Object.values(byMonth)[0] || {})}`);
+    return byMonth;
+  }
+
   // ── Salary budget breakdown by account for a specific month ──
   async function fetchSalaryBudgetBreakdown(month) {
     console.log(`[Snowflake] Fetching salary budget breakdown for ${month}...`);
@@ -1837,6 +1868,7 @@ function createSnowflakeClient(env) {
     fetchBudgetCategoryDetail,
     fetchBudgetOverrides,
     fetchSalaryBudget,
+    fetchRevenueBudget,
     fetchFinanceBudget,
     fetchSalaryBudgetBreakdown,
     fetchMonthlyRevenuePaid,

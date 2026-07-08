@@ -1190,6 +1190,22 @@ function registerApiRoutes(app     ) {
         }
       });
 
+      // ── Revenue budget by month (FCT_BUDGET Income accounts, e.g. NS acct 400001) ──
+      use('/api/sf-revenue-budget', async (_req, res) => {
+        try {
+          const sf = getSfClient();
+          const yr = getYear(_req);
+          if (!sf) { res.end(JSON.stringify({ data: {} })); return; }
+          const data = await sf.fetchRevenueBudget(yr);
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ data }));
+        } catch (e     ) {
+          console.error('[SF] Revenue budget fetch failed:', e.message);
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ data: {}, error: e.message }));
+        }
+      });
+
       // ── ARR/MRR: current run-rate + daily history ──
       const arrSnapshotPath = path.resolve(ROOT, 'data', 'arr-history.json');
       function loadArrHistory()        {
