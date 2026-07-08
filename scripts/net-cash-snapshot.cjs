@@ -74,7 +74,9 @@
  *
  * Flags
  * ─────
- *   --dry-run           resolve + print the row and SQL, do NOT write to Snowflake (no creds needed)
+ *   --dry-run           resolve + print the row, the SQL, and a preview of the notification
+ *                       message (exactly as Slack would post it); do NOT write to Snowflake and
+ *                       do NOT send anything (no creds needed)
  *   --refresh           recompute the forecast server-side (NO browser) BEFORE pushing, by running
  *                       scripts/net-cash-forecast-compute.cjs: it fetches fresh NetSuite + Snowflake
  *                       data, runs the shared forecast engine, and rewrites data/net-cash-forecast.json.
@@ -192,7 +194,7 @@ function buildSummary({ enabled, wrote, dryRun, syncTs, totalBankEur, forecastEu
     `Table            : ${tableName}`,
     '',
     `DATE             : ${syncTs}`,
-    `TOTAL_BANK_EUR   : ${fmtEur(totalBankEur)}${bankAsOf ? ` (prev month-end GL as of ${bankAsOf}${dividendExcludedEur ? `; dividend ${fmtEur(dividendExcludedEur)} excluded → operating` : ''})` : ''}`,
+    `TOTAL_BANK_EUR   : ${fmtEur(totalBankEur)}${bankAsOf ? ` (prev month-end, posted GL as of ${bankAsOf})` : ''}`,
     ...(currentBankEur != null ? [`CURRENT_BANK_EUR : ${fmtEur(currentBankEur)} (live as of ${currentBankDate}${currentBankRevalOk ? (currentBankReval ? `; open-month reval ${fmtEur(currentBankReval)} excluded until month-end` : '') : '; reval NOT neutralized — lookup failed'}${currentBankDividendExcl ? `; dividend ${fmtEur(currentBankDividendExcl)} excluded` : ''})`] : []),
     `FORECAST_EUR     : ${fmtEur(forecastEur)}`,
   ];
@@ -518,6 +520,19 @@ async function main() {
     }
     console.log('[net-cash] --dry-run: not writing. Would insert:');
     console.log(`[net-cash]   DATE=TO_TIMESTAMP_NTZ('${syncTs}'), TOTAL_BANK_EUR=${Number.isFinite(totalBankEur) ? Math.round(totalBankEur) : 'null'}, FORECAST_EUR=${Number.isFinite(forecastEur) ? Math.round(forecastEur) : 'null'}${modelClosingEur != null ? `, MODEL_CLOSING_EUR=${modelClosingEur}` : ''} (+ SRC_UPDATED_AT=CURRENT_TIMESTAMP() and IS_APPROVED=FALSE if those columns exist)`);
+    // Preview the notification body EXACTLY as a real successful run would post it to Slack.
+    // Nothing is sent — this only prints. Rendered with enabled/wrote=true so it matches the
+    // live "row written" message (not a DRY RUN status), using the values resolved above.
+    const previewPayload = { enabled: true, wrote: true, dryRun: false, syncTs, totalBankEur, forecastEur, modelClosingEur, modelClosingMonth, bankAsOf: asOf, asOfNote, currentBankEur: currentBank.eur, currentBankReval: currentBank.revalEur, currentBankRevalOk: currentBank.revalOk, currentBankDate: dateOnly, dividendExcludedEur, currentBankDividendExcl, tableName: TABLE };
+    const { statusLine: previewStatus, text: previewText } = buildSummary(previewPayload);
+    console.log('');
+    console.log('[net-cash] --dry-run: notification message preview (NOT sent):');
+    console.log('┌─ Slack (#' + (process.env.NET_CASH_SLACK_CHANNEL || 'cash_flow_sync') + ') ' + '─'.repeat(30));
+    console.log('│ *Net-Cash → Snowflake* — ' + previewStatus);
+    console.log('│ ```');
+    for (const line of previewText.split('\n')) console.log('│ ' + line);
+    console.log('│ ```');
+    console.log('└' + '─'.repeat(48));
     process.exit(0);
   }
 
