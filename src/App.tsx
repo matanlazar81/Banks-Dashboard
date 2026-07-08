@@ -2,7 +2,7 @@ declare const __GIT_HASH__: string;
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  Cell, Legend, ComposedChart, Line, Area, LabelList, ReferenceLine
+  Cell, Legend, ComposedChart, Line, Area, LabelList
 } from 'recharts';
 import {
   Landmark, RefreshCw, Loader2, AlertTriangle, TrendingUp, Building2, DollarSign,
@@ -4930,23 +4930,10 @@ useEffect(() => {
             // Start anchor: budgeted YTD net cash (what the plan expected to generate so far).
             const budgetYtd = revBudTot - salBudTot - venBudTot;
 
-            // End anchor: actual net cash growth THROUGH THE LAST COMPLETED MONTH. For past months
-            // the model closing is calibrated to the actual NetSuite bank delta (operating basis,
-            // same basis as the buckets), so the walk still ties. This intentionally runs through the
-            // last closed month, so it differs from the live KR5 OKR card by the current partial month.
-            const netCashTarget = activeCompany === 'consolidated' ? 9500000 : (companyConfig.hasSF ? 8500000 : 1000000);
-            const janOpening = cashflowForecast[0].openingBalance;
-            const latestClosing = ytd[ytd.length - 1].closingBalance;
-            const actualYtd = latestClosing - janOpening;
-
-            // Reconciling residual so the waterfall closes exactly on the dashboard's actual.
-            const residual = actualYtd - (budgetYtd + revVar + salVar + venVar);
-
-            const proratedTarget = Math.round(netCashTarget * (completedMonths / 12));
-            const projNetCashGrowth = cashflowForecast.reduce((s: number, r) => s + r.net + r.revalImpact, 0);
+            // End anchor: actual OPERATING NET (Revenue − Salary − Vendors) through the last
+            // completed month. Pure budget-vs-actual; no FX / dividend / timing reconciling plug.
+            const actualYtd = revActTot - salActTot - venActTot;
             const gapVsBudget = actualYtd - budgetYtd;
-            const gapVsTarget = actualYtd - proratedTarget;
-            const onTrackYtd = actualYtd >= proratedTarget;
 
             // Build floating waterfall bars: a transparent base positions each bar, the visible
             // segment carries the delta; anchors sit on the zero line.
@@ -4955,7 +4942,6 @@ useEffect(() => {
               { label: 'Revenue', value: revVar, type: 'delta' },
               { label: 'Salary', value: salVar, type: 'delta' },
               { label: 'Vendors / OpEx', value: venVar, type: 'delta' },
-              { label: 'Other / FX / timing', value: residual, type: 'delta' },
               { label: 'Actual YTD', value: actualYtd, type: 'anchor' },
             ];
             const labelK = (v: number, signed: boolean) => (signed ? (v >= 0 ? '+' : '−') : '') + Math.abs(Math.round(v / 1000)).toLocaleString() + 'K';
@@ -4989,15 +4975,7 @@ useEffect(() => {
                 + 'Actual: collections (NetSuite receipts / FCT_MONTHLY_REVENUE__SUBSET_PAID). Month totals; per-customer only via deeper drill.',
               sal: 'Budget: FCT_BUDGET IS_PAYROLL (GL 76xxx). Actual: NetSuite GL 76% payroll cash.',
               ven: 'Budget: FCT_BUDGET PARENT_GL_ACCOUNT_NAME categories (excludes payroll, 800%, 780502). Actual: FCT_EXPENSE vendor cash.',
-              other: 'NetSuite bank-line classifier residual (tax / withholding, bank fees, transfers, checks) + FX revaluation + dividend add-back.',
             };
-            const divByMonth: Record<string, { distributionEUR?: number; whtEUR?: number }> =
-              (isOwner && showActualDividend) ? {} : (((dividendExclusions && dividendExclusions.byMonth) || {}) as Record<string, { distributionEUR?: number; whtEUR?: number }>);
-            const otherMonthly = ytd.map((r) => {
-              const dv = divByMonth[r.mKey];
-              const div = dv ? Math.abs((dv.distributionEUR || 0) + (dv.whtEUR || 0)) : 0;
-              return { m: monthLbl(r.mKey), mKey: r.mKey, fx: r.revalImpact || 0, bankOther: -(r.other || 0), div };
-            });
 
             return (
               <div className="space-y-4">
@@ -5009,38 +4987,30 @@ useEffect(() => {
                     </h2>
                     <p className="text-xs text-gray-500">YTD through {lastMonthLabel} · {completedMonths} completed month{completedMonths > 1 ? 's' : ''} · {activeCompany === 'lsports' ? 'LSports' : activeCompany === 'statscore' ? 'Statscore' : 'Consolidated'} · EUR</p>
                   </div>
-                  <div className={`text-xs font-semibold px-3 py-1.5 rounded-lg ${onTrackYtd ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
-                    {onTrackYtd ? '✓ Ahead of pro-rated target' : '⚠ Behind pro-rated target'} ({gapVsTarget >= 0 ? '+' : '−'}{fmt(Math.abs(gapVsTarget))})
-                  </div>
                 </div>
 
                 {activeCompany === 'consolidated' && (
                   <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-[11px] text-amber-800">
-                    Consolidated view: the Start and End anchors are consolidated, but the per-bucket budget split (Revenue / Salary / Vendors) is sourced LSports-scoped. Any consolidation difference is absorbed into "Other / FX / timing", so the End bar still ties to the dashboard actual.
+                    Consolidated view: the per-bucket budget split (Revenue / Salary / Vendors) is sourced LSports-scoped, so consolidated figures are approximate.
                   </div>
                 )}
 
                 {/* Summary cards */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
                     <p className="text-[10px] text-gray-400 uppercase">Budget YTD</p>
                     <p className="text-lg font-bold text-slate-700">{fmt(budgetYtd)}</p>
-                    <p className="text-[10px] text-gray-400">planned net cash generated</p>
+                    <p className="text-[10px] text-gray-400">planned operating net</p>
                   </div>
                   <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
                     <p className="text-[10px] text-gray-400 uppercase">Actual YTD</p>
                     <p className={`text-lg font-bold ${actualYtd >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>{fmt(actualYtd)}</p>
-                    <p className="text-[10px] text-gray-400">net cash growth (dashboard)</p>
+                    <p className="text-[10px] text-gray-400">operating net (rev − salary − vendors)</p>
                   </div>
                   <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
                     <p className="text-[10px] text-gray-400 uppercase">Gap vs Budget</p>
                     <p className={`text-lg font-bold ${gapVsBudget >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>{gapVsBudget >= 0 ? '+' : '−'}{fmt(Math.abs(gapVsBudget))}</p>
                     <p className="text-[10px] text-gray-400">actual minus budget YTD</p>
-                  </div>
-                  <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
-                    <p className="text-[10px] text-gray-400 uppercase">Full-Year Target</p>
-                    <p className="text-lg font-bold text-indigo-700">{fmt(netCashTarget)}</p>
-                    <p className="text-[10px] text-gray-400">projected year-end {fmt(projNetCashGrowth)}</p>
                   </div>
                 </div>
 
@@ -5048,7 +5018,7 @@ useEffect(() => {
                 <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
                   <div className="flex items-center justify-between mb-2">
                     <h3 className="text-sm font-semibold text-gray-700">The walk from Budget to Actual (EUR thousands)</h3>
-                    <span className="text-[10px] text-gray-400">green = adds cash · red = uses cash · pro-rated target line at {labelK(proratedTarget, false)}</span>
+                    <span className="text-[10px] text-gray-400">green = adds cash · red = uses cash</span>
                   </div>
                   <ResponsiveContainer width="100%" height={400}>
                     <BarChart data={bars} margin={{ top: 24, right: 20, left: 10, bottom: 40 }}>
@@ -5056,7 +5026,6 @@ useEffect(() => {
                       <XAxis dataKey="name" tick={{ fontSize: 11 }} angle={-15} textAnchor="end" interval={0} height={50} />
                       <YAxis tick={{ fontSize: 11 }} tickFormatter={(v: number) => `${v.toLocaleString()}K`} />
                       <Tooltip formatter={(_v, _n, p) => [labelK((p as { payload?: { raw?: number } })?.payload?.raw ?? 0, (p as { payload?: { sign?: string } })?.payload?.sign !== 'anchor'), (p as { payload?: { name?: string } })?.payload?.name]} />
-                      <ReferenceLine y={Math.round(proratedTarget / 1000)} stroke="#6366f1" strokeDasharray="5 4" label={{ value: 'Target (YTD)', position: 'right', fontSize: 10, fill: '#6366f1' }} />
                       <Bar dataKey="base" stackId="w" fill="transparent" />
                       <Bar dataKey="bar" stackId="w" radius={[3, 3, 0, 0]}>
                         {bars.map((b, i) => <Cell key={i} fill={barColor(b)} />)}
@@ -5133,43 +5102,8 @@ useEffect(() => {
                         )}
                         </Fragment>
                       ))}
-                      <tr className="border-b border-gray-50 cursor-pointer hover:bg-gray-50" onClick={() => setBridgeBucketOpen(prev => prev === 'other' ? null : 'other')}>
-                        <td className="py-2 text-gray-600"><span className="text-gray-400 mr-1">{bridgeBucketOpen === 'other' ? '▼' : '▶'}</span>Other / FX / timing (reconciling)</td>
-                        <td className="text-right text-gray-300">—</td>
-                        <td className="text-right text-gray-300">—</td>
-                        <td className={`text-right font-medium ${residual >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{residual >= 0 ? '+' : '−'}{fmt(Math.abs(residual))}</td>
-                      </tr>
-                      {bridgeBucketOpen === 'other' && (
-                        <tr>
-                          <td colSpan={4} className="bg-gray-50 px-3 py-2">
-                            <p className="text-[10px] text-gray-500 mb-2">{bucketSource.other} It is the reconciling plug — the components below may not sum to the total by the model-vs-bank closing difference.</p>
-                            <table className="w-full text-xs">
-                              <thead><tr className="text-[10px] text-gray-400 uppercase">
-                                <th className="text-left py-1 font-medium">Month</th>
-                                <th className="text-right py-1 font-medium">FX reval</th>
-                                <th className="text-right py-1 font-medium">Bank residual</th>
-                                <th className="text-right py-1 font-medium">Dividend</th>
-                              </tr></thead>
-                              <tbody>
-                                {otherMonthly.map((mm) => (
-                                  <tr key={mm.m} className="border-t border-gray-100">
-                                    <td className="py-1 text-gray-600">{mm.m}</td>
-                                    <td className="text-right text-gray-500">{fmt(mm.fx)}</td>
-                                    <td className="text-right text-gray-500">{fmt(mm.bankOther)}</td>
-                                    <td className="text-right text-gray-500">{fmt(mm.div)}</td>
-                                  </tr>
-                                ))}
-                                <tr className="border-t border-gray-200 font-semibold">
-                                  <td className="py-1 text-gray-700" colSpan={3}>Reconciling total (model vs bank close)</td>
-                                  <td className={`text-right ${residual >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>{residual >= 0 ? '+' : '−'}{fmt(Math.abs(residual))}</td>
-                                </tr>
-                              </tbody>
-                            </table>
-                          </td>
-                        </tr>
-                      )}
                       <tr className="font-bold">
-                        <td className="py-2 text-gray-900">Actual YTD (net cash growth)</td>
+                        <td className="py-2 text-gray-900">Actual YTD (operating net)</td>
                         <td className="text-right text-gray-300">—</td>
                         <td className={`text-right ${actualYtd >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>{fmt(actualYtd)}</td>
                         <td className="text-right text-gray-300">—</td>
@@ -5177,7 +5111,7 @@ useEffect(() => {
                     </tbody>
                   </table>
                   <p className="text-[11px] text-gray-400 mt-3 leading-relaxed">
-                    How to read: start at what the budget said you'd generate by now (Budget YTD). Each bar adds or removes cash — collecting more than planned or spending less than planned pushes you up; the reverse pulls you down. "Other / FX / timing" reconciles cash-timing, FX revaluation, and the operating dividend add-back so the walk lands exactly on the dashboard's actual net cash growth.
+                    How to read: start at what the budget said you'd generate by now (Budget YTD). Each bar adds or removes cash — collecting more than planned or spending less than planned pushes you up; the reverse pulls you down. The walk ends at your actual operating net (revenue minus salary and vendors) for the completed months.
                   </p>
                 </div>
 
