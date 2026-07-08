@@ -1150,6 +1150,8 @@ export default function App() {
 
   // ── Top-level screen switcher: the main dashboard vs the Budget→Actual net-cash bridge ──
   const [screen, setScreen] = useState<'dashboard' | 'bridge'>('dashboard');
+  // Which bridge bucket row is expanded to its per-month gap breakdown (null = all collapsed).
+  const [bridgeBucketOpen, setBridgeBucketOpen] = useState<string | null>(null);
 
   // ── Per-company year selector (for multi-year budget planning) ──
   const currentYear = new Date().getFullYear();
@@ -4949,11 +4951,28 @@ useEffect(() => {
             });
             const barColor = (b: { sign: string }) => b.sign === 'anchor' ? '#475569' : b.sign === 'up' ? '#10b981' : '#ef4444';
 
+            const monthLbl = (mk: string) => monthNames[parseInt(mk.substring(5)) - 1] || mk;
             const rows = [
-              { label: 'Revenue / collections', bud: revBudTot, act: revActTot, variance: revVar },
-              { label: 'Salary', bud: salBudTot, act: salActTot, variance: salVar },
-              { label: 'Vendors / OpEx', bud: venBudTot, act: venActTot, variance: venVar },
+              { key: 'rev', label: 'Revenue / collections', bud: revBudTot, act: revActTot, variance: revVar,
+                monthly: ytd.map((r) => { const bud = revBud(r.mKey); const act = r.collections; return { m: monthLbl(r.mKey), bud, act, gap: act - bud }; }) },
+              { key: 'sal', label: 'Salary', bud: salBudTot, act: salActTot, variance: salVar,
+                monthly: ytd.map((r) => { const bud = salBud(r.mKey); const act = r.salary; return { m: monthLbl(r.mKey), bud, act, gap: bud - act }; }) },
+              { key: 'ven', label: 'Vendors / OpEx', bud: venBudTot, act: venActTot, variance: venVar,
+                monthly: ytd.map((r) => { const bud = venBud(r.mKey); const act = r.vendors; return { m: monthLbl(r.mKey), bud, act, gap: bud - act }; }) },
             ];
+            const bucketSource: Record<string, string> = {
+              rev: 'Budget: FCT_REVENUE_TARGET. Actual: collections (NetSuite receipts / FCT_MONTHLY_REVENUE__SUBSET_PAID). Month totals; per-customer only via deeper drill.',
+              sal: 'Budget: FCT_BUDGET IS_PAYROLL (GL 76xxx). Actual: NetSuite GL 76% payroll cash.',
+              ven: 'Budget: FCT_BUDGET PARENT_GL_ACCOUNT_NAME categories (excludes payroll, 800%, 780502). Actual: FCT_EXPENSE vendor cash.',
+              other: 'NetSuite bank-line classifier residual (tax / withholding, bank fees, transfers, checks) + FX revaluation + dividend add-back.',
+            };
+            const divByMonth: Record<string, { distributionEUR?: number; whtEUR?: number }> =
+              (isOwner && showActualDividend) ? {} : (((dividendExclusions && dividendExclusions.byMonth) || {}) as Record<string, { distributionEUR?: number; whtEUR?: number }>);
+            const otherMonthly = ytd.map((r) => {
+              const dv = divByMonth[r.mKey];
+              const div = dv ? Math.abs((dv.distributionEUR || 0) + (dv.whtEUR || 0)) : 0;
+              return { m: monthLbl(r.mKey), fx: r.revalImpact || 0, bankOther: -(r.other || 0), div };
+            });
 
             return (
               <div className="space-y-4">
@@ -5042,19 +5061,81 @@ useEffect(() => {
                         <td className="text-right text-gray-300">—</td>
                       </tr>
                       {rows.map((r) => (
-                        <tr key={r.label} className="border-b border-gray-50">
-                          <td className="py-2 text-gray-600">{r.label}</td>
+                        <Fragment key={r.key}>
+                        <tr className="border-b border-gray-50 cursor-pointer hover:bg-gray-50" onClick={() => setBridgeBucketOpen(prev => prev === r.key ? null : r.key)}>
+                          <td className="py-2 text-gray-600"><span className="text-gray-400 mr-1">{bridgeBucketOpen === r.key ? '▼' : '▶'}</span>{r.label}</td>
                           <td className="text-right text-gray-600">{fmt(r.bud)}</td>
                           <td className="text-right text-gray-600">{fmt(r.act)}</td>
                           <td className={`text-right font-medium ${r.variance >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{r.variance >= 0 ? '+' : '−'}{fmt(Math.abs(r.variance))}</td>
                         </tr>
+                        {bridgeBucketOpen === r.key && (
+                          <tr>
+                            <td colSpan={4} className="bg-gray-50 px-3 py-2">
+                              <p className="text-[10px] text-gray-500 mb-2">{bucketSource[r.key]}</p>
+                              <table className="w-full text-xs">
+                                <thead><tr className="text-[10px] text-gray-400 uppercase">
+                                  <th className="text-left py-1 font-medium">Month</th>
+                                  <th className="text-right py-1 font-medium">Budget</th>
+                                  <th className="text-right py-1 font-medium">Actual</th>
+                                  <th className="text-right py-1 font-medium">Gap</th>
+                                </tr></thead>
+                                <tbody>
+                                  {r.monthly.map((mm) => (
+                                    <tr key={mm.m} className="border-t border-gray-100">
+                                      <td className="py-1 text-gray-600">{mm.m}</td>
+                                      <td className="text-right text-gray-500">{fmt(mm.bud)}</td>
+                                      <td className="text-right text-gray-500">{fmt(mm.act)}</td>
+                                      <td className={`text-right font-medium ${mm.gap >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{mm.gap >= 0 ? '+' : '−'}{fmt(Math.abs(mm.gap))}</td>
+                                    </tr>
+                                  ))}
+                                  <tr className="border-t border-gray-200 font-semibold">
+                                    <td className="py-1 text-gray-700">YTD</td>
+                                    <td className="text-right text-gray-600">{fmt(r.bud)}</td>
+                                    <td className="text-right text-gray-600">{fmt(r.act)}</td>
+                                    <td className={`text-right ${r.variance >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>{r.variance >= 0 ? '+' : '−'}{fmt(Math.abs(r.variance))}</td>
+                                  </tr>
+                                </tbody>
+                              </table>
+                            </td>
+                          </tr>
+                        )}
+                        </Fragment>
                       ))}
-                      <tr className="border-b border-gray-50">
-                        <td className="py-2 text-gray-600">Other / FX / timing (reconciling)</td>
+                      <tr className="border-b border-gray-50 cursor-pointer hover:bg-gray-50" onClick={() => setBridgeBucketOpen(prev => prev === 'other' ? null : 'other')}>
+                        <td className="py-2 text-gray-600"><span className="text-gray-400 mr-1">{bridgeBucketOpen === 'other' ? '▼' : '▶'}</span>Other / FX / timing (reconciling)</td>
                         <td className="text-right text-gray-300">—</td>
                         <td className="text-right text-gray-300">—</td>
                         <td className={`text-right font-medium ${residual >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{residual >= 0 ? '+' : '−'}{fmt(Math.abs(residual))}</td>
                       </tr>
+                      {bridgeBucketOpen === 'other' && (
+                        <tr>
+                          <td colSpan={4} className="bg-gray-50 px-3 py-2">
+                            <p className="text-[10px] text-gray-500 mb-2">{bucketSource.other} It is the reconciling plug — the components below may not sum to the total by the model-vs-bank closing difference.</p>
+                            <table className="w-full text-xs">
+                              <thead><tr className="text-[10px] text-gray-400 uppercase">
+                                <th className="text-left py-1 font-medium">Month</th>
+                                <th className="text-right py-1 font-medium">FX reval</th>
+                                <th className="text-right py-1 font-medium">Bank residual</th>
+                                <th className="text-right py-1 font-medium">Dividend</th>
+                              </tr></thead>
+                              <tbody>
+                                {otherMonthly.map((mm) => (
+                                  <tr key={mm.m} className="border-t border-gray-100">
+                                    <td className="py-1 text-gray-600">{mm.m}</td>
+                                    <td className="text-right text-gray-500">{fmt(mm.fx)}</td>
+                                    <td className="text-right text-gray-500">{fmt(mm.bankOther)}</td>
+                                    <td className="text-right text-gray-500">{fmt(mm.div)}</td>
+                                  </tr>
+                                ))}
+                                <tr className="border-t border-gray-200 font-semibold">
+                                  <td className="py-1 text-gray-700" colSpan={3}>Reconciling total (model vs bank close)</td>
+                                  <td className={`text-right ${residual >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>{residual >= 0 ? '+' : '−'}{fmt(Math.abs(residual))}</td>
+                                </tr>
+                              </tbody>
+                            </table>
+                          </td>
+                        </tr>
+                      )}
                       <tr className="font-bold">
                         <td className="py-2 text-gray-900">Actual YTD (net cash growth)</td>
                         <td className="text-right text-gray-300">—</td>
