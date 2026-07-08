@@ -1321,14 +1321,21 @@ export default function App() {
   const [bridgeRevBudget, setBridgeRevBudget] = useState<Record<string, { eur: number }>>({});
   useEffect(() => {
     if (screen !== 'bridge' || activeCompany !== 'lsports') { setBridgeRevBudget({}); return; }
-    const yr = activeYears[activeCompany] || currentYear;
     let cancelled = false;
-    fetch(`/api/sf-revenue-budget?year=${yr}`)
-      .then(r => r.ok ? r.json() : { data: {} })
-      .then(res => { if (!cancelled) setBridgeRevBudget(res.data || {}); })
+    // The GL revenue budget (NetSuite account 400001) lives in NetSuite budgetsmachine, surfaced by
+    // /api/ns-budget as byMonth[m].revenue. FCT_BUDGET holds only expense budget, so we use NS here.
+    fetch(`/api/ns-budget?subsidiary=3`)
+      .then(r => r.ok ? r.json() : { byMonth: {} })
+      .then(res => {
+        if (cancelled) return;
+        const bm = (res && res.byMonth) || {};
+        const out: Record<string, { eur: number }> = {};
+        for (const m of Object.keys(bm)) { const rev = Math.round(bm[m]?.revenue || 0); if (rev) out[m] = { eur: rev }; }
+        setBridgeRevBudget(out);
+      })
       .catch(() => { if (!cancelled) setBridgeRevBudget({}); });
     return () => { cancelled = true; };
-  }, [screen, activeCompany, activeYears, currentYear]);
+  }, [screen, activeCompany]);
   // Per-(department, account) salary breakdown baked from the SOURCE-year Oct-Dec
   // FCT_BUDGET monthly average. Drives the projection-year salary modal so it shows
   // the same per-department, per-account detail as the live 2026 view. Empty when
@@ -4977,7 +4984,7 @@ useEffect(() => {
             ];
             const bucketSource: Record<string, string> = {
               rev: (Object.keys(bridgeRevBudget).length > 0
-                ? 'Budget: NetSuite GL revenue budget (FCT_BUDGET, Income accounts incl. 400001). '
+                ? 'Budget: NetSuite revenue budget (budgetsmachine, all Income accounts incl. 400001). '
                 : 'Budget: Salesforce revenue forecast (FCT_REVENUE__MONTHLY_ACTUAL_VS_TARGET / target). ')
                 + 'Actual: collections (NetSuite receipts / FCT_MONTHLY_REVENUE__SUBSET_PAID). Month totals; per-customer only via deeper drill.',
               sal: 'Budget: FCT_BUDGET IS_PAYROLL (GL 76xxx). Actual: NetSuite GL 76% payroll cash.',
