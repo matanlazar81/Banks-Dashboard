@@ -656,6 +656,9 @@ function computeCashflowForecast(inputs) {
       r.openingBalanceILS += cumIls;
       if (mEur || mIls) {
         r.vendors -= distEur; r.vendorsILS -= distIls;   // vendors/other are positive outflow magnitudes
+        r.vendorsBase -= distEur;                         // exclude from the pre-savings base too, so the
+                                                          // dividend is not mis-counted as a vendor "saving"
+                                                          // (savings = Σ(vendorsBase − vendors)); reclass, not a cut
         r.other -= whtEur; r.otherILS -= whtIls;
         r.net += mEur; r.netILS += mIls;                  // removing an outflow raises net
         r.totalOutflow = r.salary + r.vendors + Math.max(0, r.other);
