@@ -1152,6 +1152,8 @@ export default function App() {
   const [screen, setScreen] = useState<'dashboard' | 'bridge'>('dashboard');
   // Which bridge bucket row is expanded to its per-month gap breakdown (null = all collapsed).
   const [bridgeBucketOpen, setBridgeBucketOpen] = useState<string | null>(null);
+  // Vendor month drill (bridge): click a Vendors month → categories → per-vendor. rows = 'loading' | array.
+  const [venDrill, setVenDrill] = useState<{ mKey: string; monthLabel: string; category: string | null; rows: 'loading' | Array<{ category?: string; vendorName?: string; vendor?: string; amountEUR?: number }> } | null>(null);
 
   // ── Per-company year selector (for multi-year budget planning) ──
   const currentYear = new Date().getFullYear();
@@ -1314,6 +1316,19 @@ export default function App() {
   const [pipelineMethodOpen, setPipelineMethodOpen] = useState(false);
   const [monthlyReval, setMonthlyReval] = useState<{ byMonth: Record<string, { eur: number; ils: number; hasBothEnds?: boolean }>; preYear: { eur: number; ils: number } }>({ byMonth: {}, preYear: { eur: 0, ils: 0 } });
   const [sfSalaryBudget, setSfSalaryBudget] = useState<Record<string, { eur: number; ils: number }>>({});
+  // NetSuite GL revenue budget (FCT_BUDGET Income accounts, e.g. acct 400001) — fetched lazily for
+  // the Budget Bridge (LSports only). Falls back to the SF forecast when empty.
+  const [bridgeRevBudget, setBridgeRevBudget] = useState<Record<string, { eur: number }>>({});
+  useEffect(() => {
+    if (screen !== 'bridge' || activeCompany !== 'lsports') { setBridgeRevBudget({}); return; }
+    const yr = activeYears[activeCompany] || currentYear;
+    let cancelled = false;
+    fetch(`/api/sf-revenue-budget?year=${yr}`)
+      .then(r => r.ok ? r.json() : { data: {} })
+      .then(res => { if (!cancelled) setBridgeRevBudget(res.data || {}); })
+      .catch(() => { if (!cancelled) setBridgeRevBudget({}); });
+    return () => { cancelled = true; };
+  }, [screen, activeCompany, activeYears, currentYear]);
   // Per-(department, account) salary breakdown baked from the SOURCE-year Oct-Dec
   // FCT_BUDGET monthly average. Drives the projection-year salary modal so it shows
   // the same per-department, per-account detail as the live 2026 view. Empty when
@@ -4889,7 +4904,7 @@ useEffect(() => {
             const lastMonthLabel = monthNames[parseInt(lastMonthKey.substring(5)) - 1] || lastMonthKey;
 
             // Budget feeds per month (EUR), mirroring the chart-row logic at the Cashflow Charts block.
-            const revBud = (m: string) => (sfRevenue.budget?.[m]?.eur || nsBudget.byMonth[m]?.revenue || 0);
+            const revBud = (m: string) => (bridgeRevBudget[m]?.eur || sfRevenue.budget?.[m]?.eur || nsBudget.byMonth[m]?.revenue || 0);
             const salBud = (m: string) => (sfSalaryBudget[m]?.eur || nsBudget.byMonth[m]?.salary || 0);
             const venBud = (m: string) => (sfBudget.totalByMonth[m]?.eur || nsBudget.byMonth[m]?.vendors || 0);
 
@@ -4954,14 +4969,17 @@ useEffect(() => {
             const monthLbl = (mk: string) => monthNames[parseInt(mk.substring(5)) - 1] || mk;
             const rows = [
               { key: 'rev', label: 'Revenue / collections', bud: revBudTot, act: revActTot, variance: revVar,
-                monthly: ytd.map((r) => { const bud = revBud(r.mKey); const act = r.collections; return { m: monthLbl(r.mKey), bud, act, gap: act - bud }; }) },
+                monthly: ytd.map((r) => { const bud = revBud(r.mKey); const act = r.collections; return { m: monthLbl(r.mKey), mKey: r.mKey, bud, act, gap: act - bud }; }) },
               { key: 'sal', label: 'Salary', bud: salBudTot, act: salActTot, variance: salVar,
-                monthly: ytd.map((r) => { const bud = salBud(r.mKey); const act = r.salary; return { m: monthLbl(r.mKey), bud, act, gap: bud - act }; }) },
+                monthly: ytd.map((r) => { const bud = salBud(r.mKey); const act = r.salary; return { m: monthLbl(r.mKey), mKey: r.mKey, bud, act, gap: bud - act }; }) },
               { key: 'ven', label: 'Vendors / OpEx', bud: venBudTot, act: venActTot, variance: venVar,
-                monthly: ytd.map((r) => { const bud = venBud(r.mKey); const act = r.vendors; return { m: monthLbl(r.mKey), bud, act, gap: bud - act }; }) },
+                monthly: ytd.map((r) => { const bud = venBud(r.mKey); const act = r.vendors; return { m: monthLbl(r.mKey), mKey: r.mKey, bud, act, gap: bud - act }; }) },
             ];
             const bucketSource: Record<string, string> = {
-              rev: 'Budget: FCT_REVENUE_TARGET. Actual: collections (NetSuite receipts / FCT_MONTHLY_REVENUE__SUBSET_PAID). Month totals; per-customer only via deeper drill.',
+              rev: (Object.keys(bridgeRevBudget).length > 0
+                ? 'Budget: NetSuite GL revenue budget (FCT_BUDGET, Income accounts incl. 400001). '
+                : 'Budget: Salesforce revenue forecast (FCT_REVENUE__MONTHLY_ACTUAL_VS_TARGET / target). ')
+                + 'Actual: collections (NetSuite receipts / FCT_MONTHLY_REVENUE__SUBSET_PAID). Month totals; per-customer only via deeper drill.',
               sal: 'Budget: FCT_BUDGET IS_PAYROLL (GL 76xxx). Actual: NetSuite GL 76% payroll cash.',
               ven: 'Budget: FCT_BUDGET PARENT_GL_ACCOUNT_NAME categories (excludes payroll, 800%, 780502). Actual: FCT_EXPENSE vendor cash.',
               other: 'NetSuite bank-line classifier residual (tax / withholding, bank fees, transfers, checks) + FX revaluation + dividend add-back.',
@@ -4971,7 +4989,7 @@ useEffect(() => {
             const otherMonthly = ytd.map((r) => {
               const dv = divByMonth[r.mKey];
               const div = dv ? Math.abs((dv.distributionEUR || 0) + (dv.whtEUR || 0)) : 0;
-              return { m: monthLbl(r.mKey), fx: r.revalImpact || 0, bankOther: -(r.other || 0), div };
+              return { m: monthLbl(r.mKey), mKey: r.mKey, fx: r.revalImpact || 0, bankOther: -(r.other || 0), div };
             });
 
             return (
@@ -5081,8 +5099,15 @@ useEffect(() => {
                                 </tr></thead>
                                 <tbody>
                                   {r.monthly.map((mm) => (
-                                    <tr key={mm.m} className="border-t border-gray-100">
-                                      <td className="py-1 text-gray-600">{mm.m}</td>
+                                    <tr key={mm.m} className={`border-t border-gray-100 ${r.key === 'ven' ? 'cursor-pointer hover:bg-violet-50' : ''}`}
+                                      onClick={r.key === 'ven' ? () => {
+                                        setVenDrill({ mKey: mm.mKey, monthLabel: mm.m, category: null, rows: 'loading' });
+                                        fetch(`/api/ns-vendor-payments-detail?month=${mm.mKey}`)
+                                          .then(res => res.ok ? res.json() : { rows: [] })
+                                          .then(res => setVenDrill(prev => prev && prev.mKey === mm.mKey ? { ...prev, rows: res.rows || [] } : prev))
+                                          .catch(() => setVenDrill(prev => prev ? { ...prev, rows: [] } : prev));
+                                      } : undefined}>
+                                      <td className="py-1 text-gray-600">{mm.m}{r.key === 'ven' && <span className="text-violet-400 ml-1">›</span>}</td>
                                       <td className="text-right text-gray-500">{fmt(mm.bud)}</td>
                                       <td className="text-right text-gray-500">{fmt(mm.act)}</td>
                                       <td className={`text-right font-medium ${mm.gap >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{mm.gap >= 0 ? '+' : '−'}{fmt(Math.abs(mm.gap))}</td>
@@ -5148,6 +5173,70 @@ useEffect(() => {
                     How to read: start at what the budget said you'd generate by now (Budget YTD). Each bar adds or removes cash — collecting more than planned or spending less than planned pushes you up; the reverse pulls you down. "Other / FX / timing" reconciles cash-timing, FX revaluation, and the operating dividend add-back so the walk lands exactly on the dashboard's actual net cash growth.
                   </p>
                 </div>
+
+                {venDrill && (
+                  <div className="fixed inset-0 bg-black/40 z-50 flex items-start justify-center pt-10 px-4" onClick={() => setVenDrill(null)}>
+                    <div className="bg-white rounded-xl shadow-2xl border w-full max-w-3xl max-h-[85vh] overflow-hidden" onClick={e => e.stopPropagation()}>
+                      <div className="flex items-center justify-between px-4 py-3 border-b">
+                        <h3 className="text-sm font-semibold text-gray-800 flex items-center gap-2">
+                          {venDrill.category && (
+                            <button onClick={() => setVenDrill(prev => prev ? { ...prev, category: null } : null)} className="text-gray-400 hover:text-gray-700">←</button>
+                          )}
+                          Vendors — {venDrill.monthLabel}{venDrill.category ? ` › ${venDrill.category}` : ''}
+                        </h3>
+                        <button onClick={() => setVenDrill(null)} className="text-gray-400 hover:text-gray-700"><X className="w-4 h-4" /></button>
+                      </div>
+                      <div className="overflow-auto max-h-[72vh] p-4">
+                        {venDrill.rows === 'loading' ? (
+                          <div className="flex items-center justify-center py-10 gap-2 text-gray-400"><Loader2 className="w-5 h-5 animate-spin" /> Loading…</div>
+                        ) : (() => {
+                          const allRows = Array.isArray(venDrill.rows) ? venDrill.rows : [];
+                          if (allRows.length === 0) return <p className="text-center text-gray-400 py-10 text-sm">No vendor payments found for this month.</p>;
+                          const total = allRows.reduce((s: number, r) => s + (r.amountEUR || 0), 0);
+                          if (!venDrill.category) {
+                            const byCat: Record<string, number> = {};
+                            for (const r of allRows) { const c = r.category || 'Uncategorized'; byCat[c] = (byCat[c] || 0) + (r.amountEUR || 0); }
+                            const cats = Object.entries(byCat).sort((a, b) => b[1] - a[1]);
+                            return (
+                              <>
+                                <p className="text-[11px] text-gray-500 mb-3">Payment-linked vendor cash for {venDrill.monthLabel} (NetSuite bill payments). Cash-basis, so it may differ from the accrual actual in the bridge. Click a category to see vendors.</p>
+                                <table className="w-full text-sm">
+                                  <thead><tr className="text-[11px] text-gray-400 uppercase border-b"><th className="text-left py-1.5">Category</th><th className="text-right py-1.5">Amount</th><th className="text-right py-1.5">%</th></tr></thead>
+                                  <tbody>
+                                    {cats.map(([c, amt]) => (
+                                      <tr key={c} className="border-b border-gray-50 cursor-pointer hover:bg-violet-50" onClick={() => setVenDrill(prev => prev ? { ...prev, category: c } : null)}>
+                                        <td className="py-1.5 text-violet-700 underline">{c}</td>
+                                        <td className="text-right text-gray-700">{fmt(amt)}</td>
+                                        <td className="text-right text-gray-400">{total ? (amt / total * 100).toFixed(1) : '0'}%</td>
+                                      </tr>
+                                    ))}
+                                    <tr className="font-semibold"><td className="py-1.5">Total</td><td className="text-right">{fmt(total)}</td><td></td></tr>
+                                  </tbody>
+                                </table>
+                              </>
+                            );
+                          }
+                          const rowsInCat = allRows.filter((r) => (r.category || 'Uncategorized') === venDrill.category);
+                          const byVen: Record<string, number> = {};
+                          for (const r of rowsInCat) { const v = r.vendorName || r.vendor || 'Unknown'; byVen[v] = (byVen[v] || 0) + (r.amountEUR || 0); }
+                          const vens = Object.entries(byVen).sort((a, b) => b[1] - a[1]);
+                          const catTotal = rowsInCat.reduce((s: number, r) => s + (r.amountEUR || 0), 0);
+                          return (
+                            <table className="w-full text-sm">
+                              <thead><tr className="text-[11px] text-gray-400 uppercase border-b"><th className="text-left py-1.5">Vendor</th><th className="text-right py-1.5">Amount</th><th className="text-right py-1.5">%</th></tr></thead>
+                              <tbody>
+                                {vens.map(([v, amt]) => (
+                                  <tr key={v} className="border-b border-gray-50"><td className="py-1.5 text-gray-700">{v}</td><td className="text-right text-gray-700">{fmt(amt)}</td><td className="text-right text-gray-400">{catTotal ? (amt / catTotal * 100).toFixed(1) : '0'}%</td></tr>
+                                ))}
+                                <tr className="font-semibold"><td className="py-1.5">Total</td><td className="text-right">{fmt(catTotal)}</td><td></td></tr>
+                              </tbody>
+                            </table>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })()}
