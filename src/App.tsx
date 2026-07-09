@@ -5795,7 +5795,7 @@ useEffect(() => {
               const asOfLabel = asOfDate ? new Date(asOfDate + 'T12:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
 
               // ARR data (from FCT_MRR_Q_SNAPSHOT)
-              const arrTarget = 67000000; // €67M ARR goal
+              const arrTarget = 68300000; // €68.3M ARR goal
               const currentARR = arrData?.arr || 0;
               const currentMRR = arrData?.mrr || 0;
               const arrPct = arrTarget > 0 ? Math.round(currentARR / arrTarget * 1000) / 10 : 0;
@@ -5814,10 +5814,10 @@ useEffect(() => {
                     <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">ARR</span>
                     <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${arrOnTrack ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>{arrOnTrack ? 'On Track' : arrPct >= 90 ? 'Close' : 'Building'}</span>
                   </div>
-                  <p className="text-xs font-medium text-gray-700 mb-2">Annual Recurring Revenue goal: €{(arrTarget / 1e6).toFixed(0)}M</p>
+                  <p className="text-xs font-medium text-gray-700 mb-2">Annual Recurring Revenue goal: €{(arrTarget / 1e6).toFixed(1)}M</p>
                   <div className="flex items-end gap-3 mb-2">
                     <p className={`text-2xl font-bold ${arrOnTrack ? 'text-emerald-700' : 'text-blue-700'}`}>{currentARR > 0 ? `€${(currentARR / 1e6).toFixed(1)}M` : '—'}</p>
-                    <p className="text-xs text-gray-400 mb-1">target: €{(arrTarget / 1e6).toFixed(0)}M ({arrPct}%)</p>
+                    <p className="text-xs text-gray-400 mb-1">target: €{(arrTarget / 1e6).toFixed(1)}M ({arrPct}%)</p>
                     {arrData?.liveMonth && <p className="text-[10px] text-emerald-600 mb-1 font-medium">live {arrData.liveMonth}{arrData.liveDate ? ` · ${arrData.liveDate}` : ''}</p>}
                   </div>
                   {/* Progress bar */}
