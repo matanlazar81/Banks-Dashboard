@@ -5837,6 +5837,7 @@ useEffect(() => {
                       ))}
                     </>}
                     <div className="flex justify-between mt-1"><span>vs Target</span><span className={`font-semibold ${arrOnTrack ? 'text-emerald-600' : 'text-red-600'}`}>{currentARR > 0 ? `${currentARR >= arrTarget ? '+' : ''}${fmt(currentARR - arrTarget)}` : '—'}</span></div>
+                    {currentARR === 0 && <p className="text-[10px] text-amber-600 mt-1 leading-snug">No MRR data available (FCT_MRR_Q_SNAPSHOT / live opportunities FCT_OPPORTUNITY__MONTHLY, EUR). This card loads on the LSports tab only.</p>}
                   </div>
                 </div>
 
