@@ -5766,18 +5766,11 @@ useEffect(() => {
               const janOpening = cashflowForecast.length > 0 ? cashflowForecast[0].openingBalance : 0;
               // Use ACTUAL bank balance (revalued Grand Total) as the authoritative current balance
               // instead of cashflow forecast closing balance which includes pipeline/forecast items
-              const pastOrCurrent = cashflowForecast.filter(r => r.isPast || r.isCurrent);
-              // The dividend distribution is excluded from the operating forecast (the Projected side below
-              // flows from cashflowForecast, which strips it). The live bank balance (displayTotalEUR) still
-              // reflects the dividend cash-out, so add the YTD-paid dividend back here to keep YTD Actual on
-              // the same operating basis as Projected — unless the owner is viewing "actual" (then both keep
-              // it). janOpening (Jan) is pre-dividend; the forecast-closing fallback is already ex-dividend.
-              const _kr5CurMonthKey = pastOrCurrent.length > 0 ? pastOrCurrent[pastOrCurrent.length - 1].mKey : '9999-12';
-              const dividendYtdAddback = (isOwner && showActualDividend) ? 0
-                : Object.entries((dividendExclusions && dividendExclusions.byMonth) || {})
-                    .filter(([m]) => m <= _kr5CurMonthKey)
-                    .reduce((s, [, v]) => s + Math.abs(((v as any).distributionEUR || 0) + ((v as any).whtEUR || 0)), 0);
-              const latestClosing = displayTotalEUR > 0 ? (displayTotalEUR + dividendYtdAddback) : (pastOrCurrent.length > 0 ? pastOrCurrent[pastOrCurrent.length - 1].closingBalance : janOpening);
+              // "Current Balance" reflects the last COMPLETED month (operating basis), consistent with
+              // the rest of the dashboard — not the live/partial current month. A past month's model
+              // closing is calibrated to the actual NetSuite bank delta and already excludes the dividend.
+              const pastCompleted = cashflowForecast.filter(r => r.isPast);
+              const latestClosing = pastCompleted.length > 0 ? pastCompleted[pastCompleted.length - 1].closingBalance : janOpening;
               const netCashGrowth = latestClosing - janOpening;
               const netCashOnTrack = netCashGrowth >= netCashTarget;
               const netCashProgress = Math.min(100, Math.max(0, (netCashGrowth / netCashTarget) * 100));
@@ -5893,7 +5886,7 @@ useEffect(() => {
                   <div className="text-[11px] space-y-1 text-gray-600">
                     <p className="text-[10px] text-gray-400 font-semibold uppercase mt-1">YTD Actual</p>
                     <div className="flex justify-between"><span>Jan Opening Balance</span><span className="font-medium">{fmt(janOpening)}</span></div>
-                    <div className="flex justify-between"><span>Current Balance ({pastOrCurrent.length > 0 ? pastOrCurrent[pastOrCurrent.length - 1].month : '—'}){dividendYtdAddback > 0 && <span className="text-gray-400"> · excl. dividend</span>}</span><span className="font-medium">{fmt(latestClosing)}</span></div>
+                    <div className="flex justify-between"><span>Current Balance ({pastCompleted.length > 0 ? pastCompleted[pastCompleted.length - 1].month : '—'})</span><span className="font-medium">{fmt(latestClosing)}</span></div>
                     <div className="flex justify-between"><span>YTD Net Growth</span><span className={`font-semibold ${netCashGrowth >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{fmt(netCashGrowth)} ({Math.round(netCashProgress)}%)</span></div>
                     <p className="text-[10px] text-gray-400 font-semibold uppercase mt-2">Projected Full Year</p>
                     <div className="flex justify-between"><span>Dec Closing (forecast)</span><span className="font-medium">{fmt(decClosing)}</span></div>
