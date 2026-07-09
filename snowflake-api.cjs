@@ -1608,6 +1608,30 @@ function createSnowflakeClient(env) {
   // ── ARR/MRR: snapshot for closed months + live FCT_OPPORTUNITY__MONTHLY for current month ──
   async function fetchCurrentARR() {
     console.log('[Snowflake] Fetching current ARR/MRR (snapshot + live current month)...');
+
+    // Live current-month MRR + client count from opportunities (refreshed daily). Computed up front
+    // so it can both override a stale snapshot AND stand in when the snapshot table is empty.
+    let liveMrr = 0, liveMonthYM = '', liveCustomers = 0;
+    try {
+      const liveRows = await query(`
+        SELECT TO_VARCHAR(f.CAL_MONTH_START_DATE,'YYYY-MM') AS MONTH,
+               ROUND(SUM(f.OPPORTUNITY_MRR)) AS MRR_TOTAL,
+               COUNT(DISTINCT CASE WHEN f.OPPORTUNITY_MRR > 0 THEN f.OPPORTUNITY_ID END) AS CUSTOMERS
+        FROM DL_PRODUCTION.FINANCE.FCT_OPPORTUNITY__MONTHLY f
+        JOIN DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY d ON f.OPPORTUNITY_ID = d.OPPORTUNITY_ID
+        WHERE f.CAL_MONTH_START_DATE = DATE_TRUNC('MONTH', CURRENT_DATE())
+          AND d.CURRENCY = 'EUR'
+        GROUP BY 1
+      `);
+      liveMrr = Math.round(liveRows[0]?.MRR_TOTAL || 0);
+      liveMonthYM = liveRows[0]?.MONTH || '';
+      liveCustomers = Math.round(liveRows[0]?.CUSTOMERS || 0);
+    } catch (e) {
+      console.warn('[Snowflake] Live MRR query failed:', e.message);
+    }
+    const liveMonthLabel = liveMonthYM ? new Date(liveMonthYM + '-01T12:00:00').toLocaleString('en-US', { month: 'short', year: '2-digit' }) : '';
+    const today = new Date().toISOString().substring(0, 10);
+
     const rows = await query(`
       SELECT NAME, ROUND(MRR) AS MRR, TOTAL_CUSTOMERS, ROUND(AVG_PER_CUSTOMER) AS AVG_PER_CUSTOMER,
              SNAPSHOT_DATE::VARCHAR AS SNAP_DATE
@@ -1616,7 +1640,16 @@ function createSnowflakeClient(env) {
       ORDER BY SNAPSHOT_DATE DESC NULLS LAST, SRC_UPDATE_AT DESC
       LIMIT 6
     `);
-    if (!rows.length) return { mrr: 0, arr: 0, customers: 0, month: '', avgPerCustomer: 0, history: [] };
+
+    if (!rows.length) {
+      // Snapshot table empty — fall back to the live opportunity MRR when available.
+      if (liveMrr > 0) {
+        console.log(`[Snowflake] ARR: snapshot empty, using LIVE €${(liveMrr * 12 / 1e6).toFixed(1)}M (${liveMonthLabel})`);
+        return { mrr: liveMrr, arr: liveMrr * 12, customers: liveCustomers, avgPerCustomer: liveCustomers ? Math.round(liveMrr / liveCustomers) : 0, month: liveMonthLabel, snapDate: today, history: [], liveMonth: liveMonthLabel, liveDate: today };
+      }
+      console.log('[Snowflake] ARR: snapshot empty and no live opportunity MRR — returning zeros');
+      return { mrr: 0, arr: 0, customers: 0, month: '', avgPerCustomer: 0, history: [] };
+    }
     const latest = rows[0];
     const snapMrr = Math.round(latest.MRR || 0);
     const customers = Math.round(latest.TOTAL_CUSTOMERS || 0);
@@ -1633,31 +1666,15 @@ function createSnowflakeClient(env) {
       avgPerCustomer: Math.round(r.AVG_PER_CUSTOMER || 0),
     })).reverse();
 
-    // Headline current-month MRR from FCT_OPPORTUNITY__MONTHLY (refreshed daily).
-    // Snapshot section (history, month, customers, avgPerCustomer) remains as-is.
+    // Headline current-month MRR override when the live month is newer than the snapshot.
     let mrr = snapMrr;
     let liveMonth = '';
     let liveDate = '';
-    try {
-      const liveRows = await query(`
-        SELECT TO_VARCHAR(f.CAL_MONTH_START_DATE,'YYYY-MM') AS MONTH,
-               ROUND(SUM(f.OPPORTUNITY_MRR)) AS MRR_TOTAL
-        FROM DL_PRODUCTION.FINANCE.FCT_OPPORTUNITY__MONTHLY f
-        JOIN DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY d ON f.OPPORTUNITY_ID = d.OPPORTUNITY_ID
-        WHERE f.CAL_MONTH_START_DATE = DATE_TRUNC('MONTH', CURRENT_DATE())
-          AND d.CURRENCY = 'EUR'
-        GROUP BY 1
-      `);
-      const liveMrr = Math.round(liveRows[0]?.MRR_TOTAL || 0);
-      const liveMonthYM = liveRows[0]?.MONTH || '';
-      const snapMonthYM = snapDate ? snapDate.substring(0, 7) : '';
-      if (liveMrr > 0 && liveMonthYM && liveMonthYM > snapMonthYM) {
-        mrr = liveMrr;
-        liveMonth = new Date(liveMonthYM + '-01T12:00:00').toLocaleString('en-US', { month: 'short', year: '2-digit' });
-        liveDate = new Date().toISOString().substring(0, 10);
-      }
-    } catch (e) {
-      console.warn('[Snowflake] Live MRR override failed (using snapshot only):', e.message);
+    const snapMonthYM = snapDate ? snapDate.substring(0, 7) : '';
+    if (liveMrr > 0 && liveMonthYM && liveMonthYM > snapMonthYM) {
+      mrr = liveMrr;
+      liveMonth = liveMonthLabel;
+      liveDate = today;
     }
 
     const arr = mrr * 12;
