@@ -313,33 +313,68 @@ function diff(oldV, newV) {
     projection: 'Budget/Actual bridge revenue rows + dept revenue budget-vs-actual + forecast collections fallback',
     calibration: 'Pipeline button label ×N.NN + methodology panel Column B',
   };
-  const driverFor = (m) => (m >= `${year}-06` ? 'GAP 4: SF edits after the 2026-06-23 freeze' : 'unexpected — investigate (2025 & Jan–May should be near-exact)');
+  const inStableWindow = (m) => m < `${year}-06`; // 2025-* and Jan–May of the current year should be near-exact
+  // Metric-aware classification. `expected:true` → benign, review-only. `expected:false` → genuine
+  // regression to investigate (goes on the short "must explain" list).
+  function classify(metric, period) {
+    if (metric === 'monthly.paid' || metric === 'monthly.unpaid' || metric === 'monthly.customers' || metric === 'yoy.paid' || metric === 'yoy.customers')
+      return { expected: true, driver: 'live SF payment/customer status (expected — paid/unpaid split & customer set reflect current collection state)' };
+    if (metric === 'monthly.revenue' || metric === 'yoy.revenue')
+      return inStableWindow(period)
+        ? { expected: false, driver: 'INVESTIGATE — total revenue should be near-exact for 2025 & Jan–May 2026' }
+        : { expected: true, driver: 'GAP 4: SF edits after the 2026-06-23 freeze' };
+    if (metric === 'projection.budget') return { expected: true, driver: 'GAP 6: live MRs vs frozen Apr-2025 pipeline snapshot' };
+    if (metric === 'projection.actual') return { expected: true, driver: 'GAP 5: SF MRs vs NetSuite recognized revenue (AI-summary text only — no widget/forecast reads it)' };
+    if (metric === 'calibration.numer') return { expected: false, driver: 'INVESTIGATE — prior-year numerator changes the calibration factor' };
+    if (metric === 'calibration.sfContrib') return inStableWindow(period)
+      ? { expected: true, driver: 'live SF MR edits (Column B contribution reflects current SF state)' }
+      : { expected: true, driver: 'GAP 4: SF edits after the 2026-06-23 freeze' };
+    return { expected: false, driver: 'INVESTIGATE' };
+  }
+  const flagged = [];
+  const add = (metric, key, d, where) => { const c = classify(metric, key); flagged.push({ metric, key, ...d, where, driver: c.driver, expected: c.expected }); };
+  for (const yr of [year, priorYr]) {
+    const sec = report.sections[`monthly_${yr}`];
+    if (Array.isArray(sec)) for (const row of sec) for (const k of ['revenue', 'paid', 'unpaid', 'customers']) if (row[k].flag) add(`monthly.${k}`, row.month, row[k], WHERE.monthly);
+  }
+  if (Array.isArray(report.sections.yoy)) for (const row of report.sections.yoy) for (const k of ['revenue', 'paid', 'customers']) if (row[k].flag) add(`yoy.${k}`, String(row.year), row[k], WHERE.yoy);
+  if (Array.isArray(report.sections.projection)) for (const row of report.sections.projection) for (const k of ['budget', 'actual']) if (row[k].flag) add(`projection.${k}`, row.month, row[k], WHERE.projection);
+  if (report.sections.calibration && !report.sections.calibration.__error) {
+    const c = report.sections.calibration;
+    if (c.numer.flag) add('calibration.numer', `${priorYr}`, c.numer, WHERE.calibration);
+    for (const row of c.sfContribByMonth) if (row.contrib.flag) add('calibration.sfContrib', row.month, row.contrib, WHERE.calibration);
+  }
+  const investigate = flagged.filter(f => !f.expected);
+  const expectedRows = flagged.filter(f => f.expected);
+
+  // Top-line summary
+  const cal = report.sections.calibration && !report.sections.calibration.__error ? report.sections.calibration : null;
+  const revenueTotalStable = !flagged.some(f => (f.metric === 'monthly.revenue' || f.metric === 'yoy.revenue') && !f.expected);
+  const calibrationIdentical = cal ? (cal.numer.pct === 0 || (Math.abs(cal.numer.abs) <= 1)) : null;
   const L = [];
   L.push(`# SF Revenue Migration — Parity Report`);
   L.push(`Generated ${report.generatedAt} · year=${year} · asof=${asof} · new table readable: ${report.newTableReadable ? 'YES' : 'NO'}`);
   if (!report.newTableReadable) L.push(`\n⚠ NEW TABLE NOT READABLE: ${report.newTableError}\n   Grant read on CONSUMER_HUB__BANKS_DASHBOARD, then re-run. Only OLD-side numbers were captured.`);
-  L.push(`\nGAP-3 integration filter: ${integrationCol ? `KEEP (resolved column: ${integrationCol})` : 'OMIT (no integration column resolved today)'}`);
-  const flagged = [];
-  for (const yr of [year, priorYr]) {
-    const sec = report.sections[`monthly_${yr}`];
-    if (Array.isArray(sec)) for (const row of sec) for (const k of ['revenue', 'paid', 'unpaid', 'customers']) if (row[k].flag) flagged.push({ metric: `monthly.${k}`, key: row.month, ...row[k], where: WHERE.monthly, driver: driverFor(row.month) });
-  }
-  if (Array.isArray(report.sections.yoy)) for (const row of report.sections.yoy) for (const k of ['revenue', 'paid', 'customers']) if (row[k].flag) flagged.push({ metric: `yoy.${k}`, key: String(row.year), ...row[k], where: WHERE.yoy, driver: 'GAP 4 (current year) / near-exact expected (prior year)' });
-  if (Array.isArray(report.sections.projection)) for (const row of report.sections.projection) for (const k of ['budget', 'actual']) if (row[k].flag) flagged.push({ metric: `projection.${k}`, key: row.month, ...row[k], where: WHERE.projection, driver: k === 'budget' ? 'GAP 6: live MRs vs frozen Apr-2025 snapshot' : 'GAP 5: SF MRs vs NetSuite recognized revenue' });
-  if (report.sections.calibration && !report.sections.calibration.__error) {
-    const c = report.sections.calibration;
-    if (c.numer.flag) flagged.push({ metric: 'calibration.numer', key: `${priorYr}`, ...c.numer, where: WHERE.calibration, driver: 'GAP 4/6: fresh MR data recalculates the factor' });
-    for (const row of c.sfContribByMonth) if (row.contrib.flag) flagged.push({ metric: 'calibration.sfContrib', key: row.month, ...row.contrib, where: WHERE.calibration, driver: driverFor(row.month) });
-  }
-  L.push(`\n## Flagged diffs (>1%) — ${flagged.length}\n`);
-  L.push(`| Metric | Period | Old | New | Δ | Δ% | Driver | Where you see it |`);
-  L.push(`|---|---|--:|--:|--:|--:|---|---|`);
-  for (const f of flagged) L.push(`| ${f.metric} | ${f.key} | ${f.old.toLocaleString()} | ${f.new.toLocaleString()} | ${f.abs >= 0 ? '+' : ''}${f.abs.toLocaleString()} | ${f.pct == null ? 'new' : f.pct + '%'} | ${f.driver} | ${f.where} |`);
+  L.push(`\n## Verdict`);
+  L.push(`- Total revenue stable (2025 + Jan–May 2026): ${revenueTotalStable ? 'YES ✓' : 'NO ✗ — see investigate list'}`);
+  L.push(`- Calibration factor identical: ${calibrationIdentical == null ? 'n/a' : calibrationIdentical ? 'YES ✓' : 'NO ✗'}`);
+  L.push(`- Genuine "investigate" rows: ${investigate.length}${investigate.length === 0 ? ' ✓ (all other diffs are expected/benign)' : ''}`);
+  L.push(`- GAP-3 integration filter: ${integrationCol ? `KEEP (resolved column: ${integrationCol})` : 'OMIT (no integration column resolved today)'}`);
+  const tbl = (rows) => {
+    const out = [`| Metric | Period | Old | New | Δ | Δ% | Driver | Where you see it |`, `|---|---|--:|--:|--:|--:|---|---|`];
+    for (const f of rows) out.push(`| ${f.metric} | ${f.key} | ${f.old.toLocaleString()} | ${f.new.toLocaleString()} | ${f.abs >= 0 ? '+' : ''}${f.abs.toLocaleString()} | ${f.pct == null ? 'new' : f.pct + '%'} | ${f.driver} | ${f.where} |`);
+    return out.join('\n');
+  };
+  L.push(`\n## ⚠ Investigate (should be empty) — ${investigate.length}\n`);
+  L.push(investigate.length ? tbl(investigate) : '_none — every flagged diff is an expected/benign driver below._');
+  L.push(`\n## Expected diffs (review, don't block) — ${expectedRows.length}\n`);
+  L.push(expectedRows.length ? tbl(expectedRows) : '_none_');
   L.push(`\nHow to verify any row: open the named screen on prod (old data) vs localhost (new data) and compare, or re-run the matching query from snowflake-api.cjs.`);
-  if (report.sections.calibration && !report.sections.calibration.__error) {
-    const c = report.sections.calibration;
-    L.push(`\n## Calibration factor\n- denom (shared): ${c.denom.toLocaleString()}\n- numerator: old ${c.numer.old.toLocaleString()} → new ${c.numer.new.toLocaleString()} (${c.numer.pct == null ? 'new' : c.numer.pct + '%'})\n- factor: old ${c.factorOldRaw?.toFixed(4) ?? 'n/a'} → new ${c.factorNewRaw?.toFixed(4) ?? 'n/a'} (clamped to [0.3,2.0]: old ${c.factorOldClamped?.toFixed(4) ?? 'fallback'} / new ${c.factorNewClamped?.toFixed(4) ?? 'fallback'})`);
+  if (cal) {
+    L.push(`\n## Calibration factor\n- denom (shared): ${cal.denom.toLocaleString()}\n- numerator: old ${cal.numer.old.toLocaleString()} → new ${cal.numer.new.toLocaleString()} (${cal.numer.pct == null ? 'new' : cal.numer.pct + '%'})\n- factor: old ${cal.factorOldRaw?.toFixed(4) ?? 'n/a'} → new ${cal.factorNewRaw?.toFixed(4) ?? 'n/a'} (clamped to [0.3,2.0]: old ${cal.factorOldClamped?.toFixed(4) ?? 'fallback'} / new ${cal.factorNewClamped?.toFixed(4) ?? 'fallback'})`);
   }
+  report.summary = { revenueTotalStable, calibrationIdentical, investigateCount: investigate.length, expectedCount: expectedRows.length };
+  fs.writeFileSync(jsonPath, JSON.stringify(report, null, 2));
   const mdPath = path.join(outDir, `mr-parity-${ts}.md`);
   fs.writeFileSync(mdPath, L.join('\n'));
 

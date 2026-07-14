@@ -51,6 +51,19 @@ Writes one JSON per endpoint to `data/migration-snapshots/<label>/<asof>/`. No a
 for read endpoints. Pin `--asof=2026-06-30` for a reproducible forecast; `--asof=live` matches what's
 on screen today (capture before/after the same day for live).
 
+**Point `--base` at the finance-it backend's LOCAL port, not the public URL.** The public
+`https://finance-it.lsports.eu/...` is behind SSO — a server-side capture has no session and gets a
+login page, not JSON. On the prod box, find the backend port and hit it directly (localhost bypasses
+SSO; read endpoints need no auth):
+```bash
+pm2 describe finance-it-backend    # look for the PORT / listening address
+ss -tlnp | grep node               # or list listening node ports
+# then:
+node scripts/capture-dashboard-snapshot.cjs --label=before --base=http://localhost:<port> --asof=2026-06-30
+```
+`--base` is normalized to its origin, so pasting a full portal URL still works (the path is stripped).
+If the script warns "non-JSON / SSO proxy", you pointed at the public URL — switch to the local port.
+
 ### Layer 2 — client-computed numbers (not in any API response)
 The cashflow forecast rows (REVENUE / TOTAL INFLOWS / CLOSING), KR5, the bridge revenue rows, the YoY
 card, and the pipeline factor are computed in the browser. Capture them per snapshot:

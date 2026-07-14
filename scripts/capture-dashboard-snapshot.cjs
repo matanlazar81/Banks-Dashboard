@@ -153,7 +153,12 @@ function diffDirs(aDir, bDir) {
   // CAPTURE mode
   const label = arg('label', null);
   if (!label) { console.error('Provide --label=before|after (or --diff=before,after).'); process.exit(1); }
-  const base = arg('base', 'http://localhost:5176').replace(/\/$/, '');
+  // Normalize --base to its ORIGIN — the API is mounted at <origin>/api/*, so a full portal URL
+  // like https://finance-it.lsports.eu/business-tools/bank-dashboard must be stripped to the origin.
+  const baseRaw = arg('base', 'http://localhost:5176');
+  let base;
+  try { base = new URL(baseRaw).origin; } catch { base = baseRaw.replace(/\/$/, ''); }
+  if (base !== baseRaw.replace(/\/$/, '')) console.log(`[capture] normalized base → ${base} (from ${baseRaw})`);
   const subsidiary = parseInt(arg('subsidiary', '3'), 10);
   const year = parseInt(arg('year', '2026'), 10);
   const priorYear = year - 1;
@@ -168,14 +173,20 @@ function diffDirs(aDir, bDir) {
   console.log(`[capture] ${label} @ asof=${asofTag} · base=${base} · ${list.length} endpoints → ${outDir}`);
 
   const manifest = { label, base, subsidiary, year, asof: asofTag, lastActual, capturedAt: new Date().toISOString(), endpoints: {} };
+  let ssoSeen = false, connSeen = false;
   for (const [name, pathq] of list) {
     const url = base + pathq;
     const r = await fetchJson(url);
     fs.writeFileSync(path.join(outDir, `${name}.json`), JSON.stringify({ url: pathq, ...r }, null, 2));
     manifest.endpoints[name] = { url: pathq, ok: r.ok, status: r.status, error: r.error || null };
-    console.log(`  ${r.ok ? '✓' : '✗'} ${name} (${r.status || r.error})`);
+    const looksSso = r.body && r.body.__nonJson != null || [301, 302, 401, 403].includes(r.status);
+    if (looksSso) ssoSeen = true;
+    if (r.error) connSeen = true;
+    console.log(`  ${r.ok && !looksSso ? '✓' : '✗'} ${name} (${r.status || r.error}${looksSso ? ', non-JSON/SSO' : ''})`);
   }
   fs.writeFileSync(path.join(outDir, 'manifest.json'), JSON.stringify(manifest, null, 2));
+  if (ssoSeen) console.log(`\n⚠ Some responses were non-JSON / redirects — this base is behind the SSO proxy.\n   Point --base at the finance-it backend's LOCAL port instead (bypasses login). On the prod box:\n     pm2 describe finance-it-backend   # or: ss -tlnp | grep node\n   then re-run with --base=http://localhost:<port> (read endpoints need no auth header).`);
+  if (connSeen && !ssoSeen) console.log(`\n⚠ Some requests failed to connect ("fetch failed"). Nothing is listening at ${base}.\n   Confirm the server is up and the port is right (dev :5176 / this repo's serve :8790 / finance-it backend local port).`);
   console.log(`\n[capture] done. Layer-2 (client-computed) reminder:`);
   console.log(`  open ${base}/?fccapture=1${liveAsof ? '' : `&asOf=${asof}`}  → console: copy(JSON.stringify(window.__fcRows))`);
   console.log(`  save it as ${path.join(outDir, '__fcRows.json')} and jot the KR5 / bridge / YoY / pipeline-factor numbers alongside.`);
