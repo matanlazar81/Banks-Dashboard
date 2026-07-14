@@ -979,15 +979,43 @@ function createSnowflakeClient(env) {
     }));
   }
 
+  // ── Resolve the DIM_OPPORTUNITY probability column (schema drift guard) ──────
+  // The SF→warehouse layer renamed/dropped `PROBABILITY`, which 500'd the pipeline
+  // and conversion endpoints (invalid identifier 'PROBABILITY'). Probe the schema
+  // once, cache the result, and fall back to the literal `0` when no such column
+  // exists so the queries stay valid (weighting just becomes 0) instead of erroring.
+  let _oppProbCol; // undefined = not probed yet; string = resolved name; null = none
+  async function resolveOppProbCol() {
+    if (_oppProbCol !== undefined) return _oppProbCol;
+    try {
+      const cols = await query(`
+        SELECT COLUMN_NAME FROM DL_PRODUCTION.INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = 'FINANCE' AND TABLE_NAME = 'DIM_OPPORTUNITY'
+          AND COLUMN_NAME ILIKE '%PROBABILITY%'
+        ORDER BY ORDINAL_POSITION
+      `);
+      const names = cols.map(c => c.COLUMN_NAME);
+      _oppProbCol = names.find(n => n === 'PROBABILITY')
+        || names.find(n => /PROBABILITY/.test(n))
+        || null;
+    } catch (e) {
+      console.log(`[Snowflake] opp probability column probe failed: ${e.message}`);
+      _oppProbCol = null;
+    }
+    console.log(`[Snowflake] DIM_OPPORTUNITY probability column: ${_oppProbCol || '(none found — weighting as 0)'}`);
+    return _oppProbCol;
+  }
+
   // ── Open pipeline — opportunities not yet closed-won ──
   async function fetchOpenPipeline(year) {
     const yr = year || 2026;
     console.log(`[Snowflake] Fetching open pipeline for ${yr}...`);
+    const probCol = (await resolveOppProbCol()) || '0';
     const rows = await query(`
       SELECT OPPORTUNITY_NAME AS OPP_NAME,
              OPPORTUNITY_STAGE AS STAGE,
              ROUND(OPPORTUNITY_AMOUNT) AS AMOUNT,
-             PROBABILITY AS PROB,
+             ${probCol} AS PROB,
              CURRENCY,
              SRC_CLOSE_DATE::VARCHAR AS CLOSE_DATE,
              TYPE,
@@ -1024,11 +1052,12 @@ function createSnowflakeClient(env) {
   // ── Salesforce conversion rate analysis ──
   async function fetchConversionAnalysis() {
     console.log('[Snowflake] Fetching SF conversion analysis...');
+    const probCol = (await resolveOppProbCol()) || '0';
     // 1. Stage summary (open pipeline — excludes upgrades, price updates)
     const stageRows = await query(`
       SELECT OPPORTUNITY_STAGE AS STAGE, COUNT(*) AS CNT,
              ROUND(SUM(OPPORTUNITY_AMOUNT)) AS TOTAL_AMT,
-             ROUND(AVG(PROBABILITY), 1) AS AVG_PROB,
+             ROUND(AVG(${probCol}), 1) AS AVG_PROB,
              ROUND(AVG(DATEDIFF('day', SRC_CREATE_AT, CURRENT_DATE())), 0) AS AVG_AGE_DAYS
       FROM DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY
       WHERE IS_OPPORTUNITY_CLOSED = FALSE
@@ -1063,7 +1092,7 @@ function createSnowflakeClient(env) {
              ROUND(SUM(CASE WHEN IS_OPPORTUNITY_WON THEN OPPORTUNITY_AMOUNT END)) AS TOTAL_WON_AMT,
              ROUND(SUM(CASE WHEN NOT IS_OPPORTUNITY_CLOSED THEN OPPORTUNITY_AMOUNT END)) AS OPEN_AMT,
              MAX(CASE WHEN NOT IS_OPPORTUNITY_CLOSED THEN OPPORTUNITY_STAGE END) AS MAX_OPEN_STAGE,
-             MAX(CASE WHEN NOT IS_OPPORTUNITY_CLOSED THEN PROBABILITY END) AS MAX_OPEN_PROB
+             MAX(CASE WHEN NOT IS_OPPORTUNITY_CLOSED THEN ${probCol} END) AS MAX_OPEN_PROB
       FROM DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY
       GROUP BY CUSTOMER_ID
       HAVING OPEN_CNT > 0
@@ -1074,8 +1103,8 @@ function createSnowflakeClient(env) {
       SELECT DATE_TRUNC('MONTH', SRC_CLOSE_DATE)::VARCHAR AS CLOSE_MONTH,
              COUNT(*) AS CNT,
              ROUND(SUM(OPPORTUNITY_AMOUNT)) AS TOTAL_AMT,
-             ROUND(SUM(OPPORTUNITY_AMOUNT * PROBABILITY / 100)) AS WEIGHTED_AMT,
-             ROUND(AVG(PROBABILITY), 0) AS AVG_PROB
+             ROUND(SUM(OPPORTUNITY_AMOUNT * ${probCol} / 100)) AS WEIGHTED_AMT,
+             ROUND(AVG(${probCol}), 0) AS AVG_PROB
       FROM DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY
       WHERE IS_OPPORTUNITY_CLOSED = FALSE AND SRC_CLOSE_DATE IS NOT NULL AND OPPORTUNITY_AMOUNT > 0
         AND IS_UPGRADE_DEAL = FALSE AND IS_PRICE_UPDATE = FALSE
