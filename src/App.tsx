@@ -4971,8 +4971,8 @@ useEffect(() => {
             const bucketSource: Record<string, string> = {
               rev: (Object.keys(bridgeRevBudget).length > 0
                 ? 'Budget: NetSuite revenue budget (budgetsmachine, all Income accounts incl. 400001). '
-                : 'Budget: Salesforce revenue forecast (FCT_REVENUE__MONTHLY_ACTUAL_VS_TARGET / target). ')
-                + 'Actual: collections (NetSuite receipts / FCT_MONTHLY_REVENUE__SUBSET_PAID). Month totals; per-customer only via deeper drill.',
+                : 'Budget: Salesforce revenue forecast (live monthly MR / target). ')
+                + 'Actual: collections (NetSuite receipts / FCT_OPPORTUNITY_MONTHLY_REVENUE__SCD_DAILY__BANKS_DASHBOARD). Month totals; per-customer only via deeper drill.',
               sal: 'Budget: FCT_BUDGET IS_PAYROLL (GL 76xxx). Actual: NetSuite GL 76% payroll cash.',
               ven: 'Budget: FCT_BUDGET PARENT_GL_ACCOUNT_NAME categories (excludes payroll, 800%, 780502). Actual: FCT_EXPENSE vendor cash.',
             };
@@ -9992,7 +9992,7 @@ useEffect(() => {
                   const revGap = (d.revenue || d.forecast || 0) - (d.target || 0);
                   return (
                     <div className="space-y-4">
-                      <p className="text-xs text-gray-400 mb-1">Revenue from FCT_MONTHLY_REVENUE__SUBSET_PAID • {d.customers > 0 ? `${d.customers} customers` : ''}</p>
+                      <p className="text-xs text-gray-400 mb-1">Revenue from FCT_OPPORTUNITY_MONTHLY_REVENUE__SCD_DAILY__BANKS_DASHBOARD • {d.customers > 0 ? `${d.customers} customers` : ''}</p>
                       <table className="w-full text-xs">
                         <thead><tr className="text-left text-gray-400 uppercase border-b">
                           <th className="pb-1 pr-2">Metric</th><th className="pb-1 pr-2 text-right">EUR</th>

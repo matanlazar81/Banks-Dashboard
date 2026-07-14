@@ -931,7 +931,7 @@ function registerApiRoutes(app     ) {
         }
       });
 
-      // ── GET /api/sf-revenue-paid — monthly revenue from FCT_MONTHLY_REVENUE__SUBSET_PAID ──
+      // ── GET /api/sf-revenue-paid — monthly revenue from FCT_OPPORTUNITY_MONTHLY_REVENUE__SCD_DAILY__BANKS_DASHBOARD ──
       use('/api/sf-revenue-paid', async (_req, res) => {
         try {
           const sf = getSfClient();
