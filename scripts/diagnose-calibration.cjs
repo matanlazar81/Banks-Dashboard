@@ -1,19 +1,32 @@
 // Diagnostic for the Column B pipeline calibration factor.
-// Computes factor=39.1331 (live) vs expected ~0.8381 — find the root cause.
+// Recomputes numerator / denominator / factor against the current MR source and
+// checks for the failure modes that historically distorted it (SCD fanout,
+// record fanout per opp/month, opp-amount vs Σ MR mismatch).
 //
 //   node scripts/diagnose-calibration.cjs
 //
+// MR source: DL_PRODUCTION.CONSUMER_HUB__BANKS_DASHBOARD.
+//            FCT_OPPORTUNITY_MONTHLY_REVENUE__SCD_DAILY__BANKS_DASHBOARD
+// (migrated 2026-07 from the retired FINANCE.FCT_MONTHLY_REVENUE* tables). The
+// new table is EUR-native — amount = REVENUE_AMOUNT_EUR, no CURRENCY column —
+// and exposes IS_INTEGRATION_MONTH, which the calibration numerator excludes.
+//
 // Dumps:
-//   - FCT_MONTHLY_REVENUE columns (to spot price_update / shared flags on MR side)
-//   - DIM_OPPORTUNITY columns (to find alt amount fields like AMOUNT_EUR)
-//   - Currency mix on both tables
+//   - MR source columns + DIM_OPPORTUNITY amount/currency columns
 //   - Numerator / denominator raw values for prior year
 //   - MR records per (opportunity, month) — fanout check
-//   - Sample 10 closed-won opps showing OPPORTUNITY_AMOUNT vs Σ MR_AMOUNT
+//   - Sample 5 closed-won opps showing OPPORTUNITY_AMOUNT vs Σ REVENUE_AMOUNT_EUR
 
 const path = require('path');
 const fs = require('fs');
 const { createSnowflakeClient } = require('../snowflake-api.cjs');
+
+const MR_TABLE = 'DL_PRODUCTION.CONSUMER_HUB__BANKS_DASHBOARD.FCT_OPPORTUNITY_MONTHLY_REVENUE__SCD_DAILY__BANKS_DASHBOARD';
+const MR_SCHEMA = 'CONSUMER_HUB__BANKS_DASHBOARD';
+const MR_NAME = 'FCT_OPPORTUNITY_MONTHLY_REVENUE__SCD_DAILY__BANKS_DASHBOARD';
+// Integration-month exclusion applied to the numerator (matches snowflake-api.cjs).
+const MR_WHERE = `AND COALESCE(mr.REVENUE_AMOUNT_EUR, 0) <> 0
+      AND COALESCE(mr.IS_INTEGRATION_MONTH, FALSE) = FALSE`;
 
 // Walk up the tree collecting candidate .env files, then pick whichever one
 // actually contains SNOWFLAKE_ACCOUNT. bank-dashboard sits under extra-apps/
@@ -54,11 +67,11 @@ console.log(`[diag] env loaded from: ${env ? env.path : '(none found)'} (snowfla
   console.log(`  Calibration diagnostic — prior year = ${priorYr}`);
   console.log(`══════════════════════════════════════════════════════════════\n`);
 
-  // ── FCT_MONTHLY_REVENUE columns ───────────────────────────────────────────
-  console.log('▸ FCT_MONTHLY_REVENUE columns:');
+  // ── MR source columns ─────────────────────────────────────────────────────
+  console.log(`▸ ${MR_NAME} columns:`);
   const mrCols = await q(`
     SELECT COLUMN_NAME, DATA_TYPE FROM DL_PRODUCTION.INFORMATION_SCHEMA.COLUMNS
-    WHERE TABLE_SCHEMA = 'FINANCE' AND TABLE_NAME = 'FCT_MONTHLY_REVENUE'
+    WHERE TABLE_SCHEMA = '${MR_SCHEMA}' AND TABLE_NAME = '${MR_NAME}'
     ORDER BY ORDINAL_POSITION
   `);
   console.log(mrCols.map(r => `  - ${r.COLUMN_NAME} (${r.DATA_TYPE})`).join('\n'));
@@ -93,18 +106,8 @@ console.log(`[diag] env loaded from: ${env ? env.path : '(none found)'} (snowfla
     console.log('  (no CURRENCY column on DIM_OPPORTUNITY)');
   }
 
-  // ── Currency mix in FCT_MONTHLY_REVENUE for prior-year MR ─────────────────
-  console.log(`\n▸ FCT_MONTHLY_REVENUE currency mix for ${priorYr}:`);
-  const mrCur = await q(`
-    SELECT CURRENCY AS CCY, COUNT(*) AS N, SUM(ROUND(MR_AMOUNT)) AS SUM_AMT
-    FROM DL_PRODUCTION.FINANCE.FCT_MONTHLY_REVENUE
-    WHERE EXTRACT(YEAR FROM CAL_MONTH_START_DATE) = ${priorYr}
-    GROUP BY 1 ORDER BY SUM_AMT DESC
-  `);
-  console.log(mrCur.map(r => `  ${r.CCY}: n=${r.N}  Σamount=${r.SUM_AMT}`).join('\n'));
-
   // ── Raw numerator + denominator (current SQL) ─────────────────────────────
-  console.log(`\n▸ Calibration components (current SQL, EUR-only MR):`);
+  console.log(`\n▸ Calibration components (current SQL, EUR-native MR):`);
   const denomRows = await q(`
     SELECT SUM(ROUND(OPPORTUNITY_AMOUNT) * (12 - (EXTRACT(MONTH FROM CLOSED_WON_DATE) - 1))) AS DENOM,
            COUNT(*) AS N_OPPS,
@@ -119,16 +122,15 @@ console.log(`[diag] env loaded from: ${env ? env.path : '(none found)'} (snowfla
   console.log(`  denominator = ${denomRows[0]?.DENOM}  (opps=${denomRows[0]?.N_OPPS}, Σamount=${denomRows[0]?.SUM_AMOUNT})`);
 
   const numRows = await q(`
-    SELECT SUM(ROUND(mr.MR_AMOUNT)) AS NUMER, COUNT(*) AS N_MR
-    FROM DL_PRODUCTION.FINANCE.FCT_MONTHLY_REVENUE mr
+    SELECT SUM(ROUND(mr.REVENUE_AMOUNT_EUR)) AS NUMER, COUNT(*) AS N_MR
+    FROM ${MR_TABLE} mr
     JOIN DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY o ON mr.OPPORTUNITY_ID = o.OPPORTUNITY_ID
     WHERE EXTRACT(YEAR FROM mr.CAL_MONTH_START_DATE) = ${priorYr}
       AND o.IS_OPPORTUNITY_WON = TRUE
       AND EXTRACT(YEAR FROM o.CLOSED_WON_DATE) = ${priorYr}
       AND COALESCE(o.IS_OPPORTUNITY_REVENUE_SHARED, FALSE) = FALSE
       AND COALESCE(o.IS_PRICE_UPDATE, FALSE) = FALSE
-      AND COALESCE(mr.MR_AMOUNT, 0) <> 0
-      AND mr.CURRENCY = 'EUR'
+      ${MR_WHERE}
   `);
   console.log(`  numerator   = ${numRows[0]?.NUMER}  (mr-rows=${numRows[0]?.N_MR})`);
   const dn = Number(denomRows[0]?.DENOM) || 0;
@@ -141,13 +143,12 @@ console.log(`[diag] env loaded from: ${env ? env.path : '(none found)'} (snowfla
     SELECT COUNT(*) AS TOTAL_ROWS,
            COUNT(DISTINCT mr.OPPORTUNITY_ID || '|' || TO_VARCHAR(mr.CAL_MONTH_START_DATE,'YYYY-MM')) AS DISTINCT_PAIRS,
            COUNT(DISTINCT mr.OPPORTUNITY_ID) AS DISTINCT_OPPS
-    FROM DL_PRODUCTION.FINANCE.FCT_MONTHLY_REVENUE mr
+    FROM ${MR_TABLE} mr
     JOIN DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY o ON mr.OPPORTUNITY_ID = o.OPPORTUNITY_ID
     WHERE EXTRACT(YEAR FROM mr.CAL_MONTH_START_DATE) = ${priorYr}
       AND o.IS_OPPORTUNITY_WON = TRUE
       AND EXTRACT(YEAR FROM o.CLOSED_WON_DATE) = ${priorYr}
-      AND mr.CURRENCY = 'EUR'
-      AND COALESCE(mr.MR_AMOUNT, 0) <> 0
+      ${MR_WHERE}
   `);
   const fr = fanout[0] || {};
   console.log(`  total mr rows   = ${fr.TOTAL_ROWS}`);
@@ -156,19 +157,18 @@ console.log(`[diag] env loaded from: ${env ? env.path : '(none found)'} (snowfla
   console.log(`  fanout/pair     = ${(Number(fr.TOTAL_ROWS)/Number(fr.DISTINCT_PAIRS)).toFixed(2)}x`);
 
   // ── Sample: pick 5 top closed-won opps and compare amount vs Σ MR ─────────
-  console.log(`\n▸ Top 5 prior-year closed-won opps — OPPORTUNITY_AMOUNT vs Σ MR_AMOUNT:`);
+  console.log(`\n▸ Top 5 prior-year closed-won opps — OPPORTUNITY_AMOUNT vs Σ REVENUE_AMOUNT_EUR:`);
   const samples = await q(`
     WITH s AS (
       SELECT o.OPPORTUNITY_ID, o.OPPORTUNITY_AMOUNT, o.CLOSED_WON_DATE,
              ${oppCurCol ? `o.${oppCurCol} AS OPP_CCY,` : `'?' AS OPP_CCY,`}
              COUNT(mr.OPPORTUNITY_ID) AS N_MR,
-             SUM(ROUND(mr.MR_AMOUNT)) AS SUM_MR_EUR,
+             SUM(ROUND(mr.REVENUE_AMOUNT_EUR)) AS SUM_MR_EUR,
              COUNT(DISTINCT TO_VARCHAR(mr.CAL_MONTH_START_DATE,'YYYY-MM')) AS DISTINCT_MONTHS
       FROM DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY o
-      LEFT JOIN DL_PRODUCTION.FINANCE.FCT_MONTHLY_REVENUE mr
+      LEFT JOIN ${MR_TABLE} mr
         ON o.OPPORTUNITY_ID = mr.OPPORTUNITY_ID
         AND EXTRACT(YEAR FROM mr.CAL_MONTH_START_DATE) = ${priorYr}
-        AND mr.CURRENCY = 'EUR'
       WHERE o.IS_OPPORTUNITY_WON = TRUE
         AND EXTRACT(YEAR FROM o.CLOSED_WON_DATE) = ${priorYr}
         AND o.OPPORTUNITY_AMOUNT > 0
@@ -178,14 +178,6 @@ console.log(`[diag] env loaded from: ${env ? env.path : '(none found)'} (snowfla
   `);
   for (const r of samples) {
     console.log(`  ${r.OPPORTUNITY_ID}  amount=${r.OPPORTUNITY_AMOUNT} ${r.OPP_CCY}  close=${String(r.CLOSED_WON_DATE).substring(0,10)}  Σmr=${r.SUM_MR_EUR}  n_mr=${r.N_MR}  months=${r.DISTINCT_MONTHS}`);
-  }
-
-  // ── Probe: is there an EUR-converted opp amount field? ────────────────────
-  console.log(`\n▸ Probe: do DIM_OPPORTUNITY EUR-amount candidates exist?`);
-  const candCols = ['OPPORTUNITY_AMOUNT_EUR','AMOUNT_EUR','OPPORTUNITY_AMOUNT_CONVERTED','AMOUNT_CONVERTED','ARR_EUR','MRR_EUR','MRR','ARR'];
-  for (const c of candCols) {
-    const present = oppCols.find(r => r.COLUMN_NAME === c);
-    if (present) console.log(`  ✓ ${c} EXISTS (${present.DATA_TYPE})`);
   }
 
   // ── Probe: DIM_OPPORTUNITY SCD-2 fanout (multiple rows per OPPORTUNITY_ID?)
@@ -199,35 +191,6 @@ console.log(`[diag] env loaded from: ${env ? env.path : '(none found)'} (snowfla
   console.log(`  total rows for ${priorYr} closed-won = ${scd[0]?.TOTAL_ROWS}`);
   console.log(`  distinct OPPORTUNITY_ID            = ${scd[0]?.DISTINCT_OPPS}`);
   console.log(`  SCD fanout                          = ${(Number(scd[0]?.TOTAL_ROWS)/Number(scd[0]?.DISTINCT_OPPS)).toFixed(2)}x`);
-
-  // ── Probe: FCT_MONTHLY_REVENUE__SUBSET_PAID columns (curated EUR view) ────
-  console.log(`\n▸ FCT_MONTHLY_REVENUE__SUBSET_PAID columns:`);
-  const subsetCols = await q(`
-    SELECT COLUMN_NAME, DATA_TYPE FROM DL_PRODUCTION.INFORMATION_SCHEMA.COLUMNS
-    WHERE TABLE_SCHEMA = 'FINANCE' AND TABLE_NAME = 'FCT_MONTHLY_REVENUE__SUBSET_PAID'
-    ORDER BY ORDINAL_POSITION
-  `).catch((e) => { console.log(`  (probe failed: ${e.message})`); return []; });
-  console.log(subsetCols.map(r => `  - ${r.COLUMN_NAME} (${r.DATA_TYPE})`).join('\n'));
-
-  // If SUBSET_PAID has OPPORTUNITY_ID + REVENUE_AMOUNT_EUR, recompute factor using it
-  const subsetHasOpp = subsetCols.some(c => c.COLUMN_NAME === 'OPPORTUNITY_ID' || c.COLUMN_NAME === 'SRC_OPPORTUNITY_ID');
-  if (subsetHasOpp) {
-    const oppCol = subsetCols.find(c => c.COLUMN_NAME === 'OPPORTUNITY_ID')?.COLUMN_NAME || 'SRC_OPPORTUNITY_ID';
-    console.log(`\n▸ Calibration recomputed using SUBSET_PAID + ${oppCol}:`);
-    const altNum = await q(`
-      SELECT SUM(ROUND(mr.REVENUE_AMOUNT_EUR)) AS NUMER, COUNT(*) AS N_MR
-      FROM DL_PRODUCTION.FINANCE.FCT_MONTHLY_REVENUE__SUBSET_PAID mr
-      JOIN DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY o ON mr.${oppCol} = o.OPPORTUNITY_ID
-      WHERE EXTRACT(YEAR FROM mr.CAL_MONTH_START_DATE) = ${priorYr}
-        AND o.IS_OPPORTUNITY_WON = TRUE
-        AND EXTRACT(YEAR FROM o.CLOSED_WON_DATE) = ${priorYr}
-        AND COALESCE(o.IS_OPPORTUNITY_REVENUE_SHARED, FALSE) = FALSE
-        AND COALESCE(o.IS_PRICE_UPDATE, FALSE) = FALSE
-    `).catch((e) => { console.log(`  (alt numer failed: ${e.message})`); return []; });
-    const altN = Number(altNum[0]?.NUMER) || 0;
-    console.log(`  alt-numer = ${altN}  (n=${altNum[0]?.N_MR})`);
-    console.log(`  alt-factor = ${dn > 0 ? (altN / dn).toFixed(4) : 'n/a'}`);
-  }
 
   console.log('\nDone.');
   process.exit(0);

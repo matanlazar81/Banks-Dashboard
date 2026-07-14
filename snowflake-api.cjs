@@ -17,6 +17,10 @@ const PIPELINE_STAGE_WEIGHTS = [
   { match: /new|qualif/i,         weight: 0.12 },
 ];
 const PIPELINE_FALLBACK_FACTOR = 0.8489; // FY2025 calibration (per methodology doc); only used if the live compute fails/clamps
+// SF monthly-revenue source (migrated 2026-07 from the retired FINANCE.FCT_MONTHLY_REVENUE* tables).
+// 1-to-1 column mapping: REVENUE_AMOUNT_EUR, PAID_REVENUE_AMOUNT_EUR, UNPAID_REVENUE_AMOUNT_EUR,
+// CUSTOMER_ID, OPPORTUNITY_ID, CAL_MONTH_START_DATE, OPPORTUNITY_NAME, CUSTOMER_STATUS, IS_INTEGRATION_MONTH.
+const MR_TABLE = 'DL_PRODUCTION.CONSUMER_HUB__BANKS_DASHBOARD.FCT_OPPORTUNITY_MONTHLY_REVENUE__SCD_DAILY__BANKS_DASHBOARD';
 function pipelineStageWeight(stage) {
   const s = String(stage || '');
   for (const w of PIPELINE_STAGE_WEIGHTS) if (w.match.test(s)) return w.weight;
@@ -327,25 +331,25 @@ function createSnowflakeClient(env) {
     return byMonth;
   }
 
-  // ── Revenue projection from FCT_REVENUE__MONTHLY_ACTUAL_VS_TARGET ──
+  // ── Revenue projection: monthly SF MR sums (new table) + FCT_REVENUE_TARGET ──
+  // Replaces the retired FCT_REVENUE__MONTHLY_ACTUAL_VS_TARGET. `budget` = live monthly MR (target
+  // fallback where no MR yet); `actuals` = same MR sum but only for elapsed months (old ACTUAL_EUR
+  // only existed for closed months). `actuals` feeds only the AI-summary text; targets unchanged.
   async function fetchRevenueProjection(year) {
     const yr = year || 2026;
     console.log(`[Snowflake] Fetching revenue projection for ${yr}...`);
 
     const rows = await query(`
       SELECT CAL_MONTH_START_DATE::VARCHAR AS MONTH_STR,
-             ROUND(REVENUE_EUR_ACTUAL) AS ACTUAL_EUR,
-             ROUND(REVENUE_EUR_FORECAST) AS FORECAST_EUR,
-             ROUND(REVENUE_TARGET_EURO) AS TARGET_EUR,
-             ROUND(SF_REVENUE_AMOUNT_EUR) AS SF_REV_EUR,
-             ROUND(NS_REVENUE_AMOUNT_EUR) AS NS_REV_EUR
-      FROM DL_PRODUCTION.FINANCE.FCT_REVENUE__MONTHLY_ACTUAL_VS_TARGET
+             ROUND(SUM(REVENUE_AMOUNT_EUR)) AS REV_EUR
+      FROM ${MR_TABLE}
       WHERE CAL_MONTH_START_DATE >= '${yr - 1}-01-01'
         AND CAL_MONTH_START_DATE <= '${yr}-12-31'
+      GROUP BY CAL_MONTH_START_DATE
       ORDER BY CAL_MONTH_START_DATE
     `);
 
-    // Also get revenue targets
+    // Revenue targets — now the sole source for the target fallback.
     let targets = {};
     try {
       const targetRows = await query(`
@@ -363,26 +367,19 @@ function createSnowflakeClient(env) {
 
     const budget = {};
     const actuals = {};
+    const nowYM = new Date().toISOString().substring(0, 7); // elapsed-month guard for actuals
     for (const r of rows) {
       const m = (r.MONTH_STR || '').substring(0, 7);
-      // Forecast = SF_REV (Salesforce pipeline) for future months
-      const forecast = r.FORECAST_EUR || r.SF_REV_EUR || 0;
-      const actual = r.ACTUAL_EUR || r.NS_REV_EUR || 0;
-      const target = r.TARGET_EUR || targets[m] || 0;
-
-      // For each month: use forecast as the projected inflow
-      if (forecast > 0) {
-        budget[m] = { eur: Math.round(forecast), ils: Math.round(forecast * 3.68) };
-      } else if (target > 0) {
-        budget[m] = { eur: Math.round(target), ils: Math.round(target * 3.68) };
-      }
-
-      if (actual > 0) {
-        actuals[m] = { eur: Math.round(actual), ils: Math.round(actual * 3.68) };
-      }
+      const rev = Math.round(r.REV_EUR || 0);
+      const target = targets[m] || 0;
+      // Projected inflow: live monthly MR when present, else the target.
+      if (rev > 0) budget[m] = { eur: rev, ils: Math.round(rev * 3.68) };
+      else if (target > 0) budget[m] = { eur: target, ils: Math.round(target * 3.68) };
+      // Actuals: only elapsed months, so future months don't appear as "actuals" in the AI summary.
+      if (rev > 0 && m <= nowYM) actuals[m] = { eur: rev, ils: Math.round(rev * 3.68) };
     }
 
-    console.log(`[Snowflake] Revenue: ${Object.keys(budget).length} forecast months, ${Object.keys(actuals).length} actual months`);
+    console.log(`[Snowflake] Revenue: ${Object.keys(budget).length} budget months, ${Object.keys(actuals).length} actual months`);
     return { budget, actuals, targets };
   }
 
@@ -1112,46 +1109,16 @@ function createSnowflakeClient(env) {
     const yr = year || new Date().getFullYear();
     console.log(`[Snowflake] Fetching pipeline methodology for ${yr}...`);
 
-    // Probe both MR tables. Prefer FCT_MONTHLY_REVENUE__SUBSET_PAID when it has
-    // OPPORTUNITY_ID + REVENUE_AMOUNT_EUR — that's the curated, EUR-converted,
-    // deduped semantic layer (no currency or fanout surprises). Fall back to
-    // raw FCT_MONTHLY_REVENUE (MR_AMOUNT in raw currency, multi-currency rows).
-    const probeCols = async (table) => new Set((await query(`
-      SELECT COLUMN_NAME FROM DL_PRODUCTION.INFORMATION_SCHEMA.COLUMNS
-      WHERE TABLE_SCHEMA = 'FINANCE' AND TABLE_NAME = '${table}'
-    `).catch(() => [])).map(r => r.COLUMN_NAME));
-    const subsetCols = await probeCols('FCT_MONTHLY_REVENUE__SUBSET_PAID');
-    const rawCols    = await probeCols('FCT_MONTHLY_REVENUE');
-
-    let MR_TABLE, MR_MONTH, MR_OPP, MR_AMOUNT, MR_CHURNED, MR_ZERO, MR_INTEG, MR_CCY;
-    if (subsetCols.has('REVENUE_AMOUNT_EUR') && (subsetCols.has('OPPORTUNITY_ID') || subsetCols.has('SRC_OPPORTUNITY_ID'))) {
-      MR_TABLE  = 'FCT_MONTHLY_REVENUE__SUBSET_PAID';
-      MR_MONTH  = 'CAL_MONTH_START_DATE';
-      MR_OPP    = subsetCols.has('OPPORTUNITY_ID') ? 'OPPORTUNITY_ID' : 'SRC_OPPORTUNITY_ID';
-      MR_AMOUNT = 'REVENUE_AMOUNT_EUR';
-      MR_CHURNED = null; // SUBSET_PAID has CUSTOMER_STATUS but no CHURNED_OPP — skip
-      MR_ZERO    = null; // falls back to REVENUE_AMOUNT_EUR <> 0 via mrFilters logic
-      MR_INTEG   = subsetCols.has('IS_INTEGRATION_MONTH') ? 'IS_INTEGRATION_MONTH' : null;
-      MR_CCY     = null; // REVENUE_AMOUNT_EUR is already EUR-converted
-    } else {
-      const pick = (...cands) => cands.find(c => rawCols.has(c)) || null;
-      MR_TABLE   = 'FCT_MONTHLY_REVENUE';
-      MR_MONTH   = pick('CAL_MONTH_START_DATE', 'REVENUE_MONTH', 'MONTH_START_DATE');
-      MR_OPP     = pick('OPPORTUNITY_ID', 'SRC_OPPORTUNITY_ID');
-      MR_AMOUNT  = pick('MR_AMOUNT', 'REVENUE_AMOUNT_EUR', 'MONTHLY_REVENUE_EUR', 'AMOUNT_EUR', 'REVENUE_EUR');
-      MR_CHURNED = pick('IS_CHURNED_OPP', 'CHURNED_OPP', 'IS_CHURNED');
-      MR_ZERO    = pick('IS_ZERO', 'ISZERO');
-      MR_INTEG   = pick('IS_INTEGRATION_MONTH', 'INTEGRATION_MONTH');
-      MR_CCY     = pick('CURRENCY');
-    }
-    const mrFilters = [
-      MR_CHURNED ? `COALESCE(mr.${MR_CHURNED}, FALSE) = FALSE` : null,
-      MR_ZERO    ? `COALESCE(mr.${MR_ZERO}, FALSE) = FALSE`    : `COALESCE(mr.${MR_AMOUNT}, 0) <> 0`,
-      MR_INTEG   ? `COALESCE(mr.${MR_INTEG}, FALSE) = FALSE`   : null,
-      MR_CCY     ? `mr.${MR_CCY} = 'EUR'`                     : null,
-    ].filter(Boolean).join('\n        AND ');
-    const mrWhere = mrFilters ? `AND ${mrFilters}` : '';
-    const mrUsable = MR_MONTH && MR_OPP && MR_AMOUNT;
+    // MR source columns are fixed on the new table (1-to-1 mapping) — no probe/fallback needed.
+    const MR_MONTH = 'CAL_MONTH_START_DATE';
+    const MR_OPP = 'OPPORTUNITY_ID';
+    const MR_AMOUNT = 'REVENUE_AMOUNT_EUR';
+    // Zero filter kept (harmless; SUM skips NULLs) + integration-month exclusion. The new table
+    // exposes IS_INTEGRATION_MONTH and the migration parity run matched the prior factor with it
+    // applied. If a future source drops the column, remove the second line here.
+    const mrWhere = `AND COALESCE(mr.${MR_AMOUNT}, 0) <> 0
+        AND COALESCE(mr.IS_INTEGRATION_MONTH, FALSE) = FALSE`;
+    const mrUsable = true; // constants above are always present now (kept so the guards below read clearly)
     console.log(`[Snowflake] Pipeline: using ${MR_TABLE} (amount=${MR_AMOUNT}, opp=${MR_OPP})`);
 
     // ── Calibration factor (computed from prior-year closed-won) ──────────────
@@ -1195,7 +1162,7 @@ function createSnowflakeClient(env) {
             GROUP BY OPPORTUNITY_ID
           )
           SELECT SUM(ROUND(mr.${MR_AMOUNT})) AS NUMER
-          FROM DL_PRODUCTION.FINANCE.${MR_TABLE} mr
+          FROM ${MR_TABLE} mr
           WHERE EXTRACT(YEAR FROM mr.${MR_MONTH}) = ${priorYr}
             AND mr.${MR_OPP} IN (SELECT OPPORTUNITY_ID FROM opp)
             ${mrWhere}
@@ -1257,7 +1224,7 @@ function createSnowflakeClient(env) {
         )
         SELECT opp.CLOSE_MONTH AS CLOSE_MONTH,
                SUM(ROUND(mr.${MR_AMOUNT})) AS CONTRIB
-        FROM DL_PRODUCTION.FINANCE.${MR_TABLE} mr
+        FROM ${MR_TABLE} mr
         JOIN opp ON mr.${MR_OPP} = opp.OPPORTUNITY_ID
         WHERE EXTRACT(YEAR FROM mr.${MR_MONTH}) = ${yr}
           ${mrWhere}
@@ -1297,13 +1264,13 @@ function createSnowflakeClient(env) {
       priorYearClosedByQuarter, calibrationFactor, calibrationSource,
     });
     result.priorYearClosedByQuarter = priorYearClosedByQuarter;
-    result.mrColumnsResolved = { table: MR_TABLE, month: MR_MONTH, opp: MR_OPP, amount: MR_AMOUNT, churned: MR_CHURNED, zero: MR_ZERO || (MR_TABLE === 'FCT_MONTHLY_REVENUE' ? `${MR_AMOUNT}<>0 (inferred)` : 'n/a'), integration: MR_INTEG, currency: MR_CCY };
+    result.mrColumnsResolved = { table: MR_TABLE, month: MR_MONTH, opp: MR_OPP, amount: MR_AMOUNT, integration: 'IS_INTEGRATION_MONTH' };
     result.calibrationRaw = calibrationRaw;
     console.log(`[Snowflake] Pipeline methodology: factor=${calibrationFactor.toFixed(4)} (${calibrationSource})${calibrationRaw != null ? `, raw=${calibrationRaw.toFixed(4)}` : ''}, footer=${result.footerTotal}, columnD=${result.columnDTotal}`);
     return result;
   }
 
-  // ── Monthly revenue from FCT_MONTHLY_REVENUE__SUBSET_PAID (fresh semantic layer) ──
+  // ── Monthly revenue from the migrated opportunity SCD daily table (fresh semantic layer) ──
   async function fetchMonthlyRevenuePaid(year) {
     const yr = year || 2026;
     console.log(`[Snowflake] Fetching monthly revenue (paid subset) for ${yr}...`);
@@ -1313,7 +1280,7 @@ function createSnowflakeClient(env) {
              ROUND(SUM(PAID_REVENUE_AMOUNT_EUR)) AS PAID_REV,
              ROUND(SUM(UNPAID_REVENUE_AMOUNT_EUR)) AS UNPAID_REV,
              COUNT(DISTINCT CUSTOMER_ID) AS CUSTOMERS
-      FROM DL_PRODUCTION.FINANCE.FCT_MONTHLY_REVENUE__SUBSET_PAID
+      FROM ${MR_TABLE}
       WHERE CAL_MONTH_START_DATE >= '${yr}-01-01' AND CAL_MONTH_START_DATE < '${yr + 1}-01-01'
       GROUP BY CAL_MONTH_START_DATE
       ORDER BY CAL_MONTH_START_DATE
@@ -1345,7 +1312,7 @@ function createSnowflakeClient(env) {
              ROUND(SUM(REVENUE_AMOUNT_EUR)) AS TOTAL_REV,
              ROUND(SUM(PAID_REVENUE_AMOUNT_EUR)) AS PAID_REV,
              COUNT(DISTINCT CUSTOMER_ID) AS CUSTOMERS
-      FROM DL_PRODUCTION.FINANCE.FCT_MONTHLY_REVENUE__SUBSET_PAID
+      FROM ${MR_TABLE}
       WHERE (
               (YEAR(CAL_MONTH_START_DATE) = ${curYear} AND MONTH(CAL_MONTH_START_DATE) <= ${curMonth})
            OR (YEAR(CAL_MONTH_START_DATE) = ${prevYear} AND MONTH(CAL_MONTH_START_DATE) <= ${curMonth})
@@ -1375,7 +1342,6 @@ function createSnowflakeClient(env) {
     const startDate = `${month}-01`;
     const havingClause = unpaidOnly ? 'HAVING SUM(r.UNPAID_REVENUE_AMOUNT_EUR) > 0' : '';
     const orderCol = unpaidOnly ? 'SUM(r.UNPAID_REVENUE_AMOUNT_EUR)' : 'SUM(r.REVENUE_AMOUNT_EUR)';
-    // Try the paid subset first, fall back to base revenue table
     let rows = [];
     try {
       rows = await query(`
@@ -1384,7 +1350,7 @@ function createSnowflakeClient(env) {
                ROUND(SUM(r.PAID_REVENUE_AMOUNT_EUR)) AS PAID_EUR,
                ROUND(SUM(r.UNPAID_REVENUE_AMOUNT_EUR)) AS UNPAID_EUR,
                MAX(r.CUSTOMER_STATUS) AS STATUS
-        FROM DL_PRODUCTION.FINANCE.FCT_MONTHLY_REVENUE__SUBSET_PAID r
+        FROM ${MR_TABLE} r
         WHERE r.CAL_MONTH_START_DATE = TO_DATE('${startDate}')
           AND r.REVENUE_AMOUNT_EUR > 0
         GROUP BY r.OPPORTUNITY_NAME
@@ -1393,30 +1359,8 @@ function createSnowflakeClient(env) {
         LIMIT 100
       `);
     } catch (e) {
-      console.log(`[Snowflake] Paid subset failed, trying base table: ${e.message}`);
-    }
-    // Fallback: try base revenue table if subset returned nothing
-    if (rows.length === 0) {
-      const havingBase = unpaidOnly ? 'HAVING SUM(CASE WHEN r.IS_PAID = FALSE THEN r.MR_AMOUNT ELSE 0 END) > 0' : '';
-      const orderBase = unpaidOnly ? 'SUM(CASE WHEN r.IS_PAID = FALSE THEN r.MR_AMOUNT ELSE 0 END)' : 'SUM(r.MR_AMOUNT)';
-      try {
-        rows = await query(`
-          SELECT r.MR_NAME AS CUST_NAME,
-                 ROUND(SUM(r.MR_AMOUNT)) AS REV_EUR,
-                 ROUND(SUM(CASE WHEN r.IS_PAID = TRUE THEN r.MR_AMOUNT ELSE 0 END)) AS PAID_EUR,
-                 ROUND(SUM(CASE WHEN r.IS_PAID = FALSE THEN r.MR_AMOUNT ELSE 0 END)) AS UNPAID_EUR,
-                 MAX(r.ACCOUNT_STATUS) AS STATUS
-          FROM DL_PRODUCTION.FINANCE.FCT_MONTHLY_REVENUE r
-          WHERE r.CAL_MONTH_START_DATE = TO_DATE('${startDate}')
-            AND r.MR_AMOUNT > 0
-          GROUP BY r.MR_NAME
-          ${havingBase}
-          ORDER BY ${orderBase} DESC
-          LIMIT 100
-        `);
-      } catch (e2) {
-        console.log(`[Snowflake] Base revenue table also failed: ${e2.message}`);
-      }
+      // No raw-table fallback anymore — the old FCT_MONTHLY_REVENUE base table is retired.
+      console.log(`[Snowflake] Revenue breakdown query failed: ${e.message}`);
     }
     console.log(`[Snowflake] Revenue breakdown: ${rows.length} rows for ${month}${unpaidOnly ? ' (unpaid)' : ''}`);
     return rows.map(r => ({
