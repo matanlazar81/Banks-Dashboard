@@ -95,7 +95,7 @@ function pairs(sub) {
   const sub = parseInt(arg('sub', '3'), 10);
 
   const report = { generatedAt: new Date().toISOString(), subsidiary: sub, tables: [], summary: {} };
-  let flagged = 0, errored = 0, compared = 0;
+  let flagged = 0, errored = 0, compared = 0, newErrored = 0;
 
   async function agg(fqn, sel, where) {
     const rows = await q(`SELECT ${sel} FROM ${fqn} ${where || ''}`);
@@ -124,6 +124,7 @@ function pairs(sub) {
         new: isNumeric ? (nv == null ? null : round(nv)) : nv, match });
     }
     if (oldErr || newErr) errored++;
+    if (newErr) newErrored++;
     report.tables.push(entry);
     const status = (oldErr || newErr) ? '⚠ err' : (entry.metrics.every(m => m.match) ? '✓' : '✗ DIFF');
     console.log(`  ${status.padEnd(7)} ${p.name}`);
@@ -131,8 +132,12 @@ function pairs(sub) {
     if (newErr) console.log(`          new: ${newErr}`);
   }
 
+  const verdict = newErrored > 0
+    ? 'FAIL — NEW views unreadable (dbt not built / not granted) — DO NOT DEPLOY'
+    : (flagged > 0 ? 'FAIL — value diffs (view defect) — DO NOT DEPLOY'
+      : (errored > 0 ? 'PASS — exact parity (old-side read notes below are benign)' : 'PASS — exact parity'));
   report.summary = { comparedMetrics: compared, mismatches: flagged, tablesWithErrors: errored,
-    verdict: flagged === 0 ? (errored === 0 ? 'PASS — exact parity' : 'PASS with read errors (review)') : 'FAIL — value diffs (view defect)' };
+    newViewsUnreadable: newErrored, verdict };
 
   // ── write reports ──
   const outDir = path.resolve(__dirname, '..', 'data', 'migration-snapshots');
@@ -165,6 +170,9 @@ function pairs(sub) {
   fs.writeFileSync(mdPath, md.join('\n'));
 
   console.log(`\n${report.summary.verdict}`);
+  if (newErrored > 0 || flagged > 0) {
+    console.log(`\n⛔ DO NOT DEPLOY — ${newErrored > 0 ? `${newErrored} table(s) could not be read from CONSUMER_HUB__FINANCE (create/grant the dbt views first)` : `${flagged} value mismatch(es) — investigate the view definition`}.`);
+  }
   console.log(`[verify-p2] wrote:\n  ${jsonPath}\n  ${mdPath}`);
-  process.exit(flagged === 0 ? 0 : 2);
+  process.exit((newErrored > 0 || flagged > 0) ? 2 : 0);
 })().catch(e => { console.error('ERROR:', e); process.exit(1); });
