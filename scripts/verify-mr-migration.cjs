@@ -12,6 +12,12 @@
 //
 // Expected per the migration plan: 2025 + Jan–May 2026 near-exact; June/July 2026 diffs are
 // legitimate SF corrections after the 2026-06-23 freeze (GAP 4). Projection diffs are GAP 5/6.
+//
+// NOTE (BI-3228 phase 2): the consumer-hub schema was since renamed
+// CONSUMER_HUB__BANKS_DASHBOARD → CONSUMER_HUB__FINANCE (views suffixed __FINANCE). This script
+// deliberately still reads the OLD DL_PRODUCTION.FINANCE.* tables for the phase-1 parity record;
+// it is UNRUNNABLE after the grant cutover (those schemas are revoked from the finance user).
+// Kept as a historical artifact — do not repoint its constants.
 
 const path = require('path');
 const fs = require('fs');

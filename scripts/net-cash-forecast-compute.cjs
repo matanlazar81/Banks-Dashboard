@@ -204,7 +204,7 @@ async function gatherInputs(ns, sf, year) {
   const overrides = await tryFetch('sf.fetchBudgetOverrides', () => sf.fetchBudgetOverrides(), []);
   let payrollAccounts = new Set();
   try {
-    const rows = await sf.query(`SELECT DISTINCT GL_ACCOUNT_NUMBER FROM DL_PRODUCTION.FINANCE.DIM_GL_ACCOUNT WHERE IS_PAYROLL = TRUE`);
+    const rows = await sf.query(`SELECT DISTINCT GL_ACCOUNT_NUMBER FROM DL_PRODUCTION.CONSUMER_HUB__FINANCE.DIM_GL_ACCOUNT__FINANCE WHERE IS_PAYROLL = TRUE`);
     payrollAccounts = new Set((rows || []).map((r) => r.GL_ACCOUNT_NUMBER));
   } catch (e) { console.warn(`[compute]   ! payroll-accounts query failed: ${e.message}`); }
 

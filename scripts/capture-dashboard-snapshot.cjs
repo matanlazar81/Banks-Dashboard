@@ -28,7 +28,14 @@ function arg(name, def) {
 const SNAP_ROOT = path.resolve(__dirname, '..', 'data', 'migration-snapshots');
 
 // Revenue-touching endpoints — changes here are EXPECTED impact zones after migration.
-const IMPACT = new Set(['sf-revenue', 'sf-revenue-paid', 'sf-yoy-revenue', 'sf-pipeline-methodology', 'sf-revenue-breakdown']);
+// BI-3228 phase 2 migrates every FINANCE/HR/CORE table → CONSUMER_HUB__FINANCE views, so all
+// Snowflake-backed endpoints are in-scope. Migration is value-neutral: expected diffs = 0 even here.
+const IMPACT = new Set([
+  'sf-revenue', 'sf-revenue-prior', 'sf-revenue-paid', 'sf-revenue-paid-prior', 'sf-yoy-revenue',
+  'sf-pipeline-methodology', 'sf-revenue-breakdown', 'sf-budget', 'sf-finance-budget',
+  'sf-salary-budget', 'sf-actuals-split', 'sf-salary-actuals-by-dept', 'sf-monthly-hc-impact',
+  'sf-pipeline', 'sf-conversion', 'sf-churn-analysis', 'arr-current',
+]);
 
 function prevMonth(ymd) {
   const y = parseInt(ymd.slice(0, 4), 10), m = parseInt(ymd.slice(5, 7), 10);

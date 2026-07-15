@@ -4972,7 +4972,7 @@ useEffect(() => {
               rev: (Object.keys(bridgeRevBudget).length > 0
                 ? 'Budget: NetSuite revenue budget (budgetsmachine, all Income accounts incl. 400001). '
                 : 'Budget: Salesforce revenue forecast (live monthly MR / target). ')
-                + 'Actual: collections (NetSuite receipts / FCT_OPPORTUNITY_MONTHLY_REVENUE__SCD_DAILY__BANKS_DASHBOARD). Month totals; per-customer only via deeper drill.',
+                + 'Actual: collections (NetSuite receipts / FCT_OPPORTUNITY_MONTHLY_REVENUE__SCD_DAILY__FINANCE). Month totals; per-customer only via deeper drill.',
               sal: 'Budget: FCT_BUDGET IS_PAYROLL (GL 76xxx). Actual: NetSuite GL 76% payroll cash.',
               ven: 'Budget: FCT_BUDGET PARENT_GL_ACCOUNT_NAME categories (excludes payroll, 800%, 780502). Actual: FCT_EXPENSE vendor cash.',
             };
@@ -8620,7 +8620,7 @@ useEffect(() => {
                               </tr>
                             ))}</tbody>
                           </table>
-                          <p className="text-[11px] text-gray-400 mt-2">Source: <code>DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY</code> where <code>is_opportunity_churned = TRUE</code>, grouped by <code>opportunity_churn_month_start_date</code> quarter.</p>
+                          <p className="text-[11px] text-gray-400 mt-2">Source: <code>DL_PRODUCTION.CONSUMER_HUB__FINANCE.DIM_OPPORTUNITY__FINANCE</code> where <code>is_opportunity_churned = TRUE</code>, grouped by <code>opportunity_churn_month_start_date</code> quarter.</p>
                         </div>
                       )}
                       <div>
@@ -8919,7 +8919,7 @@ useEffect(() => {
                         <p className="text-xs text-gray-400 mb-2 uppercase">Summary{hasAnyAdjustment ? ' — adjustments applied' : ''}{salaryProjectionMode === 'lastActual' ? ' — using last actual' : ''}</p>
                         <table className="w-full text-xs">
                           <tbody>
-                            <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600">{useLastActualInDrill ? `Last Actual (${drillBasisMonth})` : 'Budget (original)'}{useLastActualInDrill ? <SourceInfo source="DL_PRODUCTION.FINANCE.FCT_EXPENSE" column="SUM(AMOUNT_EUR), SUM(AMOUNT_ILS)" detail="filtered IS_PAYROLL=TRUE, excl. one-time accts (760038, 760023, 760020, 760017, 760029, 760014, 760015, 760008)" /> : <SourceInfo source="DL_PRODUCTION.FINANCE.FCT_BUDGET" column="SUM(AMOUNT_EUR_CC), SUM(AMOUNT_ILS_CC)" detail="recurring payroll line items, subsidiary_id=3" />}</td><td className="py-1.5 text-right"><span className="font-bold text-violet-700">{fmt(budgetTotal)}</span><span className="text-[10px] text-gray-400 ml-1">{fmtILS(toILS(budgetTotal))}</span></td></tr>
+                            <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600">{useLastActualInDrill ? `Last Actual (${drillBasisMonth})` : 'Budget (original)'}{useLastActualInDrill ? <SourceInfo source="DL_PRODUCTION.CONSUMER_HUB__FINANCE.FCT_EXPENSE__FINANCE" column="SUM(AMOUNT_EUR), SUM(AMOUNT_ILS)" detail="filtered IS_PAYROLL=TRUE, excl. one-time accts (760038, 760023, 760020, 760017, 760029, 760014, 760015, 760008)" /> : <SourceInfo source="DL_PRODUCTION.CONSUMER_HUB__FINANCE.FCT_BUDGET__FINANCE" column="SUM(AMOUNT_EUR_CC), SUM(AMOUNT_ILS_CC)" detail="recurring payroll line items, subsidiary_id=3" />}</td><td className="py-1.5 text-right"><span className="font-bold text-violet-700">{fmt(budgetTotal)}</span><span className="text-[10px] text-gray-400 ml-1">{fmtILS(toILS(budgetTotal))}</span></td></tr>
                             {hasSfOverrides ? (
                               <>
                                 {monthOverrides.map((ov, oi) => (
@@ -8997,7 +8997,7 @@ useEffect(() => {
                             {hasHcImpact && monthlyHCImpact[forecastDrilldown.mKey]?.categories?.length > 0 ? (
                               <>
                                 <tr className="border-b border-blue-200 bg-blue-50/30">
-                                  <td className="py-1 pl-3 text-[10px] text-blue-500 uppercase font-medium" colSpan={2}>HC Levers — cumulative through {forecastDrilldown.month}{!useLastActualInDrill ? ' (info only — included in budget)' : ''}<SourceInfo source="DL_PRODUCTION.HR.FCT_HEADCOUNT_EVENT" column="EMPLOYER_COST (ILS), EVENT_TYPE, EVENT_SUB_TYPE" detail="joined to DIM_EMPLOYEE for names; EUR = EMPLOYER_COST / ils_rate (client-side)" /></td>
+                                  <td className="py-1 pl-3 text-[10px] text-blue-500 uppercase font-medium" colSpan={2}>HC Levers — cumulative through {forecastDrilldown.month}{!useLastActualInDrill ? ' (info only — included in budget)' : ''}<SourceInfo source="DL_PRODUCTION.CONSUMER_HUB__FINANCE.FCT_HEADCOUNT_EVENT__FINANCE" column="EMPLOYER_COST (ILS), EVENT_TYPE, EVENT_SUB_TYPE" detail="joined to DIM_EMPLOYEE for names; EUR = EMPLOYER_COST / ils_rate (client-side)" /></td>
                                 </tr>
                                 {monthlyHCImpact[forecastDrilldown.mKey].categories.filter((c: any) => c.runningCost !== 0).map((c: any, ci: number) => {
                                   const catCostILS = c.runningCost || 0;
@@ -9121,7 +9121,7 @@ useEffect(() => {
                                 <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600 font-semibold">Budget (adjusted)</td><td className="py-1.5 text-right"><span className="font-bold text-green-700">{fmt(finalEUR)}</span><span className="text-[10px] text-gray-400 ml-1">{fmtILS(finalILS)}</span></td></tr>
                               );
                             })()}
-                            {hasActuals && <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600">Actual ({forecastDrilldown.data?.__nsMode ? 'NetSuite' : 'Snowflake'}){forecastDrilldown.data?.__nsMode ? <SourceInfo source="NetSuite GL — 76xxxx Payroll accounts" column="transaction.foreignamount, transaction.trandate" detail="posted transactions in the period" system="NetSuite" /> : <SourceInfo source="DL_PRODUCTION.FINANCE.FCT_EXPENSE" column="SUM(AMOUNT_EUR), SUM(AMOUNT_ILS)" detail="IS_PAYROLL=TRUE, source='netsuite', subsidiary_id=3" />}</td><td className="py-1.5 text-right"><span className="font-bold text-amber-700">{fmt(actualTotal)}</span><span className="text-[10px] text-gray-400 ml-1">{fmtILS(toILS(actualTotal))}</span></td></tr>}
+                            {hasActuals && <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600">Actual ({forecastDrilldown.data?.__nsMode ? 'NetSuite' : 'Snowflake'}){forecastDrilldown.data?.__nsMode ? <SourceInfo source="NetSuite GL — 76xxxx Payroll accounts" column="transaction.foreignamount, transaction.trandate" detail="posted transactions in the period" system="NetSuite" /> : <SourceInfo source="DL_PRODUCTION.CONSUMER_HUB__FINANCE.FCT_EXPENSE__FINANCE" column="SUM(AMOUNT_EUR), SUM(AMOUNT_ILS)" detail="IS_PAYROLL=TRUE, source='netsuite', subsidiary_id=3" />}</td><td className="py-1.5 text-right"><span className="font-bold text-amber-700">{fmt(actualTotal)}</span><span className="text-[10px] text-gray-400 ml-1">{fmtILS(toILS(actualTotal))}</span></td></tr>}
                             {hasActuals && (() => { const variance = (hasAnyAdjustment ? adjustedTotal + totalDeptAdjDelta + sfOverrideTotal : budgetTotal) - actualTotal; return <tr><td className="py-1.5 text-gray-600">Variance (Budget − Actual)</td><td className={`py-1.5 text-right ${variance >= 0 ? 'text-green-700' : 'text-red-600'}`}><span className="font-bold">{variance >= 0 ? '+' : ''}{fmt(variance)}</span><span className="text-[10px] opacity-60 ml-1">{fmtILS(toILS(variance))}</span></td></tr>; })()}
                           </tbody>
                         </table>
@@ -9992,7 +9992,7 @@ useEffect(() => {
                   const revGap = (d.revenue || d.forecast || 0) - (d.target || 0);
                   return (
                     <div className="space-y-4">
-                      <p className="text-xs text-gray-400 mb-1">Revenue from FCT_OPPORTUNITY_MONTHLY_REVENUE__SCD_DAILY__BANKS_DASHBOARD • {d.customers > 0 ? `${d.customers} customers` : ''}</p>
+                      <p className="text-xs text-gray-400 mb-1">Revenue from FCT_OPPORTUNITY_MONTHLY_REVENUE__SCD_DAILY__FINANCE • {d.customers > 0 ? `${d.customers} customers` : ''}</p>
                       <table className="w-full text-xs">
                         <thead><tr className="text-left text-gray-400 uppercase border-b">
                           <th className="pb-1 pr-2">Metric</th><th className="pb-1 pr-2 text-right">EUR</th>
@@ -10548,7 +10548,7 @@ useEffect(() => {
                           <p className="text-xs text-gray-400 mb-2 uppercase">Budget vs Historical{hasVendorOverrides ? ' — overrides applied' : ''}</p>
                           <table className="w-full text-xs">
                             <tbody>
-                              <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600">Snowflake Budget (original)<SourceInfo source="DL_PRODUCTION.FINANCE.FCT_BUDGET" column="SUM(AMOUNT_EUR_CC), SUM(AMOUNT_ILS_CC)" detail="non-payroll expense accounts, subsidiary_id=3, GROUP BY parent GL category" /></td><td className="py-1.5 text-right font-bold text-violet-700">{fmt(meta.budgetTotal - overrideTotal)}</td></tr>
+                              <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600">Snowflake Budget (original)<SourceInfo source="DL_PRODUCTION.CONSUMER_HUB__FINANCE.FCT_BUDGET__FINANCE" column="SUM(AMOUNT_EUR_CC), SUM(AMOUNT_ILS_CC)" detail="non-payroll expense accounts, subsidiary_id=3, GROUP BY parent GL category" /></td><td className="py-1.5 text-right font-bold text-violet-700">{fmt(meta.budgetTotal - overrideTotal)}</td></tr>
                               {hasVendorOverrides && vendorOverrides.map((ov, oi) => (
                                 <tr key={oi} className="border-b border-orange-200 bg-orange-50">
                                   <td className="py-2 pl-3">
@@ -10570,11 +10570,11 @@ useEffect(() => {
                                 <tr className="border-b border-gray-200 cursor-pointer hover:bg-blue-50" onClick={() => {
                                   setForecastDrilldown(prev => prev ? { ...prev, data: { ...prev.data, __showHistDetail: !prev.data.__showHistDetail } } : null);
                                 }}>
-                                  <td className="py-1.5 text-blue-600 underline">Historical Avg (12m trailing) <span className="text-[10px] text-gray-400">click to expand</span><SourceInfo source="DL_PRODUCTION.FINANCE.FCT_EXPENSE" column="AVG(SUM(AMOUNT_EUR)) over last 12 months" detail="non-payroll, source='netsuite', subsidiary_id=3" /></td>
+                                  <td className="py-1.5 text-blue-600 underline">Historical Avg (12m trailing) <span className="text-[10px] text-gray-400">click to expand</span><SourceInfo source="DL_PRODUCTION.CONSUMER_HUB__FINANCE.FCT_EXPENSE__FINANCE" column="AVG(SUM(AMOUNT_EUR)) over last 12 months" detail="non-payroll, source='netsuite', subsidiary_id=3" /></td>
                                   <td className="py-1.5 text-right font-bold text-blue-700">{fmt(meta.histAvg)}</td>
                                 </tr>
                               )}
-                              {meta.actual > 0 && <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600">Snowflake Actual (this month)<SourceInfo source="DL_PRODUCTION.FINANCE.FCT_EXPENSE" column="SUM(AMOUNT_EUR), SUM(AMOUNT_ILS)" detail="non-payroll, source='netsuite', subsidiary_id=3, current month" /></td><td className="py-1.5 text-right font-bold text-amber-700">{fmt(meta.actual)}</td></tr>}
+                              {meta.actual > 0 && <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600">Snowflake Actual (this month)<SourceInfo source="DL_PRODUCTION.CONSUMER_HUB__FINANCE.FCT_EXPENSE__FINANCE" column="SUM(AMOUNT_EUR), SUM(AMOUNT_ILS)" detail="non-payroll, source='netsuite', subsidiary_id=3, current month" /></td><td className="py-1.5 text-right font-bold text-amber-700">{fmt(meta.actual)}</td></tr>}
                               {_isFutVM && scenarioAdj !== 0 && (
                                 <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600">Scenario adjustments<span className="text-[10px] text-gray-400 ml-1">dept / per-line — incl. detail not shown below</span></td><td className={`py-1.5 text-right font-bold ${scenarioAdj >= 0 ? 'text-red-600' : 'text-green-700'}`}>{scenarioAdj >= 0 ? '+' : ''}{fmt(scenarioAdj)}{scenarioAdjPct !== 0 && <span className="text-[11px] font-normal opacity-70 ml-1">({scenarioAdjPct > 0 ? '+' : ''}{scenarioAdjPct}%)</span>}</td></tr>
                               )}
@@ -10828,8 +10828,8 @@ useEffect(() => {
                       return (<><p className="text-xs text-gray-500 mb-2">
                       {forecastDrilldown.type === 'vendors' ? (_isFutureCat ? 'Snowflake Budget Breakdown — click category for details' : 'Snowflake Actuals Breakdown — click category for details') : 'Budget Breakdown'}
                       {forecastDrilldown.type === 'vendors' && (_isFutureCat
-                        ? <SourceInfo source="DL_PRODUCTION.FINANCE.FCT_BUDGET" column="SUM(AMOUNT_EUR_CC), SUM(AMOUNT_ILS_CC)" detail="non-payroll budget, grouped by PARENT_GL_ACCOUNT_NAME (category)" />
-                        : <SourceInfo source="DL_PRODUCTION.FINANCE.FCT_EXPENSE" column="SUM(AMOUNT_EUR), SUM(AMOUNT_ILS)" detail="non-payroll actuals, source='netsuite', grouped by PARENT_GL_ACCOUNT_NAME" />
+                        ? <SourceInfo source="DL_PRODUCTION.CONSUMER_HUB__FINANCE.FCT_BUDGET__FINANCE" column="SUM(AMOUNT_EUR_CC), SUM(AMOUNT_ILS_CC)" detail="non-payroll budget, grouped by PARENT_GL_ACCOUNT_NAME (category)" />
+                        : <SourceInfo source="DL_PRODUCTION.CONSUMER_HUB__FINANCE.FCT_EXPENSE__FINANCE" column="SUM(AMOUNT_EUR), SUM(AMOUNT_ILS)" detail="non-payroll actuals, source='netsuite', grouped by PARENT_GL_ACCOUNT_NAME" />
                       )}
                     </p>
                     <table className="w-full text-xs">

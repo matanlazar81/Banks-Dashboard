@@ -498,7 +498,7 @@ function registerApiRoutes(app     ) {
         try {
           const sf = getSfClient();
           if (!sf) { res.end(JSON.stringify({ error: 'no sf client' })); return; }
-          const rows = await sf.query(`SELECT * FROM DL_PRODUCTION.FINANCE.FCT_EXPENSE WHERE source IN ('future_cost_override','future_cost_increment') LIMIT 10`);
+          const rows = await sf.query(`SELECT * FROM DL_PRODUCTION.CONSUMER_HUB__FINANCE.FCT_EXPENSE__FINANCE WHERE source IN ('future_cost_override','future_cost_increment') LIMIT 10`);
           res.setHeader('Content-Type', 'application/json');
           res.end(JSON.stringify({ count: rows.length, columns: rows.length > 0 ? Object.keys(rows[0]) : [], sample: rows }));
         } catch (e     ) { res.end(JSON.stringify({ error: e.message })); }
@@ -854,38 +854,6 @@ function registerApiRoutes(app     ) {
         } catch (e     ) { res.end(JSON.stringify({ data: [], error: e.message })); }
       });
 
-      // ── GET /api/sf-discover — list tables in a schema ──
-      use('/api/sf-discover', async (req, res) => {
-        try {
-          const sf = getSfClient();
-          const url = new URL(req.url || '', `http://${req.headers.host}`);
-          const schema = url.searchParams.get('schema') || 'FINANCE';
-          if (!sf) { res.end(JSON.stringify({ data: [] })); return; }
-          const data = await sf.listTables('DL_PRODUCTION', schema);
-          res.setHeader('Content-Type', 'application/json');
-          res.end(JSON.stringify({ data }));
-        } catch (e     ) {
-          res.setHeader('Content-Type', 'application/json');
-          res.end(JSON.stringify({ data: [], error: e.message }));
-        }
-      });
-
-      // ── GET /api/sf-query — run arbitrary Snowflake SQL (dev only) ──
-      use('/api/sf-query', async (req, res) => {
-        try {
-          const sf = getSfClient();
-          const url = new URL(req.url || '', `http://${req.headers.host}`);
-          const sql = url.searchParams.get('sql') || '';
-          if (!sf || !sql) { res.end(JSON.stringify({ data: [], error: 'Missing sql param' })); return; }
-          const data = await sf.fetchFinancialData(sql);
-          res.setHeader('Content-Type', 'application/json');
-          res.end(JSON.stringify({ data }));
-        } catch (e     ) {
-          res.setHeader('Content-Type', 'application/json');
-          res.end(JSON.stringify({ data: [], error: e.message }));
-        }
-      });
-
       // ── GET /api/sf-conversion — Salesforce conversion rate analysis ──
       use('/api/sf-conversion', async (_req, res) => {
         try {
@@ -931,7 +899,7 @@ function registerApiRoutes(app     ) {
         }
       });
 
-      // ── GET /api/sf-revenue-paid — monthly revenue from FCT_OPPORTUNITY_MONTHLY_REVENUE__SCD_DAILY__BANKS_DASHBOARD ──
+      // ── GET /api/sf-revenue-paid — monthly revenue from FCT_OPPORTUNITY_MONTHLY_REVENUE__SCD_DAILY__FINANCE ──
       use('/api/sf-revenue-paid', async (_req, res) => {
         try {
           const sf = getSfClient();
@@ -1115,7 +1083,7 @@ function registerApiRoutes(app     ) {
           // Apply payroll overrides only — new format has month + category per row
           let payrollAccounts = new Set        ();
           try {
-            const payrollRows = await sf.query(`SELECT DISTINCT GL_ACCOUNT_NUMBER FROM DL_PRODUCTION.FINANCE.DIM_GL_ACCOUNT WHERE IS_PAYROLL = TRUE`);
+            const payrollRows = await sf.query(`SELECT DISTINCT GL_ACCOUNT_NUMBER FROM DL_PRODUCTION.CONSUMER_HUB__FINANCE.DIM_GL_ACCOUNT__FINANCE WHERE IS_PAYROLL = TRUE`);
             payrollAccounts = new Set(payrollRows.map((r     ) => r.GL_ACCOUNT_NUMBER));
           } catch (_) {}
           const appliedOverrides        = [];
@@ -1533,7 +1501,7 @@ function registerApiRoutes(app     ) {
               const overrides = await sf.fetchBudgetOverrides().catch(() => []);
               let payrollAccounts = new Set        ();
               try {
-                const payrollRows = await sf.query(`SELECT DISTINCT GL_ACCOUNT_NUMBER FROM DL_PRODUCTION.FINANCE.DIM_GL_ACCOUNT WHERE IS_PAYROLL = TRUE`);
+                const payrollRows = await sf.query(`SELECT DISTINCT GL_ACCOUNT_NUMBER FROM DL_PRODUCTION.CONSUMER_HUB__FINANCE.DIM_GL_ACCOUNT__FINANCE WHERE IS_PAYROLL = TRUE`);
                 payrollAccounts = new Set(payrollRows.map((r     ) => r.GL_ACCOUNT_NUMBER));
               } catch (_) {}
               for (const ov of overrides) {
