@@ -17,10 +17,27 @@ const PIPELINE_STAGE_WEIGHTS = [
   { match: /new|qualif/i,         weight: 0.12 },
 ];
 const PIPELINE_FALLBACK_FACTOR = 0.8489; // FY2025 calibration (per methodology doc); only used if the live compute fails/clamps
-// SF monthly-revenue source (migrated 2026-07 from the retired FINANCE.FCT_MONTHLY_REVENUE* tables).
-// 1-to-1 column mapping: REVENUE_AMOUNT_EUR, PAID_REVENUE_AMOUNT_EUR, UNPAID_REVENUE_AMOUNT_EUR,
-// CUSTOMER_ID, OPPORTUNITY_ID, CAL_MONTH_START_DATE, OPPORTUNITY_NAME, CUSTOMER_STATUS, IS_INTEGRATION_MONTH.
-const MR_TABLE = 'DL_PRODUCTION.CONSUMER_HUB__BANKS_DASHBOARD.FCT_OPPORTUNITY_MONTHLY_REVENUE__SCD_DAILY__BANKS_DASHBOARD';
+// BI-3228: all Snowflake reads are scoped to the CONSUMER_HUB__FINANCE schema — passthrough
+// views suffixed __FINANCE (explicit column-list, no filters; value-identical to the source
+// FINANCE/HR/CORE tables). This decouples the finance user from upstream schema changes; after
+// the grant cutover the user can SELECT only from CONSUMER_HUB__FINANCE.
+const CH = 'DL_PRODUCTION.CONSUMER_HUB__FINANCE';
+// SF monthly-revenue source (Phase 1). 1-to-1 column mapping: REVENUE_AMOUNT_EUR,
+// PAID_REVENUE_AMOUNT_EUR, UNPAID_REVENUE_AMOUNT_EUR, CUSTOMER_ID, OPPORTUNITY_ID,
+// CAL_MONTH_START_DATE, OPPORTUNITY_NAME, CUSTOMER_STATUS, IS_INTEGRATION_MONTH.
+const MR_TABLE = `${CH}.FCT_OPPORTUNITY_MONTHLY_REVENUE__SCD_DAILY__FINANCE`;
+const T_FCT_BUDGET = `${CH}.FCT_BUDGET__FINANCE`;
+const T_DIM_GL_ACCOUNT = `${CH}.DIM_GL_ACCOUNT__FINANCE`;
+const T_FCT_EXPENSE = `${CH}.FCT_EXPENSE__FINANCE`;
+const T_DIM_DEPARTMENT = `${CH}.DIM_DEPARTMENT__FINANCE`;
+const T_FCT_REVENUE_TARGET = `${CH}.FCT_REVENUE_TARGET__FINANCE`;
+const T_DIM_OPPORTUNITY = `${CH}.DIM_OPPORTUNITY__FINANCE`;
+const T_FCT_OPPORTUNITY_MONTHLY = `${CH}.FCT_OPPORTUNITY__MONTHLY__FINANCE`;
+const T_FCT_CUSTOMER_MONTHLY = `${CH}.FCT_CUSTOMER__MONTHLY__FINANCE`;
+const T_FCT_MRR_Q_SNAPSHOT = `${CH}.FCT_MRR_Q_SNAPSHOT__FINANCE`;
+const T_DIM_EMPLOYEE = `${CH}.DIM_EMPLOYEE__FINANCE`;
+const T_FCT_HEADCOUNT_EVENT = `${CH}.FCT_HEADCOUNT_EVENT__FINANCE`;
+const T_DIM_CUSTOMER = `${CH}.DIM_CUSTOMER__FINANCE`;
 function pipelineStageWeight(stage) {
   const s = String(stage || '');
   for (const w of PIPELINE_STAGE_WEIGHTS) if (w.match.test(s)) return w.weight;
@@ -172,7 +189,7 @@ function createSnowflakeClient(env) {
         privateKey,
         warehouse,
         database: 'DL_PRODUCTION',
-        schema: 'FINANCE',
+        schema: 'CONSUMER_HUB__FINANCE',
         application: 'AgingDashboard',
       });
 
@@ -225,27 +242,6 @@ function createSnowflakeClient(env) {
     }
   }
 
-  // ── Financial queries (to be expanded based on available tables) ──
-  async function listDatabases() {
-    return await query('SHOW DATABASES');
-  }
-
-  async function listSchemas(database) {
-    return await query(`SHOW SCHEMAS IN DATABASE ${database}`);
-  }
-
-  async function listTables(database, schema) {
-    return await query(`SHOW TABLES IN ${database}.${schema}`);
-  }
-
-  // Generic query wrapper for financial data
-  async function fetchFinancialData(sql) {
-    console.log('[Snowflake] Running financial query...');
-    const rows = await query(sql);
-    console.log(`[Snowflake] Query returned ${rows.length} rows`);
-    return rows;
-  }
-
   // ── Budget by category (vendor expenses, excl. salary & finance) ──
   async function fetchBudgetByCategory(year) {
     const yr = year || 2026;
@@ -256,8 +252,8 @@ function createSnowflakeClient(env) {
              g.PARENT_GL_ACCOUNT_NAME AS CATEGORY,
              ROUND(SUM(b.AMOUNT_EUR_CC)) AS BUDGET_EUR,
              ROUND(SUM(b.AMOUNT_ILS_CC)) AS BUDGET_ILS
-      FROM DL_PRODUCTION.FINANCE.FCT_BUDGET b
-      JOIN DL_PRODUCTION.FINANCE.DIM_GL_ACCOUNT g ON b.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
+      FROM ${T_FCT_BUDGET} b
+      JOIN ${T_DIM_GL_ACCOUNT} g ON b.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
       WHERE b.SUBSIDIARY_ID = 3
         AND g.GL_ACCOUNT_TYPE = 'Expense'
         AND g.IS_PAYROLL = FALSE
@@ -288,8 +284,8 @@ function createSnowflakeClient(env) {
       SELECT BUDGET_MONTH_DATE::VARCHAR AS MONTH_STR,
              ROUND(SUM(b.AMOUNT_EUR_CC)) AS BUDGET_EUR,
              ROUND(SUM(b.AMOUNT_ILS_CC)) AS BUDGET_ILS
-      FROM DL_PRODUCTION.FINANCE.FCT_BUDGET b
-      JOIN DL_PRODUCTION.FINANCE.DIM_GL_ACCOUNT g ON b.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
+      FROM ${T_FCT_BUDGET} b
+      JOIN ${T_DIM_GL_ACCOUNT} g ON b.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
       WHERE b.SUBSIDIARY_ID = 3
         AND g.GL_ACCOUNT_NUMBER LIKE '800%'
         AND b.BUDGET_MONTH_DATE >= '${yr}-01-01'
@@ -313,7 +309,7 @@ function createSnowflakeClient(env) {
       SELECT DATE_TRUNC('month', CAL_MONTH_START_DATE)::VARCHAR AS MONTH_STR,
              ROUND(SUM(AMOUNT_EUR)) AS TOTAL_EUR,
              ROUND(SUM(AMOUNT_ILS)) AS TOTAL_ILS
-      FROM DL_PRODUCTION.FINANCE.FCT_EXPENSE
+      FROM ${T_FCT_EXPENSE}
       WHERE SUBSIDIARY_ID = 3
         AND SOURCE = 'netsuite'
         AND CAL_MONTH_START_DATE >= '2025-01-01'
@@ -355,7 +351,7 @@ function createSnowflakeClient(env) {
       const targetRows = await query(`
         SELECT CAL_MONTH_START_DATE::VARCHAR AS MONTH_STR,
                ROUND(REVENUE_TARGET_EURO) AS TARGET_EUR
-        FROM DL_PRODUCTION.FINANCE.FCT_REVENUE_TARGET
+        FROM ${T_FCT_REVENUE_TARGET}
         WHERE CAL_MONTH_START_DATE >= '${yr}-01-01'
         ORDER BY CAL_MONTH_START_DATE
       `);
@@ -393,8 +389,8 @@ function createSnowflakeClient(env) {
                   ELSE 'Vendors' END AS EXPENSE_TYPE,
              ROUND(SUM(e.AMOUNT_EUR)) AS AMOUNT_EUR,
              ROUND(SUM(e.AMOUNT_ILS)) AS AMOUNT_ILS
-      FROM DL_PRODUCTION.FINANCE.FCT_EXPENSE e
-      JOIN DL_PRODUCTION.FINANCE.DIM_GL_ACCOUNT g ON e.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
+      FROM ${T_FCT_EXPENSE} e
+      JOIN ${T_DIM_GL_ACCOUNT} g ON e.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
       WHERE e.SUBSIDIARY_ID = 3
         AND e.SOURCE = 'netsuite'
         AND e.CAL_MONTH_START_DATE >= '2025-01-01'
@@ -434,9 +430,9 @@ function createSnowflakeClient(env) {
              g.GL_ACCOUNT_ID AS ACCT_ID,
              ROUND(SUM(e.AMOUNT_EUR)) AS AMOUNT_EUR,
              ROUND(SUM(e.AMOUNT_ILS)) AS AMOUNT_ILS
-      FROM DL_PRODUCTION.FINANCE.FCT_EXPENSE e
-      JOIN DL_PRODUCTION.FINANCE.DIM_GL_ACCOUNT g ON e.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
-      LEFT JOIN DL_PRODUCTION.FINANCE.DIM_DEPARTMENT d ON e.DEPARTMENT_ID = d.DEPARTMENT_ID
+      FROM ${T_FCT_EXPENSE} e
+      JOIN ${T_DIM_GL_ACCOUNT} g ON e.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
+      LEFT JOIN ${T_DIM_DEPARTMENT} d ON e.DEPARTMENT_ID = d.DEPARTMENT_ID
       WHERE e.SUBSIDIARY_ID = 3
         AND e.SOURCE = 'netsuite'
         AND g.IS_PAYROLL = FALSE
@@ -469,8 +465,8 @@ function createSnowflakeClient(env) {
              g.GL_ACCOUNT_NAME AS ACCT_NAME,
              ROUND(SUM(e.AMOUNT_EUR)) AS AMOUNT_EUR,
              ROUND(SUM(e.AMOUNT_ILS)) AS AMOUNT_ILS
-      FROM DL_PRODUCTION.FINANCE.FCT_EXPENSE e
-      JOIN DL_PRODUCTION.FINANCE.DIM_GL_ACCOUNT g ON e.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
+      FROM ${T_FCT_EXPENSE} e
+      JOIN ${T_DIM_GL_ACCOUNT} g ON e.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
       WHERE e.SUBSIDIARY_ID = 3
         AND e.SOURCE = 'netsuite'
         AND g.IS_PAYROLL = TRUE
@@ -499,9 +495,9 @@ function createSnowflakeClient(env) {
              g.GL_ACCOUNT_ID AS ACCT_ID,
              ROUND(SUM(b.AMOUNT_EUR_CC)) AS BUDGET_EUR,
              ROUND(SUM(b.AMOUNT_ILS_CC)) AS BUDGET_ILS
-      FROM DL_PRODUCTION.FINANCE.FCT_BUDGET b
-      JOIN DL_PRODUCTION.FINANCE.DIM_GL_ACCOUNT g ON b.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
-      LEFT JOIN DL_PRODUCTION.FINANCE.DIM_DEPARTMENT d ON b.DEPARTMENT_ID = d.DEPARTMENT_ID
+      FROM ${T_FCT_BUDGET} b
+      JOIN ${T_DIM_GL_ACCOUNT} g ON b.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
+      LEFT JOIN ${T_DIM_DEPARTMENT} d ON b.DEPARTMENT_ID = d.DEPARTMENT_ID
       WHERE b.SUBSIDIARY_ID = 3
         AND g.GL_ACCOUNT_TYPE = 'Expense'
         AND g.IS_PAYROLL = FALSE
@@ -571,8 +567,8 @@ function createSnowflakeClient(env) {
              e.DEPARTMENT_ID, e.CAL_MONTH_START_DATE::VARCHAR AS MONTH_STR,
              ROUND(e.AMOUNT_EUR) AS AMOUNT_EUR,
              e.SOURCE, e.MEMO
-      FROM DL_PRODUCTION.FINANCE.FCT_EXPENSE e
-      JOIN DL_PRODUCTION.FINANCE.DIM_GL_ACCOUNT g ON e.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
+      FROM ${T_FCT_EXPENSE} e
+      JOIN ${T_DIM_GL_ACCOUNT} g ON e.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
       WHERE e.SOURCE IN ('future_cost_override', 'future_cost_increment')
         AND e.SUBSIDIARY_ID = 3
     `);
@@ -597,8 +593,8 @@ function createSnowflakeClient(env) {
       SELECT BUDGET_MONTH_DATE::VARCHAR AS MONTH_STR,
              ROUND(SUM(b.AMOUNT_EUR_CC)) AS BUDGET_EUR,
              ROUND(SUM(b.AMOUNT_ILS_CC)) AS BUDGET_ILS
-      FROM DL_PRODUCTION.FINANCE.FCT_BUDGET b
-      JOIN DL_PRODUCTION.FINANCE.DIM_GL_ACCOUNT g ON b.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
+      FROM ${T_FCT_BUDGET} b
+      JOIN ${T_DIM_GL_ACCOUNT} g ON b.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
       WHERE b.SUBSIDIARY_ID = 3
         AND g.GL_ACCOUNT_NUMBER LIKE '800%'
         AND b.BUDGET_MONTH_DATE >= '${yr}-01-01'
@@ -625,8 +621,8 @@ function createSnowflakeClient(env) {
       SELECT BUDGET_MONTH_DATE::VARCHAR AS MONTH_STR,
              ROUND(SUM(b.AMOUNT_EUR_CC)) AS BUDGET_EUR,
              ROUND(SUM(b.AMOUNT_ILS_CC)) AS BUDGET_ILS
-      FROM DL_PRODUCTION.FINANCE.FCT_BUDGET b
-      JOIN DL_PRODUCTION.FINANCE.DIM_GL_ACCOUNT g ON b.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
+      FROM ${T_FCT_BUDGET} b
+      JOIN ${T_DIM_GL_ACCOUNT} g ON b.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
       WHERE b.SUBSIDIARY_ID = 3
         AND g.IS_PAYROLL = TRUE
         AND b.BUDGET_MONTH_DATE >= '${yr}-01-01'
@@ -656,8 +652,8 @@ function createSnowflakeClient(env) {
       SELECT BUDGET_MONTH_DATE::VARCHAR AS MONTH_STR,
              ROUND(SUM(b.AMOUNT_EUR_CC)) AS BUDGET_EUR,
              ROUND(SUM(b.AMOUNT_ILS_CC)) AS BUDGET_ILS
-      FROM DL_PRODUCTION.FINANCE.FCT_BUDGET b
-      JOIN DL_PRODUCTION.FINANCE.DIM_GL_ACCOUNT g ON b.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
+      FROM ${T_FCT_BUDGET} b
+      JOIN ${T_DIM_GL_ACCOUNT} g ON b.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
       WHERE b.SUBSIDIARY_ID = 3
         AND g.GL_ACCOUNT_TYPE = 'Income'
         AND b.BUDGET_MONTH_DATE >= '${yr}-01-01'
@@ -687,9 +683,9 @@ function createSnowflakeClient(env) {
              g.GL_ACCOUNT_ID AS ACCT_ID,
              ROUND(SUM(b.AMOUNT_EUR_CC)) AS BUDGET_EUR,
              ROUND(SUM(b.AMOUNT_ILS_CC)) AS BUDGET_ILS
-      FROM DL_PRODUCTION.FINANCE.FCT_BUDGET b
-      JOIN DL_PRODUCTION.FINANCE.DIM_GL_ACCOUNT g ON b.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
-      LEFT JOIN DL_PRODUCTION.FINANCE.DIM_DEPARTMENT d ON b.DEPARTMENT_ID = d.DEPARTMENT_ID
+      FROM ${T_FCT_BUDGET} b
+      JOIN ${T_DIM_GL_ACCOUNT} g ON b.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
+      LEFT JOIN ${T_DIM_DEPARTMENT} d ON b.DEPARTMENT_ID = d.DEPARTMENT_ID
       WHERE b.SUBSIDIARY_ID = 3
         AND g.IS_PAYROLL = TRUE
         AND b.BUDGET_MONTH_DATE = TO_DATE('${startDate}')
@@ -718,8 +714,8 @@ function createSnowflakeClient(env) {
       SELECT d.DEPARTMENT_NAME AS DEPT,
              COUNT(*) AS HEADCOUNT,
              ROUND(AVG(e.PAYROLL_SALARY_MONTHLY_PAYMENT_AMOUNT)) AS AVG_SALARY_ILS
-      FROM DL_PRODUCTION.HR.DIM_EMPLOYEE e
-      JOIN DL_PRODUCTION.FINANCE.DIM_DEPARTMENT d
+      FROM ${T_DIM_EMPLOYEE} e
+      JOIN ${T_DIM_DEPARTMENT} d
         ON e.EMPLOYEE_GROUP = d.GROUP_NAME AND d.SUBSIDIARY_ID = 3 AND d.SRC_IS_ACTIVE = TRUE
       WHERE e.STATUS = 'Active'
         AND e.COMPANY_NAME = 'LSports'
@@ -747,7 +743,7 @@ function createSnowflakeClient(env) {
       SELECT EVENT_TYPE, EVENT_SUB_TYPE, DEPARTMENT, POSITION_NAME,
              ROUND(EMPLOYER_COST) AS COST, CURRENCY_CODE,
              EMPLOYEE_ID, OPENING_ID, OPENING_STATUS
-      FROM DL_PRODUCTION.HR.FCT_HEADCOUNT_EVENT
+      FROM ${T_FCT_HEADCOUNT_EVENT}
       WHERE EVENT_MONTH_DATE = TO_DATE('${startDate}')
       ORDER BY EVENT_TYPE, EMPLOYER_COST DESC
     `);
@@ -759,7 +755,7 @@ function createSnowflakeClient(env) {
              COUNT(*) AS CNT,
              ROUND(SUM(EMPLOYER_COST)) AS TOTAL_COST,
              MAX(CURRENCY_CODE) AS CURRENCY
-      FROM DL_PRODUCTION.HR.FCT_HEADCOUNT_EVENT
+      FROM ${T_FCT_HEADCOUNT_EVENT}
       WHERE EVENT_MONTH_DATE >= TO_DATE('${startDate}')
         AND EVENT_MONTH_DATE <= '${yr}-12-31'
       GROUP BY EVENT_TYPE, EVENT_SUB_TYPE
@@ -771,7 +767,7 @@ function createSnowflakeClient(env) {
              COUNT(*) AS CNT,
              ROUND(SUM(EMPLOYER_COST)) AS TOTAL_COST,
              MAX(CURRENCY_CODE) AS CURRENCY
-      FROM DL_PRODUCTION.HR.FCT_HEADCOUNT_EVENT
+      FROM ${T_FCT_HEADCOUNT_EVENT}
       WHERE EVENT_MONTH_DATE < TO_DATE('${startDate}')
         AND EVENT_MONTH_DATE >= '${yr}-01-01'
         AND OPENING_STATUS = 'Open'
@@ -796,7 +792,7 @@ function createSnowflakeClient(env) {
              EVENT_TYPE, EVENT_SUB_TYPE,
              COUNT(*) AS CNT,
              ROUND(SUM(EMPLOYER_COST)) AS TOTAL_COST
-      FROM DL_PRODUCTION.HR.FCT_HEADCOUNT_EVENT
+      FROM ${T_FCT_HEADCOUNT_EVENT}
       WHERE EVENT_MONTH_DATE >= TO_DATE('${yr}-01-01')
         AND EVENT_MONTH_DATE <= '${yr}-12-31'
       GROUP BY TO_CHAR(EVENT_MONTH_DATE, 'YYYY-MM'), EVENT_TYPE, EVENT_SUB_TYPE
@@ -807,7 +803,7 @@ function createSnowflakeClient(env) {
     const baseline = await query(`
       SELECT COUNT(*) AS HC,
              ROUND(SUM(PAYROLL_SALARY_MONTHLY_PAYMENT_AMOUNT)) AS BASE_MONTHLY
-      FROM DL_PRODUCTION.HR.DIM_EMPLOYEE
+      FROM ${T_DIM_EMPLOYEE}
       WHERE IS_ACTIVE_HEADCOUNT_PAYROLL = TRUE
         AND PAYROLL_SALARY_MONTHLY_PAYMENT_AMOUNT > 0
     `);
@@ -862,8 +858,8 @@ function createSnowflakeClient(env) {
              COALESCE(d.DEPARTMENT_NAME, h.DEPARTMENT, 'Unassigned') AS DEPARTMENT,
              COUNT(*) AS CNT,
              ROUND(SUM(h.EMPLOYER_COST)) AS TOTAL_COST
-      FROM DL_PRODUCTION.HR.FCT_HEADCOUNT_EVENT h
-      LEFT JOIN DL_PRODUCTION.FINANCE.DIM_DEPARTMENT d
+      FROM ${T_FCT_HEADCOUNT_EVENT} h
+      LEFT JOIN ${T_DIM_DEPARTMENT} d
         ON h.DEPARTMENT = d.GROUP_NAME AND d.SUBSIDIARY_ID = 3 AND d.SRC_IS_ACTIVE = TRUE
       WHERE h.EVENT_MONTH_DATE >= TO_DATE('${startMonth}-01')
         AND h.EVENT_MONTH_DATE <= '${yr}-12-31'
@@ -936,8 +932,8 @@ function createSnowflakeClient(env) {
                  ${nameCol.includes('||') ? nameCol : 'e.' + nameCol} AS EMPLOYEE_NAME,
                  ROUND(h.EMPLOYER_COST) AS COST, h.CURRENCY_CODE,
                  h.OPENING_ID, h.OPENING_STATUS
-          FROM DL_PRODUCTION.HR.FCT_HEADCOUNT_EVENT h
-          LEFT JOIN DL_PRODUCTION.HR.DIM_EMPLOYEE e ON h.EMPLOYEE_ID = e.EMPLOYEE_ID
+          FROM ${T_FCT_HEADCOUNT_EVENT} h
+          LEFT JOIN ${T_DIM_EMPLOYEE} e ON h.EMPLOYEE_ID = e.EMPLOYEE_ID
           WHERE h.EVENT_TYPE = '${eventType}'
             AND h.EVENT_SUB_TYPE = '${eventSubType}'
             AND h.EVENT_MONTH_DATE >= TO_DATE('${fromDate}')
@@ -958,7 +954,7 @@ function createSnowflakeClient(env) {
                NULL AS EMPLOYEE_NAME,
                ROUND(EMPLOYER_COST) AS COST, CURRENCY_CODE,
                OPENING_ID, OPENING_STATUS
-        FROM DL_PRODUCTION.HR.FCT_HEADCOUNT_EVENT
+        FROM ${T_FCT_HEADCOUNT_EVENT}
         WHERE EVENT_TYPE = '${eventType}'
           AND EVENT_SUB_TYPE = '${eventSubType}'
           AND EVENT_MONTH_DATE >= TO_DATE('${fromDate}')
@@ -979,57 +975,29 @@ function createSnowflakeClient(env) {
     }));
   }
 
-  // ── Resolve the DIM_OPPORTUNITY probability column (schema drift guard) ──────
-  // The SF→warehouse layer renamed/dropped `PROBABILITY`, which 500'd the pipeline
-  // and conversion endpoints (invalid identifier 'PROBABILITY'). Probe the schema
-  // once, cache the result, and fall back to the literal `0` when no such column
-  // exists so the queries stay valid (weighting just becomes 0) instead of erroring.
-  let _oppProbCol; // undefined = not probed yet; string = resolved name; null = none
-  async function resolveOppProbCol() {
-    if (_oppProbCol !== undefined) return _oppProbCol;
-    try {
-      const cols = await query(`
-        SELECT COLUMN_NAME FROM DL_PRODUCTION.INFORMATION_SCHEMA.COLUMNS
-        WHERE TABLE_SCHEMA = 'FINANCE' AND TABLE_NAME = 'DIM_OPPORTUNITY'
-          AND COLUMN_NAME ILIKE '%PROBABILITY%'
-        ORDER BY ORDINAL_POSITION
-      `);
-      const names = cols.map(c => c.COLUMN_NAME);
-      _oppProbCol = names.find(n => n === 'PROBABILITY')
-        || names.find(n => /PROBABILITY/.test(n))
-        || null;
-    } catch (e) {
-      console.log(`[Snowflake] opp probability column probe failed: ${e.message}`);
-      _oppProbCol = null;
-    }
-    console.log(`[Snowflake] DIM_OPPORTUNITY probability column: ${_oppProbCol || '(none found — weighting as 0)'}`);
-    return _oppProbCol;
-  }
-
   // ── Open pipeline — opportunities not yet closed-won ──
   async function fetchOpenPipeline(year) {
     const yr = year || 2026;
     console.log(`[Snowflake] Fetching open pipeline for ${yr}...`);
-    const probCol = (await resolveOppProbCol()) || '0';
     const rows = await query(`
       SELECT OPPORTUNITY_NAME AS OPP_NAME,
              OPPORTUNITY_STAGE AS STAGE,
              ROUND(OPPORTUNITY_AMOUNT) AS AMOUNT,
-             ${probCol} AS PROB,
+             OPPORTUNITY_PROBABILITY AS PROB,
              CURRENCY,
              SRC_CLOSE_DATE::VARCHAR AS CLOSE_DATE,
              TYPE,
              FEED_TYPE,
              OPPORTUNITY_OWNER_NAME AS OWNER
       , CASE WHEN IS_UPGRADE_DEAL OR IS_PRICE_UPDATE THEN TRUE ELSE FALSE END AS IS_UPSELL
-      FROM DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY
+      FROM ${T_DIM_OPPORTUNITY}
       WHERE IS_OPPORTUNITY_CLOSED = FALSE
         AND OPPORTUNITY_AMOUNT > 0
         AND SRC_CLOSE_DATE >= '${yr}-01-01'
         AND (
           (IS_UPGRADE_DEAL = FALSE AND IS_PRICE_UPDATE = FALSE)
           OR (IS_UPGRADE_DEAL = TRUE OR IS_PRICE_UPDATE = TRUE)
-             AND CUSTOMER_ID IN (SELECT DISTINCT CUSTOMER_ID FROM DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY WHERE IS_OPPORTUNITY_WON = TRUE)
+             AND CUSTOMER_ID IN (SELECT DISTINCT CUSTOMER_ID FROM ${T_DIM_OPPORTUNITY} WHERE IS_OPPORTUNITY_WON = TRUE)
         )
       ORDER BY SRC_CLOSE_DATE, OPPORTUNITY_AMOUNT DESC
     `);
@@ -1052,14 +1020,13 @@ function createSnowflakeClient(env) {
   // ── Salesforce conversion rate analysis ──
   async function fetchConversionAnalysis() {
     console.log('[Snowflake] Fetching SF conversion analysis...');
-    const probCol = (await resolveOppProbCol()) || '0';
     // 1. Stage summary (open pipeline — excludes upgrades, price updates)
     const stageRows = await query(`
       SELECT OPPORTUNITY_STAGE AS STAGE, COUNT(*) AS CNT,
              ROUND(SUM(OPPORTUNITY_AMOUNT)) AS TOTAL_AMT,
-             ROUND(AVG(${probCol}), 1) AS AVG_PROB,
+             ROUND(AVG(OPPORTUNITY_PROBABILITY), 1) AS AVG_PROB,
              ROUND(AVG(DATEDIFF('day', SRC_CREATE_AT, CURRENT_DATE())), 0) AS AVG_AGE_DAYS
-      FROM DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY
+      FROM ${T_DIM_OPPORTUNITY}
       WHERE IS_OPPORTUNITY_CLOSED = FALSE
         AND IS_UPGRADE_DEAL = FALSE AND IS_PRICE_UPDATE = FALSE
       GROUP BY OPPORTUNITY_STAGE ORDER BY AVG_PROB
@@ -1075,7 +1042,7 @@ function createSnowflakeClient(env) {
              ROUND(AVG(CASE WHEN IS_OPPORTUNITY_WON AND IS_OPPORTUNITY_FIRST_WON AND DATEDIFF('day', SRC_CREATE_AT, CLOSED_WON_DATE) > 0 THEN DATEDIFF('day', SRC_CREATE_AT, CLOSED_WON_DATE) END), 0) AS AVG_WON_DAYS,
              ROUND(SUM(CASE WHEN IS_OPPORTUNITY_WON AND IS_OPPORTUNITY_FIRST_WON THEN OPPORTUNITY_AMOUNT END)) AS WON_NEW_AMT,
              ROUND(SUM(CASE WHEN IS_OPPORTUNITY_WON AND (IS_UPGRADE_DEAL = TRUE OR IS_PRICE_UPDATE = TRUE) THEN OPPORTUNITY_AMOUNT END)) AS WON_UPGRADE_AMT
-      FROM DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY
+      FROM ${T_DIM_OPPORTUNITY}
       WHERE IS_OPPORTUNITY_CLOSED = TRUE AND COALESCE(CLOSED_WON_DATE, CLOSED_LOST_DATE) IS NOT NULL
       GROUP BY CLOSE_YEAR HAVING CLOSE_YEAR >= 2020 ORDER BY CLOSE_YEAR
     `);
@@ -1092,8 +1059,8 @@ function createSnowflakeClient(env) {
              ROUND(SUM(CASE WHEN IS_OPPORTUNITY_WON THEN OPPORTUNITY_AMOUNT END)) AS TOTAL_WON_AMT,
              ROUND(SUM(CASE WHEN NOT IS_OPPORTUNITY_CLOSED THEN OPPORTUNITY_AMOUNT END)) AS OPEN_AMT,
              MAX(CASE WHEN NOT IS_OPPORTUNITY_CLOSED THEN OPPORTUNITY_STAGE END) AS MAX_OPEN_STAGE,
-             MAX(CASE WHEN NOT IS_OPPORTUNITY_CLOSED THEN ${probCol} END) AS MAX_OPEN_PROB
-      FROM DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY
+             MAX(CASE WHEN NOT IS_OPPORTUNITY_CLOSED THEN OPPORTUNITY_PROBABILITY END) AS MAX_OPEN_PROB
+      FROM ${T_DIM_OPPORTUNITY}
       GROUP BY CUSTOMER_ID
       HAVING OPEN_CNT > 0
       ORDER BY OPEN_CNT DESC, MAX_OPEN_PROB DESC, WON_CNT DESC
@@ -1103,9 +1070,9 @@ function createSnowflakeClient(env) {
       SELECT DATE_TRUNC('MONTH', SRC_CLOSE_DATE)::VARCHAR AS CLOSE_MONTH,
              COUNT(*) AS CNT,
              ROUND(SUM(OPPORTUNITY_AMOUNT)) AS TOTAL_AMT,
-             ROUND(SUM(OPPORTUNITY_AMOUNT * ${probCol} / 100)) AS WEIGHTED_AMT,
-             ROUND(AVG(${probCol}), 0) AS AVG_PROB
-      FROM DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY
+             ROUND(SUM(OPPORTUNITY_AMOUNT * OPPORTUNITY_PROBABILITY / 100)) AS WEIGHTED_AMT,
+             ROUND(AVG(OPPORTUNITY_PROBABILITY), 0) AS AVG_PROB
+      FROM ${T_DIM_OPPORTUNITY}
       WHERE IS_OPPORTUNITY_CLOSED = FALSE AND SRC_CLOSE_DATE IS NOT NULL AND OPPORTUNITY_AMOUNT > 0
         AND IS_UPGRADE_DEAL = FALSE AND IS_PRICE_UPDATE = FALSE
       GROUP BY CLOSE_MONTH ORDER BY CLOSE_MONTH
@@ -1166,7 +1133,7 @@ function createSnowflakeClient(env) {
           SELECT OPPORTUNITY_ID,
                  ANY_VALUE(ROUND(OPPORTUNITY_AMOUNT)) AS AMT,
                  ANY_VALUE(EXTRACT(MONTH FROM CLOSED_WON_DATE)) AS MO
-          FROM DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY
+          FROM ${T_DIM_OPPORTUNITY}
           WHERE IS_OPPORTUNITY_WON = TRUE
             AND EXTRACT(YEAR FROM CLOSED_WON_DATE) = ${priorYr}
             AND OPPORTUNITY_AMOUNT > 0
@@ -1182,7 +1149,7 @@ function createSnowflakeClient(env) {
       if (mrUsable) {
         const numRows = await query(`
           WITH opp AS (
-            SELECT OPPORTUNITY_ID FROM DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY
+            SELECT OPPORTUNITY_ID FROM ${T_DIM_OPPORTUNITY}
             WHERE IS_OPPORTUNITY_WON = TRUE
               AND EXTRACT(YEAR FROM CLOSED_WON_DATE) = ${priorYr}
               AND OPPORTUNITY_AMOUNT > 0
@@ -1225,7 +1192,7 @@ function createSnowflakeClient(env) {
       SELECT OPPORTUNITY_STAGE AS STAGE,
              ROUND(OPPORTUNITY_AMOUNT) AS AMOUNT,
              SRC_CLOSE_DATE::VARCHAR AS CLOSE_DATE
-      FROM DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY
+      FROM ${T_DIM_OPPORTUNITY}
       WHERE IS_OPPORTUNITY_CLOSED = FALSE
         AND OPPORTUNITY_AMOUNT > 0
         AND COALESCE(IS_OPPORTUNITY_REVENUE_SHARED, FALSE) = FALSE
@@ -1246,7 +1213,7 @@ function createSnowflakeClient(env) {
         WITH opp AS (
           SELECT OPPORTUNITY_ID,
                  ANY_VALUE(TO_VARCHAR(CLOSED_WON_DATE, 'YYYY-MM')) AS CLOSE_MONTH
-          FROM DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY
+          FROM ${T_DIM_OPPORTUNITY}
           WHERE IS_OPPORTUNITY_WON = TRUE
             AND EXTRACT(YEAR FROM CLOSED_WON_DATE) = ${yr}
           GROUP BY OPPORTUNITY_ID
@@ -1266,7 +1233,7 @@ function createSnowflakeClient(env) {
     const actualMrrByMonth = {};
     const wonRows = await query(`
       SELECT TO_VARCHAR(CLOSED_WON_DATE, 'YYYY-MM') AS M, SUM(ROUND(OPPORTUNITY_AMOUNT)) AS AMT
-      FROM DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY
+      FROM ${T_DIM_OPPORTUNITY}
       WHERE IS_OPPORTUNITY_WON = TRUE
         AND EXTRACT(YEAR FROM CLOSED_WON_DATE) = ${yr}
       GROUP BY 1
@@ -1280,7 +1247,7 @@ function createSnowflakeClient(env) {
     const priorYearClosedByQuarter = { 1: 0, 2: 0, 3: 0, 4: 0 };
     const pyqRows = await query(`
       SELECT QUARTER(CLOSED_WON_DATE) AS Q, SUM(ROUND(OPPORTUNITY_AMOUNT)) AS AMT
-      FROM DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY
+      FROM ${T_DIM_OPPORTUNITY}
       WHERE IS_OPPORTUNITY_WON = TRUE
         AND EXTRACT(YEAR FROM CLOSED_WON_DATE) = ${yr - 1}
         AND OPPORTUNITY_AMOUNT > 0
@@ -1412,7 +1379,7 @@ function createSnowflakeClient(env) {
       WITH won_opps AS (
         SELECT CUSTOMER_ID, CLOSED_WON_DATE, ROUND(OPPORTUNITY_AMOUNT) AS AMT,
                LAG(ROUND(OPPORTUNITY_AMOUNT)) OVER (PARTITION BY CUSTOMER_ID ORDER BY CLOSED_WON_DATE) AS PREV_AMOUNT
-        FROM DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY
+        FROM ${T_DIM_OPPORTUNITY}
         WHERE IS_OPPORTUNITY_WON = TRUE
       )
       SELECT o.OPPORTUNITY_NAME AS OPP_NAME,
@@ -1426,7 +1393,7 @@ function createSnowflakeClient(env) {
              o.IS_UPGRADE_DEAL,
              o.IS_PRICE_UPDATE,
              w.PREV_AMOUNT
-      FROM DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY o
+      FROM ${T_DIM_OPPORTUNITY} o
       LEFT JOIN won_opps w ON w.CUSTOMER_ID = o.CUSTOMER_ID AND w.CLOSED_WON_DATE = o.CLOSED_WON_DATE AND w.AMT = ROUND(o.OPPORTUNITY_AMOUNT)
       WHERE o.IS_OPPORTUNITY_WON = TRUE
         AND ${filter}
@@ -1455,7 +1422,7 @@ function createSnowflakeClient(env) {
     const rows = await query(`
       WITH last_months AS (
         SELECT YEAR(CAL_MONTH_START_DATE) AS yr, MAX(CAL_MONTH_START_DATE) AS last_month
-        FROM DL_PRODUCTION.FINANCE.FCT_CUSTOMER__MONTHLY
+        FROM ${T_FCT_CUSTOMER_MONTHLY}
         WHERE DATE_STATUS = 'actual'
         GROUP BY YEAR(CAL_MONTH_START_DATE)
       ),
@@ -1465,12 +1432,12 @@ function createSnowflakeClient(env) {
                ROUND(SUM(m.REVENUE)) AS total_revenue,
                COUNT(DISTINCT m.CAL_MONTH_START_DATE) AS months_count
         FROM last_months lm
-        JOIN DL_PRODUCTION.FINANCE.FCT_CUSTOMER__MONTHLY m ON YEAR(m.CAL_MONTH_START_DATE) = lm.yr AND m.DATE_STATUS = 'actual'
+        JOIN ${T_FCT_CUSTOMER_MONTHLY} m ON YEAR(m.CAL_MONTH_START_DATE) = lm.yr AND m.DATE_STATUS = 'actual'
         GROUP BY lm.yr
       ),
       churned AS (
         SELECT CUSTOMER_ID, CHURN_DATE
-        FROM DL_PRODUCTION.CORE.DIM_CUSTOMER
+        FROM ${T_DIM_CUSTOMER}
         WHERE CHURN_DATE IS NOT NULL AND IS_TEST = FALSE
       ),
       churn_rev AS (
@@ -1479,7 +1446,7 @@ function createSnowflakeClient(env) {
                ROUND(SUM(CASE WHEN m.CAL_MONTH_START_DATE >= DATEADD(month, -1, c.CHURN_DATE) THEN m.REVENUE ELSE 0 END)) AS lost_monthly_rev,
                ROUND(SUM(m.REVENUE)) AS lost_annual_rev
         FROM churned c
-        JOIN DL_PRODUCTION.FINANCE.FCT_CUSTOMER__MONTHLY m ON m.CUSTOMER_ID = c.CUSTOMER_ID
+        JOIN ${T_FCT_CUSTOMER_MONTHLY} m ON m.CUSTOMER_ID = c.CUSTOMER_ID
           AND m.CAL_MONTH_START_DATE >= DATEADD(month, -12, c.CHURN_DATE)
           AND m.CAL_MONTH_START_DATE < c.CHURN_DATE
           AND m.DATE_STATUS = 'actual'
@@ -1502,7 +1469,7 @@ function createSnowflakeClient(env) {
       const recent = await query(`
         WITH churned AS (
           SELECT c.CUSTOMER_ID, c.CHURN_DATE
-          FROM DL_PRODUCTION.CORE.DIM_CUSTOMER c
+          FROM ${T_DIM_CUSTOMER} c
           WHERE c.CHURN_DATE IS NOT NULL AND c.IS_TEST = FALSE
             AND c.CHURN_DATE >= DATEADD(month, -6, CURRENT_DATE())
             AND c.CHURN_DATE < CURRENT_DATE()
@@ -1510,7 +1477,7 @@ function createSnowflakeClient(env) {
         SELECT COUNT(DISTINCT c.CUSTOMER_ID) AS churned_count,
                ROUND(SUM(CASE WHEN m.CAL_MONTH_START_DATE >= DATEADD(month, -1, c.CHURN_DATE) THEN m.REVENUE ELSE 0 END)) AS lost_monthly_rev
         FROM churned c
-        LEFT JOIN DL_PRODUCTION.FINANCE.FCT_CUSTOMER__MONTHLY m ON m.CUSTOMER_ID = c.CUSTOMER_ID
+        LEFT JOIN ${T_FCT_CUSTOMER_MONTHLY} m ON m.CUSTOMER_ID = c.CUSTOMER_ID
           AND m.CAL_MONTH_START_DATE >= DATEADD(month, -12, c.CHURN_DATE)
           AND m.CAL_MONTH_START_DATE < c.CHURN_DATE
           AND m.DATE_STATUS = 'actual'
@@ -1545,7 +1512,7 @@ function createSnowflakeClient(env) {
       WITH churned AS (
         SELECT d.CUSTOMER_ID, d.CUSTOMER_NAME, d.CHURN_DATE, d.CUSTOMER_STATUS,
                d.TIER, d.CUSTOMER_REGION, d.SERVICES, d.SALES_ACCOUNT_OWNER
-        FROM DL_PRODUCTION.CORE.DIM_CUSTOMER d
+        FROM ${T_DIM_CUSTOMER} d
         WHERE d.CHURN_DATE IS NOT NULL AND d.IS_TEST = FALSE
           AND YEAR(d.CHURN_DATE) = ${parseInt(year)}
       )
@@ -1555,7 +1522,7 @@ function createSnowflakeClient(env) {
              ROUND(SUM(m.REVENUE)) AS total_12m_rev,
              COUNT(DISTINCT m.CAL_MONTH_START_DATE) AS months_active
       FROM churned c
-      LEFT JOIN DL_PRODUCTION.FINANCE.FCT_CUSTOMER__MONTHLY m ON m.CUSTOMER_ID = c.CUSTOMER_ID
+      LEFT JOIN ${T_FCT_CUSTOMER_MONTHLY} m ON m.CUSTOMER_ID = c.CUSTOMER_ID
         AND m.CAL_MONTH_START_DATE >= DATEADD(month, -12, c.CHURN_DATE)
         AND m.CAL_MONTH_START_DATE < c.CHURN_DATE
         AND m.DATE_STATUS = 'actual'
@@ -1590,8 +1557,8 @@ function createSnowflakeClient(env) {
         SELECT TO_VARCHAR(f.CAL_MONTH_START_DATE,'YYYY-MM') AS MONTH,
                ROUND(SUM(f.OPPORTUNITY_MRR)) AS MRR_TOTAL,
                COUNT(DISTINCT CASE WHEN f.OPPORTUNITY_MRR > 0 THEN f.OPPORTUNITY_ID END) AS CUSTOMERS
-        FROM DL_PRODUCTION.FINANCE.FCT_OPPORTUNITY__MONTHLY f
-        JOIN DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY d ON f.OPPORTUNITY_ID = d.OPPORTUNITY_ID
+        FROM ${T_FCT_OPPORTUNITY_MONTHLY} f
+        JOIN ${T_DIM_OPPORTUNITY} d ON f.OPPORTUNITY_ID = d.OPPORTUNITY_ID
         WHERE f.CAL_MONTH_START_DATE = DATE_TRUNC('MONTH', CURRENT_DATE())
           AND d.CURRENCY = 'EUR'
         GROUP BY 1
@@ -1608,7 +1575,7 @@ function createSnowflakeClient(env) {
     const rows = await query(`
       SELECT NAME, ROUND(MRR) AS MRR, TOTAL_CUSTOMERS, ROUND(AVG_PER_CUSTOMER) AS AVG_PER_CUSTOMER,
              SNAPSHOT_DATE::VARCHAR AS SNAP_DATE
-      FROM DL_PRODUCTION.FINANCE.FCT_MRR_Q_SNAPSHOT
+      FROM ${T_FCT_MRR_Q_SNAPSHOT}
       WHERE CURRENCY_ISO_CODE = 'EUR' AND SRC_IS_DELETED = FALSE
       ORDER BY SNAPSHOT_DATE DESC NULLS LAST, SRC_UPDATE_AT DESC
       LIMIT 6
@@ -1673,9 +1640,9 @@ function createSnowflakeClient(env) {
              ROUND(e.AMOUNT_ILS, 2) AS AMOUNT_ILS,
              e.MEMO,
              e.CAL_MONTH_START_DATE AS TRANSACTION_DATE
-      FROM DL_PRODUCTION.FINANCE.FCT_EXPENSE e
-      JOIN DL_PRODUCTION.FINANCE.DIM_GL_ACCOUNT g ON e.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
-      LEFT JOIN DL_PRODUCTION.FINANCE.DIM_DEPARTMENT d ON e.DEPARTMENT_ID = d.DEPARTMENT_ID
+      FROM ${T_FCT_EXPENSE} e
+      JOIN ${T_DIM_GL_ACCOUNT} g ON e.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
+      LEFT JOIN ${T_DIM_DEPARTMENT} d ON e.DEPARTMENT_ID = d.DEPARTMENT_ID
       WHERE e.SUBSIDIARY_ID = 3
         AND YEAR(e.CAL_MONTH_START_DATE) = ${yr}
       ORDER BY e.CAL_MONTH_START_DATE, d.DEPARTMENT_NAME, g.GL_ACCOUNT_NUMBER
@@ -1708,9 +1675,9 @@ function createSnowflakeClient(env) {
              DATE_TRUNC('month', e.CAL_MONTH_START_DATE)::VARCHAR AS MONTH_STR,
              ROUND(SUM(e.AMOUNT_EUR)) AS AMOUNT_EUR,
              ROUND(SUM(e.AMOUNT_ILS)) AS AMOUNT_ILS
-      FROM DL_PRODUCTION.FINANCE.FCT_EXPENSE e
-      JOIN DL_PRODUCTION.FINANCE.DIM_GL_ACCOUNT g ON e.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
-      LEFT JOIN DL_PRODUCTION.FINANCE.DIM_DEPARTMENT d ON e.DEPARTMENT_ID = d.DEPARTMENT_ID
+      FROM ${T_FCT_EXPENSE} e
+      JOIN ${T_DIM_GL_ACCOUNT} g ON e.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
+      LEFT JOIN ${T_DIM_DEPARTMENT} d ON e.DEPARTMENT_ID = d.DEPARTMENT_ID
       WHERE e.SUBSIDIARY_ID = 3
         AND e.SOURCE = 'netsuite'
         AND g.IS_PAYROLL = TRUE
@@ -1771,8 +1738,8 @@ function createSnowflakeClient(env) {
              g.GL_ACCOUNT_NUMBER AS ACCT_NUM,
              g.GL_ACCOUNT_NAME AS ACCT_NAME,
              ROUND(SUM(e.AMOUNT_EUR)) AS AMOUNT_EUR
-      FROM DL_PRODUCTION.FINANCE.FCT_EXPENSE e
-      JOIN DL_PRODUCTION.FINANCE.DIM_GL_ACCOUNT g ON e.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
+      FROM ${T_FCT_EXPENSE} e
+      JOIN ${T_DIM_GL_ACCOUNT} g ON e.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
       WHERE e.SUBSIDIARY_ID = ${sub}
         AND e.SOURCE = 'netsuite'
         AND g.IS_PAYROLL = FALSE
@@ -1816,7 +1783,7 @@ function createSnowflakeClient(env) {
         DATE_TRUNC('quarter', opportunity_churn_month_start_date)::VARCHAR AS QUARTER_START,
         SUM(opportunity_amount) AS AMOUNT,
         COUNT(*) AS OPPS
-      FROM DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY
+      FROM ${T_DIM_OPPORTUNITY}
       WHERE opportunity_churn_month_start_date >= '2025-01-01'
         AND opportunity_churn_month_start_date < DATEADD('quarter', 1, DATE_TRUNC('quarter', CURRENT_DATE()))
         AND is_opportunity_churned = TRUE
@@ -1844,10 +1811,6 @@ function createSnowflakeClient(env) {
   return {
     query,
     testConnection,
-    listDatabases,
-    listSchemas,
-    listTables,
-    fetchFinancialData,
     fetchBudgetByCategory,
     fetchActualExpenses,
     fetchRevenueProjection,

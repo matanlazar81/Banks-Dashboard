@@ -12,6 +12,12 @@ const path = require('path');
 const { createSnowflakeClient, createSnowflakeWriteClient } = require('../snowflake-api.cjs');
 const { getDb, DB_PATH } = require('../db.cjs');
 
+// BI-3228: Snowflake reads scoped to CONSUMER_HUB__FINANCE passthrough views (__FINANCE).
+const CH = 'DL_PRODUCTION.CONSUMER_HUB__FINANCE';
+const T_FCT_BUDGET = `${CH}.FCT_BUDGET__FINANCE`;
+const T_DIM_GL_ACCOUNT = `${CH}.DIM_GL_ACCOUNT__FINANCE`;
+const T_DIM_DEPARTMENT = `${CH}.DIM_DEPARTMENT__FINANCE`;
+
 function runSelect(conn, sql) {
   return new Promise((resolve, reject) => {
     conn.execute({
@@ -19,15 +25,6 @@ function runSelect(conn, sql) {
       complete: (err, _stmt, rows) => (err ? reject(err) : resolve(rows || [])),
     });
   });
-}
-
-async function discoverColumns(conn, schema, table) {
-  const rows = await runSelect(conn, `
-    SELECT COLUMN_NAME
-    FROM DL_PRODUCTION.INFORMATION_SCHEMA.COLUMNS
-    WHERE TABLE_SCHEMA = '${schema}' AND TABLE_NAME = '${table}'
-  `);
-  return new Set(rows.map((r) => r.COLUMN_NAME));
 }
 
 async function populateBudgetTargets({ subsidiary, years, env, log = console.log }) {
@@ -43,15 +40,10 @@ async function populateBudgetTargets({ subsidiary, years, env, log = console.log
   if (!sf) throw new Error('Snowflake client failed to initialize (check .env)');
   const conn = await sf.getConnection();
 
-  const budgetCols = await discoverColumns(conn, 'FINANCE', 'FCT_BUDGET');
-  const hasLocationId = budgetCols.has('LOCATION_ID');
-  const hasCurrencyCode = budgetCols.has('CURRENCY_CODE');
-  const dimLocationCols = hasLocationId ? await discoverColumns(conn, 'FINANCE', 'DIM_LOCATION') : new Set();
-  const hasDimLocation = dimLocationCols.has('LOCATION_NAME');
-
-  log(`[populate] FCT_BUDGET.LOCATION_ID  : ${hasLocationId ? 'yes' : 'no'}`);
-  log(`[populate] FCT_BUDGET.CURRENCY_CODE: ${hasCurrencyCode ? 'yes' : 'no'}`);
-  log(`[populate] DIM_LOCATION usable     : ${hasDimLocation ? 'yes' : 'no'}`);
+  // BI-3228: passthrough views are column-parity with source by contract — no runtime schema
+  // introspection. The sports location dimension is intentionally dropped: dbt has no financial
+  // location model (the old existence-probe silently skipped the join in prod), so LOCATION is a
+  // constant. CURRENCY_CODE is a source column on FCT_BUDGET, mirrored in the __FINANCE view.
 
   const yearStart = Math.min(...fiscalYears);
   const yearEnd = Math.max(...fiscalYears);
@@ -62,23 +54,17 @@ async function populateBudgetTargets({ subsidiary, years, env, log = console.log
       EXTRACT(YEAR  FROM b.BUDGET_MONTH_DATE)                    AS FISCAL_YEAR,
       EXTRACT(MONTH FROM b.BUDGET_MONTH_DATE)                    AS MONTH_NUM,
       COALESCE(d.DEPARTMENT_NAME, 'Unassigned')                  AS DEPARTMENT,
-      ${hasLocationId && hasDimLocation
-        ? `COALESCE(l.LOCATION_NAME, 'Unassigned')`
-        : `'Unassigned'`}                                        AS LOCATION,
-      ${hasCurrencyCode ? `COALESCE(b.CURRENCY_CODE, 'ILS')` : `'ILS'`}
-                                                                 AS CURRENCY,
+      'Unassigned'                                               AS LOCATION,
+      COALESCE(b.CURRENCY_CODE, 'ILS')                           AS CURRENCY,
       g.GL_ACCOUNT_NUMBER                                        AS ACCOUNT_NUMBER,
       g.GL_ACCOUNT_NAME                                          AS ACCOUNT_NAME,
       g.GL_ACCOUNT_ID                                            AS NETSUITE_INTERNAL_NUMBER,
       g.PARENT_GL_ACCOUNT_NAME                                   AS CATEGORY,
       ROUND(SUM(b.AMOUNT_ILS_CC), 2)                             AS MONTH_AMOUNT_ILS,
       b.SUBSIDIARY_ID                                            AS SUBSIDIARY_ID
-    FROM DL_PRODUCTION.FINANCE.FCT_BUDGET b
-    JOIN      DL_PRODUCTION.FINANCE.DIM_GL_ACCOUNT  g ON b.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
-    LEFT JOIN DL_PRODUCTION.FINANCE.DIM_DEPARTMENT  d ON b.DEPARTMENT_ID = d.DEPARTMENT_ID
-    ${hasLocationId && hasDimLocation
-      ? `LEFT JOIN DL_PRODUCTION.FINANCE.DIM_LOCATION    l ON b.LOCATION_ID   = l.LOCATION_ID`
-      : ''}
+    FROM ${T_FCT_BUDGET} b
+    JOIN      ${T_DIM_GL_ACCOUNT}  g ON b.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
+    LEFT JOIN ${T_DIM_DEPARTMENT}  d ON b.DEPARTMENT_ID = d.DEPARTMENT_ID
     WHERE b.SUBSIDIARY_ID = ${subsidiary}
       AND b.BUDGET_MONTH_DATE >= '${yearStart}-01-01'
       AND b.BUDGET_MONTH_DATE <= '${yearEnd}-12-31'
@@ -87,8 +73,7 @@ async function populateBudgetTargets({ subsidiary, years, env, log = console.log
       EXTRACT(YEAR  FROM b.BUDGET_MONTH_DATE),
       EXTRACT(MONTH FROM b.BUDGET_MONTH_DATE),
       d.DEPARTMENT_NAME,
-      ${hasLocationId && hasDimLocation ? 'l.LOCATION_NAME,' : ''}
-      ${hasCurrencyCode ? 'b.CURRENCY_CODE,' : ''}
+      b.CURRENCY_CODE,
       g.GL_ACCOUNT_NUMBER, g.GL_ACCOUNT_NAME, g.GL_ACCOUNT_ID, g.PARENT_GL_ACCOUNT_NAME,
       b.SUBSIDIARY_ID
   `;

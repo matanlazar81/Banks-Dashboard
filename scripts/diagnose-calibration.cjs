@@ -5,25 +5,26 @@
 //
 //   node scripts/diagnose-calibration.cjs
 //
-// MR source: DL_PRODUCTION.CONSUMER_HUB__BANKS_DASHBOARD.
-//            FCT_OPPORTUNITY_MONTHLY_REVENUE__SCD_DAILY__BANKS_DASHBOARD
-// (migrated 2026-07 from the retired FINANCE.FCT_MONTHLY_REVENUE* tables). The
-// new table is EUR-native — amount = REVENUE_AMOUNT_EUR, no CURRENCY column —
-// and exposes IS_INTEGRATION_MONTH, which the calibration numerator excludes.
+// MR source: DL_PRODUCTION.CONSUMER_HUB__FINANCE.
+//            FCT_OPPORTUNITY_MONTHLY_REVENUE__SCD_DAILY__FINANCE
+// EUR-native — amount = REVENUE_AMOUNT_EUR, exposes IS_INTEGRATION_MONTH, which
+// the calibration numerator excludes. BI-3228: reads are scoped to
+// CONSUMER_HUB__FINANCE (passthrough views suffixed __FINANCE); no runtime schema
+// introspection — column sets are contractual via the dbt views.
 //
 // Dumps:
-//   - MR source columns + DIM_OPPORTUNITY amount/currency columns
 //   - Numerator / denominator raw values for prior year
 //   - MR records per (opportunity, month) — fanout check
 //   - Sample 5 closed-won opps showing OPPORTUNITY_AMOUNT vs Σ REVENUE_AMOUNT_EUR
+//   - DIM_OPPORTUNITY row uniqueness (SCD fanout)
 
 const path = require('path');
 const fs = require('fs');
 const { createSnowflakeClient } = require('../snowflake-api.cjs');
 
-const MR_TABLE = 'DL_PRODUCTION.CONSUMER_HUB__BANKS_DASHBOARD.FCT_OPPORTUNITY_MONTHLY_REVENUE__SCD_DAILY__BANKS_DASHBOARD';
-const MR_SCHEMA = 'CONSUMER_HUB__BANKS_DASHBOARD';
-const MR_NAME = 'FCT_OPPORTUNITY_MONTHLY_REVENUE__SCD_DAILY__BANKS_DASHBOARD';
+const CH = 'DL_PRODUCTION.CONSUMER_HUB__FINANCE';
+const MR_TABLE = `${CH}.FCT_OPPORTUNITY_MONTHLY_REVENUE__SCD_DAILY__FINANCE`;
+const T_DIM_OPPORTUNITY = `${CH}.DIM_OPPORTUNITY__FINANCE`;
 // Integration-month exclusion applied to the numerator (matches snowflake-api.cjs).
 const MR_WHERE = `AND COALESCE(mr.REVENUE_AMOUNT_EUR, 0) <> 0
       AND COALESCE(mr.IS_INTEGRATION_MONTH, FALSE) = FALSE`;
@@ -67,52 +68,13 @@ console.log(`[diag] env loaded from: ${env ? env.path : '(none found)'} (snowfla
   console.log(`  Calibration diagnostic — prior year = ${priorYr}`);
   console.log(`══════════════════════════════════════════════════════════════\n`);
 
-  // ── MR source columns ─────────────────────────────────────────────────────
-  console.log(`▸ ${MR_NAME} columns:`);
-  const mrCols = await q(`
-    SELECT COLUMN_NAME, DATA_TYPE FROM DL_PRODUCTION.INFORMATION_SCHEMA.COLUMNS
-    WHERE TABLE_SCHEMA = '${MR_SCHEMA}' AND TABLE_NAME = '${MR_NAME}'
-    ORDER BY ORDINAL_POSITION
-  `);
-  console.log(mrCols.map(r => `  - ${r.COLUMN_NAME} (${r.DATA_TYPE})`).join('\n'));
-
-  // ── DIM_OPPORTUNITY columns (amount + currency suspects) ──────────────────
-  console.log('\n▸ DIM_OPPORTUNITY columns matching AMOUNT / CURRENCY / REVENUE / MRR / EUR:');
-  const oppCols = await q(`
-    SELECT COLUMN_NAME, DATA_TYPE FROM DL_PRODUCTION.INFORMATION_SCHEMA.COLUMNS
-    WHERE TABLE_SCHEMA = 'FINANCE' AND TABLE_NAME = 'DIM_OPPORTUNITY'
-      AND (COLUMN_NAME ILIKE '%AMOUNT%' OR COLUMN_NAME ILIKE '%CURRENCY%'
-        OR COLUMN_NAME ILIKE '%REVENUE%' OR COLUMN_NAME ILIKE '%MRR%'
-        OR COLUMN_NAME ILIKE '%EUR%' OR COLUMN_NAME ILIKE '%PRICE%')
-    ORDER BY ORDINAL_POSITION
-  `);
-  console.log(oppCols.map(r => `  - ${r.COLUMN_NAME} (${r.DATA_TYPE})`).join('\n'));
-
-  // ── Currency mix in DIM_OPPORTUNITY for prior-year closed-won ─────────────
-  console.log(`\n▸ DIM_OPPORTUNITY currency mix for ${priorYr} closed-won:`);
-  const oppCurCol = oppCols.find(r => /^CURRENCY/i.test(r.COLUMN_NAME))?.COLUMN_NAME
-                 || oppCols.find(r => /CURRENCY/i.test(r.COLUMN_NAME))?.COLUMN_NAME;
-  if (oppCurCol) {
-    const oppCur = await q(`
-      SELECT ${oppCurCol} AS CCY, COUNT(*) AS N, SUM(ROUND(OPPORTUNITY_AMOUNT)) AS SUM_AMT
-      FROM DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY
-      WHERE IS_OPPORTUNITY_WON = TRUE
-        AND EXTRACT(YEAR FROM CLOSED_WON_DATE) = ${priorYr}
-        AND OPPORTUNITY_AMOUNT > 0
-      GROUP BY 1 ORDER BY SUM_AMT DESC
-    `);
-    console.log(oppCur.map(r => `  ${r.CCY}: n=${r.N}  Σamount=${r.SUM_AMT}`).join('\n'));
-  } else {
-    console.log('  (no CURRENCY column on DIM_OPPORTUNITY)');
-  }
-
   // ── Raw numerator + denominator (current SQL) ─────────────────────────────
-  console.log(`\n▸ Calibration components (current SQL, EUR-native MR):`);
+  console.log(`▸ Calibration components (current SQL, EUR-native MR):`);
   const denomRows = await q(`
     SELECT SUM(ROUND(OPPORTUNITY_AMOUNT) * (12 - (EXTRACT(MONTH FROM CLOSED_WON_DATE) - 1))) AS DENOM,
            COUNT(*) AS N_OPPS,
            SUM(ROUND(OPPORTUNITY_AMOUNT)) AS SUM_AMOUNT
-    FROM DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY
+    FROM ${T_DIM_OPPORTUNITY}
     WHERE IS_OPPORTUNITY_WON = TRUE
       AND EXTRACT(YEAR FROM CLOSED_WON_DATE) = ${priorYr}
       AND OPPORTUNITY_AMOUNT > 0
@@ -124,7 +86,7 @@ console.log(`[diag] env loaded from: ${env ? env.path : '(none found)'} (snowfla
   const numRows = await q(`
     SELECT SUM(ROUND(mr.REVENUE_AMOUNT_EUR)) AS NUMER, COUNT(*) AS N_MR
     FROM ${MR_TABLE} mr
-    JOIN DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY o ON mr.OPPORTUNITY_ID = o.OPPORTUNITY_ID
+    JOIN ${T_DIM_OPPORTUNITY} o ON mr.OPPORTUNITY_ID = o.OPPORTUNITY_ID
     WHERE EXTRACT(YEAR FROM mr.CAL_MONTH_START_DATE) = ${priorYr}
       AND o.IS_OPPORTUNITY_WON = TRUE
       AND EXTRACT(YEAR FROM o.CLOSED_WON_DATE) = ${priorYr}
@@ -144,7 +106,7 @@ console.log(`[diag] env loaded from: ${env ? env.path : '(none found)'} (snowfla
            COUNT(DISTINCT mr.OPPORTUNITY_ID || '|' || TO_VARCHAR(mr.CAL_MONTH_START_DATE,'YYYY-MM')) AS DISTINCT_PAIRS,
            COUNT(DISTINCT mr.OPPORTUNITY_ID) AS DISTINCT_OPPS
     FROM ${MR_TABLE} mr
-    JOIN DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY o ON mr.OPPORTUNITY_ID = o.OPPORTUNITY_ID
+    JOIN ${T_DIM_OPPORTUNITY} o ON mr.OPPORTUNITY_ID = o.OPPORTUNITY_ID
     WHERE EXTRACT(YEAR FROM mr.CAL_MONTH_START_DATE) = ${priorYr}
       AND o.IS_OPPORTUNITY_WON = TRUE
       AND EXTRACT(YEAR FROM o.CLOSED_WON_DATE) = ${priorYr}
@@ -161,30 +123,29 @@ console.log(`[diag] env loaded from: ${env ? env.path : '(none found)'} (snowfla
   const samples = await q(`
     WITH s AS (
       SELECT o.OPPORTUNITY_ID, o.OPPORTUNITY_AMOUNT, o.CLOSED_WON_DATE,
-             ${oppCurCol ? `o.${oppCurCol} AS OPP_CCY,` : `'?' AS OPP_CCY,`}
              COUNT(mr.OPPORTUNITY_ID) AS N_MR,
              SUM(ROUND(mr.REVENUE_AMOUNT_EUR)) AS SUM_MR_EUR,
              COUNT(DISTINCT TO_VARCHAR(mr.CAL_MONTH_START_DATE,'YYYY-MM')) AS DISTINCT_MONTHS
-      FROM DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY o
+      FROM ${T_DIM_OPPORTUNITY} o
       LEFT JOIN ${MR_TABLE} mr
         ON o.OPPORTUNITY_ID = mr.OPPORTUNITY_ID
         AND EXTRACT(YEAR FROM mr.CAL_MONTH_START_DATE) = ${priorYr}
       WHERE o.IS_OPPORTUNITY_WON = TRUE
         AND EXTRACT(YEAR FROM o.CLOSED_WON_DATE) = ${priorYr}
         AND o.OPPORTUNITY_AMOUNT > 0
-      GROUP BY 1, 2, 3, 4
+      GROUP BY 1, 2, 3
     )
     SELECT * FROM s ORDER BY OPPORTUNITY_AMOUNT DESC LIMIT 5
   `);
   for (const r of samples) {
-    console.log(`  ${r.OPPORTUNITY_ID}  amount=${r.OPPORTUNITY_AMOUNT} ${r.OPP_CCY}  close=${String(r.CLOSED_WON_DATE).substring(0,10)}  Σmr=${r.SUM_MR_EUR}  n_mr=${r.N_MR}  months=${r.DISTINCT_MONTHS}`);
+    console.log(`  ${r.OPPORTUNITY_ID}  amount=${r.OPPORTUNITY_AMOUNT}  close=${String(r.CLOSED_WON_DATE).substring(0,10)}  Σmr=${r.SUM_MR_EUR}  n_mr=${r.N_MR}  months=${r.DISTINCT_MONTHS}`);
   }
 
   // ── Probe: DIM_OPPORTUNITY SCD-2 fanout (multiple rows per OPPORTUNITY_ID?)
   console.log(`\n▸ DIM_OPPORTUNITY row uniqueness:`);
   const scd = await q(`
     SELECT COUNT(*) AS TOTAL_ROWS, COUNT(DISTINCT OPPORTUNITY_ID) AS DISTINCT_OPPS
-    FROM DL_PRODUCTION.FINANCE.DIM_OPPORTUNITY
+    FROM ${T_DIM_OPPORTUNITY}
     WHERE IS_OPPORTUNITY_WON = TRUE
       AND EXTRACT(YEAR FROM CLOSED_WON_DATE) = ${priorYr}
   `);
