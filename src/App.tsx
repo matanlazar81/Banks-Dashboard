@@ -2711,6 +2711,21 @@ useEffect(() => {
                     }
                   }
                   if (monthsWithData === 0) { setSalaryActualsByDept({}); setLastActualSalaryMonth(''); setSfSalaryBreakdownSnap([]); return; }
+                  // When the live source-year cashflow is loaded, scale the FCT_BUDGET Oct-Dec shape so
+                  // the flat monthly equals the source year's ACTUAL Oct-Dec salary (what the
+                  // FY(coYear-1) dashboard shows), not the raw budget — preserving per-dept proportions
+                  // for the salary modal. Without it the projection used budgeted salary (~€2.45M)
+                  // instead of the displayed run-rate (~€2.23M).
+                  if (hasLiveCf) {
+                    const tgtEur = (liveCf[9].salary + liveCf[10].salary + liveCf[11].salary) / 3;
+                    const tgtIls = (liveCf[9].salaryILS + liveCf[10].salaryILS + liveCf[11].salaryILS) / 3;
+                    const curEur = Object.values(perDept).reduce((s, v) => s + v.eur, 0) / monthsWithData;
+                    const curIls = Object.values(perDept).reduce((s, v) => s + v.ils, 0) / monthsWithData;
+                    const sE = curEur > 0 && tgtEur > 0 ? tgtEur / curEur : 1;
+                    const sI = curIls > 0 && tgtIls > 0 ? tgtIls / curIls : 1;
+                    for (const k of Object.keys(perKey)) { perKey[k].eur = Math.round(perKey[k].eur * sE); perKey[k].ils = Math.round(perKey[k].ils * sI); }
+                    for (const dd of Object.keys(perDept)) { perDept[dd].eur = Math.round(perDept[dd].eur * sE); perDept[dd].ils = Math.round(perDept[dd].ils * sI); }
+                  }
                   setSalaryFrom(perKey, perDept, monthsWithData, `Oct-Dec ${srcYearSal} run-rate`);
                 })
                 .catch(() => { setSalaryActualsByDept({}); setLastActualSalaryMonth(''); setSfSalaryBreakdownSnap([]); });
