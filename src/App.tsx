@@ -2558,15 +2558,16 @@ useEffect(() => {
             // Opening balance: live Dec closing > snapshot projected > snapshot bankBalance
             const openBal = hasLiveCf ? liveCf[11].closingBalance : (snap.projectedDecClosing || snap.bankBalance?.openingBalance || 0);
             const openBalILS = hasLiveCf ? liveCf[11].closingBalanceILS : (snap.bankBalance?.openingBalanceILS ?? Math.round(openBal * 3.68));
-            setBankData({ openingBalance: openBal, dailyBalances: [], currentBalance: openBal });
-            setBankAccounts([]);
             // Chain the projection year's January opening off the prior year's December closing.
-            // The engine (forecast-core.mjs:177-178) prefers yearStartBalance over book.openingBalance,
-            // and the live-path NS "as-of prior-Dec-31" fetch that normally sets it is skipped for
-            // snapshot years — leaving a STALE prior anchor (which is why FY2027 Jan reused the FY2026
-            // Jan opening instead of Dec 2026's close). Pin it to the chained close here (EUR + ILS)
-            // so Jan of the projection year = prior-year Dec closing.
-            setYearStartBalance({ eur: Math.round(openBal), ils: Math.round(openBalILS) });
+            // Carry it in book.openingBalance (EUR) + book.local.openingBalance (ILS): the engine reads
+            // those for a projection year (forecast-core.mjs). We must NOT set the shared
+            // yearStartBalance state here — that anchor belongs to the CURRENT year, and mutating it
+            // leaks a wrong opening into the live year when you switch back to it.
+            setBankData({
+              openingBalance: openBal, dailyBalances: [], currentBalance: openBal,
+              local: { openingBalance: Math.round(openBalILS), dailyBalances: [], currentBalance: Math.round(openBalILS) },
+            });
+            setBankAccounts([]);
             setVendorBills([]);
             setARForecast([]);
             // Salary/vendor history from snapshot (used to derive budget baseline)
