@@ -172,10 +172,18 @@ function computeCashflowForecast(inputs) {
   const derivedEurIls = (adjustedCurrent > 0 && adjustedCurrentLocal > 0) ? adjustedCurrentLocal / adjustedCurrent : liveFxRate;
   const eurIlsRatio = (forecastYear !== currentYear && (fxRateByYear[forecastYear] || 0) > 0) ? fxRateByYear[forecastYear] : derivedEurIls;
 
-  // Jan 1 opening: prefer NS Bank+CC actual at year-start (yearStartBalance). Falls back to
-  // book.openingBalance + cumulative pre-year reval if the NS as-of query hasn't returned yet.
-  let runningBalance = yearStartBalance?.eur ?? ((book?.openingBalance || 0) + (monthlyReval.preYear?.eur || 0));
-  let runningBalanceILS = yearStartBalance?.ils ?? ((bookLocal?.openingBalance || 0) + (monthlyReval.preYear?.ils || 0));
+  // Jan 1 opening. Current year: prefer the NS Bank+CC as-of anchor (yearStartBalance), falling
+  // back to book.openingBalance + cumulative pre-year reval if the as-of query hasn't returned.
+  // Projection years: yearStartBalance is the CURRENT year's anchor (shared React state) and must
+  // NOT be used — it would leak the current year's opening into the projection (and vice-versa).
+  // Chain off the prior year's Dec closing, carried in book/bookLocal.openingBalance by the loader.
+  const _isProjectionYear = forecastYear !== currentYear;
+  let runningBalance = _isProjectionYear
+    ? (book?.openingBalance || 0)
+    : (yearStartBalance?.eur ?? ((book?.openingBalance || 0) + (monthlyReval.preYear?.eur || 0)));
+  let runningBalanceILS = _isProjectionYear
+    ? (bookLocal?.openingBalance || 0)
+    : (yearStartBalance?.ils ?? ((bookLocal?.openingBalance || 0) + (monthlyReval.preYear?.ils || 0)));
   const rows = [];
   let prevMonthSalary = 0;
   let prevMonthUnpaid = 0; // unpaid from previous month rolls forward
