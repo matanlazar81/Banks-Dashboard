@@ -5,10 +5,12 @@ scenario assumptions) back into Snowflake so other teams can consume the same
 numbers the dashboard shows.
 
 - **Table:** `RAW.LANDING_FINANCE.BANK_DASHBOARD_BUDGET_TARGETS`
-- **Refresh:** rewritten in full every time someone clicks **Sync** on the dashboard.
-- **Method:** OVERWRITE — the whole table is replaced atomically with the current
-  snapshot (one `INSERT OVERWRITE`). It is a *current-state mirror*, not a history.
-  After a Sync, the table equals what the dashboard shows for the synced year(s).
+- **Refresh:** the **synced fiscal year's** rows are replaced every time someone clicks **Sync**
+  on the dashboard. Other years already in the table are left untouched — so syncing 2026 then
+  2027 leaves **both** present.
+- **Method:** per-(fiscal_year × subsidiary) REPLACE inside one transaction — delete that
+  year/subsidiary's rows, then insert the fresh batch. It is a *current-state mirror per year*,
+  not a history. After a Sync, each synced year equals what the dashboard shows for that year.
 - **Grain:** one row per **fiscal year × subsidiary × department × location ×
   account number × currency**, and each row carries the **12 monthly values** in
   `MONTHLY_SOURCE_ILS` / `MONTHLY_SOURCE_EUR`. So every
