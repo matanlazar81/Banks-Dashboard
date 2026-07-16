@@ -8053,13 +8053,18 @@ useEffect(() => {
                       // Other is signed per month (positive = outflow, negative = inflow). Sum keeps the sign so the
                       // year total reconciles: TotalInflows - Salary - Vendors - Other = Net.
                       const otherTotal = cashflowForecast.reduce((s, r) => s + (r.other || 0), 0);
-                      const outTotal = salTotal + venTotal + Math.max(0, otherTotal);
+                      // Total Outflow must equal the sum of the monthly Total Outflow column, which adds each
+                      // month's OUTFLOW-side Other independently (per-month Math.max(0, other) — see forecast-core
+                      // totalOutflow). Clamping the YEAR-summed otherTotal instead nets outflow months (e.g. Jan,
+                      // Jun) against inflow months and undercounts by the outflow-month Other: sum the per-month
+                      // clamp, not the clamped sum, so the footer ties to its own column (and to Budget Targets).
+                      const outTotal = salTotal + venTotal + cashflowForecast.reduce((s, r) => s + Math.max(0, r.other || 0), 0);
                       // ILS counterparts. salaryBase / vendorsBase have no ILS field on the row, so derive them
                       // by adding the EUR savings back at the live ILS rate (matches the netILS logic below).
                       const salTotalILS = cashflowForecast.reduce((s, r) => s + (hasSavings ? Math.round(r.salaryILS + (r.salaryBase - r.salary) * ilsRate) : r.salaryILS), 0);
                       const venTotalILS = cashflowForecast.reduce((s, r) => s + (hasSavings ? Math.round(r.vendorsILS + (r.vendorsBase - r.vendors) * ilsRate) : r.vendorsILS), 0);
                       const otherTotalILS = cashflowForecast.reduce((s, r) => s + (r.otherILS || 0), 0);
-                      const outTotalILS = salTotalILS + venTotalILS + Math.max(0, otherTotalILS);
+                      const outTotalILS = salTotalILS + venTotalILS + cashflowForecast.reduce((s, r) => s + Math.max(0, r.otherILS || 0), 0);
                       return (<>
                         <td className="py-2.5 px-0.5 text-right text-amber-700">-{fmtC(salTotal, salTotalILS)}</td>
                         <td className="py-2.5 px-0.5 text-right text-violet-700">-{fmtC(venTotal, venTotalILS)}</td>
