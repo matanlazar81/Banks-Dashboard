@@ -19,6 +19,21 @@
 // All endpoints reuse the existing `bankRole` middleware and `snowflakeService.getClient()`.
 // Tables are created on module load via `ensureBudgetTablesExist()` (idempotent).
 //
+// ── BI-3228 note: payroll-GL lookups OUTSIDE this block ──────────────────────
+//   Every Snowflake read inside THIS block is already scoped to the governed
+//   CONSUMER_HUB__FINANCE passthrough views (…__FINANCE suffix). But the live
+//   bankDashboardApi.ts ALSO contains four STANDALONE payroll-GL lookups that
+//   are NOT part of this pasted block:
+//       SELECT DISTINCT GL_ACCOUNT_NUMBER
+//       FROM DL_PRODUCTION.CONSUMER_HUB__FINANCE.DIM_GL_ACCOUNT__FINANCE
+//       WHERE IS_PAYROLL = TRUE
+//   (they resolve the payroll GL-account set used elsewhere in the file). They
+//   were migrated FINANCE.DIM_GL_ACCOUNT → CONSUMER_HUB__FINANCE.DIM_GL_ACCOUNT__FINANCE
+//   in the same cutover (prod commit ff6ce22). The first splice fix missed them
+//   because they live outside this block — so if you ever re-paste or re-derive
+//   the parent route file, migrate those four lookups too, or the finance-user
+//   revoke will make the Targets sync fail with "schema FINANCE does not exist".
+//
 // After pasting:
 //   1. npm run build      (tsc)
 //   2. restart the backend (pm2 / systemctl, however you run it)
