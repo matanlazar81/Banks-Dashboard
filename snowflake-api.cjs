@@ -1936,9 +1936,10 @@ function createSnowflakeWriteClient(env) {
     await exec(`ALTER TABLE ${fqtn} ADD COLUMN IF NOT EXISTS SOURCE_AMOUNT_EUR FLOAT`);
     await exec(`ALTER TABLE ${fqtn} ADD COLUMN IF NOT EXISTS MONTHLY_SOURCE_EUR STRING`);
 
-    // No rows → just clear the table (INSERT OVERWRITE needs at least one VALUES row).
+    // No rows → leave the table unchanged. We do a per-year REPLACE below, so an empty batch has
+    // no year to target; a whole-table TRUNCATE here would wipe every already-landed year.
     if (!rows.length) {
-      await exec(`TRUNCATE TABLE ${fqtn}`);
+      console.warn(`[Snowflake][write] no rows to land — ${fqtn} left unchanged`);
       return { table: fqtn, rowCount: 0 };
     }
 
@@ -1963,11 +1964,26 @@ function createSnowflakeWriteClient(env) {
       r.MONTHLY_SOURCE_EUR != null ? r.MONTHLY_SOURCE_EUR : null,
     ]);
 
-    // Single atomic statement: INSERT OVERWRITE replaces the whole table in one
-    // shot (array binding stages all rows and runs once), so no explicit
-    // transaction is needed and readers never see a half-written table.
-    await exec(`INSERT OVERWRITE INTO ${fqtn} (${cols.join(',')}) VALUES ${placeholders}`, binds);
-    return { table: fqtn, rowCount: binds.length };
+    // Per-(FISCAL_YEAR × SUBSIDIARY_ID) REPLACE — NOT a whole-table overwrite. Each Sync lands one
+    // year's rows; the old `INSERT OVERWRITE` replaced the ENTIRE table, so syncing 2027 wiped the
+    // already-landed 2026. Delete only the (year, subsidiary) scopes present in this batch, then
+    // insert them, inside one transaction so readers never see a half-written table and other
+    // years already in the table survive. (A full-table batch — e.g. the standalone script that
+    // lands all years at once — simply deletes+reinserts every year it carries: same net result.)
+    const scopeKeys = [...new Set(rows.map((r) => `${Number(r.FISCAL_YEAR)}|${Number(r.SUBSIDIARY_ID)}`))];
+    await exec('BEGIN');
+    try {
+      for (const key of scopeKeys) {
+        const [fy, sub] = key.split('|').map(Number);
+        await exec(`DELETE FROM ${fqtn} WHERE FISCAL_YEAR = ? AND SUBSIDIARY_ID = ?`, [fy, sub]);
+      }
+      await exec(`INSERT INTO ${fqtn} (${cols.join(',')}) VALUES ${placeholders}`, binds);
+      await exec('COMMIT');
+    } catch (e) {
+      try { await exec('ROLLBACK'); } catch (_) { /* best-effort */ }
+      throw e;
+    }
+    return { table: fqtn, rowCount: binds.length, scopes: scopeKeys };
   }
 
   function writeBudgetTargetsLanding(rows) {
