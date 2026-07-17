@@ -102,6 +102,9 @@ SNOWFLAKE_WAREHOUSE=finance_wh
 # NET_CASH_EMAIL_TO=matan.l@lsports.eu
 # NET_CASH_SMTP_URL=smtp://smtp-relay.gmail.com:587   # IP-allowlisted relay (no creds) OR smtps://user:app_pw@smtp.gmail.com:465
 # NET_CASH_EMAIL_FROM=finance-bot@lsports.eu          # optional; defaults to NET_CASH_EMAIL_TO
+
+# missed-run / crash alerting (dead-man's-switch — see §7):
+# NET_CASH_HEARTBEAT_URL=https://hc-ping.com/<uuid>   # external monitor ping; alerts if the daily run goes missing
 ```
 
 ## 3. Verify before scheduling
@@ -302,6 +305,43 @@ just **logs** the body (no send) and still writes Snowflake — so email is stri
 ```
 
 A disabled run also doubles as an email test: it sends the summary without writing a row.
+
+### Missed-run / crash alerting (dead-man's-switch)
+
+The Slack/email summary can only reach you once the job **runs and gets to the notify step**. Two
+failure modes escape it, and both produce total silence (which is exactly how the 2026-07-16 run
+went missing — no `row written`, no `FAILED`, no `DISABLED`):
+
+1. **The job crashes before `notify()`** — e.g. a NetSuite fetch or the pre-connect phase throws.
+2. **The job never runs at all** — cron didn't fire, the box was down, pm2 wasn't up.
+
+This job closes both:
+
+- **Crash → still alerts.** A top-level catch wraps the whole run, so **any** error (including one
+  thrown before Snowflake is reached) sends a `FAILED` summary to Slack/email. A broken run is
+  never silent.
+- **No-run → external monitor.** Set `NET_CASH_HEARTBEAT_URL` and the job pings it at
+  start/success/fail. An external monitor (Healthchecks.io-style) alerts when the **expected daily
+  ping doesn't arrive** — the one case an in-process notifier can never catch.
+
+```
+# .env
+NET_CASH_HEARTBEAT_URL=https://hc-ping.com/<your-check-uuid>
+```
+
+Ping convention (Healthchecks.io and compatible services):
+
+- `POST <url>/start` when the run begins (real runs only — not `--dry-run`/`--describe`/`--show`),
+- `POST <url>` on success (a **disabled** run counts as success — it ran fine, just paused),
+- `POST <url>/fail` on any failure.
+
+Set the monitor's **period to 1 day** and give it a **grace window** (e.g. 1-2h past 23:00
+Asia/Jerusalem). If no success ping lands inside period + grace, the monitor notifies you (its own
+email/Slack) that the nightly sync didn't complete. The URL is a secret-ish token — keep it in
+`.env`, never in code.
+
+> To pin down a past miss (like 07-16), check the server directly: `crontab -l`, `pm2 status`,
+> and `grep 2026-07-16 /var/log/net-cash.log`.
 
 ## Notes
 
