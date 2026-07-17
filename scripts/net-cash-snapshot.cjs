@@ -319,8 +319,11 @@ async function sendHeartbeat(status) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 5000);
   try {
-    await fetch(url, { method: 'POST', signal: ctrl.signal });
-    console.log(`[net-cash] heartbeat '${status}' sent`);
+    // fetch() resolves on ANY HTTP status — a 400 from a malformed ping URL would otherwise be
+    // logged as "sent" while the monitor never hears the ping. Verify the server accepted it.
+    const res = await fetch(url, { method: 'POST', signal: ctrl.signal });
+    if (res.ok) console.log(`[net-cash] heartbeat '${status}' sent`);
+    else console.warn(`[net-cash] heartbeat '${status}' REJECTED: HTTP ${res.status} — NET_CASH_HEARTBEAT_URL must be the monitor's ping URL (e.g. https://hc-ping.com/<uuid>), not a dashboard link or placeholder.`);
   } catch (e) {
     console.warn(`[net-cash] heartbeat '${status}' failed: ${e && e.message ? e.message : e}`);
   } finally {
