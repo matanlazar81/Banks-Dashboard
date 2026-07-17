@@ -60,6 +60,9 @@
  *   NET_CASH_SMTP_HELO       (optional) EHLO name for the Workspace relay (defaults to sender domain)
  *   SLACK_BOT_TOKEN          (optional) post the summary to Slack (reuses the backend's bot token)
  *   NET_CASH_SLACK_CHANNEL   (optional) Slack channel name or ID (default 'cash_flow_sync')
+ *   NET_CASH_HEARTBEAT_URL   (optional) dead-man's-switch ping URL (Healthchecks.io-style): base=success,
+ *                            /start at start, /fail on failure. Lets an external monitor alert when the
+ *                            job doesn't run at all or crashes before the summary. No-op if unset.
  *
  * APPEND-ONLY: every run inserts a NEW row. Nothing is overwritten, deduped, or deleted —
  * each update is preserved as its own row (a full history), keyed by the DATE sync timestamp.
@@ -68,6 +71,11 @@
  *   • After each run it sends a summary (the data pushed + the ACTIVE flag) to email and/or Slack,
  *     whichever is configured (email needs NET_CASH_EMAIL_TO + a transport; Slack needs
  *     SLACK_BOT_TOKEN). If neither is set it just logs the body.
+ *   • ANY failure — even one thrown before Snowflake is reached — sends a FAILED summary (a
+ *     top-level catch wraps the whole run), so a broken run is never silent.
+ *   • NET_CASH_HEARTBEAT_URL (optional) pings an external monitor at start/success/fail; the
+ *     monitor alerts if the expected daily ping never arrives — the one case the summary can't
+ *     cover (the job didn't run at all).
  *   • NET_CASH_SYNC_ENABLED=false stops the write entirely (and sends a DISABLED notice), so you
  *     can pause/resume the sync any time by editing .env — no code change, no restart.
  *   • The pushed FORECAST_EUR is the dashboard's Revenue:Pipeline + Salary:Actual year-end close.
@@ -296,6 +304,30 @@ async function sendSlack(payload) {
   }
 }
 
+// Heartbeat / dead-man's-switch (optional, env-driven). A summary can only tell you the job
+// FAILED once it actually runs and reaches notify(); it can NEVER tell you the job didn't run
+// at all (cron didn't fire, box down) or crashed before notify(). An external monitor closes
+// that gap: the job pings NET_CASH_HEARTBEAT_URL and the monitor alerts if the expected daily
+// ping doesn't arrive. Healthchecks.io-style convention: base URL = success, <url>/start at
+// start, <url>/fail on failure. Best-effort — never throws, never blocks the sync.
+async function sendHeartbeat(status) {
+  const base = process.env.NET_CASH_HEARTBEAT_URL;
+  if (!base) return; // heartbeat not configured — skip
+  const url = status === 'start' ? `${base.replace(/\/$/, '')}/start`
+    : status === 'fail' ? `${base.replace(/\/$/, '')}/fail`
+    : base; // 'success' → base URL
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 5000);
+  try {
+    await fetch(url, { method: 'POST', signal: ctrl.signal });
+    console.log(`[net-cash] heartbeat '${status}' sent`);
+  } catch (e) {
+    console.warn(`[net-cash] heartbeat '${status}' failed: ${e && e.message ? e.message : e}`);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // Fan the run summary out to whichever channels are configured (email + Slack); one failing
 // never blocks the other, and never aborts the sync itself.
 async function notify(payload) {
@@ -451,6 +483,10 @@ async function main() {
   let asOf = prevMonthEnd(dateOnly);                // bank balance as-of = previous month-end
   let asOfNote = '';                                // set when the reval-closed guard falls back
 
+  // Heartbeat 'start' — only for real runs (not dry-run/describe/show). Lets the external
+  // monitor measure run duration and detect a job that starts but never finishes.
+  if (!args.dryRun && !args.describe && !args.show) await sendHeartbeat('start');
+
   // --refresh: recompute the forecast server-side (no browser) BEFORE reading the file,
   // so the pushed FORECAST_EUR is fresh — no one's browser needed. Skipped for describe/show.
   if (args.refresh && !args.describe && !args.show) {
@@ -541,6 +577,7 @@ async function main() {
     reportRow();
     console.log('[net-cash] NET_CASH_SYNC_ENABLED=false → sync DISABLED, not writing to Snowflake.');
     await notify({ enabled: false, wrote: false, dryRun: false, syncTs, totalBankEur, forecastEur, modelClosingEur, modelClosingMonth, bankAsOf: asOf, asOfNote, currentBankEur: currentBank.eur, currentBankReval: currentBank.revalEur, currentBankRevalOk: currentBank.revalOk, currentBankDate: dateOnly, dividendExcludedEur, currentBankDividendExcl, tableName: TABLE });
+    await sendHeartbeat('success'); // a paused run ran fine — keep the monitor from false-alarming
     process.exit(0);
   }
 
@@ -621,15 +658,37 @@ async function main() {
     await exec(conn, adaptedSql, binds);
     console.log(`[net-cash] ✓ Appended 1 row for ${syncTs} (columns: ${used.map((c) => c.name).join(', ')}).`);
     await notify({ enabled: true, wrote: true, dryRun: false, syncTs, totalBankEur, forecastEur, modelClosingEur, modelClosingMonth, bankAsOf: asOf, asOfNote, currentBankEur: currentBank.eur, currentBankReval: currentBank.revalEur, currentBankRevalOk: currentBank.revalOk, currentBankDate: dateOnly, dividendExcludedEur, currentBankDividendExcl, tableName: TABLE });
+    await sendHeartbeat('success');
     process.exit(0);
   } catch (e) {
     const msg = e && e.message ? e.message : String(e);
     console.error(`[net-cash] ERROR: ${msg}`);
     try { await notify({ enabled: syncEnabled, wrote: false, dryRun: false, syncTs, totalBankEur, forecastEur, modelClosingEur, modelClosingMonth, bankAsOf: asOf, asOfNote, currentBankEur: currentBank.eur, currentBankReval: currentBank.revalEur, currentBankRevalOk: currentBank.revalOk, currentBankDate: dateOnly, dividendExcludedEur, currentBankDividendExcl, tableName: TABLE, error: msg }); } catch { /* ignore */ }
+    // 'fail' ping for real runs only — a failing manual --describe/--show must not mark the
+    // nightly monitor down (start/success are guarded the same way).
+    if (!args.dryRun && !args.describe && !args.show) { try { await sendHeartbeat('fail'); } catch { /* ignore */ } }
     process.exit(1);
   } finally {
     if (conn) { try { conn.destroy(() => {}); } catch { /* ignore */ } }
   }
 }
 
-main();
+// Top-level guard: any error thrown BEFORE the main try/catch (the pre-connect NetSuite /
+// dividend / current-bank phase) or any other unhandled rejection would otherwise crash the
+// process silently — no Slack, no email, no failure notice. Catch it here so a broken run
+// ALWAYS sends a FAILED summary (and fires the 'fail' heartbeat) instead of dying quietly.
+// Success/disabled/dry-run paths call process.exit() first, so this never double-notifies.
+main().catch(async (e) => {
+  const msg = e && e.message ? e.message : String(e);
+  console.error(`[net-cash] FATAL: ${msg}`);
+  const now = israelNowParts();
+  const enabled = String(process.env.NET_CASH_SYNC_ENABLED ?? 'true').trim().toLowerCase() !== 'false';
+  try { await notify({ enabled, wrote: false, dryRun: false, syncTs: `${now.date} ${now.time}`, tableName: TABLE, error: msg }); } catch { /* ignore */ }
+  // args isn't in scope here — re-check argv so a crashing manual --dry-run/--describe/--show
+  // doesn't 'fail'-ping the nightly monitor.
+  const argv = process.argv.slice(2);
+  if (!argv.includes('--dry-run') && !argv.includes('--describe') && !argv.includes('--show')) {
+    try { await sendHeartbeat('fail'); } catch { /* ignore */ }
+  }
+  process.exit(1);
+});
