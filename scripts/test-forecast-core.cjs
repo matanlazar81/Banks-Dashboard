@@ -383,6 +383,13 @@ function runIlsAnchorProjection() {
   const c = computeCashflowForecast(c1);
   if (Math.round(c[5].salary) === 2_200_000) ok('ils=0 → falls back to the 2,200,000 EUR carry'); else fail(`fallback salary ${Math.round(c[5].salary)} != 2,200,000`);
 
+  // 3b. NO explicit FY rate set (left empty / reset) → plain EUR carry, even though ILS exists
+  //     and a live/derived market rate is available. Never ILS ÷ market rate.
+  const e1 = projInputs();
+  e1.fxRateByYear = {}; // user never set (or reset) the FY2027 rate
+  const e = computeCashflowForecast(e1);
+  if (Math.round(e[5].salary) === 2_200_000) ok('no FY rate set → salary stays the 2,200,000 EUR carry (not ILS ÷ market rate)'); else fail(`no-rate salary ${Math.round(e[5].salary)} != 2,200,000`);
+
   // 4. sfSalaryBudget branch (consolidated bake) anchors on ILS too
   const d1 = projInputs();
   d1.salaryProjectionMode = 'budget'; d1.lastActualSalaryMonth = ''; d1.salaryActualsByDept = {};
