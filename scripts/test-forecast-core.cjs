@@ -334,6 +334,63 @@ function runDividendExclusion() {
   if (Math.round(noop[11].closingBalance) === Math.round(withDiv[11].closingBalance)) ok('null dividendExclusions is a no-op'); else fail('null dividendExclusions changed output');
 }
 
+// ── Mode 5: ILS-ANCHORED PROJECTION SALARY ──
+// A projection year's salary is payroll-ILS anchored: EUR = source-year ILS average ÷ the
+// user-set FY rate (fxRateByYear[year]). Moving the rate moves the EUR line while the ILS
+// line stays fixed; entries with no ILS anchor keep the EUR carry (non-ILS subsidiaries).
+// The current year is untouched (anchor applies only when forecastYear !== currentYear).
+function runIlsAnchorProjection() {
+  console.log('\nILS-ANCHOR: projection-year salary = ILS avg ÷ FY rate');
+  const projInputs = () => {
+    const base = buildSyntheticInputs();
+    base.activeYear = 2027;                       // projection year (currentYear stays 2026)
+    base.fxRateByYear = { 2027: 3.5 };
+    // Isolate salary: clear feeds/adjustments that would layer deltas on top.
+    base.salaryData = []; base.sfActualsSplit = {};
+    base.salaryAdjPctByMonth = {}; base.salaryDeptAdj = {}; base.sfSalaryOverrides = [];
+    base.monthlyHCImpact = {}; base.salaryManualILS = {};
+    base.nsBankClassified = { byMonth: {} };
+    base.monthlyReval = { preYear: { eur: 0, ils: 0 }, byMonth: {} };
+    base.nsBudget = { byMonth: {} };
+    base.sfBudget = { totalByMonth: {}, byMonth: {} };
+    base.sfSalaryBudget = {};
+    // Projection bake shape: synthetic AVG dept basis carrying BOTH eur and ils.
+    // ILS total 8,400,000 → ÷3.5 = 2,400,000 ≠ the 2,200,000 EUR carry, so the
+    // assertions can tell which anchor won.
+    base.salaryProjectionMode = 'lastActual';
+    base.lastActualSalaryMonth = '2026-AVG';
+    base.salaryActualsByDept = { '2026-AVG': {
+      Sales: { eur: 1_200_000, ils: 4_550_000 },
+      'R&D': { eur: 1_000_000, ils: 3_850_000 },
+    } };
+    return base;
+  };
+
+  // 1. lastActual carry anchors on ILS ÷ rate
+  const a = computeCashflowForecast(projInputs());
+  if (Math.round(a[5].salary) === 2_400_000) ok('salary = ILS 8.4M ÷ 3.5 = 2,400,000 (not the 2.2M EUR carry)'); else fail(`salary ${Math.round(a[5].salary)} != 2,400,000`);
+  if (Math.round(a[5].salaryILS) === 8_400_000) ok('salaryILS stays the 8,400,000 anchor'); else fail(`salaryILS ${Math.round(a[5].salaryILS)} != 8,400,000`);
+
+  // 2. changing the FY rate moves EUR, not ILS
+  const b1 = projInputs(); b1.fxRateByYear = { 2027: 4.2 };
+  const b = computeCashflowForecast(b1);
+  if (Math.round(b[5].salary) === 2_000_000) ok('rate 3.5→4.2: salary EUR drops to 2,000,000'); else fail(`salary at 4.2 ${Math.round(b[5].salary)} != 2,000,000`);
+  if (Math.round(b[5].salaryILS) === 8_400_000) ok('rate 3.5→4.2: salaryILS unchanged (ILS is the anchor)'); else fail(`salaryILS at 4.2 ${Math.round(b[5].salaryILS)} != 8,400,000`);
+
+  // 3. no ILS anchor → EUR carry preserved (non-ILS subsidiaries)
+  const c1 = projInputs();
+  c1.salaryActualsByDept = { '2026-AVG': { Sales: { eur: 1_200_000, ils: 0 }, 'R&D': { eur: 1_000_000, ils: 0 } } };
+  const c = computeCashflowForecast(c1);
+  if (Math.round(c[5].salary) === 2_200_000) ok('ils=0 → falls back to the 2,200,000 EUR carry'); else fail(`fallback salary ${Math.round(c[5].salary)} != 2,200,000`);
+
+  // 4. sfSalaryBudget branch (consolidated bake) anchors on ILS too
+  const d1 = projInputs();
+  d1.salaryProjectionMode = 'budget'; d1.lastActualSalaryMonth = ''; d1.salaryActualsByDept = {};
+  d1.sfSalaryBudget = Object.fromEntries(Array.from({ length: 12 }, (_, m) => [`2027-${String(m + 1).padStart(2, '0')}`, { eur: 2_300_000, ils: 8_750_000 }]));
+  const d = computeCashflowForecast(d1);
+  if (Math.round(d[5].salary) === 2_500_000) ok('budget path: salary = ILS 8.75M ÷ 3.5 = 2,500,000 (not the 2.3M EUR)'); else fail(`budget-path salary ${Math.round(d[5].salary)} != 2,500,000`);
+}
+
 // ── main ──────────────────────────────────────────────────────────────────
 async function main() {
   const coreUrl = pathToFileURL(path.join(__dirname, '..', 'src', 'forecast', 'forecast-core.mjs')).href;
@@ -343,6 +400,7 @@ async function main() {
   runSmoke();
   runBankReconcile();
   runDividendExclusion();
+  runIlsAnchorProjection();
   console.log('');
   if (failures === 0) { console.log('✅ PASS — all checks green.'); process.exit(0); }
   else { console.error(`❌ FAIL — ${failures} check(s) failed.`); process.exit(1); }
