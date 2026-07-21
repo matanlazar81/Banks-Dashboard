@@ -178,6 +178,13 @@ function computeCashflowForecast(inputs) {
   // NOT be used — it would leak the current year's opening into the projection (and vice-versa).
   // Chain off the prior year's Dec closing, carried in book/bookLocal.openingBalance by the loader.
   const _isProjectionYear = forecastYear !== currentYear;
+  // Projection-year salary is ILS-anchored: payroll is paid in ILS, so the planning figure is
+  // the source-year ILS average divided by the user-set FY rate (fxRateByYear override in
+  // eurIlsRatio), NOT the carried EUR (which embeds the source year's historical rates).
+  // Returns null when there is no ILS anchor (e.g. non-ILS subsidiaries) so callers fall back
+  // to the EUR-carried value unchanged.
+  const salaryEurFromIls = (ils) => (_isProjectionYear && eurIlsRatio > 0 && (ils || 0) > 0)
+    ? Math.round(ils / eurIlsRatio) : null;
   let runningBalance = _isProjectionYear
     ? (book?.openingBalance || 0)
     : (yearStartBalance?.eur ?? ((book?.openingBalance || 0) + (monthlyReval.preYear?.eur || 0)));
@@ -252,7 +259,7 @@ function computeCashflowForecast(inputs) {
     const deptBasis = useLastActual ? salaryActualsByDept[lastActualSalaryMonth] : null;
     if (Object.keys(effectiveDeptAdj).length > 0) {
       const deptSource = deptBasis
-        ? Object.fromEntries(Object.entries(deptBasis).map(([d, v]) => [d, v.eur]))
+        ? Object.fromEntries(Object.entries(deptBasis).map(([d, v]) => [d, salaryEurFromIls(v && v.ils) ?? ((v && v.eur) || 0)]))
         : salaryDeptBudgets[mKey];
       if (deptSource) {
         for (const [dept, pct] of Object.entries(effectiveDeptAdj)) {
@@ -280,7 +287,9 @@ function computeCashflowForecast(inputs) {
     } else if (useLastActual && !isPastMonth) {
       // "Last Actual" mode: project last actual month's recurring salary per dept
       // (applies to current month too if no actual data yet)
-      const lastActualBase = Object.values(salaryActualsByDept[lastActualSalaryMonth]).reduce((s, v) => s + v.eur, 0);
+      const _laVals = Object.values(salaryActualsByDept[lastActualSalaryMonth]);
+      const lastActualBase = salaryEurFromIls(_laVals.reduce((s, v) => s + ((v && v.ils) || 0), 0))
+        ?? _laVals.reduce((s, v) => s + v.eur, 0);
       // GSheets salary overrides — applied as fixed delta (manual % does NOT scale them)
       const monthOvrs = sfSalaryOverrides.filter(o => o.mKey === mKey);
       let overrideDelta = 0;
@@ -294,9 +303,10 @@ function computeCashflowForecast(inputs) {
       salaryBase = Math.round(lastActualBase + overrideDelta + hcImpactEUR);
       // Manual % applies only to the base; override + HC + dept-adj layer on top
       salary = Math.round(lastActualBase * monthMultiplier) + deptAdjDelta + overrideDelta + hcImpactEUR;
-    } else if (sfSalaryBudget[mKey]?.eur > 0) {
-      salaryBase = Math.round(sfSalaryBudget[mKey].eur);
-      salary = Math.round(sfSalaryBudget[mKey].eur * monthMultiplier) + deptAdjDelta;
+    } else if (sfSalaryBudget[mKey]?.eur > 0 || salaryEurFromIls(sfSalaryBudget[mKey]?.ils) != null) {
+      const _budEur = salaryEurFromIls(sfSalaryBudget[mKey]?.ils) ?? Math.round(sfSalaryBudget[mKey].eur);
+      salaryBase = _budEur;
+      salary = Math.round(_budEur * monthMultiplier) + deptAdjDelta;
     } else if (nsBudget.byMonth[mKey]?.salary > 0) {
       salaryBase = Math.round(nsBudget.byMonth[mKey].salary);
       salary = Math.round(nsBudget.byMonth[mKey].salary * monthMultiplier);

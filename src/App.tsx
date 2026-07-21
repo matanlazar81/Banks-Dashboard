@@ -3339,10 +3339,14 @@ useEffect(() => {
       let liveOpenBal: number | undefined;
       if (hasLive) {
         liveOpenBal = liveCf[11].closingBalance;
-        // Salary baseline: avg of last 3 months (Oct, Nov, Dec)
+        // Salary baseline: avg of last 3 months (Oct, Nov, Dec). Carry the ILS average too —
+        // payroll is ILS-denominated, and the engine anchors a projection year's salary on
+        // ILS ÷ the user-set FY rate (salaryEurFromIls in forecast-core), so the EUR here is
+        // only the fallback for months without an ILS anchor.
         const avgSal = Math.round((liveCf[9].salary + liveCf[10].salary + liveCf[11].salary) / 3);
+        const avgSalIls = Math.round(((liveCf[9].salaryILS || 0) + (liveCf[10].salaryILS || 0) + (liveCf[11].salaryILS || 0)) / 3);
         const liveSalBud: Record<string, { eur: number; ils: number }> = {};
-        for (let m = 1; m <= 12; m++) liveSalBud[`${activeYear}-${String(m).padStart(2, '0')}`] = { eur: avgSal, ils: 0 };
+        for (let m = 1; m <= 12; m++) liveSalBud[`${activeYear}-${String(m).padStart(2, '0')}`] = { eur: avgSal, ils: avgSalIls };
         sfSalBud = liveSalBud;
         // Vendor baseline: mirror the source year month-for-month (each projection month =
         // the same month of the source-year cashflow), matching the single-company view.
