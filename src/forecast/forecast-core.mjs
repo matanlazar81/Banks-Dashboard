@@ -178,13 +178,16 @@ function computeCashflowForecast(inputs) {
   // NOT be used — it would leak the current year's opening into the projection (and vice-versa).
   // Chain off the prior year's Dec closing, carried in book/bookLocal.openingBalance by the loader.
   const _isProjectionYear = forecastYear !== currentYear;
-  // Projection-year salary is ILS-anchored: payroll is paid in ILS, so the planning figure is
-  // the source-year ILS average divided by the user-set FY rate (fxRateByYear override in
-  // eurIlsRatio), NOT the carried EUR (which embeds the source year's historical rates).
-  // Returns null when there is no ILS anchor (e.g. non-ILS subsidiaries) so callers fall back
-  // to the EUR-carried value unchanged.
-  const salaryEurFromIls = (ils) => (_isProjectionYear && eurIlsRatio > 0 && (ils || 0) > 0)
-    ? Math.round(ils / eurIlsRatio) : null;
+  // Projection-year salary is ILS-anchored ONLY when the user has explicitly set a FY planning
+  // rate (fxRateByYear[year], the 💱 panel): payroll is paid in ILS, so the planning figure is
+  // the source-year ILS average divided by that rate — NOT the carried EUR (which embeds the
+  // source year's historical rates). With NO explicit rate set (left empty / reset), the salary
+  // stays the plain source-year EUR average — never ILS ÷ the live market rate. Returns null
+  // when the anchor doesn't apply (no explicit rate, or no ILS amount — e.g. non-ILS
+  // subsidiaries) so callers fall back to the EUR-carried value unchanged.
+  const _fyExplicitRate = _isProjectionYear ? (fxRateByYear[forecastYear] || 0) : 0;
+  const salaryEurFromIls = (ils) => (_fyExplicitRate > 0 && (ils || 0) > 0)
+    ? Math.round(ils / _fyExplicitRate) : null;
   let runningBalance = _isProjectionYear
     ? (book?.openingBalance || 0)
     : (yearStartBalance?.eur ?? ((book?.openingBalance || 0) + (monthlyReval.preYear?.eur || 0)));
