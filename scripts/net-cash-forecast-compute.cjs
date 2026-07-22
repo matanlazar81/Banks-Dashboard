@@ -168,21 +168,31 @@ function loadScenarioData(scenarioName) {
   return { data: {}, source: 'NONE — base plan, no adjustments (forecast will be too high)' };
 }
 
-// Mirror applyScenarioData (App.tsx:2047-2114): maps reset to {} when omitted; the
+// Mirror applyScenarioData (App.tsx): maps reset to {} when omitted; the
 // toggles + currencyDefensePct + fxRateByYear fall back to the UI defaults. We then
 // FORCE pipeline + lastActual (the persist basis the dashboard writes from).
-function scenarioKnobs(sd) {
+//
+// The month-INDEX-keyed maps (salary %, collections %, pipeline %, currency-defense %)
+// are read from the YEAR-SCOPED bucket (sd.adjustmentsByYear[year]) so knobs authored on
+// a projection-year view (e.g. "December ×150%" set while planning FY2027) can never leak
+// into this compute's (current-year) figures. Legacy scenarios without buckets keep the
+// old behavior: flat maps apply to the compute year.
+function scenarioKnobs(sd, year) {
+  const aby = sd.adjustmentsByYear;
+  const bucket = aby ? (aby[String(year)] || aby[year] || {}) : null;
+  const idx = (k) => (bucket ? bucket[k] : sd[k]) || {};
+  console.log(`[compute] adjustment source: ${bucket ? `year-scoped bucket for ${year}` : 'legacy flat maps (applied to compute year)'}`);
   return {
-    salaryAdjPctByMonth: sd.salaryAdjPctByMonth || {},
-    collPctByMonth: sd.collPctByMonth || {},
+    salaryAdjPctByMonth: idx('salaryAdjPctByMonth'),
+    collPctByMonth: idx('collPctByMonth'),
     salaryDeptAdj: sd.salaryDeptAdj || {},
     vendorCatAdj: sd.vendorCatAdj || {},
     vendorDetailAdj: sd.vendorDetailAdj || {},
     pipelineMinProb: sd.pipelineMinProb ?? 100,
     currencyDefensePct: sd.currencyDefensePct !== undefined ? sd.currencyDefensePct : 30,
-    currencyDefensePctByMonth: sd.currencyDefensePctByMonth || {},
+    currencyDefensePctByMonth: idx('currencyDefensePctByMonth'),
     salaryManualILS: sd.salaryManualILS || {},
-    pipelineAdjPctByMonth: sd.pipelineAdjPctByMonth || {},
+    pipelineAdjPctByMonth: idx('pipelineAdjPctByMonth'),
     churnOverride: sd.churnOverride || {},
     fxRateByYear: sd.fxRateByYear || {},
     // Forced basis (persist gate): the nightly figure is always Pipeline + Last-Actual.
@@ -432,7 +442,7 @@ async function main() {
   console.log(`[compute] Gathered inputs in ${((Date.now() - t0) / 1000).toFixed(1)}s (lastActualSalaryMonth=${meta.lastActualSalaryMonth || 'none'}, salary overrides=${meta.overridesApplied}).`);
 
   // Merge scenario knobs + fixed run params. Forces Pipeline + Last-Actual.
-  Object.assign(inputs, scenarioKnobs(scenarioData), {
+  Object.assign(inputs, scenarioKnobs(scenarioData, year), {
     activeYear: year,
     currentYear,
     now: new Date(),

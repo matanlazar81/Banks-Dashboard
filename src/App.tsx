@@ -83,6 +83,16 @@ type ScenarioData = {
   churnOverride?: Record<string, number>;          // per-month manual churn
   year?: number;                                   // fiscal year the author was viewing
   fxRateByYear?: Record<number, number>;           // per-year EUR→ILS override (EUR base)
+  // Month-INDEX-keyed (0-11) adjustment maps, scoped per fiscal year. Without this scoping a
+  // "December ×150%" set on the FY2027 view leaked into the nightly FY2026 compute (the flat
+  // maps above carry no year). The flat maps are kept as a legacy mirror of the CURRENT year's
+  // bucket so older readers keep applying the correct current-year values.
+  adjustmentsByYear?: Record<string, {
+    salaryAdjPctByMonth?: Record<number, number>;
+    collPctByMonth?: Record<number, number>;
+    pipelineAdjPctByMonth?: Record<number, number>;
+    currencyDefensePctByMonth?: Record<number, number>;
+  }>;
 };
 type Scenario = {
   id: string;
@@ -1430,10 +1440,17 @@ export default function App() {
     try { const v = parseFloat(localStorage.getItem('banks-currency-defense-pct') || ''); return isFinite(v) ? v : 30; } catch { return 30; }
   });
   useEffect(() => { try { localStorage.setItem('banks-currency-defense-pct', String(currencyDefensePct)); } catch {} }, [currencyDefensePct]);
-  const [currencyDefensePctByMonth, setCurrencyDefensePctByMonth] = useState<Record<number, number>>(() => { // per-month % override (month index 0-11)
-    try { const s = localStorage.getItem('banks-currency-defense-pct-by-month'); return s ? JSON.parse(s) : {}; } catch { return {}; }
+  const [currencyDefensePctByMonth, setCurrencyDefensePctByMonth] = useState<Record<number, number>>(() => { // per-month % override (month index 0-11), per-year store
+    try {
+      const initYear = (() => { try { const y = localStorage.getItem('banks-active-years'); return y ? JSON.parse(y) : {}; } catch { return {}; } })();
+      const yr = initYear.lsports || new Date().getFullYear();
+      const yearSaved = localStorage.getItem(`banks-currency-defense-pct-by-month-${yr}`);
+      if (yearSaved) return JSON.parse(yearSaved);
+      if (yr !== new Date().getFullYear()) return {};
+      const s = localStorage.getItem('banks-currency-defense-pct-by-month'); // legacy unscoped key = current year
+      return s ? JSON.parse(s) : {};
+    } catch { return {}; }
   });
-  useEffect(() => { try { localStorage.setItem('banks-currency-defense-pct-by-month', JSON.stringify(currencyDefensePctByMonth)); } catch {} }, [currencyDefensePctByMonth]);
   // Per-year EUR→ILS rate override (EUR is the base; ILS is derived as EUR × rate). Lets the
   // user set the planning rate for a projection year. Empty → use the bank-derived rate.
   const [fxRateByYear, setFxRateByYear] = useState<Record<number, number>>(() => {
@@ -1448,7 +1465,14 @@ export default function App() {
   });
   // Live market EUR→ILS rate fetched on demand from the ECB (Frankfurter API, CORS-enabled).
   const [fxMarket, setFxMarket] = useState<{ rate?: number; date?: string; error?: string; loading?: boolean } | null>(null);
-  const [pipelineAdjPctByMonth, setPipelineAdjPctByMonth] = useState<Record<number, number>>({}); // per-month pipeline % adjustment
+  const [pipelineAdjPctByMonth, setPipelineAdjPctByMonth] = useState<Record<number, number>>(() => { // per-month pipeline % adjustment, per-year store
+    try {
+      const initYear = (() => { try { const y = localStorage.getItem('banks-active-years'); return y ? JSON.parse(y) : {}; } catch { return {}; } })();
+      const yr = initYear.lsports || new Date().getFullYear();
+      const s = localStorage.getItem(`banks-pipeline-adj-${yr}`);
+      return s ? JSON.parse(s) : {};
+    } catch { return {}; }
+  });
   const [expandedKpi, setExpandedKpi] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [lastRefreshed, setLastRefreshed] = useState('');
@@ -1492,7 +1516,11 @@ export default function App() {
     } catch { return {}; }
   });
   useEffect(() => { try { localStorage.setItem(`banks-coll-pct-${activeYearRef.current}`, JSON.stringify(collPctByMonth)); } catch {} }, [collPctByMonth]);
-  // Load year-specific adjustments when switching years — inherit from current year if none saved
+  useEffect(() => { try { localStorage.setItem(`banks-pipeline-adj-${activeYearRef.current}`, JSON.stringify(pipelineAdjPctByMonth)); } catch {} }, [pipelineAdjPctByMonth]);
+  useEffect(() => { try { localStorage.setItem(`banks-currency-defense-pct-by-month-${activeYearRef.current}`, JSON.stringify(currencyDefensePctByMonth)); } catch {} }, [currencyDefensePctByMonth]);
+  // Load year-specific adjustments when switching years — inherit from current year if none saved.
+  // ALL month-index-keyed maps swap here; a projection year's knobs never share state with the
+  // current year's (the "December ×150% set on FY2027 leaked into the FY2026 nightly" bug).
   useEffect(() => {
     try {
       const salKey = `banks-salary-adj-${activeYear}`;
@@ -1514,9 +1542,20 @@ export default function App() {
         const srcCol = localStorage.getItem(`banks-coll-pct-${currentYear}`) || localStorage.getItem('banks-coll-pct');
         setCollPctByMonth(srcCol ? JSON.parse(srcCol) : {});
       }
+      const pipSaved = localStorage.getItem(`banks-pipeline-adj-${activeYear}`);
+      setPipelineAdjPctByMonth(pipSaved ? JSON.parse(pipSaved) : {});
+      const cdSaved = localStorage.getItem(`banks-currency-defense-pct-by-month-${activeYear}`);
+      const cdParsed = cdSaved ? JSON.parse(cdSaved) : null;
+      if (cdParsed && Object.keys(cdParsed).length > 0) { setCurrencyDefensePctByMonth(cdParsed); }
+      else {
+        const srcCd = localStorage.getItem(`banks-currency-defense-pct-by-month-${currentYear}`) || localStorage.getItem('banks-currency-defense-pct-by-month');
+        setCurrencyDefensePctByMonth(srcCd ? JSON.parse(srcCd) : {});
+      }
     } catch {
       setSalaryAdjPctByMonth({});
       setCollPctByMonth({});
+      setPipelineAdjPctByMonth({});
+      setCurrencyDefensePctByMonth({});
     }
   }, [activeYear]);
   const getCollPct = (i: number) => collPctByMonth[i] ?? 100; // default 100%
@@ -2085,44 +2124,94 @@ useEffect(() => {
     for (const k of Object.keys(m || {})) { const v = m[k]; if (typeof v === 'number' && Number.isFinite(v)) out[k] = v; }
     return out;
   };
-  const getCurrentScenarioData = useCallback((): ScenarioData => ({
-    salaryAdjPctByMonth: cleanNumMap(salaryAdjPctByMonth),
-    collPctByMonth: cleanNumMap(collPctByMonth),
-    salaryDeptAdj: JSON.parse(JSON.stringify(salaryDeptAdj)),
-    vendorCatAdj: JSON.parse(JSON.stringify(vendorCatAdj)),
-    vendorDetailAdj: JSON.parse(JSON.stringify(vendorDetailAdj)),
-    leverOverrides: JSON.parse(JSON.stringify(leverOverrides)),
-    headcountAdj: JSON.parse(JSON.stringify(headcountAdj)),
-    pipelineMinProb,
-    currencyDefensePct,
-    currencyDefensePctByMonth: cleanNumMap(currencyDefensePctByMonth),
-    salaryProjectionMode,
-    revenueMethodology,
-    salaryManualILS: cleanNumMap(salaryManualILS),
-    pipelineAdjPctByMonth: cleanNumMap(pipelineAdjPctByMonth),
-    churnOverride: { ...churnOverride },
-    year: activeYear,
-    fxRateByYear: { ...fxRateByYear },
-  }), [salaryAdjPctByMonth, collPctByMonth, salaryDeptAdj, vendorCatAdj, vendorDetailAdj, leverOverrides, headcountAdj, pipelineMinProb, currencyDefensePct, currencyDefensePctByMonth, salaryProjectionMode, revenueMethodology, salaryManualILS, pipelineAdjPctByMonth, churnOverride, activeYear, fxRateByYear]);
+  const getCurrentScenarioData = useCallback((): ScenarioData => {
+    // Per-year buckets for the month-index-keyed maps: the ACTIVE year's values come from live
+    // state; other years' from their per-year localStorage stores (kept in sync by the year-
+    // switch effect). The flat legacy fields mirror the CURRENT year's bucket, so older readers
+    // (and the nightly compute on pre-bucket scenarios) keep applying correct current-year values.
+    const lsMap = (k: string): Record<number, number> => { try { const s = localStorage.getItem(k); return s ? JSON.parse(s) : {}; } catch { return {}; } };
+    const yearBucket = (yr: number) => yr === activeYear
+      ? { salaryAdjPctByMonth: cleanNumMap(salaryAdjPctByMonth), collPctByMonth: cleanNumMap(collPctByMonth), pipelineAdjPctByMonth: cleanNumMap(pipelineAdjPctByMonth), currencyDefensePctByMonth: cleanNumMap(currencyDefensePctByMonth) }
+      : { salaryAdjPctByMonth: cleanNumMap(lsMap(`banks-salary-adj-${yr}`)), collPctByMonth: cleanNumMap(lsMap(`banks-coll-pct-${yr}`)), pipelineAdjPctByMonth: cleanNumMap(lsMap(`banks-pipeline-adj-${yr}`)), currencyDefensePctByMonth: cleanNumMap(lsMap(`banks-currency-defense-pct-by-month-${yr}`)) };
+    const adjustmentsByYear: NonNullable<ScenarioData['adjustmentsByYear']> = {};
+    for (let yr = Math.min(currentYear, activeYear); yr <= Math.max(currentYear + 3, activeYear); yr++) {
+      const b = yearBucket(yr);
+      if (Object.values(b).some(m => Object.keys(m || {}).length > 0)) adjustmentsByYear[String(yr)] = b;
+    }
+    const cur = adjustmentsByYear[String(currentYear)] || {};
+    return {
+      salaryAdjPctByMonth: cur.salaryAdjPctByMonth || {},
+      collPctByMonth: cur.collPctByMonth || {},
+      salaryDeptAdj: JSON.parse(JSON.stringify(salaryDeptAdj)),
+      vendorCatAdj: JSON.parse(JSON.stringify(vendorCatAdj)),
+      vendorDetailAdj: JSON.parse(JSON.stringify(vendorDetailAdj)),
+      leverOverrides: JSON.parse(JSON.stringify(leverOverrides)),
+      headcountAdj: JSON.parse(JSON.stringify(headcountAdj)),
+      pipelineMinProb,
+      currencyDefensePct,
+      currencyDefensePctByMonth: cur.currencyDefensePctByMonth || {},
+      salaryProjectionMode,
+      revenueMethodology,
+      salaryManualILS: cleanNumMap(salaryManualILS),
+      pipelineAdjPctByMonth: cur.pipelineAdjPctByMonth || {},
+      churnOverride: { ...churnOverride },
+      year: activeYear,
+      fxRateByYear: { ...fxRateByYear },
+      adjustmentsByYear,
+    };
+  }, [salaryAdjPctByMonth, collPctByMonth, salaryDeptAdj, vendorCatAdj, vendorDetailAdj, leverOverrides, headcountAdj, pipelineMinProb, currencyDefensePct, currencyDefensePctByMonth, salaryProjectionMode, revenueMethodology, salaryManualILS, pipelineAdjPctByMonth, churnOverride, activeYear, currentYear, fxRateByYear]);
 
   const applyScenarioData = useCallback((data: ScenarioData) => {
     isLoadingScenario.current = true; // prevent auto-save from overwriting during load
-    setSalaryAdjPctByMonth(data.salaryAdjPctByMonth || {});
-    setCollPctByMonth(data.collPctByMonth || {});
+    // ── Month-index-keyed maps: load the bucket of the year this view will show ──
+    // The scenario switches the view to data.year (below), so pick that year's bucket. All
+    // buckets are also written to the per-year localStorage stores so year switches restore them.
+    const targetYear = (data.year && activeCompanyRef.current !== 'consolidated') ? data.year : activeYearRef.current;
+    const aby = data.adjustmentsByYear;
+    if (aby) {
+      try {
+        for (const [yrS, b] of Object.entries(aby)) {
+          localStorage.setItem(`banks-salary-adj-${yrS}`, JSON.stringify(b?.salaryAdjPctByMonth || {}));
+          localStorage.setItem(`banks-coll-pct-${yrS}`, JSON.stringify(b?.collPctByMonth || {}));
+          localStorage.setItem(`banks-pipeline-adj-${yrS}`, JSON.stringify(b?.pipelineAdjPctByMonth || {}));
+          localStorage.setItem(`banks-currency-defense-pct-by-month-${yrS}`, JSON.stringify(b?.currencyDefensePctByMonth || {}));
+        }
+      } catch { /* localStorage unavailable — live state below still applies */ }
+      const t = aby[String(targetYear)] || {};
+      setSalaryAdjPctByMonth(t.salaryAdjPctByMonth || {});
+      setCollPctByMonth(t.collPctByMonth || {});
+      setPipelineAdjPctByMonth(t.pipelineAdjPctByMonth || {});
+      setCurrencyDefensePctByMonth(t.currencyDefensePctByMonth || {});
+    } else {
+      // Legacy scenario (flat maps, no year buckets): the nightly compute has always applied
+      // these to the CURRENT year, so treat them as current-year adjustments — never as the
+      // authored view-year's (that ambiguity is what let 2027 knobs leak into the 2026 push).
+      try {
+        localStorage.setItem(`banks-salary-adj-${currentYear}`, JSON.stringify(data.salaryAdjPctByMonth || {}));
+        localStorage.setItem(`banks-coll-pct-${currentYear}`, JSON.stringify(data.collPctByMonth || {}));
+        localStorage.setItem(`banks-pipeline-adj-${currentYear}`, JSON.stringify(data.pipelineAdjPctByMonth || {}));
+        localStorage.setItem(`banks-currency-defense-pct-by-month-${currentYear}`, JSON.stringify(data.currencyDefensePctByMonth || {}));
+      } catch { /* ignore */ }
+      const isCur = targetYear === currentYear;
+      setSalaryAdjPctByMonth(isCur ? (data.salaryAdjPctByMonth || {}) : {});
+      setCollPctByMonth(isCur ? (data.collPctByMonth || {}) : {});
+      setPipelineAdjPctByMonth(isCur ? (data.pipelineAdjPctByMonth || {}) : {});
+      setCurrencyDefensePctByMonth(isCur ? (data.currencyDefensePctByMonth || {}) : {});
+    }
     setSalaryDeptAdj(data.salaryDeptAdj || {});
     setVendorCatAdj(data.vendorCatAdj || {});
     setVendorDetailAdj(data.vendorDetailAdj || {});
     setLeverOverrides(data.leverOverrides || {});
     setPipelineMinProb(data.pipelineMinProb ?? 100);
     if (data.currencyDefensePct !== undefined) setCurrencyDefensePct(data.currencyDefensePct);
-    if (data.currencyDefensePctByMonth) setCurrencyDefensePctByMonth(data.currencyDefensePctByMonth);
+    // (currencyDefensePctByMonth is handled by the year-bucket block above)
     // View state: methodology toggles (only override when the scenario carries one, so
     // older scenarios leave the viewer's current toggle alone); per-month overrides reset
     // to {} when absent (a scenario without them means "no such override").
     if (data.salaryProjectionMode) setSalaryProjectionMode(data.salaryProjectionMode);
     if (data.revenueMethodology) setRevenueMethodology(data.revenueMethodology);
     setSalaryManualILS(data.salaryManualILS || {});
-    setPipelineAdjPctByMonth(data.pipelineAdjPctByMonth || {});
+    // (pipelineAdjPctByMonth is handled by the year-bucket block above)
     setChurnOverride(data.churnOverride || {});
     // FX rate: merge so a scenario's rates override the local map without clearing other years.
     if (data.fxRateByYear) setFxRateByYear(prev => ({ ...prev, ...data.fxRateByYear }));
