@@ -1167,16 +1167,11 @@ export default function App() {
 
   // ── Per-company year selector (for multi-year budget planning) ──
   const currentYear = new Date().getFullYear();
-  const [activeYears, setActiveYears] = useState<Record<string, number>>(() => {
-    try {
-      const saved = localStorage.getItem('banks-active-years');
-      if (saved) return JSON.parse(saved);
-      // Migrate from old single-year format
-      const old = parseInt(localStorage.getItem('banks-active-year') || '');
-      if (old) return { lsports: old, statscore: old };
-    } catch {}
-    return { lsports: currentYear, statscore: currentYear };
-  });
+  // Always OPEN on the current fiscal year — the year the nightly job computes and pushes.
+  // The previously viewed year is deliberately NOT restored: leaving the tab on a projection
+  // year (e.g. 2027) made the dashboard reopen there, inviting confusion about what the
+  // nightly number represents. Switching years within a session works as before.
+  const [activeYears, setActiveYears] = useState<Record<string, number>>({ lsports: currentYear, statscore: currentYear });
   const [availableYearsByCompany, setAvailableYearsByCompany] = useState<Record<string, number[]>>({ lsports: [currentYear], statscore: [currentYear] });
   const [isRollingForward, setIsRollingForward] = useState(false);
   const [budgetSyncStatus, setBudgetSyncStatus] = useState<'idle' | 'syncing' | 'success' | 'error'>('idle');
@@ -1249,7 +1244,7 @@ export default function App() {
       try { localStorage.setItem('banks-budget-edits-watermark', latest); } catch {}
     }
   };
-  useEffect(() => { try { localStorage.setItem('banks-active-years', JSON.stringify(activeYears)); } catch {} }, [activeYears]);
+  // (banks-active-years is no longer persisted — the dashboard always opens on the current year)
   useEffect(() => {
     fetch('/api/budget-years').then(r => r.json()).then(d => {
       if (d.byCompany) setAvailableYearsByCompany(d.byCompany);
@@ -1442,8 +1437,7 @@ export default function App() {
   useEffect(() => { try { localStorage.setItem('banks-currency-defense-pct', String(currencyDefensePct)); } catch {} }, [currencyDefensePct]);
   const [currencyDefensePctByMonth, setCurrencyDefensePctByMonth] = useState<Record<number, number>>(() => { // per-month % override (month index 0-11), per-year store
     try {
-      const initYear = (() => { try { const y = localStorage.getItem('banks-active-years'); return y ? JSON.parse(y) : {}; } catch { return {}; } })();
-      const yr = initYear.lsports || new Date().getFullYear();
+      const yr = new Date().getFullYear(); // the view always opens on the current year
       const yearSaved = localStorage.getItem(`banks-currency-defense-pct-by-month-${yr}`);
       if (yearSaved) return JSON.parse(yearSaved);
       if (yr !== new Date().getFullYear()) return {};
@@ -1467,8 +1461,7 @@ export default function App() {
   const [fxMarket, setFxMarket] = useState<{ rate?: number; date?: string; error?: string; loading?: boolean } | null>(null);
   const [pipelineAdjPctByMonth, setPipelineAdjPctByMonth] = useState<Record<number, number>>(() => { // per-month pipeline % adjustment, per-year store
     try {
-      const initYear = (() => { try { const y = localStorage.getItem('banks-active-years'); return y ? JSON.parse(y) : {}; } catch { return {}; } })();
-      const yr = initYear.lsports || new Date().getFullYear();
+      const yr = new Date().getFullYear(); // the view always opens on the current year
       const s = localStorage.getItem(`banks-pipeline-adj-${yr}`);
       return s ? JSON.parse(s) : {};
     } catch { return {}; }
@@ -1480,8 +1473,7 @@ export default function App() {
   const [salaryAdjPctByMonth, setSalaryAdjPctByMonth] = useState<Record<number, number>>(() => {
     // Year-specific: load adjustments for the initial active year
     try {
-      const initYear = (() => { try { const y = localStorage.getItem('banks-active-years'); return y ? JSON.parse(y) : {}; } catch { return {}; } })();
-      const yr = initYear.lsports || new Date().getFullYear();
+      const yr = new Date().getFullYear(); // the view always opens on the current year
       const yearSaved = localStorage.getItem(`banks-salary-adj-${yr}`);
       if (yearSaved) return JSON.parse(yearSaved);
       // Only fall back to legacy keys for current year — non-current years start clean
@@ -1506,8 +1498,7 @@ export default function App() {
   // Collection % adjustment per month (default 100% — expected collection rate vs forecast)
   const [collPctByMonth, setCollPctByMonth] = useState<Record<number, number>>(() => {
     try {
-      const initYear = (() => { try { const y = localStorage.getItem('banks-active-years'); return y ? JSON.parse(y) : {}; } catch { return {}; } })();
-      const yr = initYear.lsports || new Date().getFullYear();
+      const yr = new Date().getFullYear(); // the view always opens on the current year
       const yearSaved = localStorage.getItem(`banks-coll-pct-${yr}`);
       if (yearSaved) return JSON.parse(yearSaved);
       if (yr !== new Date().getFullYear()) return {};
@@ -2161,12 +2152,16 @@ useEffect(() => {
     };
   }, [salaryAdjPctByMonth, collPctByMonth, salaryDeptAdj, vendorCatAdj, vendorDetailAdj, leverOverrides, headcountAdj, pipelineMinProb, currencyDefensePct, currencyDefensePctByMonth, salaryProjectionMode, revenueMethodology, salaryManualILS, pipelineAdjPctByMonth, churnOverride, activeYear, currentYear, fxRateByYear]);
 
-  const applyScenarioData = useCallback((data: ScenarioData) => {
+  // opts.keepViewYear: don't switch the view to the scenario's authored year — used by the
+  // startup hydration so the dashboard always OPENS on the current year, whatever year the
+  // scenario was last saved from. Explicit scenario loads keep the author's-view behavior.
+  const applyScenarioData = useCallback((data: ScenarioData, opts?: { keepViewYear?: boolean }) => {
     isLoadingScenario.current = true; // prevent auto-save from overwriting during load
     // ── Month-index-keyed maps: load the bucket of the year this view will show ──
-    // The scenario switches the view to data.year (below), so pick that year's bucket. All
-    // buckets are also written to the per-year localStorage stores so year switches restore them.
-    const targetYear = (data.year && activeCompanyRef.current !== 'consolidated') ? data.year : activeYearRef.current;
+    // The scenario switches the view to data.year (below, unless keepViewYear), so pick that
+    // year's bucket. All buckets are also written to the per-year localStorage stores so year
+    // switches restore them.
+    const targetYear = (!opts?.keepViewYear && data.year && activeCompanyRef.current !== 'consolidated') ? data.year : activeYearRef.current;
     const aby = data.adjustmentsByYear;
     if (aby) {
       try {
@@ -2218,7 +2213,7 @@ useEffect(() => {
     // Switch the viewed year to the author's so the view matches exactly. Adjustments are
     // keyed 'YYYY-MM', so they only line up on that year. (Skip for consolidated, which
     // derives its year from the two subsidiaries.)
-    if (data.year && data.year !== activeYearRef.current && activeCompanyRef.current !== 'consolidated') {
+    if (!opts?.keepViewYear && data.year && data.year !== activeYearRef.current && activeCompanyRef.current !== 'consolidated') {
       setActiveYears(prev => ({ ...prev, [activeCompanyRef.current]: data.year! }));
     }
     // If scenario has headcountAdj, use it; otherwise compute from salaryDeptAdj + deptHeadcount
@@ -2287,7 +2282,9 @@ useEffect(() => {
         const shared = _shared.find((s: any) => s.id === remoteId);
         const sc = own || shared;
         if (!sc) return;
-        applyScenarioData(sc.data);
+        // keepViewYear: restoring the remembered scenario must not yank the view to the year it
+        // was last saved from — the dashboard always opens on the current year.
+        applyScenarioData(sc.data, { keepViewYear: true });
         setActiveScenarioId(sc.id);
         _setActiveSharedOwner(!own && shared ? (remoteSharedOwner || (shared as any).ownerEmail || null) : null);
       })
