@@ -1172,6 +1172,26 @@ export default function App() {
   // year (e.g. 2027) made the dashboard reopen there, inviting confusion about what the
   // nightly number represents. Switching years within a session works as before.
   const [activeYears, setActiveYears] = useState<Record<string, number>>({ lsports: currentYear, statscore: currentYear });
+  // Snap back to the current fiscal year when RETURNING to a tab that sat hidden for a while.
+  // The open-on-current-year rule above only runs on a page load; a tab left on FY2027 and
+  // revisited hours later never reloads, so it kept showing 2027. A quick app/tab switch
+  // (< 20 min) keeps the working context; a longer absence gets the default (current-year) view.
+  useEffect(() => {
+    let hiddenAt = 0;
+    const onVis = () => {
+      if (document.visibilityState === 'hidden') { hiddenAt = Date.now(); return; }
+      if (hiddenAt && Date.now() - hiddenAt > 20 * 60 * 1000) {
+        setActiveYears(prev => {
+          const next: Record<string, number> = { ...prev };
+          for (const k of Object.keys(next)) next[k] = currentYear;
+          return next;
+        });
+      }
+      hiddenAt = 0;
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, [currentYear]);
   const [availableYearsByCompany, setAvailableYearsByCompany] = useState<Record<string, number[]>>({ lsports: [currentYear], statscore: [currentYear] });
   const [isRollingForward, setIsRollingForward] = useState(false);
   const [budgetSyncStatus, setBudgetSyncStatus] = useState<'idle' | 'syncing' | 'success' | 'error'>('idle');
