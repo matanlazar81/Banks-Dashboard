@@ -1314,10 +1314,11 @@ export default function App() {
   type PipelineMonth = { state: 'past' | 'current' | 'future'; actualMRR: number; sfContribution: number; projectedMrr: number; monthsRemaining: number; closedSoFar?: number; projected?: number; monthlyContribution: number; columnB: number; columnD: number };
   const [pipelineMethodology, setPipelineMethodology] = useState<{ year: number; calibrationFactor: number; calibrationSource: string; quarterWeighted: Record<string, number>; byMonth: Record<string, PipelineMonth>; footerTotal: number; columnDTotal: number } | null>(null);
   // Revenue projection mode: 'legacy' (historical win-rate pipeline) or 'pipeline' (Column B methodology).
-  const [revenueMethodology, setRevenueMethodology] = useState<'legacy' | 'pipeline'>(() => {
-    try { return (localStorage.getItem('banks-revenue-methodology') as 'legacy' | 'pipeline') || 'pipeline'; } catch { return 'pipeline'; }
-  });
-  useEffect(() => { try { localStorage.setItem('banks-revenue-methodology', revenueMethodology); } catch {} }, [revenueMethodology]);
+  // Revenue methodology ALWAYS boots on 'pipeline' — the agreed basis (and the one the nightly
+  // Snowflake push is gated to). Deliberately NOT restored from localStorage: a session left on
+  // Win-rate must not become anyone's silent default. Win-rate stays available as an in-session
+  // comparison lens.
+  const [revenueMethodology, setRevenueMethodology] = useState<'legacy' | 'pipeline'>('pipeline');
   const [pipelineMethodOpen, setPipelineMethodOpen] = useState(false);
   const [monthlyReval, setMonthlyReval] = useState<{ byMonth: Record<string, { eur: number; ils: number; hasBothEnds?: boolean }>; preYear: { eur: number; ils: number } }>({ byMonth: {}, preYear: { eur: 0, ils: 0 } });
   const [sfSalaryBudget, setSfSalaryBudget] = useState<Record<string, { eur: number; ils: number }>>({});
@@ -2155,7 +2156,7 @@ useEffect(() => {
   // opts.keepViewYear: don't switch the view to the scenario's authored year — used by the
   // startup hydration so the dashboard always OPENS on the current year, whatever year the
   // scenario was last saved from. Explicit scenario loads keep the author's-view behavior.
-  const applyScenarioData = useCallback((data: ScenarioData, opts?: { keepViewYear?: boolean }) => {
+  const applyScenarioData = useCallback((data: ScenarioData, opts?: { keepViewYear?: boolean; keepMethodology?: boolean }) => {
     isLoadingScenario.current = true; // prevent auto-save from overwriting during load
     // ── Month-index-keyed maps: load the bucket of the year this view will show ──
     // The scenario switches the view to data.year (below, unless keepViewYear), so pick that
@@ -2204,7 +2205,10 @@ useEffect(() => {
     // older scenarios leave the viewer's current toggle alone); per-month overrides reset
     // to {} when absent (a scenario without them means "no such override").
     if (data.salaryProjectionMode) setSalaryProjectionMode(data.salaryProjectionMode);
-    if (data.revenueMethodology) setRevenueMethodology(data.revenueMethodology);
+    // keepMethodology: the startup hydration must not flip the viewer off the Pipeline default —
+    // a scenario saved while someone compared on Win-rate would otherwise change everyone's boot
+    // state. Explicit scenario loads still reproduce the author's view.
+    if (data.revenueMethodology && !opts?.keepMethodology) setRevenueMethodology(data.revenueMethodology);
     setSalaryManualILS(data.salaryManualILS || {});
     // (pipelineAdjPctByMonth is handled by the year-bucket block above)
     setChurnOverride(data.churnOverride || {});
@@ -2284,7 +2288,7 @@ useEffect(() => {
         if (!sc) return;
         // keepViewYear: restoring the remembered scenario must not yank the view to the year it
         // was last saved from — the dashboard always opens on the current year.
-        applyScenarioData(sc.data, { keepViewYear: true });
+        applyScenarioData(sc.data, { keepViewYear: true, keepMethodology: true });
         setActiveScenarioId(sc.id);
         _setActiveSharedOwner(!own && shared ? (remoteSharedOwner || (shared as any).ownerEmail || null) : null);
       })
