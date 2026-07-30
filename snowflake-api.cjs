@@ -190,7 +190,7 @@ function createSnowflakeClient(env) {
         warehouse,
         database: 'DL_PRODUCTION',
         schema: 'CONSUMER_HUB__FINANCE',
-        application: 'AgingDashboard',
+        application: 'BanksDashboardRead',
       });
 
       conn.connect((err, conn) => {
@@ -208,27 +208,41 @@ function createSnowflakeClient(env) {
     });
   }
 
+  // The SDK's isUp() can report true after Snowflake has closed an idle connection server-side;
+  // the next execute then fails with "Unable to perform operation using terminated connection"
+  // and — without this check — the dead connection stays cached for every later query too
+  // (observed as: pipeline calibration falling back, live-MRR/ARR failing, churn intermittents).
+  function _isDeadConnErr(msg) {
+    return /terminated connection|connection was closed|not connected|ECONNRESET|socket hang up/i.test(String(msg || ''));
+  }
+
   async function query(sql, binds = []) {
     // READ-ONLY GUARD: Only allow SELECT, SHOW, DESCRIBE, WITH statements
     const trimmed = sql.trim().toUpperCase();
     if (!trimmed.startsWith('SELECT') && !trimmed.startsWith('SHOW') && !trimmed.startsWith('DESCRIBE') && !trimmed.startsWith('WITH') && !trimmed.startsWith('ALTER SESSION')) {
       throw new Error(`[Snowflake] READ-ONLY: Blocked non-SELECT query: ${trimmed.substring(0, 50)}`);
     }
-    const conn = await getConnection();
-    return new Promise((resolve, reject) => {
-      conn.execute({
-        sqlText: sql,
-        binds,
-        complete: (err, stmt, rows) => {
-          if (err) {
-            console.error('[Snowflake] Query failed:', err.message);
-            reject(err);
-          } else {
-            resolve(rows || []);
-          }
-        },
-      });
-    });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const conn = await getConnection();
+      try {
+        return await new Promise((resolve, reject) => {
+          conn.execute({
+            sqlText: sql,
+            binds,
+            complete: (err, _stmt, rows) => (err ? reject(err) : resolve(rows || [])),
+          });
+        });
+      } catch (err) {
+        const msg = err && err.message ? err.message : String(err);
+        if (attempt === 0 && _isDeadConnErr(msg)) {
+          console.warn(`[Snowflake] Dead connection detected — reconnecting and retrying once (${msg})`);
+          connection = null; // evict the corpse; getConnection() builds a fresh one
+          continue;
+        }
+        console.error('[Snowflake] Query failed:', msg);
+        throw err;
+      }
+    }
   }
 
   // ── Test connection ──
