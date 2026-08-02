@@ -52,8 +52,16 @@ app.use((req, res, next) => {
   res.sendFile(path.join(DIST, 'index.html'));
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`[server] Banks-Dashboard listening on http://0.0.0.0:${PORT}`);
+// These routes expose NetSuite and Snowflake finance data without a login, so the
+// listener stays on loopback and reaching it from another host must go through an
+// authenticating reverse proxy. Set BIND_HOST explicitly to override.
+const HOST = process.env.BIND_HOST || '127.0.0.1';
+
+app.listen(PORT, HOST, () => {
+  console.log(`[server] Banks-Dashboard listening on http://${HOST}:${PORT}`);
   console.log('[server] all data pulls run here — browsers only read /api/*');
+  if (HOST !== '127.0.0.1' && HOST !== 'localhost') {
+    console.warn(`[server] WARNING: bound to ${HOST} — these endpoints are unauthenticated.`);
+  }
   startWarmCache(PORT);
 });

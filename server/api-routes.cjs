@@ -62,12 +62,32 @@ function getYear(req     )         {
   return parseInt(url.searchParams.get('year') || '') || new Date().getFullYear();
 }
 
-// User identity: trust an upstream-injected header (the finance-it parent app should set
-// X-User-Email when proxying). DEV_USER_EMAIL is a local-dev fallback only.
+// User identity comes from a header injected by an upstream proxy, which any client can
+// forge if it can reach this process directly. The header is therefore only honoured when
+// TRUST_PROXY_USER_HEADER is set, which should happen exclusively on hosts where an
+// authenticating proxy is the sole route in. DEV_USER_EMAIL is a local-dev fallback only.
+const TRUST_USER_HEADER = process.env.TRUST_PROXY_USER_HEADER === '1';
+
 function getUserEmail(req     )         {
   const h = req.headers || {};
-  const raw = (h['x-user-email'] || h['x-forwarded-user'] || h['x-auth-user'] || process.env.DEV_USER_EMAIL || '').toString();
+  const fromHeader = TRUST_USER_HEADER
+    ? (h['x-user-email'] || h['x-forwarded-user'] || h['x-auth-user'] || '')
+    : '';
+  const raw = (fromHeader || process.env.DEV_USER_EMAIL || '').toString();
   return raw.trim().toLowerCase();
+}
+
+// Build the path of a per-company budget snapshot. `year` and `company` arrive from
+// query strings and request bodies, so both are constrained to a fixed shape and the
+// result is verified to stay inside budgetDir — otherwise a company of "../../x" would
+// read, overwrite or delete arbitrary .json files on the host.
+function budgetSnapshotPath(budgetDir        , year     , company     )         {
+  const yr = String(year).trim();
+  const co = String(company).trim().toLowerCase();
+  if (!/^\d{4}$/.test(yr) || !/^[a-z0-9_-]{1,40}$/.test(co)) return null;
+  const filePath = path.resolve(budgetDir, `${yr}-${co}.json`);
+  const root = path.resolve(budgetDir) + path.sep;
+  return filePath.startsWith(root) ? filePath : null;
 }
 
 function getSyncAllowlist()           {
@@ -127,9 +147,48 @@ function getStale(key) {
 }
 function setCache(key, data) { apiCache.set(key, { data, ts: Date.now() }); persistCacheSoon(); }
 
+// Query parameters that reach SuiteQL/Snowflake as interpolated string literals rather
+// than bound parameters. Validating them once at registration time covers every route,
+// including the ones registered indirectly through cachedNsHandler.
+const QUERY_PARAM_RULES = {
+  month: /^\d{4}-\d{2}$/,
+  year: /^\d{4}$/,
+  subsidiary: /^\d{1,6}$/,
+  accountId: /^[A-Za-z0-9_.-]{1,64}$/,
+  // category and similar labels are free text; reject only the characters that could
+  // terminate a literal or start a comment.
+  category: /^[^'"`;\\]{0,200}$/,
+  type: /^[a-z_]{0,40}$/,
+  company: /^[A-Za-z0-9_-]{0,40}$/,
+};
+
+function invalidQueryParam(req) {
+  let url;
+  try {
+    url = new URL(req.url || '', 'http://localhost');
+  } catch {
+    return 'url';
+  }
+  for (const [name, pattern] of Object.entries(QUERY_PARAM_RULES)) {
+    const value = url.searchParams.get(name);
+    if (value !== null && value !== '' && !pattern.test(value)) return name;
+  }
+  return null;
+}
+
 function registerApiRoutes(app     ) {
   // connect (vite dev) and express (server.cjs) share the same use(route, handler) semantics.
-  const use = (route        , handler     ) => app.use(route, handler);
+  const use = (route        , handler     ) => app.use(route, (req, res, next) => {
+    const bad = invalidQueryParam(req);
+    if (bad) {
+      console.warn(`[API] Rejected ${route} — malformed "${bad}" query parameter`);
+      res.statusCode = 400;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ error: `Invalid "${bad}" parameter` }));
+      return;
+    }
+    return handler(req, res, next);
+  });
       // ── GET /api/ns-config — expose NS account ID for register links ──
       use('/api/ns-config', (_req, res) => {
         const accountId = (process.env.NETSUITE_ACCOUNT_ID || '').replace(/_/g, '-').toLowerCase();
@@ -476,33 +535,10 @@ function registerApiRoutes(app     ) {
         }
       });
 
-      // ── DEBUG: Raw NS SuiteQL query ──
-      use('/api/debug-ns-sql', async (req, res) => {
-        try {
-          const url = new URL(req.url || '', `http://${req.headers.host}`);
-          const sql = url.searchParams.get('sql') || '';
-          const sub = parseInt(url.searchParams.get('subsidiary') || '6') || 6;
-          const ns = getNsClient(sub);
-          if (!sql) { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ error: 'no sql' })); return; }
-          const result = await queueNsCall(() => ns.suiteql(sql));
-          res.setHeader('Content-Type', 'application/json');
-          res.end(JSON.stringify({ items: result.items || [], count: (result.items || []).length }));
-        } catch (e     ) {
-          res.setHeader('Content-Type', 'application/json');
-          res.end(JSON.stringify({ error: e.message }));
-        }
-      });
-
-      // ── DEBUG: Check override table columns ──
-      use('/api/debug-overrides', async (_req, res) => {
-        try {
-          const sf = getSfClient();
-          if (!sf) { res.end(JSON.stringify({ error: 'no sf client' })); return; }
-          const rows = await sf.query(`SELECT * FROM DL_PRODUCTION.CONSUMER_HUB__FINANCE.FCT_EXPENSE__FINANCE WHERE source IN ('future_cost_override','future_cost_increment') LIMIT 10`);
-          res.setHeader('Content-Type', 'application/json');
-          res.end(JSON.stringify({ count: rows.length, columns: rows.length > 0 ? Object.keys(rows[0]) : [], sample: rows }));
-        } catch (e     ) { res.end(JSON.stringify({ error: e.message })); }
-      });
+      // The /api/debug-ns-sql and /api/debug-overrides endpoints were removed: the first
+      // ran caller-supplied SuiteQL against production NetSuite and the second dumped raw
+      // Snowflake expense rows, both without any authentication. Use a NetSuite or
+      // Snowflake console for ad-hoc queries instead.
 
       // ── Snowflake: Budget + Revenue ──
       use('/api/sf-budget', async (_req, res) => {
@@ -1710,6 +1746,13 @@ function registerApiRoutes(app     ) {
           const month = url.searchParams.get('month') || '';
           const type = url.searchParams.get('type') || ''; // salary, vendors, collections
           if (!month || !type) { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ ls: [], st: [] })); return; }
+          // month is interpolated straight into SuiteQL below, so only YYYY-MM is accepted.
+          if (!/^\d{4}-\d{2}$/.test(month)) {
+            res.statusCode = 400;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: 'month must be formatted YYYY-MM' }));
+            return;
+          }
           const [y, m] = month.split('-');
           const startDate = `${y}-${m}-01`;
           const endDay = new Date(parseInt(y), parseInt(m), 0).getDate();
@@ -1979,7 +2022,8 @@ function registerApiRoutes(app     ) {
           try {
             const { year, company, projectedDecClosing } = JSON.parse(body);
             if (!year || !company) { res.end(JSON.stringify({ error: 'year and company required' })); return; }
-            const filePath = path.resolve(budgetDir, `${year}-${company}.json`);
+            const filePath = budgetSnapshotPath(budgetDir, year, company);
+            if (!filePath) { res.statusCode = 400; res.end(JSON.stringify({ error: 'invalid year or company' })); return; }
             if (!fs.existsSync(filePath)) { res.end(JSON.stringify({ error: 'snapshot not found' })); return; }
             const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
             if (projectedDecClosing !== undefined) data.projectedDecClosing = projectedDecClosing;
@@ -2005,7 +2049,8 @@ function registerApiRoutes(app     ) {
             const yr = parseInt(url.searchParams.get('year') || '');
             const company = url.searchParams.get('company') || '';
             if (!yr || !company) { res.end(JSON.stringify({ error: 'year and company required' })); return; }
-            const filePath = path.resolve(budgetDir, `${yr}-${company}.json`);
+            const filePath = budgetSnapshotPath(budgetDir, yr, company);
+            if (!filePath) { res.statusCode = 400; res.end(JSON.stringify({ error: 'invalid year or company' })); return; }
             if (fs.existsSync(filePath)) {
               fs.unlinkSync(filePath);
               console.log(`[Budget] Deleted snapshot: ${yr}-${company}.json`);
@@ -2021,7 +2066,8 @@ function registerApiRoutes(app     ) {
             const yr = parseInt(url.searchParams.get('year') || '');
             const company = url.searchParams.get('company') || '';
             if (!yr || !company) { res.end(JSON.stringify({ error: 'year and company required' })); return; }
-            const filePath = path.resolve(budgetDir, `${yr}-${company}.json`);
+            const filePath = budgetSnapshotPath(budgetDir, yr, company);
+            if (!filePath) { res.statusCode = 400; res.end(JSON.stringify({ error: 'invalid year or company' })); return; }
             if (!fs.existsSync(filePath)) { res.end(JSON.stringify({ exists: false })); return; }
             const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
             res.end(JSON.stringify({ exists: true, data }));
@@ -2037,12 +2083,18 @@ function registerApiRoutes(app     ) {
             try {
               const { sourceYear, targetYear, company, clientDecClosing } = JSON.parse(body);
               if (!sourceYear || !targetYear || !company) { res.end(JSON.stringify({ error: 'sourceYear, targetYear, and company required' })); return; }
+              const targetPath = budgetSnapshotPath(budgetDir, targetYear, company);
+              if (!targetPath || !budgetSnapshotPath(budgetDir, sourceYear, company)) {
+                res.statusCode = 400;
+                res.end(JSON.stringify({ error: 'invalid year or company' }));
+                return;
+              }
               // When clientDecClosing is not provided (e.g. refresh from source year),
               // preserve the existing snapshot's projectedDecClosing so the opening balance stays correct.
               // The server-side cashflow calc omits pipeline/churn/unpaid carry, so its estimate diverges.
               let existingDecClosing                    ;
               if (!clientDecClosing) {
-                const existingPath = path.resolve(budgetDir, `${targetYear}-${company}.json`);
+                const existingPath = targetPath;
                 if (fs.existsSync(existingPath)) {
                   try {
                     const existing = JSON.parse(fs.readFileSync(existingPath, 'utf-8'));
