@@ -598,7 +598,8 @@ function computeCashflowForecast(inputs) {
     // ── Reval both-ends guard ──
     // A month's FX-reval cycle = an opening reversal (posted the 1st, reversing the prior
     // month's mark) + a new month-end mark (last day). We only recognize a PAST month's reval
-    // when BOTH ends are present (monthlyReval.hasBothEnds → reval txns on >=2 distinct dates).
+    // when BOTH ends are present (monthlyReval.hasBothEnds → reval txns on >=2 distinct dates
+    // AND an FxReval-type mark posted in the month's final 3 days — see fetchMonthlyRevaluation).
     // This stops a stale/mid-month snapshot that captured only the opening reversal from posting
     // a phantom one-sided swing (e.g. June showing -€2.53M, which was just May's mark being
     // reversed, with June's own +€2.75M month-end mark not yet in the snapshot).
