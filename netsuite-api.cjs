@@ -1984,12 +1984,18 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
     `);
 
     // Monthly reval — EUR (book 1)
+    // month_end_reval: an FxReval-type transaction dated in the month's final 3 days — the
+    // genuine month-end mark. A distinct-date count alone is not enough: a small mid-month FX
+    // journal next to the 1st-of-month reversal makes dateCount >= 2 while the real month-end
+    // mark is still unposted, showing the prior month's mark reversal as a phantom swing
+    // (June 2026 -€2.53M, July 2026 -€2.74M).
     const eurRows = await suiteqlAll(`
       SELECT TO_CHAR(t.trandate, 'YYYY-MM') AS month,
              -SUM(tal.amount) AS reval_net,
              MIN(t.trandate) AS first_date,
              MAX(t.trandate) AS last_date,
-             COUNT(DISTINCT t.trandate) AS date_count
+             COUNT(DISTINCT t.trandate) AS date_count,
+             MAX(CASE WHEN t.type = 'FxReval' AND t.trandate >= LAST_DAY(t.trandate) - 2 THEN 1 ELSE 0 END) AS month_end_reval
       FROM transactionaccountingline tal
       JOIN transaction t ON tal.transaction = t.id
       JOIN account a ON tal.account = a.id
@@ -2007,7 +2013,8 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
              -SUM(tal.amount) AS reval_net,
              MIN(t.trandate) AS first_date,
              MAX(t.trandate) AS last_date,
-             COUNT(DISTINCT t.trandate) AS date_count
+             COUNT(DISTINCT t.trandate) AS date_count,
+             MAX(CASE WHEN t.type = 'FxReval' AND t.trandate >= LAST_DAY(t.trandate) - 2 THEN 1 ELSE 0 END) AS month_end_reval
       FROM transactionaccountingline tal
       JOIN transaction t ON tal.transaction = t.id
       JOIN account a ON tal.account = a.id
@@ -2019,19 +2026,18 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
       ORDER BY month
     `);
 
+    // hasBothEnds: reval txns on >= 2 distinct dates (1st-of-month reversal + month-end mark)
+    // AND the month-end mark itself is posted (FxReval txn in the month's final 3 days).
+    const cycleComplete = (r) => (parseInt(r.date_count) || 0) >= 2 && parseInt(r.month_end_reval) === 1;
     const byMonth = {};
     for (const r of eurRows) {
-      // hasBothEnds: true if reval transactions exist on at least 2 distinct dates in the month
-      // (beginning-of-month reversal + end-of-month new reval)
-      const dateCount = parseInt(r.date_count) || 0;
-      byMonth[r.month] = { eur: Math.round(parseFloat(r.reval_net) || 0), ils: 0, hasBothEnds: dateCount >= 2 };
+      byMonth[r.month] = { eur: Math.round(parseFloat(r.reval_net) || 0), ils: 0, hasBothEnds: cycleComplete(r) };
     }
     for (const r of ilsRows) {
-      const dateCount = parseInt(r.date_count) || 0;
-      if (!byMonth[r.month]) byMonth[r.month] = { eur: 0, ils: 0, hasBothEnds: dateCount >= 2 };
+      if (!byMonth[r.month]) byMonth[r.month] = { eur: 0, ils: 0, hasBothEnds: cycleComplete(r) };
       else byMonth[r.month].ils = Math.round(parseFloat(r.reval_net) || 0);
-      // If ILS has both ends but EUR didn't, upgrade the flag
-      if (dateCount >= 2) byMonth[r.month].hasBothEnds = true;
+      // If ILS has a complete cycle but EUR didn't, upgrade the flag
+      if (cycleComplete(r)) byMonth[r.month].hasBothEnds = true;
     }
 
     const preYear = {
