@@ -8970,7 +8970,7 @@ useEffect(() => {
                         <p className="text-xs text-gray-400 mb-2 uppercase">Summary{hasAnyAdjustment ? ' — adjustments applied' : ''}{salaryProjectionMode === 'lastActual' ? ' — using last actual' : ''}</p>
                         <table className="w-full text-xs">
                           <tbody>
-                            <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600">{useLastActualInDrill ? `Last Actual (${drillBasisMonth})` : 'Budget (original)'}{useLastActualInDrill ? <SourceInfo source="DL_PRODUCTION.CONSUMER_HUB__FINANCE.FCT_EXPENSE__FINANCE" column="SUM(AMOUNT_EUR), SUM(AMOUNT_ILS)" detail="filtered IS_PAYROLL=TRUE, excl. one-time accts (760038, 760023, 760020, 760017, 760029, 760014, 760015, 760008)" /> : <SourceInfo source="DL_PRODUCTION.CONSUMER_HUB__FINANCE.FCT_BUDGET__FINANCE" column="SUM(AMOUNT_EUR_CC), SUM(AMOUNT_ILS_CC)" detail="recurring payroll line items, subsidiary_id=3" />}</td><td className="py-1.5 text-right"><span className="font-bold text-violet-700">{fmt(budgetTotal)}</span><span className="text-[10px] text-gray-400 ml-1">{fmtILS(toILS(budgetTotal))}</span></td></tr>
+                            <tr className="border-b border-gray-200"><td className="py-1.5 text-gray-600">{useLastActualInDrill ? `Last Actual (${drillBasisMonth})` : 'Budget (original)'}{useLastActualInDrill ? <SourceInfo source="DL_PRODUCTION.CONSUMER_HUB__FINANCE.FCT_EXPENSE__FINANCE" column="SUM(AMOUNT_EUR), SUM(AMOUNT_ILS)" detail="filtered IS_PAYROLL=TRUE, SOURCE='netsuite', excl. one-time/irregular accts (760015 Recuperation, 760017 Bonus, 760019 Maternity, 760023, 760029, 760030)" /> : <SourceInfo source="DL_PRODUCTION.CONSUMER_HUB__FINANCE.FCT_BUDGET__FINANCE" column="SUM(AMOUNT_EUR_CC), SUM(AMOUNT_ILS_CC)" detail="recurring payroll line items, subsidiary_id=3" />}</td><td className="py-1.5 text-right"><span className="font-bold text-violet-700">{fmt(budgetTotal)}</span><span className="text-[10px] text-gray-400 ml-1">{fmtILS(toILS(budgetTotal))}</span></td></tr>
                             {hasSfOverrides ? (
                               <>
                                 {monthOverrides.map((ov, oi) => (
@@ -12366,7 +12366,7 @@ useEffect(() => {
                       const wsLastActFc = XLSX.utils.aoa_to_sheet([
                         [{ v: `Salary Forecast — Last Actual Mode (based on ${lastActualSalaryMonth || 'N/A'})`, t: 's', s: { font: { bold: true, sz: 14 } } }],
                         [{ v: 'Projects salary using last actual month\'s recurring payroll (excl. one-time accounts) per department', t: 's', s: { font: { color: { rgb: '666666' }, sz: 10 } } }],
-                        [{ v: `Excluded accounts: 760038, 76003, 760023, 760020, 760017, 760029, 760014, 760015, 760008 (one-time/irregular)`, t: 's', s: { font: { color: { rgb: '999999' }, sz: 9 } } }],
+                        [{ v: `Excluded accounts: 760015, 760017, 760019, 760023, 760029, 760030 (one-time/irregular)`, t: 's', s: { font: { color: { rgb: '999999' }, sz: 9 } } }],
                         [],
                         ['Month', 'Mode', 'Last Actual Base', 'Manual Adj %', 'Manual Adj EUR', 'Dept Adj EUR', 'Dashboard Value', 'BI Value', 'Delta'].map(h => ({ v: h, t: 's', s: hdrStyle('D97706') })),
                         ...lastActRows.map(row => row.map((v: any, ci: number) => {
