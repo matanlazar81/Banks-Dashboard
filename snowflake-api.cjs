@@ -1680,7 +1680,10 @@ function createSnowflakeClient(env) {
   }
 
   // ── Salary actuals by department (for "Last Actual" projection mode) ──
-  // Excludes one-time/irregular accounts so the projection base is stable month-to-month
+  // Excludes one-time/irregular accounts so the projection base is stable month-to-month.
+  // 760015 (Recuperation) is annual — paid once, in July 2026 (EUR 134,540). Left in, it would
+  // ride the last-actual basis into every projected month (~EUR 672K over Aug-Dec). Closed months
+  // are unaffected: their salary comes from the NS 76xxx GL feed, which keeps the real payment.
   async function fetchSalaryActualsByDept(year) {
     const yr = year || 2026;
     console.log(`[Snowflake] Fetching salary actuals by dept for ${yr}...`);
@@ -1695,7 +1698,7 @@ function createSnowflakeClient(env) {
       WHERE e.SUBSIDIARY_ID = 3
         AND e.SOURCE = 'netsuite'
         AND g.IS_PAYROLL = TRUE
-        AND g.GL_ACCOUNT_NUMBER NOT IN ('760017', '760019', '760023', '760029', '760030')
+        AND g.GL_ACCOUNT_NUMBER NOT IN ('760015', '760017', '760019', '760023', '760029', '760030')
         AND e.CAL_MONTH_START_DATE >= '${yr}-01-01'
         AND e.CAL_MONTH_START_DATE <= '${yr}-12-31'
       GROUP BY d.DEPARTMENT_NAME, DATE_TRUNC('month', e.CAL_MONTH_START_DATE)::VARCHAR
