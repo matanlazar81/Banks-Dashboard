@@ -46,7 +46,11 @@ async function sweep(port) {
     // Sequential on purpose: the NS queue serializes anyway, and this keeps the
     // warm sweep from competing with live user requests for connections.
     try {
-      const res = await fetch(`http://127.0.0.1:${port}${u}`);
+      const headers = {};
+      if (process.env.STANDALONE_ACCESS_TOKEN) {
+        headers['X-Standalone-Token'] = process.env.STANDALONE_ACCESS_TOKEN;
+      }
+      const res = await fetch(`http://127.0.0.1:${port}${u}`, { headers });
       if (!res.ok) console.warn(`[warm] ${u} → HTTP ${res.status}`);
       else await res.arrayBuffer(); // drain
     } catch (e) {

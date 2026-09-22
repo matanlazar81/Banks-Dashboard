@@ -14,7 +14,9 @@
 //      on the cron to match wherever this route writes, or write to that path here.
 //   3. pm2 restart finance-it-backend
 //
-// The dashboard calls it fire-and-forget; no auth beyond the existing app gate.
+// The dashboard calls it fire-and-forget. POST must stay behind the app session
+// AND an allowlist / admin check — any logged-in user writing this file can
+// poison the nightly Snowflake NET_CASH_ACTUAL_AND_FORECAST row.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import express from 'express';
@@ -37,7 +39,26 @@ router.get('/api/net-cash-forecast', (_req, res) => {
   }
 });
 
+function callerEmail(req: express.Request): string {
+  const u: any = (req as any).user || {};
+  return String(u.email || u.user || u.preferred_username || '').trim().toLowerCase();
+}
+function canPersistNetCash(req: express.Request): boolean {
+  const token = (process.env.NET_CASH_WRITE_TOKEN || '').trim();
+  const given = String(req.headers['x-net-cash-write-token'] || '');
+  if (token && given && token === given) return true;
+  const allow = (process.env.SYNC_ALLOWLIST || 'matan.l@lsports.eu')
+    .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+  const email = callerEmail(req);
+  const admin = !!(req as any).user && ((req as any).user.isAdmin || (req as any).user.is_admin);
+  return !!(email && allow.includes(email)) || admin;
+}
+
 router.post('/api/net-cash-forecast', (req, res) => {
+  if (!canPersistNetCash(req)) {
+    res.status(403).json({ ok: false, error: 'Not authorized to persist net-cash forecast' });
+    return;
+  }
   try {
     const b = req.body || {};
     const record = {

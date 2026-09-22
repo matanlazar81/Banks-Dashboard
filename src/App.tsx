@@ -3620,7 +3620,7 @@ useEffect(() => {
 
   // Load chat history list from server
   useEffect(() => {
-    fetch('/api/chat-history').then(r => r.json()).then(setChatHistoryList).catch(() => {});
+    fetch('/api/chat-history').then(r => r.json()).then(d => setChatHistoryList(Array.isArray(d) ? d : [])).catch(() => {});
   }, []);
 
   // Auto-save current chat to server after each AI reply
@@ -3633,7 +3633,7 @@ useEffect(() => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'save', id, title, messages: msgs }),
     }).then(r => r.json()).then(() => {
-      fetch('/api/chat-history').then(r => r.json()).then(setChatHistoryList).catch(() => {});
+      fetch('/api/chat-history').then(r => r.json()).then(d => setChatHistoryList(Array.isArray(d) ? d : [])).catch(() => {});
     }).catch(() => {});
   }, []);
 

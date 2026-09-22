@@ -11,6 +11,16 @@
 // ─────────────────────────────────────────────────────────────────────────────
 const path = require('path');
 const { config: dotenvConfig } = require('dotenv');
+const {
+  resolveUserEmail,
+  readJsonBody,
+  sendJson,
+  canWriteNetCash,
+  allowChatRequest,
+  clipDashboardContext,
+  PayloadTooLargeError,
+  CHAT_MAX_BODY,
+} = require('./security.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
 const IS_WINDOWS = process.platform === 'win32';
@@ -62,19 +72,24 @@ function getYear(req     )         {
   return parseInt(url.searchParams.get('year') || '') || new Date().getFullYear();
 }
 
-// User identity comes from a header injected by an upstream proxy, which any client can
-// forge if it can reach this process directly. The header is therefore only honoured when
-// TRUST_PROXY_USER_HEADER is set, which should happen exclusively on hosts where an
-// authenticating proxy is the sole route in. DEV_USER_EMAIL is a local-dev fallback only.
-const TRUST_USER_HEADER = process.env.TRUST_PROXY_USER_HEADER === '1';
-
+// User identity: trusted proxy header (when TRUST_PROXY_USER_HEADER=1), then a
+// standalone session cookie, then DEV_USER_EMAIL only for loopback + non-production.
+// Remote clients never inherit DEV_USER_EMAIL, so a LAN-exposed Vite/dev server
+// cannot mint SYNC_ALLOWLIST privileges for every visitor.
 function getUserEmail(req     )         {
-  const h = req.headers || {};
-  const fromHeader = TRUST_USER_HEADER
-    ? (h['x-user-email'] || h['x-forwarded-user'] || h['x-auth-user'] || '')
-    : '';
-  const raw = (fromHeader || process.env.DEV_USER_EMAIL || '').toString();
-  return raw.trim().toLowerCase();
+  return resolveUserEmail(req);
+}
+
+async function parseBody(req, res, maxBytes) {
+  try {
+    return await readJsonBody(req, maxBytes);
+  } catch (e) {
+    if (e instanceof PayloadTooLargeError || e.statusCode === 413) {
+      sendJson(res, 413, { ok: false, error: e.message });
+      return null;
+    }
+    throw e;
+  }
 }
 
 // Build the path of a per-company budget snapshot. `year` and `company` arrive from
@@ -617,9 +632,8 @@ function registerApiRoutes(app     ) {
           if (method === 'PUT') {
             const email = getUserEmail(req);
             if (!email) { res.statusCode = 401; res.end(JSON.stringify({ ok: false, error: 'Not authenticated' })); return; }
-            let body = '';
-            for await (const chunk of req) body += chunk;
-            const p = JSON.parse(body || '{}');
+            const p = await parseBody(req, res);
+            if (!p) return;
             const { fiscalYear, subsidiaryId, department, location, accountNumber, currency } = p;
             if (!fiscalYear || !subsidiaryId || !accountNumber) {
               res.statusCode = 400;
@@ -1898,9 +1912,8 @@ function registerApiRoutes(app     ) {
             return;
           }
           if (method === 'PUT') {
-            let body = '';
-            for await (const chunk of req) body += chunk;
-            const patch = JSON.parse(body || '{}');
+            const patch = await parseBody(req, res);
+            if (!patch) return;
             prefs[email] = { ...(prefs[email] || {}), ...patch, updatedAt: new Date().toISOString() };
             savePrefs(prefs);
             res.end(JSON.stringify({ ok: true }));
@@ -1929,9 +1942,14 @@ function registerApiRoutes(app     ) {
             return;
           }
           if (method === 'POST') {
-            let body = '';
-            for await (const chunk of req) body += chunk;
-            const b = JSON.parse(body || '{}');
+            const email = getUserEmail(req);
+            if (!canWriteNetCash(req, email, canUserSync(email))) {
+              res.statusCode = 403;
+              res.end(JSON.stringify({ ok: false, error: 'Not authorized to persist net-cash forecast' }));
+              return;
+            }
+            const b = await parseBody(req, res);
+            if (!b) return;
             const record = {
               date: b.date || new Date().toISOString().slice(0, 10),
               company: b.company || 'lsports',
@@ -2016,23 +2034,21 @@ function registerApiRoutes(app     ) {
         const fs = await import('fs');
         const budgetDir = path.resolve(ROOT, 'data', 'budgets');
         res.setHeader('Content-Type', 'application/json');
-        let body = '';
-        req.on('data', (chunk     ) => { body += chunk; });
-        req.on('end', () => {
-          try {
-            const { year, company, projectedDecClosing } = JSON.parse(body);
-            if (!year || !company) { res.end(JSON.stringify({ error: 'year and company required' })); return; }
-            const filePath = budgetSnapshotPath(budgetDir, year, company);
-            if (!filePath) { res.statusCode = 400; res.end(JSON.stringify({ error: 'invalid year or company' })); return; }
-            if (!fs.existsSync(filePath)) { res.end(JSON.stringify({ error: 'snapshot not found' })); return; }
-            const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-            if (projectedDecClosing !== undefined) data.projectedDecClosing = projectedDecClosing;
-            data.lastPatchedAt = new Date().toISOString();
-            fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
-            console.log(`[Budget] Patched ${year}-${company}: projectedDecClosing=€${projectedDecClosing?.toLocaleString()}`);
-            res.end(JSON.stringify({ success: true }));
-          } catch (e     ) { res.end(JSON.stringify({ error: e.message })); }
-        });
+        try {
+          const parsed = await parseBody(req, res);
+          if (!parsed) return;
+          const { year, company, projectedDecClosing } = parsed;
+          if (!year || !company) { res.end(JSON.stringify({ error: 'year and company required' })); return; }
+          const filePath = budgetSnapshotPath(budgetDir, year, company);
+          if (!filePath) { res.statusCode = 400; res.end(JSON.stringify({ error: 'invalid year or company' })); return; }
+          if (!fs.existsSync(filePath)) { res.end(JSON.stringify({ error: 'snapshot not found' })); return; }
+          const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+          if (projectedDecClosing !== undefined) data.projectedDecClosing = projectedDecClosing;
+          data.lastPatchedAt = new Date().toISOString();
+          fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+          console.log(`[Budget] Patched ${year}-${company}: projectedDecClosing=€${projectedDecClosing?.toLocaleString()}`);
+          res.end(JSON.stringify({ success: true }));
+        } catch (e     ) { res.end(JSON.stringify({ error: e.message })); }
       });
 
       // ── /api/budget-snapshot — per-company roll forward, read, delete ──
@@ -2077,11 +2093,10 @@ function registerApiRoutes(app     ) {
 
         // ── POST: create per-company snapshot (roll forward) ──
         try {
-          let body = '';
-          req.on('data', (chunk     ) => { body += chunk; });
-          req.on('end', async () => {
-            try {
-              const { sourceYear, targetYear, company, clientDecClosing } = JSON.parse(body);
+          const parsed = await parseBody(req, res);
+          if (!parsed) return;
+          try {
+              const { sourceYear, targetYear, company, clientDecClosing } = parsed;
               if (!sourceYear || !targetYear || !company) { res.end(JSON.stringify({ error: 'sourceYear, targetYear, and company required' })); return; }
               const targetPath = budgetSnapshotPath(budgetDir, targetYear, company);
               if (!targetPath || !budgetSnapshotPath(budgetDir, sourceYear, company)) {
@@ -2407,7 +2422,6 @@ function registerApiRoutes(app     ) {
               console.error('[Budget] Snapshot creation failed:', e.message);
               res.end(JSON.stringify({ error: e.message }));
             }
-          });
         } catch (e     ) { res.end(JSON.stringify({ error: e.message })); }
       });
 
@@ -2428,9 +2442,9 @@ function registerApiRoutes(app     ) {
 
           // POST /api/scenarios — create/save
           if (req.method === 'POST' && pathParts.length === 0) {
-            let body = '';
-            for await (const chunk of req) body += chunk;
-            const { id, name, data, company } = JSON.parse(body);
+            const parsed = await parseBody(req, res, 2 * 1024 * 1024);
+            if (!parsed) return;
+            const { id, name, data, company } = parsed;
             const scenarios = loadScenarios();
             const now = new Date().toISOString();
             const existing = scenarios.findIndex((s     ) => s.id === id);
@@ -2446,9 +2460,8 @@ function registerApiRoutes(app     ) {
 
           // PUT /api/scenarios/:id — update
           if (req.method === 'PUT' && pathParts.length === 1) {
-            let body = '';
-            for await (const chunk of req) body += chunk;
-            const updates = JSON.parse(body);
+            const updates = await parseBody(req, res, 2 * 1024 * 1024);
+            if (!updates) return;
             const scenarios = loadScenarios();
             const idx = scenarios.findIndex((s     ) => s.id === pathParts[0]);
             if (idx >= 0) {
@@ -2481,8 +2494,8 @@ function registerApiRoutes(app     ) {
 
           // POST /api/scenarios/:id/share — stub
           if (req.method === 'POST' && pathParts.length === 2 && pathParts[1] === 'share') {
-            let body = '';
-            for await (const chunk of req) body += chunk;
+            const parsed = await parseBody(req, res);
+            if (!parsed) return;
             res.end(JSON.stringify({ ok: true }));
             return;
           }
@@ -2513,31 +2526,50 @@ function registerApiRoutes(app     ) {
         fs.writeFileSync(chatHistoryPath, JSON.stringify(history, null, 2));
       };
 
-      // GET /api/chat-history — list all conversations
+      // GET /api/chat-history — conversations owned by the caller only
       use('/api/chat-history', async (req, res) => {
+        const email = getUserEmail(req);
+        const owns = (h) => (h.ownerEmail || '').toLowerCase() === email;
+        const isLegacy = (h) => !h.ownerEmail;
         if (req.method === 'GET') {
           res.setHeader('Content-Type', 'application/json');
-          res.end(JSON.stringify(loadChatHistory()));
+          if (!email) { res.statusCode = 401; res.end(JSON.stringify([])); return; }
+          const mine = loadChatHistory().filter((h) => owns(h) || (isLegacy(h) && canUserSync(email)));
+          res.end(JSON.stringify(mine));
           return;
         }
         if (req.method === 'POST') {
-          let body = '';
-          for await (const chunk of req) body += chunk;
-          const { action, id, title, messages } = JSON.parse(body);
+          if (!email) { sendJson(res, 401, { ok: false, error: 'Not authenticated' }); return; }
+          const parsed = await parseBody(req, res);
+          if (!parsed) return;
+          const { action, id, title, messages } = parsed;
           const history = loadChatHistory();
           if (action === 'save') {
             const existing = history.find(h => h.id === id);
             if (existing) {
+              if (!owns(existing) && !(isLegacy(existing) && canUserSync(email))) {
+                sendJson(res, 403, { ok: false, error: 'Not authorized to modify this conversation' });
+                return;
+              }
               existing.messages = messages;
               existing.title = title || existing.title;
               existing.updatedAt = new Date().toISOString();
+              existing.ownerEmail = existing.ownerEmail || email;
             } else {
-              history.unshift({ id, title: title || 'New Chat', messages, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+              history.unshift({
+                id, title: title || 'New Chat', messages, ownerEmail: email,
+                createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+              });
             }
             saveChatHistory(history);
             res.setHeader('Content-Type', 'application/json');
             res.end(JSON.stringify({ ok: true }));
           } else if (action === 'delete') {
+            const target = history.find(h => h.id === id);
+            if (target && !owns(target) && !(isLegacy(target) && canUserSync(email))) {
+              sendJson(res, 403, { ok: false, error: 'Not authorized to delete this conversation' });
+              return;
+            }
             saveChatHistory(history.filter(h => h.id !== id));
             res.setHeader('Content-Type', 'application/json');
             res.end(JSON.stringify({ ok: true }));
@@ -2553,16 +2585,20 @@ function registerApiRoutes(app     ) {
       use('/api/chat', async (req, res) => {
         if (req.method !== 'POST') { res.statusCode = 405; res.end('Method not allowed'); return; }
         try {
-          let body = '';
-          for await (const chunk of req) body += chunk;
-          const { messages, dashboardContext } = JSON.parse(body);
+          const email = getUserEmail(req);
+          if (!email) { sendJson(res, 401, { error: 'Not authenticated' }); return; }
+          if (!allowChatRequest(email)) { sendJson(res, 429, { error: 'Too many chat requests' }); return; }
+          const parsed = await parseBody(req, res, CHAT_MAX_BODY);
+          if (!parsed) return;
+          const { messages, dashboardContext } = parsed;
+          if (!Array.isArray(messages)) { sendJson(res, 400, { error: 'messages must be an array' }); return; }
           const apiKey = process.env.ANTHROPIC_API_KEY;
           if (!apiKey) { res.statusCode = 500; res.end(JSON.stringify({ error: 'ANTHROPIC_API_KEY not set' })); return; }
 
           const systemPrompt = `You are a senior financial analyst AI assistant embedded in a Banks Dashboard for CloudPay.
 You have access to the following real-time dashboard data:
 
-${dashboardContext || 'No dashboard context provided.'}
+${clipDashboardContext(dashboardContext) || 'No dashboard context provided.'}
 
 Your capabilities:
 1. **Answer questions** about the financial data shown on the dashboard — bank balances, cashflow, salary, vendors, collections, revenue, churn, pipeline, OKRs, etc.
@@ -2641,4 +2677,4 @@ If the user asks to modify, adjust, or refine an existing scenario (e.g. "reduce
       });
 }
 
-module.exports = { registerApiRoutes, apiCache, getCached, setCache, getNsClient, getSfClient, queueNsCall };
+module.exports = { registerApiRoutes, apiCache, getCached, setCache, getNsClient, getSfClient, queueNsCall, getUserEmail, canUserSync };

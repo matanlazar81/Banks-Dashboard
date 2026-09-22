@@ -15,6 +15,7 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
         PORT: 8790,
+        BIND_HOST: '127.0.0.1',
         CACHE_TTL_MIN: 20,
         WARM_INTERVAL_MIN: 15,
       },

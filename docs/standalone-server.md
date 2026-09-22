@@ -75,27 +75,28 @@ processes would write the same `data/*.json` files).
 | Var | Default | Meaning |
 |---|---|---|
 | `PORT` | `8790` | Listen port |
+| `BIND_HOST` | `127.0.0.1` | Listen address. pm2 pins this. A non-loopback bind is refused unless `STANDALONE_ACCESS_TOKEN` is set. |
+| `STANDALONE_ACCESS_TOKEN` | — | Shared password for `/login`. Required to bind off loopback. Warm-cache sends it as `X-Standalone-Token`. |
 | `CACHE_TTL_MIN` | `5` | Shared API cache TTL (minutes) |
 | `WARM_INTERVAL_MIN` | `15` | Keep-warm sweep interval; `0` disables |
 | `WARM_SUBSIDIARIES` | `3,6` | Subsidiaries to warm |
 | `WARM_ENDPOINTS` | built-in set | Override the warmed endpoint list (`{sub}` placeholder) |
-| `DEV_USER_EMAIL` | — | Identity fallback when no proxy injects `X-User-Email` |
-| `SYNC_ALLOWLIST` | `matan.l@lsports.eu` | Who may use the Sync button |
+| `DEV_USER_EMAIL` | — | Local-dev identity **only** (loopback + `NODE_ENV !== production`). Ignored in production. |
+| `SYNC_ALLOWLIST` | `matan.l@lsports.eu` | Who may use the Sync button and persist net-cash |
+| `NET_CASH_WRITE_TOKEN` | — | Optional header `X-Net-Cash-Write-Token` for server-side writers |
+| `TRUST_PROXY_USER_HEADER` | — | Set to `1` only behind an authenticating proxy that injects `X-User-Email` |
 
-## User identity: LAN-trust model (accepted, by design)
+## User identity
 
-There is deliberately **no login layer** on this server. Nothing injects `X-User-Email`, so
-everyone shares one identity. The `DEV_USER_EMAIL` setting decides what that means:
+`server.cjs` is loopback-only by default (`BIND_HOST=127.0.0.1` in `ecosystem.config.cjs`).
+Reach it from another host through an authenticating reverse proxy, **or** set
+`STANDALONE_ACCESS_TOKEN` and bind publicly — then `/login` (work email + token) issues an
+httpOnly session cookie. Mutating routes and chat require that identity.
 
-- **Unset (recommended default):** `getUserEmail()` resolves to empty → the **Sync button is
-  disabled for everyone** on the shared server (nobody can push budget targets to Snowflake
-  from the shared URL). Syncs still work from a local `npm run dev` or the scripts. Prefs and
-  scenarios are shared under one anonymous identity — consistent with "everyone sees the same
-  data".
-- **Set (e.g. `DEV_USER_EMAIL=matan.l@lsports.eu`):** everyone who can reach the server passes
-  the `SYNC_ALLOWLIST` check and can press Sync. Only for a network where everyone is trusted
-  with that button.
-
-If real per-user identity is ever needed, two upgrade paths (no route changes required —
-they already trust `X-User-Email`): front this server with the existing finance-it proxy
-(it injects the header), or add Google Workspace sign-in to the dashboard.
+- **`DEV_USER_EMAIL`:** used only by `npm run dev` on loopback, so a LAN-exposed Vite server
+  cannot grant `SYNC_ALLOWLIST` privileges to every visitor. Production (`NODE_ENV=production`)
+  ignores it entirely.
+- **Trusted proxy:** set `TRUST_PROXY_USER_HEADER=1` so `X-User-Email` from finance-it / nginx
+  SSO becomes the caller identity.
+- **Chat history** is scoped to the caller's email. **`POST /api/net-cash-forecast`** and
+  **`POST /api/chat`** require that identity (or, for net-cash, `NET_CASH_WRITE_TOKEN`).
