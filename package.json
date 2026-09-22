@@ -13,7 +13,6 @@
     "populate:budget-targets": "node scripts/populate-budget-targets.cjs"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.82.0",
     "@tailwindcss/vite": "^4.2.2",
     "better-sqlite3": "^12.8.0",
     "cors": "^2.8.6",
@@ -22,14 +21,13 @@
     "express": "^5.2.1",
     "html2canvas": "^1.4.1",
     "lucide-react": "^0.577.0",
-    "nodemailer": "^6.9.16",
+    "nodemailer": "^10.0.10",
     "oauth-1.0a": "^2.2.6",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "recharts": "^3.8.0",
-    "snowflake-sdk": "^2.3.6",
+    "snowflake-sdk": "^2.4.3",
     "tailwindcss": "^4.2.2",
-    "xlsx": "^0.18.5",
     "xlsx-js-style": "^1.2.0"
   },
   "devDependencies": {
@@ -44,6 +42,9 @@
     "globals": "^17.4.0",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.57.0",
-    "vite": "^8.0.1"
+    "vite": "^8.3.0"
+  },
+  "overrides": {
+    "toml": "5.0.0"
   }
 }
