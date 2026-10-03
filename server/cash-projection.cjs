@@ -32,7 +32,8 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 
 const ROOT = path.resolve(__dirname, '..');
-const SCHEMA_VERSION = 1;
+// 2: balances are cash in the bank with a separate `dividend` figure (1 was the operating view).
+const SCHEMA_VERSION = 2;
 const COMPANY = 'lsports';
 const DEFAULT_SCENARIO = 'Exit plan June26';
 const MIN = 60 * 1000;
@@ -198,16 +199,20 @@ async function computeCashProjection(opts) {
     const rowsT = computeCashflowForecast(inputsT);
 
     const dec = rowsY[11];
+    // This year's dividends are still inside every next-year balance (it opens at the operating-view
+    // December closing); shapeYear takes them out so both years show cash in the bank.
+    const divY = rowsY.reduce((s, r) => ({ eur: s.eur + (r.dividendExcluded || 0), ils: s.ils + (r.dividendExcludedILS || 0) }), { eur: 0, ils: 0 });
+    const decBank = { eur: dec.closingBalance - divY.eur, ils: dec.closingBalanceILS - divY.ils };
     variants[variant] = {
       years: [
         rf.shapeYear(rowsY, { year: Y, kind: 'current' }),
-        rf.shapeYear(rowsT, { year: T, kind: 'projection', prevClosing: { eur: dec.closingBalance, ils: dec.closingBalanceILS } }),
+        rf.shapeYear(rowsT, { year: T, kind: 'projection', prevClosing: decBank, dividendCarry: divY }),
       ],
       rollForward: {
         from: `${Y}-12`,
         to: `${T}-01`,
-        closing: { eur: cents(dec.closingBalance), ils: cents(dec.closingBalanceILS) },
-        opening: { eur: cents(rowsT[0].openingBalance), ils: cents(rowsT[0].openingBalanceILS) },
+        closing: { eur: cents(decBank.eur), ils: cents(decBank.ils) },
+        opening: { eur: cents(rowsT[0].openingBalance - divY.eur), ils: cents(rowsT[0].openingBalanceILS - divY.ils) },
         source: opts.snapshotFile ? 'snapshot-file' : 'live',
         salaryBasis: salaryBasis
           ? { method: 'run-rate', monthsWithData: salaryBasis.monthsWithData, scale: salaryBasis.scale }

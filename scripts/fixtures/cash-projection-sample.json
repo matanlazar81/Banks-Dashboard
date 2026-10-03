@@ -1,7 +1,7 @@
 {
   "_note": "Synthetic numbers for tests and UI screenshots. Not LSports data.",
   "ok": true,
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "status": "ready",
   "generatedAt": "2026-10-15T07:42:00.000Z",
   "computedMonth": "2026-10",
@@ -45,6 +45,7 @@
                 "reval": 25000,
                 "net": 135000,
                 "closing": 8255000,
+                "dividend": 0,
                 "reanchor": 0
               },
               "ils": {
@@ -58,6 +59,7 @@
                 "reval": 89750,
                 "net": 496750,
                 "closing": 30540750,
+                "dividend": 0,
                 "reanchor": 0
               }
             },
@@ -76,6 +78,7 @@
                 "reval": -18000,
                 "net": 87000,
                 "closing": 8342000,
+                "dividend": 0,
                 "reanchor": 0
               },
               "ils": {
@@ -89,6 +92,7 @@
                 "reval": -64620,
                 "net": 323880,
                 "closing": 30864630,
+                "dividend": 0,
                 "reanchor": 0
               }
             },
@@ -107,6 +111,7 @@
                 "reval": 40000,
                 "net": 110000,
                 "closing": 8452000,
+                "dividend": 0,
                 "reanchor": 0
               },
               "ils": {
@@ -120,6 +125,7 @@
                 "reval": 143600,
                 "net": 402600,
                 "closing": 31267230,
+                "dividend": 0,
                 "reanchor": 0
               }
             },
@@ -138,6 +144,7 @@
                 "reval": -12000,
                 "net": 3000,
                 "closing": 8455000,
+                "dividend": 0,
                 "reanchor": 0
               },
               "ils": {
@@ -151,6 +158,7 @@
                 "reval": -43080,
                 "net": 12420,
                 "closing": 31279650,
+                "dividend": 0,
                 "reanchor": 0
               }
             },
@@ -168,7 +176,8 @@
                 "other": 50000,
                 "reval": 30000,
                 "net": 50000,
-                "closing": 8505000,
+                "closing": 6855000,
+                "dividend": 1650000,
                 "reanchor": 0
               },
               "ils": {
@@ -181,7 +190,8 @@
                 "other": 185000,
                 "reval": 107700,
                 "net": 181700,
-                "closing": 31461350,
+                "closing": 25356350,
+                "dividend": 6105000,
                 "reanchor": 0
               }
             },
@@ -190,7 +200,7 @@
               "status": "actual",
               "dividendExcluded": 0,
               "eur": {
-                "opening": 8505000,
+                "opening": 6855000,
                 "collections": 3450000,
                 "pipeline": 0,
                 "churn": 0,
@@ -199,11 +209,12 @@
                 "other": 42000,
                 "reval": -22000,
                 "net": 36000,
-                "closing": 8541000,
+                "closing": 6891000,
+                "dividend": 0,
                 "reanchor": 0
               },
               "ils": {
-                "opening": 31461350,
+                "opening": 25356350,
                 "collections": 12765000,
                 "pipeline": 0,
                 "churn": 0,
@@ -212,7 +223,8 @@
                 "other": 155400,
                 "reval": -78980,
                 "net": 135620,
-                "closing": 31596970,
+                "closing": 25491970,
+                "dividend": 0,
                 "reanchor": 0
               }
             },
@@ -221,7 +233,7 @@
               "status": "actual",
               "dividendExcluded": 0,
               "eur": {
-                "opening": 8541000,
+                "opening": 6891000,
                 "collections": 3470000,
                 "pipeline": 0,
                 "churn": 0,
@@ -230,11 +242,12 @@
                 "other": 38000,
                 "reval": 15000,
                 "net": 37000,
-                "closing": 8578000,
+                "closing": 6928000,
+                "dividend": 0,
                 "reanchor": 0
               },
               "ils": {
-                "opening": 31596970,
+                "opening": 25491970,
                 "collections": 12839000,
                 "pipeline": 0,
                 "churn": 0,
@@ -243,7 +256,8 @@
                 "other": 140600,
                 "reval": 53850,
                 "net": 135250,
-                "closing": 31732220,
+                "closing": 25627220,
+                "dividend": 0,
                 "reanchor": 0
               }
             },
@@ -252,7 +266,7 @@
               "status": "actual",
               "dividendExcluded": 0,
               "eur": {
-                "opening": 8578000,
+                "opening": 6928000,
                 "collections": 3440000,
                 "pipeline": 0,
                 "churn": 0,
@@ -261,11 +275,12 @@
                 "other": 55000,
                 "reval": 8000,
                 "net": -27000,
-                "closing": 8551000,
+                "closing": 6901000,
+                "dividend": 0,
                 "reanchor": 0
               },
               "ils": {
-                "opening": 31732220,
+                "opening": 25627220,
                 "collections": 12728000,
                 "pipeline": 0,
                 "churn": 0,
@@ -274,7 +289,8 @@
                 "other": 203500,
                 "reval": 28720,
                 "net": -100780,
-                "closing": 31631440,
+                "closing": 25526440,
+                "dividend": 0,
                 "reanchor": 0
               }
             },
@@ -283,7 +299,7 @@
               "status": "actual",
               "dividendExcluded": 0,
               "eur": {
-                "opening": 8551000,
+                "opening": 6901000,
                 "collections": 3520000,
                 "pipeline": 0,
                 "churn": 0,
@@ -292,11 +308,12 @@
                 "other": 47000,
                 "reval": -20000,
                 "net": -7000,
-                "closing": 8544000,
+                "closing": 6894000,
+                "dividend": 0,
                 "reanchor": 0
               },
               "ils": {
-                "opening": 31631440,
+                "opening": 25526440,
                 "collections": 13024000,
                 "pipeline": 0,
                 "churn": 0,
@@ -305,7 +322,8 @@
                 "other": 173900,
                 "reval": -71800,
                 "net": -23700,
-                "closing": 31607740,
+                "closing": 25502740,
+                "dividend": 0,
                 "reanchor": 0
               }
             },
@@ -314,7 +332,7 @@
               "status": "current",
               "dividendExcluded": 0,
               "eur": {
-                "opening": 8579000,
+                "opening": 6929000,
                 "collections": 3580000,
                 "pipeline": 0,
                 "churn": 0,
@@ -323,11 +341,12 @@
                 "other": 0,
                 "reval": 36000,
                 "net": 166000,
-                "closing": 8745000,
+                "closing": 7095000,
+                "dividend": 0,
                 "reanchor": 35000
               },
               "ils": {
-                "opening": 31742300,
+                "opening": 25637300,
                 "collections": 13246000,
                 "pipeline": 0,
                 "churn": 0,
@@ -336,7 +355,8 @@
                 "other": 0,
                 "reval": 129240,
                 "net": 610240,
-                "closing": 32352540,
+                "closing": 26247540,
+                "dividend": 0,
                 "reanchor": 134560
               }
             },
@@ -345,7 +365,7 @@
               "status": "forecast",
               "dividendExcluded": 0,
               "eur": {
-                "opening": 8745000,
+                "opening": 7095000,
                 "collections": 3600000,
                 "pipeline": 55000,
                 "churn": 28000,
@@ -354,11 +374,12 @@
                 "other": 0,
                 "reval": 36000,
                 "net": 348400,
-                "closing": 9093400,
+                "closing": 7443400,
+                "dividend": 0,
                 "reanchor": 0
               },
               "ils": {
-                "opening": 32352540,
+                "opening": 26247540,
                 "collections": 13320000,
                 "pipeline": 203500,
                 "churn": 103600,
@@ -367,7 +388,8 @@
                 "other": 0,
                 "reval": 129240,
                 "net": 1285120,
-                "closing": 33637660,
+                "closing": 27532660,
+                "dividend": 0,
                 "reanchor": 0
               }
             },
@@ -376,7 +398,7 @@
               "status": "forecast",
               "dividendExcluded": 0,
               "eur": {
-                "opening": 9093400,
+                "opening": 7443400,
                 "collections": 3660000,
                 "pipeline": 125000,
                 "churn": 56000,
@@ -385,11 +407,12 @@
                 "other": 0,
                 "reval": 36000,
                 "net": 430400,
-                "closing": 9523800,
+                "closing": 7873800,
+                "dividend": 0,
                 "reanchor": 0
               },
               "ils": {
-                "opening": 33637660,
+                "opening": 27532660,
                 "collections": 13542000,
                 "pipeline": 462500,
                 "churn": 207200,
@@ -398,7 +421,8 @@
                 "other": 0,
                 "reval": 129240,
                 "net": 1588520,
-                "closing": 35226180,
+                "closing": 29121180,
+                "dividend": 0,
                 "reanchor": 0
               }
             }
@@ -413,7 +437,7 @@
               "status": "forecast",
               "dividendExcluded": 0,
               "eur": {
-                "opening": 9523800,
+                "opening": 7873800,
                 "collections": 3653333,
                 "pipeline": 0,
                 "churn": 0,
@@ -422,11 +446,12 @@
                 "other": 0,
                 "reval": 0,
                 "net": 383599,
-                "closing": 9907399,
+                "closing": 8257399,
+                "dividend": 0,
                 "reanchor": 0
               },
               "ils": {
-                "opening": 35226180,
+                "opening": 29121180,
                 "collections": 13512775,
                 "pipeline": 0,
                 "churn": 0,
@@ -435,7 +460,8 @@
                 "other": 0,
                 "reval": 0,
                 "net": 1418838,
-                "closing": 36645018,
+                "closing": 30540018,
+                "dividend": 0,
                 "reanchor": 0
               }
             },
@@ -444,7 +470,7 @@
               "status": "forecast",
               "dividendExcluded": 0,
               "eur": {
-                "opening": 9907399,
+                "opening": 8257399,
                 "collections": 3653333,
                 "pipeline": 0,
                 "churn": 0,
@@ -453,11 +479,12 @@
                 "other": 0,
                 "reval": 0,
                 "net": 353599,
-                "closing": 10260998,
+                "closing": 8610998,
+                "dividend": 0,
                 "reanchor": 0
               },
               "ils": {
-                "opening": 36645018,
+                "opening": 30540018,
                 "collections": 13512775,
                 "pipeline": 0,
                 "churn": 0,
@@ -466,7 +493,8 @@
                 "other": 0,
                 "reval": 0,
                 "net": 1307875,
-                "closing": 37952893,
+                "closing": 31847893,
+                "dividend": 0,
                 "reanchor": 0
               }
             },
@@ -475,7 +503,7 @@
               "status": "forecast",
               "dividendExcluded": 0,
               "eur": {
-                "opening": 10260998,
+                "opening": 8610998,
                 "collections": 3653333,
                 "pipeline": 0,
                 "churn": 0,
@@ -484,11 +512,12 @@
                 "other": 0,
                 "reval": 0,
                 "net": 333599,
-                "closing": 10594597,
+                "closing": 8944597,
+                "dividend": 0,
                 "reanchor": 0
               },
               "ils": {
-                "opening": 37952893,
+                "opening": 31847893,
                 "collections": 13512775,
                 "pipeline": 0,
                 "churn": 0,
@@ -497,7 +526,8 @@
                 "other": 0,
                 "reval": 0,
                 "net": 1233900,
-                "closing": 39186793,
+                "closing": 33081793,
+                "dividend": 0,
                 "reanchor": 0
               }
             },
@@ -506,7 +536,7 @@
               "status": "forecast",
               "dividendExcluded": 0,
               "eur": {
-                "opening": 10594597,
+                "opening": 8944597,
                 "collections": 3653333,
                 "pipeline": 0,
                 "churn": 0,
@@ -515,11 +545,12 @@
                 "other": 0,
                 "reval": 0,
                 "net": 313599,
-                "closing": 10908196,
+                "closing": 9258196,
+                "dividend": 0,
                 "reanchor": 0
               },
               "ils": {
-                "opening": 39186793,
+                "opening": 33081793,
                 "collections": 13512775,
                 "pipeline": 0,
                 "churn": 0,
@@ -528,7 +559,8 @@
                 "other": 0,
                 "reval": 0,
                 "net": 1159925,
-                "closing": 40346718,
+                "closing": 34241718,
+                "dividend": 0,
                 "reanchor": 0
               }
             },
@@ -537,7 +569,7 @@
               "status": "forecast",
               "dividendExcluded": 0,
               "eur": {
-                "opening": 10908196,
+                "opening": 9258196,
                 "collections": 3653333,
                 "pipeline": 0,
                 "churn": 0,
@@ -546,11 +578,12 @@
                 "other": 0,
                 "reval": 0,
                 "net": 283599,
-                "closing": 11191795,
+                "closing": 9541795,
+                "dividend": 0,
                 "reanchor": 0
               },
               "ils": {
-                "opening": 40346718,
+                "opening": 34241718,
                 "collections": 13512775,
                 "pipeline": 0,
                 "churn": 0,
@@ -559,7 +592,8 @@
                 "other": 0,
                 "reval": 0,
                 "net": 1048963,
-                "closing": 41395681,
+                "closing": 35290681,
+                "dividend": 0,
                 "reanchor": 0
               }
             },
@@ -568,7 +602,7 @@
               "status": "forecast",
               "dividendExcluded": 0,
               "eur": {
-                "opening": 11191795,
+                "opening": 9541795,
                 "collections": 3653333,
                 "pipeline": 0,
                 "churn": 0,
@@ -577,11 +611,12 @@
                 "other": 0,
                 "reval": 0,
                 "net": 303599,
-                "closing": 11495394,
+                "closing": 9845394,
+                "dividend": 0,
                 "reanchor": 0
               },
               "ils": {
-                "opening": 41395681,
+                "opening": 35290681,
                 "collections": 13512775,
                 "pipeline": 0,
                 "churn": 0,
@@ -590,7 +625,8 @@
                 "other": 0,
                 "reval": 0,
                 "net": 1122938,
-                "closing": 42518619,
+                "closing": 36413619,
+                "dividend": 0,
                 "reanchor": 0
               }
             },
@@ -599,7 +635,7 @@
               "status": "forecast",
               "dividendExcluded": 0,
               "eur": {
-                "opening": 11495394,
+                "opening": 9845394,
                 "collections": 3653333,
                 "pipeline": 0,
                 "churn": 0,
@@ -608,11 +644,12 @@
                 "other": 0,
                 "reval": 0,
                 "net": 273599,
-                "closing": 11768993,
+                "closing": 10118993,
+                "dividend": 0,
                 "reanchor": 0
               },
               "ils": {
-                "opening": 42518619,
+                "opening": 36413619,
                 "collections": 13512775,
                 "pipeline": 0,
                 "churn": 0,
@@ -621,7 +658,8 @@
                 "other": 0,
                 "reval": 0,
                 "net": 1011975,
-                "closing": 43530594,
+                "closing": 37425594,
+                "dividend": 0,
                 "reanchor": 0
               }
             },
@@ -630,7 +668,7 @@
               "status": "forecast",
               "dividendExcluded": 0,
               "eur": {
-                "opening": 11768993,
+                "opening": 10118993,
                 "collections": 3653333,
                 "pipeline": 0,
                 "churn": 0,
@@ -639,11 +677,12 @@
                 "other": 0,
                 "reval": 0,
                 "net": 253599,
-                "closing": 12022592,
+                "closing": 10372592,
+                "dividend": 0,
                 "reanchor": 0
               },
               "ils": {
-                "opening": 43530594,
+                "opening": 37425594,
                 "collections": 13512775,
                 "pipeline": 0,
                 "churn": 0,
@@ -652,7 +691,8 @@
                 "other": 0,
                 "reval": 0,
                 "net": 938000,
-                "closing": 44468594,
+                "closing": 38363594,
+                "dividend": 0,
                 "reanchor": 0
               }
             },
@@ -661,7 +701,7 @@
               "status": "forecast",
               "dividendExcluded": 0,
               "eur": {
-                "opening": 12022592,
+                "opening": 10372592,
                 "collections": 3653333,
                 "pipeline": 0,
                 "churn": 0,
@@ -670,11 +710,12 @@
                 "other": 0,
                 "reval": 0,
                 "net": 233599,
-                "closing": 12256191,
+                "closing": 10606191,
+                "dividend": 0,
                 "reanchor": 0
               },
               "ils": {
-                "opening": 44468594,
+                "opening": 38363594,
                 "collections": 13512775,
                 "pipeline": 0,
                 "churn": 0,
@@ -683,7 +724,8 @@
                 "other": 0,
                 "reval": 0,
                 "net": 864025,
-                "closing": 45332619,
+                "closing": 39227619,
+                "dividend": 0,
                 "reanchor": 0
               }
             },
@@ -692,7 +734,7 @@
               "status": "forecast",
               "dividendExcluded": 0,
               "eur": {
-                "opening": 12256191,
+                "opening": 10606191,
                 "collections": 3653333,
                 "pipeline": 0,
                 "churn": 0,
@@ -701,11 +743,12 @@
                 "other": 0,
                 "reval": 0,
                 "net": 243599,
-                "closing": 12499790,
+                "closing": 10849790,
+                "dividend": 0,
                 "reanchor": 0
               },
               "ils": {
-                "opening": 45332619,
+                "opening": 39227619,
                 "collections": 13512775,
                 "pipeline": 0,
                 "churn": 0,
@@ -714,7 +757,8 @@
                 "other": 0,
                 "reval": 0,
                 "net": 901012,
-                "closing": 46233631,
+                "closing": 40128631,
+                "dividend": 0,
                 "reanchor": 0
               }
             },
@@ -723,7 +767,7 @@
               "status": "forecast",
               "dividendExcluded": 0,
               "eur": {
-                "opening": 12499790,
+                "opening": 10849790,
                 "collections": 3653333,
                 "pipeline": 0,
                 "churn": 0,
@@ -732,11 +776,12 @@
                 "other": 0,
                 "reval": 0,
                 "net": 397388,
-                "closing": 12897178,
+                "closing": 11247178,
+                "dividend": 0,
                 "reanchor": 0
               },
               "ils": {
-                "opening": 46233631,
+                "opening": 40128631,
                 "collections": 13512775,
                 "pipeline": 0,
                 "churn": 0,
@@ -745,7 +790,8 @@
                 "other": 0,
                 "reval": 0,
                 "net": 1469840,
-                "closing": 47703471,
+                "closing": 41598471,
+                "dividend": 0,
                 "reanchor": 0
               }
             },
@@ -754,7 +800,7 @@
               "status": "forecast",
               "dividendExcluded": 0,
               "eur": {
-                "opening": 12897178,
+                "opening": 11247178,
                 "collections": 3653333,
                 "pipeline": 0,
                 "churn": 0,
@@ -763,11 +809,12 @@
                 "other": 0,
                 "reval": 0,
                 "net": 397388,
-                "closing": 13294566,
+                "closing": 11644566,
+                "dividend": 0,
                 "reanchor": 0
               },
               "ils": {
-                "opening": 47703471,
+                "opening": 41598471,
                 "collections": 13512775,
                 "pipeline": 0,
                 "churn": 0,
@@ -776,7 +823,8 @@
                 "other": 0,
                 "reval": 0,
                 "net": 1469840,
-                "closing": 49173311,
+                "closing": 43068311,
+                "dividend": 0,
                 "reanchor": 0
               }
             }
@@ -787,12 +835,12 @@
         "from": "2026-12",
         "to": "2027-01",
         "closing": {
-          "eur": 9523800,
-          "ils": 35226180
+          "eur": 7873800,
+          "ils": 29121180
         },
         "opening": {
-          "eur": 9523800,
-          "ils": 35226180
+          "eur": 7873800,
+          "ils": 29121180
         },
         "source": "live",
         "salaryBasis": {
@@ -826,6 +874,7 @@
                 "reval": 25000,
                 "net": 135000,
                 "closing": 8255000,
+                "dividend": 0,
                 "reanchor": 0
               },
               "ils": {
@@ -839,6 +888,7 @@
                 "reval": 89750,
                 "net": 496750,
                 "closing": 30540750,
+                "dividend": 0,
                 "reanchor": 0
               }
             },
@@ -857,6 +907,7 @@
                 "reval": -18000,
                 "net": 87000,
                 "closing": 8342000,
+                "dividend": 0,
                 "reanchor": 0
               },
               "ils": {
@@ -870,6 +921,7 @@
                 "reval": -64620,
                 "net": 323880,
                 "closing": 30864630,
+                "dividend": 0,
                 "reanchor": 0
               }
             },
@@ -888,6 +940,7 @@
                 "reval": 40000,
                 "net": 110000,
                 "closing": 8452000,
+                "dividend": 0,
                 "reanchor": 0
               },
               "ils": {
@@ -901,6 +954,7 @@
                 "reval": 143600,
                 "net": 402600,
                 "closing": 31267230,
+                "dividend": 0,
                 "reanchor": 0
               }
             },
@@ -919,6 +973,7 @@
                 "reval": -12000,
                 "net": 3000,
                 "closing": 8455000,
+                "dividend": 0,
                 "reanchor": 0
               },
               "ils": {
@@ -932,6 +987,7 @@
                 "reval": -43080,
                 "net": 12420,
                 "closing": 31279650,
+                "dividend": 0,
                 "reanchor": 0
               }
             },
@@ -949,7 +1005,8 @@
                 "other": 50000,
                 "reval": 30000,
                 "net": 50000,
-                "closing": 8505000,
+                "closing": 6855000,
+                "dividend": 1650000,
                 "reanchor": 0
               },
               "ils": {
@@ -962,7 +1019,8 @@
                 "other": 185000,
                 "reval": 107700,
                 "net": 181700,
-                "closing": 31461350,
+                "closing": 25356350,
+                "dividend": 6105000,
                 "reanchor": 0
               }
             },
@@ -971,7 +1029,7 @@
               "status": "actual",
               "dividendExcluded": 0,
               "eur": {
-                "opening": 8505000,
+                "opening": 6855000,
                 "collections": 3450000,
                 "pipeline": 0,
                 "churn": 0,
@@ -980,11 +1038,12 @@
                 "other": 42000,
                 "reval": -22000,
                 "net": 36000,
-                "closing": 8541000,
+                "closing": 6891000,
+                "dividend": 0,
                 "reanchor": 0
               },
               "ils": {
-                "opening": 31461350,
+                "opening": 25356350,
                 "collections": 12765000,
                 "pipeline": 0,
                 "churn": 0,
@@ -993,7 +1052,8 @@
                 "other": 155400,
                 "reval": -78980,
                 "net": 135620,
-                "closing": 31596970,
+                "closing": 25491970,
+                "dividend": 0,
                 "reanchor": 0
               }
             },
@@ -1002,7 +1062,7 @@
               "status": "actual",
               "dividendExcluded": 0,
               "eur": {
-                "opening": 8541000,
+                "opening": 6891000,
                 "collections": 3470000,
                 "pipeline": 0,
                 "churn": 0,
@@ -1011,11 +1071,12 @@
                 "other": 38000,
                 "reval": 15000,
                 "net": 37000,
-                "closing": 8578000,
+                "closing": 6928000,
+                "dividend": 0,
                 "reanchor": 0
               },
               "ils": {
-                "opening": 31596970,
+                "opening": 25491970,
                 "collections": 12839000,
                 "pipeline": 0,
                 "churn": 0,
@@ -1024,7 +1085,8 @@
                 "other": 140600,
                 "reval": 53850,
                 "net": 135250,
-                "closing": 31732220,
+                "closing": 25627220,
+                "dividend": 0,
                 "reanchor": 0
               }
             },
@@ -1033,7 +1095,7 @@
               "status": "actual",
               "dividendExcluded": 0,
               "eur": {
-                "opening": 8578000,
+                "opening": 6928000,
                 "collections": 3440000,
                 "pipeline": 0,
                 "churn": 0,
@@ -1042,11 +1104,12 @@
                 "other": 55000,
                 "reval": 8000,
                 "net": -27000,
-                "closing": 8551000,
+                "closing": 6901000,
+                "dividend": 0,
                 "reanchor": 0
               },
               "ils": {
-                "opening": 31732220,
+                "opening": 25627220,
                 "collections": 12728000,
                 "pipeline": 0,
                 "churn": 0,
@@ -1055,7 +1118,8 @@
                 "other": 203500,
                 "reval": 28720,
                 "net": -100780,
-                "closing": 31631440,
+                "closing": 25526440,
+                "dividend": 0,
                 "reanchor": 0
               }
             },
@@ -1064,7 +1128,7 @@
               "status": "actual",
               "dividendExcluded": 0,
               "eur": {
-                "opening": 8551000,
+                "opening": 6901000,
                 "collections": 3520000,
                 "pipeline": 0,
                 "churn": 0,
@@ -1073,11 +1137,12 @@
                 "other": 47000,
                 "reval": -20000,
                 "net": -7000,
-                "closing": 8544000,
+                "closing": 6894000,
+                "dividend": 0,
                 "reanchor": 0
               },
               "ils": {
-                "opening": 31631440,
+                "opening": 25526440,
                 "collections": 13024000,
                 "pipeline": 0,
                 "churn": 0,
@@ -1086,7 +1151,8 @@
                 "other": 173900,
                 "reval": -71800,
                 "net": -23700,
-                "closing": 31607740,
+                "closing": 25502740,
+                "dividend": 0,
                 "reanchor": 0
               }
             },
@@ -1095,7 +1161,7 @@
               "status": "current",
               "dividendExcluded": 0,
               "eur": {
-                "opening": 8579000,
+                "opening": 6929000,
                 "collections": 3580000,
                 "pipeline": 0,
                 "churn": 0,
@@ -1104,11 +1170,12 @@
                 "other": 0,
                 "reval": 36000,
                 "net": 166000,
-                "closing": 8745000,
+                "closing": 7095000,
+                "dividend": 0,
                 "reanchor": 35000
               },
               "ils": {
-                "opening": 31742300,
+                "opening": 25637300,
                 "collections": 13246000,
                 "pipeline": 0,
                 "churn": 0,
@@ -1117,7 +1184,8 @@
                 "other": 0,
                 "reval": 129240,
                 "net": 610240,
-                "closing": 32352540,
+                "closing": 26247540,
+                "dividend": 0,
                 "reanchor": 134560
               }
             },
@@ -1126,7 +1194,7 @@
               "status": "forecast",
               "dividendExcluded": 0,
               "eur": {
-                "opening": 8745000,
+                "opening": 7095000,
                 "collections": 3600000,
                 "pipeline": 55000,
                 "churn": 28000,
@@ -1135,11 +1203,12 @@
                 "other": 0,
                 "reval": 36000,
                 "net": 193000,
-                "closing": 8938000,
+                "closing": 7288000,
+                "dividend": 0,
                 "reanchor": 0
               },
               "ils": {
-                "opening": 32352540,
+                "opening": 26247540,
                 "collections": 13320000,
                 "pipeline": 203500,
                 "churn": 103600,
@@ -1148,7 +1217,8 @@
                 "other": 0,
                 "reval": 129240,
                 "net": 710140,
-                "closing": 33062680,
+                "closing": 26957680,
+                "dividend": 0,
                 "reanchor": 0
               }
             },
@@ -1157,7 +1227,7 @@
               "status": "forecast",
               "dividendExcluded": 0,
               "eur": {
-                "opening": 8938000,
+                "opening": 7288000,
                 "collections": 3660000,
                 "pipeline": 125000,
                 "churn": 56000,
@@ -1166,11 +1236,12 @@
                 "other": 0,
                 "reval": 36000,
                 "net": 275000,
-                "closing": 9213000,
+                "closing": 7563000,
+                "dividend": 0,
                 "reanchor": 0
               },
               "ils": {
-                "opening": 33062680,
+                "opening": 26957680,
                 "collections": 13542000,
                 "pipeline": 462500,
                 "churn": 207200,
@@ -1179,7 +1250,8 @@
                 "other": 0,
                 "reval": 129240,
                 "net": 1013540,
-                "closing": 34076220,
+                "closing": 27971220,
+                "dividend": 0,
                 "reanchor": 0
               }
             }
@@ -1194,7 +1266,7 @@
               "status": "forecast",
               "dividendExcluded": 0,
               "eur": {
-                "opening": 9213000,
+                "opening": 7563000,
                 "collections": 3653333,
                 "pipeline": 0,
                 "churn": 0,
@@ -1203,11 +1275,12 @@
                 "other": 0,
                 "reval": 0,
                 "net": 323333,
-                "closing": 9536333,
+                "closing": 7886333,
+                "dividend": 0,
                 "reanchor": 0
               },
               "ils": {
-                "opening": 34076220,
+                "opening": 27971220,
                 "collections": 13512621,
                 "pipeline": 0,
                 "churn": 0,
@@ -1216,7 +1289,8 @@
                 "other": 0,
                 "reval": 0,
                 "net": 1195915,
-                "closing": 35272135,
+                "closing": 29167135,
+                "dividend": 0,
                 "reanchor": 0
               }
             },
@@ -1225,7 +1299,7 @@
               "status": "forecast",
               "dividendExcluded": 0,
               "eur": {
-                "opening": 9536333,
+                "opening": 7886333,
                 "collections": 3653333,
                 "pipeline": 0,
                 "churn": 0,
@@ -1234,11 +1308,12 @@
                 "other": 0,
                 "reval": 0,
                 "net": 293333,
-                "closing": 9829666,
+                "closing": 8179666,
+                "dividend": 0,
                 "reanchor": 0
               },
               "ils": {
-                "opening": 35272135,
+                "opening": 29167135,
                 "collections": 13512621,
                 "pipeline": 0,
                 "churn": 0,
@@ -1247,7 +1322,8 @@
                 "other": 0,
                 "reval": 0,
                 "net": 1084954,
-                "closing": 36357089,
+                "closing": 30252089,
+                "dividend": 0,
                 "reanchor": 0
               }
             },
@@ -1256,7 +1332,7 @@
               "status": "forecast",
               "dividendExcluded": 0,
               "eur": {
-                "opening": 9829666,
+                "opening": 8179666,
                 "collections": 3653333,
                 "pipeline": 0,
                 "churn": 0,
@@ -1265,11 +1341,12 @@
                 "other": 0,
                 "reval": 0,
                 "net": 273333,
-                "closing": 10102999,
+                "closing": 8452999,
+                "dividend": 0,
                 "reanchor": 0
               },
               "ils": {
-                "opening": 36357089,
+                "opening": 30252089,
                 "collections": 13512621,
                 "pipeline": 0,
                 "churn": 0,
@@ -1278,7 +1355,8 @@
                 "other": 0,
                 "reval": 0,
                 "net": 1010979,
-                "closing": 37368068,
+                "closing": 31263068,
+                "dividend": 0,
                 "reanchor": 0
               }
             },
@@ -1287,7 +1365,7 @@
               "status": "forecast",
               "dividendExcluded": 0,
               "eur": {
-                "opening": 10102999,
+                "opening": 8452999,
                 "collections": 3653333,
                 "pipeline": 0,
                 "churn": 0,
@@ -1296,11 +1374,12 @@
                 "other": 0,
                 "reval": 0,
                 "net": 253333,
-                "closing": 10356332,
+                "closing": 8706332,
+                "dividend": 0,
                 "reanchor": 0
               },
               "ils": {
-                "opening": 37368068,
+                "opening": 31263068,
                 "collections": 13512621,
                 "pipeline": 0,
                 "churn": 0,
@@ -1309,7 +1388,8 @@
                 "other": 0,
                 "reval": 0,
                 "net": 937005,
-                "closing": 38305073,
+                "closing": 32200073,
+                "dividend": 0,
                 "reanchor": 0
               }
             },
@@ -1318,7 +1398,7 @@
               "status": "forecast",
               "dividendExcluded": 0,
               "eur": {
-                "opening": 10356332,
+                "opening": 8706332,
                 "collections": 3653333,
                 "pipeline": 0,
                 "churn": 0,
@@ -1327,11 +1407,12 @@
                 "other": 0,
                 "reval": 0,
                 "net": 223333,
-                "closing": 10579665,
+                "closing": 8929665,
+                "dividend": 0,
                 "reanchor": 0
               },
               "ils": {
-                "opening": 38305073,
+                "opening": 32200073,
                 "collections": 13512621,
                 "pipeline": 0,
                 "churn": 0,
@@ -1340,7 +1421,8 @@
                 "other": 0,
                 "reval": 0,
                 "net": 826044,
-                "closing": 39131117,
+                "closing": 33026117,
+                "dividend": 0,
                 "reanchor": 0
               }
             },
@@ -1349,7 +1431,7 @@
               "status": "forecast",
               "dividendExcluded": 0,
               "eur": {
-                "opening": 10579665,
+                "opening": 8929665,
                 "collections": 3653333,
                 "pipeline": 0,
                 "churn": 0,
@@ -1358,11 +1440,12 @@
                 "other": 0,
                 "reval": 0,
                 "net": 243333,
-                "closing": 10822998,
+                "closing": 9172998,
+                "dividend": 0,
                 "reanchor": 0
               },
               "ils": {
-                "opening": 39131117,
+                "opening": 33026117,
                 "collections": 13512621,
                 "pipeline": 0,
                 "churn": 0,
@@ -1371,7 +1454,8 @@
                 "other": 0,
                 "reval": 0,
                 "net": 900018,
-                "closing": 40031135,
+                "closing": 33926135,
+                "dividend": 0,
                 "reanchor": 0
               }
             },
@@ -1380,7 +1464,7 @@
               "status": "forecast",
               "dividendExcluded": 0,
               "eur": {
-                "opening": 10822998,
+                "opening": 9172998,
                 "collections": 3653333,
                 "pipeline": 0,
                 "churn": 0,
@@ -1389,11 +1473,12 @@
                 "other": 0,
                 "reval": 0,
                 "net": 213333,
-                "closing": 11036331,
+                "closing": 9386331,
+                "dividend": 0,
                 "reanchor": 0
               },
               "ils": {
-                "opening": 40031135,
+                "opening": 33926135,
                 "collections": 13512621,
                 "pipeline": 0,
                 "churn": 0,
@@ -1402,7 +1487,8 @@
                 "other": 0,
                 "reval": 0,
                 "net": 789057,
-                "closing": 40820192,
+                "closing": 34715192,
+                "dividend": 0,
                 "reanchor": 0
               }
             },
@@ -1411,7 +1497,7 @@
               "status": "forecast",
               "dividendExcluded": 0,
               "eur": {
-                "opening": 11036331,
+                "opening": 9386331,
                 "collections": 3653333,
                 "pipeline": 0,
                 "churn": 0,
@@ -1420,11 +1506,12 @@
                 "other": 0,
                 "reval": 0,
                 "net": 193333,
-                "closing": 11229664,
+                "closing": 9579664,
+                "dividend": 0,
                 "reanchor": 0
               },
               "ils": {
-                "opening": 40820192,
+                "opening": 34715192,
                 "collections": 13512621,
                 "pipeline": 0,
                 "churn": 0,
@@ -1433,7 +1520,8 @@
                 "other": 0,
                 "reval": 0,
                 "net": 715083,
-                "closing": 41535275,
+                "closing": 35430275,
+                "dividend": 0,
                 "reanchor": 0
               }
             },
@@ -1442,7 +1530,7 @@
               "status": "forecast",
               "dividendExcluded": 0,
               "eur": {
-                "opening": 11229664,
+                "opening": 9579664,
                 "collections": 3653333,
                 "pipeline": 0,
                 "churn": 0,
@@ -1451,11 +1539,12 @@
                 "other": 0,
                 "reval": 0,
                 "net": 173333,
-                "closing": 11402997,
+                "closing": 9752997,
+                "dividend": 0,
                 "reanchor": 0
               },
               "ils": {
-                "opening": 41535275,
+                "opening": 35430275,
                 "collections": 13512621,
                 "pipeline": 0,
                 "churn": 0,
@@ -1464,7 +1553,8 @@
                 "other": 0,
                 "reval": 0,
                 "net": 641108,
-                "closing": 42176383,
+                "closing": 36071383,
+                "dividend": 0,
                 "reanchor": 0
               }
             },
@@ -1473,7 +1563,7 @@
               "status": "forecast",
               "dividendExcluded": 0,
               "eur": {
-                "opening": 11402997,
+                "opening": 9752997,
                 "collections": 3653333,
                 "pipeline": 0,
                 "churn": 0,
@@ -1482,11 +1572,12 @@
                 "other": 0,
                 "reval": 0,
                 "net": 183333,
-                "closing": 11586330,
+                "closing": 9936330,
+                "dividend": 0,
                 "reanchor": 0
               },
               "ils": {
-                "opening": 42176383,
+                "opening": 36071383,
                 "collections": 13512621,
                 "pipeline": 0,
                 "churn": 0,
@@ -1495,7 +1586,8 @@
                 "other": 0,
                 "reval": 0,
                 "net": 678095,
-                "closing": 42854478,
+                "closing": 36749478,
+                "dividend": 0,
                 "reanchor": 0
               }
             },
@@ -1504,7 +1596,7 @@
               "status": "forecast",
               "dividendExcluded": 0,
               "eur": {
-                "opening": 11586330,
+                "opening": 9936330,
                 "collections": 3653333,
                 "pipeline": 0,
                 "churn": 0,
@@ -1513,11 +1605,12 @@
                 "other": 0,
                 "reval": 0,
                 "net": 183333,
-                "closing": 11769663,
+                "closing": 10119663,
+                "dividend": 0,
                 "reanchor": 0
               },
               "ils": {
-                "opening": 42854478,
+                "opening": 36749478,
                 "collections": 13512621,
                 "pipeline": 0,
                 "churn": 0,
@@ -1526,7 +1619,8 @@
                 "other": 0,
                 "reval": 0,
                 "net": 678095,
-                "closing": 43532573,
+                "closing": 37427573,
+                "dividend": 0,
                 "reanchor": 0
               }
             },
@@ -1535,7 +1629,7 @@
               "status": "forecast",
               "dividendExcluded": 0,
               "eur": {
-                "opening": 11769663,
+                "opening": 10119663,
                 "collections": 3653333,
                 "pipeline": 0,
                 "churn": 0,
@@ -1544,11 +1638,12 @@
                 "other": 0,
                 "reval": 0,
                 "net": 183333,
-                "closing": 11952996,
+                "closing": 10302996,
+                "dividend": 0,
                 "reanchor": 0
               },
               "ils": {
-                "opening": 43532573,
+                "opening": 37427573,
                 "collections": 13512621,
                 "pipeline": 0,
                 "churn": 0,
@@ -1557,7 +1652,8 @@
                 "other": 0,
                 "reval": 0,
                 "net": 678095,
-                "closing": 44210668,
+                "closing": 38105668,
+                "dividend": 0,
                 "reanchor": 0
               }
             }
@@ -1568,12 +1664,12 @@
         "from": "2026-12",
         "to": "2027-01",
         "closing": {
-          "eur": 9213000,
-          "ils": 34076220
+          "eur": 7563000,
+          "ils": 27971220
         },
         "opening": {
-          "eur": 9213000,
-          "ils": 34076220
+          "eur": 7563000,
+          "ils": 27971220
         },
         "source": "live",
         "salaryBasis": {

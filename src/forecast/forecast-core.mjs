@@ -686,6 +686,7 @@ function computeCashflowForecast(inputs) {
         r.totalOutflow = r.salary + r.vendors + Math.max(0, r.other);
         r.totalOutflowILS = r.salaryILS + r.vendorsILS + Math.max(0, r.otherILS);
         r.dividendExcluded = mEur;                        // marker for the reconciliation panel
+        r.dividendExcludedILS = mIls;                     // same in ILS (New Bank Dashboard's Dividend paid line)
       }
       cumEur += mEur; cumIls += mIls;
       r.closingBalance += cumEur;

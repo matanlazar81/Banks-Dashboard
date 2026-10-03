@@ -45,12 +45,12 @@ const k = (n) => {
 
 function printYear(label, block) {
   console.log(`\n${label} ${block.year} (${block.kind}) — € thousands`);
-  console.log('  month    status    opening  inflows outflows   reval  net chg  closing  re-anchor');
+  console.log('  month    status    opening  inflows outflows   reval  net chg dividend  closing  re-anchor');
   for (const r of block.rows) {
     const f = r.eur;
     const inflows = f.collections + f.pipeline - f.churn;
     const outflows = f.salary + f.vendors + f.other;
-    console.log(`  ${r.mKey}  ${r.status.padEnd(8)}${k(f.opening)}${k(inflows)}${k(outflows)}${k(f.reval)}${k(f.net)}${k(f.closing)}${k(f.reanchor)}`);
+    console.log(`  ${r.mKey}  ${r.status.padEnd(8)}${k(f.opening)}${k(inflows)}${k(outflows)}${k(f.reval)}${k(f.net)}${k(-f.dividend)}${k(f.closing)}${k(f.reanchor)}`);
   }
 }
 

@@ -53,22 +53,26 @@ thousands (hover any cell for the exact amount).
 | Collections (AR), Pipeline, Churn | Inflows. Churn is shown as a deduction. |
 | Salary, Vendors, Other | Outflows. Other = taxes, intercompany, fees, transfers; in parentheses when it is a net inflow. |
 | Reval (FX) | Booked revaluation (actual months) or currency-defense budget (forecast months). |
-| Net change | Total inflows − total outflows + reval. |
-| Closing balance | Opening + net change. |
-| incl. bank re-anchor | Only when material: the difference between the model's previous closing and the bank balance the current month opens from. Already inside the opening balance; in the FY column it explains why Jan opening + Σ net change ≠ Dec closing. |
+| Net change | Total inflows − total outflows + reval. Dividends are not included (next line). |
+| Dividend paid | Dividend distributions and their withholding tax paid from the bank (NetSuite), shown as a deduction. Future dividends are not forecast. |
+| Closing balance | Opening + net change − dividend paid: the cash in the bank at month-end. |
+| incl. bank re-anchor | Only when material: the difference between the model's previous closing and the bank balance the current month opens from. Already inside the opening balance; in the FY column it explains why Jan opening + Σ net change − Σ dividend paid ≠ Dec closing. |
 
 Column status: **Actual** (closed months, from NetSuite bank activity), **Current** (actual so far +
-remaining forecast), **Forecast**. Dividends are excluded from Vendors/Other (operating view), as in
-the Bank Dashboard.
+remaining forecast), **Forecast**. Dividends are kept out of Vendors/Other, as in the Bank Dashboard.
+Unlike the Bank Dashboard's operating view, they are not added back to the balances: they appear as
+**Dividend paid**, so every balance is the cash in the bank and the current month opens exactly at the
+NetSuite bank balance.
 
 ## Same logic as the Bank Dashboard
 
 - **Current year:** identical engine inputs to the nightly net-cash job (`net-cash-forecast-compute.cjs`
   main()): same feeds, same budget-override merges, same scenario knobs, basis forced to *Pipeline*
-  revenue + *Last-Actual* salary. The Plan's December closing therefore equals the official net-cash
-  forecast for the same data.
+  revenue + *Last-Actual* salary. The Plan's December closing plus its FY Dividend paid therefore equals
+  the official net-cash forecast (an operating-view figure) for the same data.
 - **Next year** (port of the Bank Dashboard's projection-year loader, `App.tsx:2633-2856`):
-  - opening = current-year December closing (operating view);
+  - opening = current-year December closing in bank cash (the engine runs on the operating-view
+    closing; the current year's dividends are taken out of every next-year balance for display);
   - salary = Oct–Dec payroll budget by department, scaled to the Oct–Dec salary the current year
     shows, flat across the year (falls back to the flat Oct–Dec budget average without the breakdown);
   - vendors = current year mirrored month by month; collections = Oct–Dec average;
@@ -146,7 +150,7 @@ A morning cron right after the nightly job means nobody waits:
 ```bash
 node scripts/test-cash-projection.cjs                 # synthetic: roll-forward rules, table arithmetic, cache behaviour, UI model
 node scripts/cash-projection.cjs --dry-run            # real data: both years, Plan and Base
-node scripts/net-cash-forecast-compute.cjs --dry-run  # its December closing must equal the Plan's
+node scripts/net-cash-forecast-compute.cjs --dry-run  # its December closing must equal the Plan's + FY Dividend paid
 node scripts/cash-projection.cjs --compare=data/parity/rows-2026.json            # vs old dashboard (?fccapture=1)
 node scripts/cash-projection.cjs --compare=data/parity/rows-2027.json --snapshot-file=data/budgets/2027-lsports.json
 ```

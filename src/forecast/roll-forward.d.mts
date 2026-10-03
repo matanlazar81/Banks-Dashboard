@@ -71,8 +71,11 @@ export interface ProjectionFigures {
   vendors: number;
   other: number;
   reval: number;
-  /** Net change incl. reval = inflows − outflows + reval. */
+  /** Net change incl. reval = inflows − outflows + reval (dividends not included). */
   net: number;
+  /** Dividend distributions + withholding tax paid this month (positive = cash out); 0 for most months. */
+  dividend: number;
+  /** Cash in the bank: opening + net − dividend. */
   closing: number;
   /** opening − previous closing; non-zero only in the live current month (bank re-anchor). */
   reanchor: number;
@@ -81,7 +84,7 @@ export interface ProjectionFigures {
 export interface ProjectionRow {
   mKey: string;
   status: MonthStatus;
-  /** EUR stripped out as dividend (operating view); 0 for most months. */
+  /** EUR dividend kept out of Vendors/Other (same as eur.dividend); 0 for most months. */
   dividendExcluded: number;
   eur: ProjectionFigures;
   ils: ProjectionFigures;
@@ -123,5 +126,5 @@ export function buildNextYearInputs(args: {
 }): ForecastInputs;
 export function shapeYear(
   rows: ForecastRow[],
-  opts: { year: number; kind: 'current' | 'projection'; prevClosing?: EurIls | null },
+  opts: { year: number; kind: 'current' | 'projection'; prevClosing?: EurIls | null; dividendCarry?: EurIls | null },
 ): ProjectionYear;

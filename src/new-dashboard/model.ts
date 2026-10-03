@@ -5,7 +5,7 @@ import type { Ccy, Figures, MonthRow, MonthStatus, ProjectionPayload, Variant, V
 export type LineKey =
   | 'opening' | 'collections' | 'pipeline' | 'churn' | 'inflows'
   | 'salary' | 'vendors' | 'other' | 'outflows'
-  | 'reval' | 'net' | 'closing' | 'reanchor';
+  | 'reval' | 'net' | 'dividend' | 'closing' | 'reanchor';
 
 export type LineKind = 'balance' | 'item' | 'subtotal' | 'note';
 
@@ -42,8 +42,11 @@ export const LINES: LineDef[] = [
   { key: 'reval', label: 'Reval (FX)', kind: 'item', fy: 'sum', value: (f) => f.reval,
     hint: 'Actual months: booked FX revaluation. Forecast: currency-defense budget × defense %.' },
   { key: 'net', label: 'Net change', kind: 'subtotal', fy: 'sum', value: (f) => f.net,
-    hint: 'Total inflows − total outflows + reval.' },
-  { key: 'closing', label: 'Closing balance', kind: 'balance', fy: 'last', value: (f) => f.closing },
+    hint: 'Total inflows − total outflows + reval. Dividends are shown separately below.' },
+  { key: 'dividend', label: 'Dividend paid', kind: 'item', fy: 'sum', value: (f) => (f.dividend ? -f.dividend : 0),
+    hint: 'Dividend distributions and their withholding tax paid from the bank (NetSuite). Kept out of Vendors and Other. Future dividends are not forecast.' },
+  { key: 'closing', label: 'Closing balance', kind: 'balance', fy: 'last', value: (f) => f.closing,
+    hint: 'Opening + net change − dividend paid: the cash in the bank at month-end.' },
   { key: 'reanchor', label: 'incl. bank re-anchor', kind: 'note', fy: 'sum', value: (f) => f.reanchor,
     hint: 'The current month opens at the actual NetSuite bank balance of the previous month-end. This is the difference to the model\'s previous closing; it is already inside the opening balance.' },
 ];
