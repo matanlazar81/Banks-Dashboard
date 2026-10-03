@@ -30,10 +30,12 @@
 const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
+const { captureDetails } = require('./cash-projection-breakdown.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
 // 2: balances are cash in the bank with a separate `dividend` figure (1 was the operating view).
-const SCHEMA_VERSION = 2;
+// 3: the entry also carries server-only `details` for GET /api/cash-projection/breakdown.
+const SCHEMA_VERSION = 3;
 const COMPANY = 'lsports';
 const DEFAULT_SCENARIO = 'Exit plan June26';
 const MIN = 60 * 1000;
@@ -170,6 +172,7 @@ async function computeCashProjection(opts) {
   const planLoaded = Object.keys(planData).length > 0;
   const variants = {};
   const raw = {};
+  let details = null; // server-only, for the breakdown endpoint
   for (const [variant, sd] of [['plan', planData], ['base', {}]]) {
     // Current year: exactly the nightly compute's engine inputs (net-cash-forecast-compute.cjs main()).
     const inputsY = {
@@ -220,6 +223,7 @@ async function computeCashProjection(opts) {
       },
     };
     if (opts.includeRaw) raw[variant] = { rows: { [Y]: rowsY, [T]: rowsT }, inputs: { [Y]: inputsY, [T]: inputsT } };
+    details = captureDetails(details, { variant, Y, T, rowsY, rowsT, inputsY, inputsT });
   }
 
   const warnings = [];
@@ -253,11 +257,12 @@ async function computeCashProjection(opts) {
     warnings,
     variants,
   };
-  return opts.includeRaw ? { payload, raw } : { payload };
+  return opts.includeRaw ? { payload, details, raw } : { payload, details };
 }
 
 // ── cache file ──────────────────────────────────────────────────────────────
-function makeEntry(payload, nowMs) {
+// `details` (optional) stays server-side: the handler only ever sends `payload`.
+function makeEntry(payload, nowMs, details = null) {
   return {
     schemaVersion: SCHEMA_VERSION,
     company: payload.company,
@@ -266,6 +271,7 @@ function makeEntry(payload, nowMs) {
     computedMonth: payload.computedMonth,
     generatedAtMs: nowMs,
     payload: { ...payload, generatedAt: new Date(nowMs).toISOString() },
+    ...(details ? { details } : {}),
   };
 }
 
@@ -366,7 +372,7 @@ function createCashProjectionHandler(deps = {}) {
       .then((result) => {
         const payload = result && result.payload;
         if (!payload || payload.status !== 'ready') throw new Error('compute returned no payload');
-        const entry = makeEntry(payload, clock());
+        const entry = makeEntry(payload, clock(), result.details);
         state.entry = entry;
         state.lastError = null;
         state.lastFailureMs = -Infinity;
@@ -473,4 +479,5 @@ module.exports = {
   ProjectionError,
   SCHEMA_VERSION,
   DEFAULT_CACHE_FILE,
+  defaultGetSfClient,
 };

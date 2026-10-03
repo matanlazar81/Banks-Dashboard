@@ -510,6 +510,215 @@ async function testWrapClient() {
   check(failures.join(',') === 'ns.fail,ns.failSync' && queued === 3, 'async and sync failures are recorded and rethrown');
 }
 
+// ── 3b. cell breakdowns (server/cash-projection-breakdown.cjs) ──────────────
+// Fake Snowflake reads. Booked amounts deliberately differ from the bank cash so the timing rows show.
+const CAT_TOTAL = Object.values(CATEGORIES).reduce((s, v) => s + v, 0);
+function fakeExpense(y) {
+  if (Number(y) !== Y) return [];
+  const rows = [];
+  range(1, 9).forEach((m, i) => {
+    const month = mk(Y, m);
+    const sal = PAST.sal[i] * 0.99;
+    rows.push({ month, kind: 'Salary', category: 'Payroll', acct: '760001', name: 'Salaries', eur: sal * 0.92, ils: sal * 0.92 * R });
+    rows.push({ month, kind: 'Salary', category: 'Payroll', acct: '760002', name: 'Social benefits', eur: sal * 0.08, ils: sal * 0.08 * R });
+    const ven = (PAST.ven[i] - (m === 5 ? 1_500_000 : 0)) * 1.02;
+    Object.entries(CATEGORIES).forEach(([cat, amt], k) => {
+      rows.push({ month, kind: 'Vendors', category: cat, acct: `6${k}0001`, name: `${cat} costs`, eur: ven * amt / CAT_TOTAL, ils: ven * amt / CAT_TOTAL * R });
+    });
+  });
+  rows.push({ month: mk(Y, 3), kind: 'Finance', category: 'Finance', acct: '800001', name: 'Bank fees', eur: 5_000, ils: 18_500 });
+  return rows;
+}
+function fakeBudget(y) {
+  if (Number(y) !== Y) return [];
+  return range(1, 12).flatMap((m) => Object.entries(CATEGORIES).flatMap(([cat, amt], k) => {
+    const extra = m === 12 && cat === 'Cloud' ? -10_000 : 0; // December leaves €10K to the overrides row
+    return [
+      { month: mk(Y, m), category: cat, acct: `6${k}0001`, name: `${cat} costs`, eur: amt * 0.75 + extra, ils: (amt * 0.75 + extra) * R },
+      { month: mk(Y, m), category: cat, acct: `6${k}0002`, name: `${cat} other`, eur: amt * 0.25, ils: amt * 0.25 * R },
+    ];
+  }));
+}
+function fakeRevenue(y) {
+  if (Number(y) !== Y) return [];
+  return range(1, 12).flatMap((m) => {
+    const revenue = 3_400_000 + (m - 1) * 20_000 - (m === 11 ? 30_000 : 0); // November leaves €30K unexplained
+    return [0.4, 0.3, 0.2, 0.1].map((share, k) => ({ month: mk(Y, m), name: `Synthetic customer ${k + 1}`, eur: revenue * share }));
+  });
+}
+function fakeSfx(calls = []) {
+  return {
+    expense: async (y) => { calls.push(`expense:${y}`); return fakeExpense(y); },
+    budget: async (y) => { calls.push(`budget:${y}`); return fakeBudget(y); },
+    revenue: async (y) => { calls.push(`revenue:${y}`); return fakeRevenue(y); },
+    churned: async (qs) => { calls.push(`churned:${qs}`); return [{ name: 'Synthetic churned A', amount: 50_000 }, { name: 'Synthetic churned B', amount: 34_000 }]; },
+  };
+}
+
+async function callAsync(handler, { method = 'GET', url } = {}) {
+  const res = {
+    statusCode: 200, headers: {}, body: null,
+    setHeader(k, v) { this.headers[k.toLowerCase()] = v; },
+    end(b) { this.body = b ? JSON.parse(b) : null; },
+  };
+  await handler({ method, url, headers: {} }, res);
+  return res;
+}
+
+async function testBreakdown() {
+  console.log('\nBREAKDOWN: what makes up each cell (server/cash-projection-breakdown.cjs)');
+  const bd = require(path.join(ROOT, 'server', 'cash-projection-breakdown.cjs'));
+  const { payload, details } = await runProjection();
+  const entry = cp.makeEntry(payload, NOW.getTime(), details);
+  const calls = [];
+  const sfx = fakeSfx(calls);
+  const get = (line, period, variant = 'plan', ccy = 'eur') => quiet(() => bd.buildBreakdown({ entry, line, period, variant, ccy, sfx }));
+  const cellOf = (line, f) => (line === 'churn' ? -f.churn : line === 'dividend' ? -f.dividend : f[line]);
+  const rowOf = (out, key) => out.sections[0].rows.find((r) => r.key === key);
+
+  check(JSON.stringify(details).includes('Synthetic deal A') && !JSON.stringify(payload).includes('Synthetic deal'),
+    'deal names live only in the server-side details, never in the page payload');
+
+  const div = await get('dividend', '2026-05');
+  check(calls.length === 0, 'a breakdown reads Snowflake only when its line needs it (none for Dividend paid)');
+
+  // The promise: every non-zero cell breaks down to exactly its value, in both currencies.
+  let n = 0;
+  let bad = 0;
+  for (const variant of ['plan', 'base']) {
+    for (const yb of payload.variants[variant].years) {
+      const periods = [...yb.rows.map((r) => r.mKey), `FY-${yb.year}`];
+      for (const period of periods) {
+        for (const line of bd.LINES) {
+          for (const ccy of ['eur', 'ils']) {
+            const expected = period.startsWith('FY')
+              ? yb.rows.reduce((s, r) => s + cellOf(line, r[ccy]), 0)
+              : cellOf(line, yb.rows.find((r) => r.mKey === period)[ccy]);
+            if (Math.abs(expected) < 0.5) continue;
+            n++;
+            const out = await get(line, period, variant, ccy);
+            if (!out || !out.ok || !near(out.cell, expected, 0.01) || !near(out.sections[0].total, out.cell, 0.02)) {
+              bad++;
+              fail(`${variant} ${line} ${period} ${ccy}: total ${out && out.sections[0].total} vs cell ${expected}`);
+            }
+          }
+        }
+      }
+    }
+  }
+  check(bad === 0 && n > 150, `every non-zero cell (${n} cells × currencies, months and full years) breaks down to exactly its value`);
+
+  const salJun = await get('salary', '2026-06');
+  const booked = PAST.sal[5] * 0.99;
+  check(salJun.sections[0].title === 'Booked payroll by NetSuite account' && rowOf(salJun, 'acct:760001').ref === '760001'
+    && near(rowOf(salJun, 'timing').amount, PAST.sal[5] - booked, 0.01),
+  'Salary, actual month: booked payroll by NetSuite account + cash timing to the bank figure');
+  const salNov = await get('salary', '2026-11');
+  const novM = details.variants.plan[Y].months[mk(Y, 11)];
+  check(salNov.sections[0].title.includes('September 2026') && near(rowOf(salNov, 'basis-diff').amount, 2_260_000 - PAST.sal[8] * 0.99, 0.01)
+    && near(rowOf(salNov, 'hc').amount, novM.salaryBase - 2_260_000, 0.01) && near(rowOf(salNov, 'plan').amount, novM.salary - novM.salaryBase, 0.01) && rowOf(salNov, 'plan').amount < 0,
+  'Salary, forecast month: September payroll accounts, by-department difference, hires/leavers, plan −4%');
+  const salJan27 = await get('salary', '2027-01');
+  check(salJan27.sections[0].title === 'Run-rate basis by department' && !!rowOf(salJan27, 'dept:R&D'), 'Salary, 2027: the Oct–Dec run-rate by department');
+
+  const venMay = await get('vendors', '2026-05');
+  const bankSec = venMay.sections.find((s) => s.id === 'bank');
+  check(venMay.sections[0].rows.some((r) => r.group === 'Cloud') && !!rowOf(venMay, 'timing') && bankSec && bankSec.collapsed
+    && bankSec.rows.some((r) => r.key === 'dividend' && r.amount === -1_500_000) && near(bankSec.total, venMay.cell, 0.02),
+  'Vendors, actual month: accounts by category + timing; bank lines (collapsed) move the dividend to its own line');
+  const venNov = await get('vendors', '2026-11');
+  const venDec = await get('vendors', '2026-12');
+  check(near(rowOf(venNov, 'plan').amount, -0.25 * CATEGORIES.Marketing, 0.01) && !rowOf(venNov, 'overrides') && near(rowOf(venDec, 'overrides').amount, 10_000, 0.01),
+    'Vendors, forecast month: budget by account, plan −25% Marketing, overrides row only where the budget differs');
+  const venMar27 = await get('vendors', '2027-03');
+  check(venMar27.sections[0].title === `Same month of ${Y}: March ${Y}` && venMar27.sections[0].rows.some((r) => r.key.startsWith('mirror:acct:')),
+    'Vendors, 2027: repeats the same month of 2026 with its account breakdown');
+
+  const colOct = await get('collections', '2026-10');
+  check(rowOf(colOct, 'actual').amount === 1_450_000 && !!rowOf(colOct, 'remaining'), 'Collections, current month: collected so far + expected for the rest');
+  const colNov = await get('collections', '2026-11');
+  const colDec = await get('collections', '2026-12');
+  check(colNov.sections[0].rows.filter((r) => r.group === 'Expected revenue by customer').length === 4 && near(rowOf(colNov, 'rev-diff').amount, 30_000, 0.01)
+    && colDec.sections[0].rows.some((r) => r.label === 'Synthetic deal B' && r.amount === 40_000) && !colDec.sections[0].rows.some((r) => r.label === 'Synthetic deal A'),
+  'Collections, forecast month: revenue by customer, a difference row when it does not add up, deals at the plan\'s minimum probability');
+
+  const pipDec = await get('pipeline', '2026-12');
+  check(pipDec.sections[0].rows.length === 2 && rowOf(pipDec, `cohort:${mk(Y, 11)}`).amount === 55_000 && rowOf(pipDec, `cohort:${mk(Y, 12)}`).amount === 70_000,
+    'Pipeline: cumulative new MRR by month (Nov + Dec cohorts)');
+
+  const chDec = await get('churn', '2026-12');
+  check(near(rowOf(chDec, 'calc').amount, -2 * 28_000, 0.01) && chDec.sections[1] && chDec.sections[1].informational && chDec.sections[1].rows.length === 2 && calls.includes('churned:2026-07-01'),
+    'Churn: run-rate (€84K ÷ 3) × 2 forecast months, with the quarter\'s lost customers as context');
+
+  const othMay = await get('other', '2026-05');
+  check(near(rowOf(othMay, 'wht').amount, -150_000, 0.01) && near(othMay.sections[0].total, othMay.cell, 0.02),
+    'Other: bank lines, with the dividend withholding tax moved to Dividend paid');
+  const revNov = await get('reval', '2026-11');
+  check(rowOf(revNov, 'defense').ref === '€120,000 × 30%' && revNov.cell === 36_000, 'Reval, forecast month: currency-defense budget × defense %');
+  const divIls = await get('dividend', '2026-05', 'plan', 'ils');
+  check(div.cell === -1_650_000 && rowOf(div, 'dist').amount === -1_500_000 && rowOf(div, 'wht').amount === -150_000 && divIls.cell === -6_105_000,
+    'Dividend paid: distribution + withholding tax (€ and ₪)');
+
+  const venFy = await get('vendors', `FY-${Y}`);
+  check(venFy.periodStatus === 'fy' && venFy.sections[0].title.startsWith('By NetSuite account') && near(venFy.sections[0].total, venFy.cell, 0.05)
+    && venFy.sections[0].rows[venFy.sections[0].rows.length - 1].kind === 'adjust',
+  'Full year: months merged by account, adjustments last, total = FY cell');
+
+  // Handler over a cache file.
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cash-projection-breakdown-'));
+  const file = path.join(tmp, 'cache.json');
+  const bump = () => { const t = new Date(Date.now() + (bump.n = (bump.n || 0) + 1) * 2000); fs.utimesSync(file, t, t); };
+  cp.writeCacheEntry(file, cp.makeEntry(payload, NOW.getTime()));
+  bump();
+  const h = bd.createCashProjectionBreakdownHandler({ cacheFile: file, sfx: fakeSfx() });
+  const url = (q) => `/api/cash-projection/breakdown?${q}`;
+  let r = await callAsync(h, { url: url('line=vendors&period=2026-03') });
+  check(r.statusCode === 202 && r.body.status === 'computing', 'cache entry without details → 202 computing');
+  cp.writeCacheEntry(file, entry);
+  bump();
+  r = await callAsync(h, { url: url('line=vendors&period=2026-03&variant=base&ccy=ils') });
+  check(r.statusCode === 200 && r.body.status === 'ready' && r.body.ccy === 'ils' && r.body.variant === 'base' && r.headers['cache-control'] === 'no-store'
+    && near(r.body.sections[0].total, r.body.cell, 0.02), 'valid request → 200 ready, no-store, adds up');
+  const bads = ['line=foo&period=2026-03', 'line=salary&period=2026-13', 'line=salary&period=FY-26', 'line=salary&period=2026-03&variant=x', 'line=salary&period=2026-03&ccy=usd', 'line=salary'];
+  const codes = [];
+  for (const q of bads) codes.push((await callAsync(h, { url: url(q) })).statusCode);
+  check(codes.every((c) => c === 400), 'unknown line, period, variant or currency → 400', codes.join(','));
+  r = await callAsync(h, { url: url('line=salary&period=2030-01') });
+  check(r.statusCode === 404, 'period outside the projection → 404');
+  r = await callAsync(h, { method: 'POST', url: url('line=salary&period=2026-03') });
+  check(r.statusCode === 405 && r.headers.allow === 'GET', 'POST → 405');
+
+  // Real Snowflake path: the queries mirror the table lines' feeds and are cached per year.
+  const sql = [];
+  const fakeClient = { query: async (q) => { sql.push(q); return []; } };
+  const h2 = bd.createCashProjectionBreakdownHandler({ cacheFile: file, getSfClient: () => fakeClient });
+  r = await callAsync(h2, { url: url('line=vendors&period=2026-03') });
+  const r2 = await callAsync(h2, { url: url('line=salary&period=2026-04') });
+  check(r.statusCode === 200 && r2.statusCode === 200 && sql.length === 1 && /FCT_EXPENSE__FINANCE/.test(sql[0]) && /SUBSIDIARY_ID = 3/.test(sql[0])
+    && /SOURCE = 'netsuite'/.test(sql[0]) && sql[0].includes("'2026-01-01'") && sql[0].includes("'2027-01-01'"),
+  'Snowflake: one FCT_EXPENSE read per year (subsidiary 3, NetSuite source), shared by Salary and Vendors');
+  r = await callAsync(h2, { url: url('line=vendors&period=2026-11') });
+  check(sql.length === 2 && /FCT_BUDGET__FINANCE/.test(sql[1]) && /IS_PAYROLL = FALSE/.test(sql[1]) && /NOT LIKE '800%'/.test(sql[1]) && /NOT IN \('780502'\)/.test(sql[1]),
+    'Snowflake: the vendor budget read uses the same filters as the Vendors forecast');
+
+  // The projection endpoint never sends the details.
+  const ph = cp.createCashProjectionHandler({ cacheFile: file, compute: async () => ({ payload }) });
+  const pr = call(ph);
+  check(pr.statusCode === 200 && pr.body.status === 'ready' && !('details' in pr.body) && !JSON.stringify(pr.body).includes('Synthetic deal'),
+    '/api/cash-projection serves the payload without the details');
+  fs.rmSync(tmp, { recursive: true, force: true });
+
+  const ui = await import(pathToFileURL(path.join(ROOT, 'src', 'new-dashboard', 'breakdown.ts')).href);
+  const blocks = ui.arrangeRows([
+    { key: 'a', label: 'a', group: 'G1', kind: 'item', amount: 3 }, { key: 'b', label: 'b', group: 'G1', kind: 'item', amount: 2 },
+    { key: 'x', label: 'x', group: null, kind: 'adjust', amount: 1 }, { key: 'c', label: 'c', group: 'G2', kind: 'item', amount: 4 },
+  ]);
+  check(blocks.length === 3 && blocks[0].group === 'G1' && blocks[0].total === 5 && blocks[1].group === null && blocks[2].group === 'G2',
+    'UI: consecutive rows of a group share a header and subtotal; adjustments stand alone');
+  const pos = ui.clampPosition({ x: 5000, y: -40 }, { w: 1200, h: 800 });
+  check(pos.x === 1200 - 560 - 8 && pos.y === 8, 'UI: the window is kept on screen when dragged');
+}
+
 // ── 4. UI table model ───────────────────────────────────────────────────────
 async function testModel(payload) {
   console.log('\nMODEL: table columns, lines and formatting (src/new-dashboard/model.ts)');
@@ -581,6 +790,7 @@ async function main() {
   testSalaryBasis(rf, first.raw.base.rows[Y]);
   const payload = await testEndToEnd(rf);
   await testHandler();
+  await testBreakdown();
   await testWrapClient();
   await testModel(payload);
   if (process.argv.includes('--write-fixture')) await writeFixture(payload);
