@@ -2678,6 +2678,14 @@ If the user asks to modify, adjust, or refine an existing scenario (e.g. "reduce
 
       // ── GET /api/cash-projection — New Bank Dashboard (server/cash-projection.cjs) ──
       // Guarded so a problem loading that module can never take the routes above down with it.
+      // The breakdown route goes first: `use` matches by prefix, so /api/cash-projection would also
+      // catch /api/cash-projection/breakdown.
+      try {
+        const { createCashProjectionBreakdownHandler } = require('./cash-projection-breakdown.cjs');
+        use('/api/cash-projection/breakdown', createCashProjectionBreakdownHandler({ getSfClient }));
+      } catch (e     ) {
+        console.error('[cash-projection] breakdown route not mounted:', e && e.message);
+      }
       try {
         const { createCashProjectionHandler } = require('./cash-projection.cjs');
         use('/api/cash-projection', createCashProjectionHandler({ getNsClient, getSfClient, queueNsCall }));

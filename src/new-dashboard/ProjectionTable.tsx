@@ -1,7 +1,8 @@
 import { useEffect, useRef } from 'react';
 import { Info } from 'lucide-react';
 import type { Ccy } from './types.ts';
-import { CCY_SYMBOL, formatFull, formatSignedThousands, formatThousands, monthLongLabel, type Column, type ProjectionTable as Table, type TableLine } from './model.ts';
+import { CCY_SYMBOL, formatFull, formatSignedThousands, formatThousands, monthLongLabel, type Column, type LineKey, type ProjectionTable as Table, type TableLine } from './model.ts';
+import { BREAKDOWN_LINES } from './breakdown.ts';
 
 const LABEL_W = 'w-52 min-w-52';
 
@@ -33,9 +34,12 @@ interface CellProps {
   ccy: Ccy;
   anchorDate: string | null;
   prevClosingLabel: string | null;
+  /** Set when the cell opens a breakdown. */
+  onOpen?: () => void;
+  active?: boolean;
 }
 
-function Cell({ line, col, value, ccy, anchorDate, prevClosingLabel }: CellProps) {
+function Cell({ line, col, value, ccy, anchorDate, prevClosingLabel, onOpen, active }: CellProps) {
   const emphasize = line.kind === 'balance' || line.kind === 'subtotal';
   const k = Math.round(value / 1000);
   const negativeBad = (line.key === 'net' || line.kind === 'balance') && k < 0;
@@ -48,14 +52,20 @@ function Cell({ line, col, value, ccy, anchorDate, prevClosingLabel }: CellProps
   let title = `${line.label} · ${where}: ${formatFull(value, ccy)}`;
   if (isAnchor && anchorDate) title += ` (re-anchored to the NetSuite bank balance of ${anchorDate})`;
   if (isRollForward && prevClosingLabel) title += ` (rolled forward: equals the ${prevClosingLabel} closing)`;
+  const text = line.signed ? formatSignedThousands(value) : formatThousands(value);
   return (
     <td
-      className={`whitespace-nowrap px-2 py-1.5 text-right tabular-nums ${columnTone(col)} ${dividerClass(col)} ${emphasize ? 'font-semibold' : ''} ${tone} ${line.kind === 'note' ? 'text-xs text-slate-500' : ''}`}
-      title={title}
+      className={`whitespace-nowrap px-2 py-1.5 text-right tabular-nums ${columnTone(col)} ${dividerClass(col)} ${emphasize ? 'font-semibold' : ''} ${tone} ${line.kind === 'note' ? 'text-xs text-slate-500' : ''} ${active ? 'outline outline-2 -outline-offset-2 outline-sky-500' : ''}`}
+      title={onOpen ? `${title} · click for the breakdown` : title}
     >
       {isAnchor && <span className="mr-1 text-sky-600" aria-label="re-anchored to bank">⚓</span>}
       {isRollForward && <span className="mr-1 text-emerald-600" aria-label="rolled forward">↩</span>}
-      {line.signed ? formatSignedThousands(value) : formatThousands(value)}
+      {onOpen ? (
+        <button type="button" onClick={onOpen} aria-pressed={!!active}
+          className="cursor-pointer tabular-nums underline decoration-slate-300 decoration-dotted underline-offset-2 hover:text-sky-700 hover:decoration-sky-500">
+          {text}
+        </button>
+      ) : text}
     </td>
   );
 }
@@ -65,9 +75,13 @@ interface Props {
   ccy: Ccy;
   /** 'YYYY-MM-DD' of the bank balance the current month opens from. */
   anchorDate: string | null;
+  /** Opens the breakdown of a cell (lines in BREAKDOWN_LINES with an amount). */
+  onOpenCell?: (line: LineKey, col: Column) => void;
+  /** The cell whose breakdown is open: `${line}|${columnId}`. */
+  activeCell?: string | null;
 }
 
-export default function ProjectionTable({ table, ccy, anchorDate }: Props) {
+export default function ProjectionTable({ table, ccy, anchorDate, onOpenCell, activeCell }: Props) {
   const scroller = useRef<HTMLDivElement>(null);
   const layoutKey = table.columns.map((c) => c.id).join('|');
 
@@ -146,15 +160,19 @@ export default function ProjectionTable({ table, ccy, anchorDate }: Props) {
                 </th>
                 {table.columns.map((col, i) => {
                   const prev = col.rollForward ? table.columns.find((c) => c.kind === 'month' && c.year === col.year - 1 && c.mKey?.endsWith('-12')) : null;
+                  const value = line.values[i];
+                  const opens = !!onOpenCell && BREAKDOWN_LINES.has(line.key) && Math.abs(value) >= 1;
                   return (
                     <Cell
                       key={col.id}
                       line={line}
                       col={col}
-                      value={line.values[i]}
+                      value={value}
                       ccy={ccy}
                       anchorDate={anchorLabel}
                       prevClosingLabel={col.rollForward ? (prev ? monthLongLabel(prev.mKey!) : `December ${col.year - 1}`) : null}
+                      onOpen={opens ? () => onOpenCell?.(line.key, col) : undefined}
+                      active={activeCell === `${line.key}|${col.id}`}
                     />
                   );
                 })}

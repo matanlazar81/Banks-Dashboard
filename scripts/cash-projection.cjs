@@ -81,7 +81,7 @@ async function main() {
 
   const t0 = Date.now();
   // NetSuite is throttled inside gatherInputs (3 at a time, like the nightly job), so no extra queue here.
-  const { payload, raw } = await computeCashProjection({
+  const { payload, raw, details } = await computeCashProjection({
     now: new Date(),
     getNsClient: () => ns,
     getSfClient: () => sf,
@@ -128,7 +128,7 @@ async function main() {
 
   if (arg('write-cache')) {
     const file = DEFAULT_CACHE_FILE;
-    writeCacheEntry(file, makeEntry(payload, Date.now()));
+    writeCacheEntry(file, makeEntry(payload, Date.now(), details));
     console.log(`[cash-projection] ✓ wrote ${path.relative(ROOT, file)}; the server serves it on its next request.`);
   }
 

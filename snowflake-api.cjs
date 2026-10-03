@@ -2012,4 +2012,14 @@ function createSnowflakeWriteClient(env) {
   return { getConnection, exec, writeBudgetTargetsLanding, fqtn };
 }
 
-module.exports = { createSnowflakeClient, createSnowflakeWriteClient, assemblePipelineMethodology, pipelineStageWeight, PIPELINE_STAGE_WEIGHTS, PIPELINE_FALLBACK_FACTOR };
+// Table names for queries written outside this file (server/cash-projection-breakdown.cjs), so they
+// read exactly the tables the functions above read.
+const SF_TABLES = Object.freeze({
+  FCT_EXPENSE: T_FCT_EXPENSE,
+  FCT_BUDGET: T_FCT_BUDGET,
+  DIM_GL_ACCOUNT: T_DIM_GL_ACCOUNT,
+  DIM_OPPORTUNITY: T_DIM_OPPORTUNITY,
+  MONTHLY_REVENUE: MR_TABLE,
+});
+
+module.exports = { createSnowflakeClient, createSnowflakeWriteClient, assemblePipelineMethodology, pipelineStageWeight, PIPELINE_STAGE_WEIGHTS, PIPELINE_FALLBACK_FACTOR, SF_TABLES };

@@ -1,9 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { AlertTriangle, Download, Loader2, RefreshCw } from 'lucide-react';
 import { useProjection } from './useProjection.ts';
-import { buildTable, computeKpis } from './model.ts';
+import { buildTable, computeKpis, type Column, type LineKey } from './model.ts';
 import KpiStrip from './KpiStrip.tsx';
 import ProjectionTable from './ProjectionTable.tsx';
+import BreakdownPanel from './BreakdownPanel.tsx';
+import { clampPosition, type BreakdownLine, type PanelPosition } from './breakdown.ts';
 import type { Ccy, VariantKey, YearView } from './types.ts';
 
 // View choices live in the URL (?plan=base&ccy=ils&years=next) so a link reproduces the view.
@@ -105,6 +107,13 @@ export default function NewBankDashboard() {
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [showAllWarnings, setShowAllWarnings] = useState(false);
+  // The breakdown window: which cell is open, and where the window was last dragged to.
+  const [openCell, setOpenCell] = useState<{ line: BreakdownLine; period: string; id: string } | null>(null);
+  const [panelPos, setPanelPos] = useState<PanelPosition>(() => clampPosition({ x: window.innerWidth - 580, y: 120 }));
+  const onOpenCell = useCallback((line: LineKey, col: Column) => {
+    setOpenCell({ line: line as BreakdownLine, period: col.kind === 'fy' ? `FY-${col.year}` : (col.mKey as string), id: `${line}|${col.id}` });
+  }, []);
+  const closePanel = useCallback(() => setOpenCell(null), []);
 
   const table = useMemo(() => (data ? buildTable(data.variants[variant], ccy, view) : null), [data, variant, ccy, view]);
   const kpis = useMemo(() => (data ? computeKpis(data, variant, ccy) : null), [data, variant, ccy]);
@@ -216,18 +225,37 @@ export default function NewBankDashboard() {
 
             <section className="rounded-lg border border-slate-200 bg-white">
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-2.5">
-                <h2 className="text-sm font-semibold text-slate-800">Cash projection by month</h2>
+                <div className="flex items-baseline gap-2">
+                  <h2 className="text-sm font-semibold text-slate-800">Cash projection by month</h2>
+                  <span className="text-xs text-slate-500">Click an underlined figure for its breakdown.</span>
+                </div>
                 <Legend />
               </div>
-              <ProjectionTable table={table} ccy={ccy} anchorDate={data.bankToday ? data.bankToday.asOf : null} />
+              <ProjectionTable
+                table={table}
+                ccy={ccy}
+                anchorDate={data.bankToday ? data.bankToday.asOf : null}
+                onOpenCell={onOpenCell}
+                activeCell={openCell ? openCell.id : null}
+              />
             </section>
+
+            {openCell && (
+              <BreakdownPanel
+                request={{ line: openCell.line, period: openCell.period, variant, ccy }}
+                position={panelPos}
+                onMove={setPanelPos}
+                onClose={closePanel}
+              />
+            )}
 
             <p className="max-w-5xl text-xs leading-relaxed text-slate-500">
               Same engine and inputs as the Bank Dashboard and the nightly net-cash figure: revenue from the pipeline
               methodology, salary from the last closed payroll month. Actual months come from NetSuite bank activity, and
               the current month opens at the NetSuite bank balance. {y1} rolls forward from the December {y0} closing:
               salary at the Oct–Dec {y0} run-rate, vendors mirrored month by month and collections at the Oct–Dec average.
-              No new pipeline, churn or FX revaluation is projected for {y1}. Dividends are excluded (operating view).
+              No new pipeline, churn or FX revaluation is projected for {y1}. Dividends paid are shown on their own line,
+              so every balance is the cash in the bank.
             </p>
           </>
         )}

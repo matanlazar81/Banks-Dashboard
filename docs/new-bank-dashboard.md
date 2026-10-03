@@ -65,6 +65,34 @@ Unlike the Bank Dashboard's operating view, they are not added back to the balan
 **Dividend paid**, so every balance is the cash in the bank and the current month opens exactly at the
 NetSuite bank balance.
 
+## Breakdown of a cell
+
+Click an underlined figure (Collections, Pipeline, Churn, Salary, Vendors, Other, Reval, Dividend paid;
+any month, or the FY column for the full year). A window opens that can be dragged by its title bar and
+stays where it was put when another cell is opened; Esc or × closes it. It follows the Plan/Base and
+€/₪ toggles.
+
+Every breakdown adds up to the table cell: the listed rows, then labelled adjustment rows for what they
+do not explain. In ₪, an "FX conversion difference" row appears when a forecast adjustment had to be
+converted at the month's rate.
+
+| Line | Actual months | Forecast months | Next year |
+|---|---|---|---|
+| Salary | Booked payroll by NetSuite account (Snowflake FCT_EXPENSE) + cash timing to the bank figure | The last closed payroll month's accounts + difference to the by-department basis + hires, leavers and overrides + plan changes | The Oct–Dec run-rate by department + changes |
+| Vendors | Booked costs by NetSuite account, by category (FCT_EXPENSE) + cash timing | Vendor budget by NetSuite account (FCT_BUDGET) + budget overrides + plan adjustments | The same month of the current year, with its breakdown |
+| Collections | Bank lines classified as collections (NetSuite groups them by type, not customer) | Expected revenue by customer (Snowflake) × collection rate + open pipeline deals | Oct–Dec average × collection rate + deals |
+| Pipeline | – | Each forecast month's new MRR (projected MRR × calibration factor), cumulative + pipeline % | – |
+| Churn | – | Run-rate × forecast months elapsed, with the customers lost in the run-rate's quarter as context | – |
+| Other | Bank lines; the dividend withholding tax is moved to Dividend paid | – | – |
+| Reval | FX bank lines, or the booked P&L revaluation | Currency-defense budget × defense % | – |
+| Dividend paid | Distribution + withholding tax | – | – |
+
+Actual months also have a collapsed "Bank lines" section for Salary and Vendors: the NetSuite bank
+movements the cell is built from. Data comes from `GET /api/cash-projection/breakdown`
+(`server/cash-projection-breakdown.cjs`): engine details saved with the cached projection (never sent with
+the projection itself), plus Snowflake reads cached for `CASH_PROJECTION_TTL_MIN`, each using the same
+table and filters as the feed of its line.
+
 ## Same logic as the Bank Dashboard
 
 - **Current year:** identical engine inputs to the nightly net-cash job (`net-cash-forecast-compute.cjs`
@@ -112,11 +140,15 @@ pm2 restart finance-it-backend                 # whatever serves /api/* (banks-d
 Then check that the existing Bank Dashboard still opens: the build now has two pages that share the
 React chunk.
 
-### finance-it backend: serve `/api/cash-projection`
+### finance-it backend: serve `/api/cash-projection` and its breakdown
 
 - If finance-it-backend mounts the shared API (`docs/backend-bank-dashboard-api.ts`; pm2 logs show
-  `[bank-dashboard] shared API mounted`), the route is already included.
-- Otherwise add `docs/backend-cash-projection-route.ts` (one file + one call).
+  `[bank-dashboard] shared API mounted`), both routes are already included.
+- Otherwise add `docs/backend-cash-projection-route.ts` (one file + one call). It mounts
+  `GET /api/cash-projection` and `GET /api/cash-projection/breakdown`. finance-it-backend has no global
+  `/api` login gate, so the file guards both with the Bank Dashboard role.
+- Server-side changes in this repo (`server/`, `src/forecast/`) take effect after a restart of whatever
+  serves `/api/*`; a page-only change needs only the build.
 
 ### finance-it frontend: the sidebar entry
 
