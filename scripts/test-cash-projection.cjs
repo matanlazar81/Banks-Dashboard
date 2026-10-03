@@ -535,12 +535,28 @@ async function testModel(payload) {
     'Dividend paid sits between Net change and Closing balance');
   check(line('dividend').values[4] === -1_650_000 && line('dividend').values[12] === -1_650_000 && line('dividend').values.every((x, i) => x <= 0 && (i === 4 || i === 12 || x === 0) && !Object.is(x, -0)),
     'Dividend paid: (1,650) in May and FY 2026, a deduction, zero elsewhere');
+  const gap = line('gap');
+  check(keys[keys.length - 1] === 'gap' && gap.label === 'Monthly gap' && gap.signed === true, 'Monthly gap is the last line, shown signed');
+  let gapBad = 0;
+  t.columns.forEach((col, i) => {
+    const v = (k) => line(k).values[i];
+    if (col.kind === 'month') {
+      if (!near(v('gap'), v('closing') - v('opening'), 0.05) || !near(v('gap'), v('net') + v('dividend'), 0.1)) { gapBad++; fail(`${col.label}: gap ${v('gap')} != closing − opening ${v('closing') - v('opening')}`); }
+    } else {
+      const sum = t.columns.reduce((s, c, j) => (c.kind === 'month' && c.year === col.year ? s + gap.values[j] : s), 0);
+      if (!near(v('gap'), sum, 0.1)) { gapBad++; fail(`${col.label}: FY gap ${v('gap')} != Σ months ${sum}`); }
+    }
+  });
+  check(gapBad === 0, 'Monthly gap = closing − opening (= net change − dividend paid) every month; FY = sum of the months');
+  check(near(gap.values[4], line('net').values[4] - 1_650_000, 0.1), 'May 2026 gap includes the €1.65M dividend');
   check(model.buildTable(payload.variants.plan, 'ils', 'current').columns.length === 13, '2026 only → 13 columns');
   const next = model.buildTable(payload.variants.base, 'eur', 'next');
   check(next.columns.length === 13 && next.columns[0].rollForward && !next.lines.some((l) => l.key === 'reanchor'), '2027 only → 13 columns, no re-anchor line');
   check(next.lines.some((l) => l.key === 'dividend'), 'the Dividend paid line stays visible in the 2027-only view');
+  check(next.lines[next.lines.length - 1].key === 'gap', 'the Monthly gap is the last line in the 2027-only view too');
 
   check(model.formatThousands(1_234_567) === '1,235' && model.formatThousands(-1_234_567) === '(1,235)' && model.formatThousands(400) === '–' && model.formatThousands(-400) === '–', 'thousands format: 1,235 / (1,235) / –');
+  check(model.formatSignedThousands(1_234_567) === '+1,235' && model.formatSignedThousands(-1_234_567) === '−1,235' && model.formatSignedThousands(400) === '–' && model.formatSignedThousands(-400) === '–', 'signed format: +1,235 / −1,235 / –');
   check(model.formatMillions(7_050_000, 'eur') === '€7.1M' && model.formatMillions(-1_240_000, 'ils') === '-₪1.2M', 'millions format for KPI cards');
   check(model.formatFull(-1_200.4, 'eur') === '-€1,200', 'full amount format');
   const k = model.computeKpis(payload, 'plan', 'eur');

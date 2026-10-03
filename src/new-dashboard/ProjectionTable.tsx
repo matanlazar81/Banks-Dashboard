@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Info } from 'lucide-react';
 import type { Ccy } from './types.ts';
-import { CCY_SYMBOL, formatFull, formatThousands, monthLongLabel, type Column, type ProjectionTable as Table, type TableLine } from './model.ts';
+import { CCY_SYMBOL, formatFull, formatSignedThousands, formatThousands, monthLongLabel, type Column, type ProjectionTable as Table, type TableLine } from './model.ts';
 
 const LABEL_W = 'w-52 min-w-52';
 
@@ -37,7 +37,11 @@ interface CellProps {
 
 function Cell({ line, col, value, ccy, anchorDate, prevClosingLabel }: CellProps) {
   const emphasize = line.kind === 'balance' || line.kind === 'subtotal';
-  const negativeBad = (line.key === 'net' || line.kind === 'balance') && Math.round(value / 1000) < 0;
+  const k = Math.round(value / 1000);
+  const negativeBad = (line.key === 'net' || line.kind === 'balance') && k < 0;
+  const tone = line.signed
+    ? (k > 0 ? 'text-emerald-700' : k < 0 ? 'text-rose-600' : '')
+    : negativeBad ? 'text-rose-600' : '';
   const isAnchor = line.key === 'opening' && col.status === 'current';
   const isRollForward = line.key === 'opening' && col.rollForward;
   const where = col.kind === 'fy' ? `FY ${col.year}` : monthLongLabel(col.mKey!);
@@ -46,12 +50,12 @@ function Cell({ line, col, value, ccy, anchorDate, prevClosingLabel }: CellProps
   if (isRollForward && prevClosingLabel) title += ` (rolled forward: equals the ${prevClosingLabel} closing)`;
   return (
     <td
-      className={`whitespace-nowrap px-2 py-1.5 text-right tabular-nums ${columnTone(col)} ${dividerClass(col)} ${emphasize ? 'font-semibold' : ''} ${negativeBad ? 'text-rose-600' : ''} ${line.kind === 'note' ? 'text-xs text-slate-500' : ''}`}
+      className={`whitespace-nowrap px-2 py-1.5 text-right tabular-nums ${columnTone(col)} ${dividerClass(col)} ${emphasize ? 'font-semibold' : ''} ${tone} ${line.kind === 'note' ? 'text-xs text-slate-500' : ''}`}
       title={title}
     >
       {isAnchor && <span className="mr-1 text-sky-600" aria-label="re-anchored to bank">⚓</span>}
       {isRollForward && <span className="mr-1 text-emerald-600" aria-label="rolled forward">↩</span>}
-      {formatThousands(value)}
+      {line.signed ? formatSignedThousands(value) : formatThousands(value)}
     </td>
   );
 }
