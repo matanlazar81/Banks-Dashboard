@@ -248,11 +248,11 @@ function identities(payload) {
           const f = r[ccy];
           const inflows = f.collections + f.pipeline - f.churn;
           const outflows = f.salary + f.vendors + f.other;
-          if (!near(f.closing, f.opening + f.net, 0.03)) { bad++; fail(`${vk} ${r.mKey} ${ccy}: closing ${f.closing} != opening + net ${f.opening + f.net}`); }
+          if (!near(f.closing, f.opening + f.net - f.dividend, 0.03)) { bad++; fail(`${vk} ${r.mKey} ${ccy}: closing ${f.closing} != opening + net − dividend ${f.opening + f.net - f.dividend}`); }
           if (!near(f.net, inflows - outflows + f.reval, 0.06)) { bad++; fail(`${vk} ${r.mKey} ${ccy}: net ${f.net} != inflows − outflows + reval ${inflows - outflows + f.reval}`); }
         });
-        const fyNet = rows.reduce((s, r) => s + r[ccy].net + r[ccy].reanchor, 0);
-        if (!near(rows[11][ccy].closing, rows[0][ccy].opening + fyNet, 0.5)) { bad++; fail(`${vk} FY${yb.year} ${ccy}: Dec closing != Jan opening + Σ net + Σ re-anchor`); }
+        const fyNet = rows.reduce((s, r) => s + r[ccy].net - r[ccy].dividend + r[ccy].reanchor, 0);
+        if (!near(rows[11][ccy].closing, rows[0][ccy].opening + fyNet, 0.5)) { bad++; fail(`${vk} FY${yb.year} ${ccy}: Dec closing != Jan opening + Σ (net − dividend) + Σ re-anchor`); }
       }
     }
   }
@@ -309,10 +309,24 @@ async function testEndToEnd(rf) {
   check(pT[0].salary === planBasis && pT[10].salary === Math.round(planBasis * 0.96),
     'plan 2027: Jan at the run-rate, Nov −4% again (2026 month-% inherited, as in the old dashboard)', `${pT[0].salary} / ${pT[10].salary} vs ${planBasis}`);
 
-  check(plan.years[0].rows[4].dividendExcluded === 1_650_000, 'May 2026 marks the €1.65M dividend stripped from the operating view');
+  const may = plan.years[0].rows[4];
+  check(may.dividendExcluded === 1_650_000 && may.eur.dividend === 1_650_000 && may.ils.dividend === 6_105_000,
+    'May 2026: the €1.65M (₪6.105M) dividend + WHT is its own Dividend paid figure');
+  check(may.eur.vendors === 1_150_000 && plan.years[0].rows.every((r) => r.mKey === '2026-05' || r.eur.dividend === 0),
+    'the dividend stays out of Vendors, and no other month has one');
+  const oct = plan.years[0].rows[9];
+  check(oct.eur.opening === payload.bankToday.eur && oct.ils.opening === payload.bankToday.ils,
+    'Oct 2026 (current) opens at the NetSuite bank balance itself, not bank + dividends', `${oct.eur.opening} vs ${payload.bankToday.eur}`);
+  for (const [vk, v] of [['plan', plan], ['base', base]]) {
+    const opRows = [...raw[vk].rows[Y], ...raw[vk].rows[T]];
+    const shaped = v.years.flatMap((y) => y.rows);
+    const offBy = shaped.map((r, i) => (r.mKey < '2026-05' ? 0 : 1_650_000) - (opRows[i].closingBalance - r.eur.closing));
+    check(offBy.every((d) => Math.abs(d) < 0.01), `${vk}: every closing from May 2026 on (2027 included) = operating view − €1.65M, i.e. cash in the bank`);
+    check(v.rollForward.closing.eur === v.years[0].rows[11].eur.closing, `${vk}: roll-forward carries the bank-cash December closing`);
+  }
   const reanchored = plan.years[0].rows.filter((r) => Math.abs(r.eur.reanchor) >= 1).map((r) => r.mKey);
   check(reanchored.length === 1 && reanchored[0] === '2026-10', 'only the current month (Oct) is re-anchored to the bank', reanchored.join(','));
-  check(identities(payload) === 0, 'every month and FY: closing = opening + net, net = inflows − outflows + reval (EUR and ILS)');
+  check(identities(payload) === 0, 'every month and FY: closing = opening + net − dividend, net = inflows − outflows + reval (EUR and ILS)');
 
   // Closed-month-only feeds must not move the projection year.
   const snapshot = rf.snapshotFieldsFromLive({ sourceYear: Y, targetYear: T, srcInputs: raw.base.inputs[Y], rawSfBudget: await fakeSfClient().fetchBudgetByCategory(), rawSfSalaryBudget: await fakeSfClient().fetchSalaryBudget(), now: NOW });
@@ -511,14 +525,20 @@ async function testModel(payload) {
     if (!near(v('inflows'), v('collections') + v('pipeline') + v('churn'), 0.05)) bad++;
     if (!near(v('outflows'), v('salary') + v('vendors') + v('other'), 0.05)) bad++;
     if (!near(v('net'), v('inflows') - v('outflows') + v('reval'), 0.1)) bad++;
-    const expectedClosing = v('opening') + v('net') + (col.kind === 'fy' ? v('reanchor') : 0);
+    const expectedClosing = v('opening') + v('net') + v('dividend') + (col.kind === 'fy' ? v('reanchor') : 0);
     if (!near(v('closing'), expectedClosing, 0.6)) { bad++; fail(`${col.label}: closing ${v('closing')} != ${expectedClosing}`); }
   });
-  check(bad === 0, 'every column adds up top to bottom (FY incl. re-anchor)');
+  check(bad === 0, 'every column adds up top to bottom (FY incl. dividend and re-anchor)');
   check(line('churn').values.every((x) => x <= 0), 'churn displays as a deduction');
+  const keys = t.lines.map((l) => l.key);
+  check(keys.indexOf('dividend') === keys.indexOf('net') + 1 && keys.indexOf('closing') === keys.indexOf('dividend') + 1 && line('dividend').label === 'Dividend paid',
+    'Dividend paid sits between Net change and Closing balance');
+  check(line('dividend').values[4] === -1_650_000 && line('dividend').values[12] === -1_650_000 && line('dividend').values.every((x, i) => x <= 0 && (i === 4 || i === 12 || x === 0) && !Object.is(x, -0)),
+    'Dividend paid: (1,650) in May and FY 2026, a deduction, zero elsewhere');
   check(model.buildTable(payload.variants.plan, 'ils', 'current').columns.length === 13, '2026 only → 13 columns');
   const next = model.buildTable(payload.variants.base, 'eur', 'next');
   check(next.columns.length === 13 && next.columns[0].rollForward && !next.lines.some((l) => l.key === 'reanchor'), '2027 only → 13 columns, no re-anchor line');
+  check(next.lines.some((l) => l.key === 'dividend'), 'the Dividend paid line stays visible in the 2027-only view');
 
   check(model.formatThousands(1_234_567) === '1,235' && model.formatThousands(-1_234_567) === '(1,235)' && model.formatThousands(400) === '–' && model.formatThousands(-400) === '–', 'thousands format: 1,235 / (1,235) / –');
   check(model.formatMillions(7_050_000, 'eur') === '€7.1M' && model.formatMillions(-1_240_000, 'ils') === '-₪1.2M', 'millions format for KPI cards');

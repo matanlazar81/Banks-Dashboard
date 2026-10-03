@@ -174,6 +174,8 @@ export interface ForecastRow {
   isPast: boolean;
   /** Total dividend (EUR) stripped from this month's buckets by the exclusion pass, if any. */
   dividendExcluded?: number;
+  /** Same in ILS. */
+  dividendExcludedILS?: number;
 }
 
 export function computeCashflowForecast(inputs: ForecastInputs): ForecastRow[];

@@ -16,8 +16,11 @@ export interface Figures {
   vendors: number;
   other: number;
   reval: number;
-  /** Net change incl. reval = inflows − outflows + reval. */
+  /** Net change incl. reval = inflows − outflows + reval (dividends not included). */
   net: number;
+  /** Dividend distributions + withholding tax paid this month (positive = cash out). */
+  dividend: number;
+  /** Cash in the bank: opening + net − dividend. */
   closing: number;
   /** opening − previous closing: the current month's re-anchor to the NetSuite bank balance. */
   reanchor: number;

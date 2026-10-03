@@ -304,23 +304,36 @@ function buildNextYearInputs({ sourceYear, targetYear, srcInputs, srcRows, snaps
 //   reanchor = opening − previous closing; non-zero only in the live current month, where the
 //              engine re-anchors the opening to the NetSuite bank balance
 // prevClosing: { eur, ils } of the preceding December (projection year), or null.
-function shapeYear(rows, { year, kind, prevClosing = null }) {
+// Balances come out as cash in the bank. The engine's operating view adds dividends paid back into
+// every later opening/closing (forecast-core "Dividend exclusion"); they are taken out again here and
+// shown as their own `dividend` figure, so closing = opening + net − dividend.
+// dividendCarry: dividends of earlier years still inside the engine's balances (the projection year
+// opens at the current year's operating-view December closing). prevClosing is in bank cash.
+function shapeYear(rows, { year, kind, prevClosing = null, dividendCarry = null }) {
   const c = (n) => Math.round((Number(n) || 0) * 100) / 100;
   const side = (r, ils) => (ils
     ? { opening: r.openingBalanceILS, collections: r.collectionsILS, pipeline: r.pipelineWeightedILS, churn: r.churnDeductionILS,
         salary: r.salaryILS, vendors: r.vendorsILS, other: r.otherILS, reval: r.revalImpactILS, net: r.netILS + r.revalImpactILS, closing: r.closingBalanceILS }
     : { opening: r.openingBalance, collections: r.collections, pipeline: r.pipelineWeighted, churn: r.churnDeduction,
         salary: r.salary, vendors: r.vendors, other: r.other, reval: r.revalImpact, net: r.net + r.revalImpact, closing: r.closingBalance });
-  const out = rows.map((r, i) => {
-    const prev = i > 0
-      ? { eur: rows[i - 1].closingBalance, ils: rows[i - 1].closingBalanceILS }
-      : prevClosing;
+  const cum = { eur: dividendCarry?.eur || 0, ils: dividendCarry?.ils || 0 };
+  let prev = prevClosing;
+  const out = rows.map((r) => {
     const eur = side(r, false);
     const ils = side(r, true);
+    eur.opening -= cum.eur;
+    ils.opening -= cum.ils;
+    eur.dividend = r.dividendExcluded || 0;
+    ils.dividend = r.dividendExcludedILS || 0;
+    cum.eur += eur.dividend;
+    cum.ils += ils.dividend;
+    eur.closing -= cum.eur;
+    ils.closing -= cum.ils;
     const shaped = { eur: {}, ils: {} };
     for (const k of Object.keys(eur)) { shaped.eur[k] = c(eur[k]); shaped.ils[k] = c(ils[k]); }
-    shaped.eur.reanchor = prev ? c(r.openingBalance - prev.eur) : 0;
-    shaped.ils.reanchor = prev ? c(r.openingBalanceILS - prev.ils) : 0;
+    shaped.eur.reanchor = prev ? c(eur.opening - prev.eur) : 0;
+    shaped.ils.reanchor = prev ? c(ils.opening - prev.ils) : 0;
+    prev = { eur: eur.closing, ils: ils.closing };
     return {
       mKey: r.mKey,
       status: r.isPast ? 'actual' : r.isCurrent ? 'current' : 'forecast',
