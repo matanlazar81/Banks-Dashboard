@@ -1,0 +1,10 @@
+/* Scan only this folder: the old dashboard's App.tsx would otherwise add every utility it uses. */
+@import "tailwindcss" source(none);
+@source "./";
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  background: #f8fafc;
+  color: #0f172a;
+}

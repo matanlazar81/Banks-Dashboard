@@ -34,6 +34,16 @@ export default defineConfig({
   plugins: [react(), tailwindcss(), banksPlugin()],
   define: { '__GIT_HASH__': JSON.stringify(gitHash) },
   resolve: { alias: { 'xlsx': 'xlsx-js-style' } },
-  build: { chunkSizeWarningLimit: 2000 },
+  build: {
+    chunkSizeWarningLimit: 2000,
+    // Two pages: the Bank Dashboard (index.html) and the New Bank Dashboard (new-bank-dashboard.html,
+    // its own small bundle that never loads App.tsx).
+    rolldownOptions: {
+      input: {
+        main: path.resolve(__dirname, 'index.html'),
+        newBankDashboard: path.resolve(__dirname, 'new-bank-dashboard.html'),
+      },
+    },
+  },
   server: { port: 5176 },
 })

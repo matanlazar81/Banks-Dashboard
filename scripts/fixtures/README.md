@@ -7,3 +7,7 @@ how to capture it from a running dashboard.
 `forecast-golden.json` is **git-ignored** — it can contain internal finance
 figures, so it must not be committed or shared. The test runs fine without it
 (smoke mode still exercises every branch).
+
+`cash-projection-sample.json` is a **synthetic** `/api/cash-projection` payload
+(made-up numbers, not LSports data) used for New Bank Dashboard UI checks and
+screenshots. Regenerate it with `node scripts/test-cash-projection.cjs --write-fixture`.

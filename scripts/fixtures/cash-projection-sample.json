@@ -1,0 +1,1597 @@
+{
+  "_note": "Synthetic numbers for tests and UI screenshots. Not LSports data.",
+  "ok": true,
+  "schemaVersion": 1,
+  "status": "ready",
+  "generatedAt": "2026-10-15T07:42:00.000Z",
+  "computedMonth": "2026-10",
+  "company": "lsports",
+  "years": [
+    2026,
+    2027
+  ],
+  "plan": {
+    "name": "Exit plan June26",
+    "loaded": true,
+    "source": "postgres"
+  },
+  "bankToday": {
+    "eur": 6929000,
+    "ils": 25637300,
+    "asOf": "2026-09-30"
+  },
+  "degraded": false,
+  "failedFeeds": [],
+  "warnings": [],
+  "variants": {
+    "plan": {
+      "years": [
+        {
+          "year": 2026,
+          "kind": "current",
+          "rows": [
+            {
+              "mKey": "2026-01",
+              "status": "actual",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 8120000,
+                "collections": 3300000,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 2100000,
+                "vendors": 1050000,
+                "other": 40000,
+                "reval": 25000,
+                "net": 135000,
+                "closing": 8255000,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 30044000,
+                "collections": 12210000,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 7770000,
+                "vendors": 3885000,
+                "other": 148000,
+                "reval": 89750,
+                "net": 496750,
+                "closing": 30540750,
+                "reanchor": 0
+              }
+            },
+            {
+              "mKey": "2026-02",
+              "status": "actual",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 8255000,
+                "collections": 3340000,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 2120000,
+                "vendors": 1080000,
+                "other": 35000,
+                "reval": -18000,
+                "net": 87000,
+                "closing": 8342000,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 30540750,
+                "collections": 12358000,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 7844000,
+                "vendors": 3996000,
+                "other": 129500,
+                "reval": -64620,
+                "net": 323880,
+                "closing": 30864630,
+                "reanchor": 0
+              }
+            },
+            {
+              "mKey": "2026-03",
+              "status": "actual",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 8342000,
+                "collections": 3380000,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 2150000,
+                "vendors": 1100000,
+                "other": 60000,
+                "reval": 40000,
+                "net": 110000,
+                "closing": 8452000,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 30864630,
+                "collections": 12506000,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 7955000,
+                "vendors": 4070000,
+                "other": 222000,
+                "reval": 143600,
+                "net": 402600,
+                "closing": 31267230,
+                "reanchor": 0
+              }
+            },
+            {
+              "mKey": "2026-04",
+              "status": "actual",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 8452000,
+                "collections": 3360000,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 2180000,
+                "vendors": 1120000,
+                "other": 45000,
+                "reval": -12000,
+                "net": 3000,
+                "closing": 8455000,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 31267230,
+                "collections": 12432000,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 8066000,
+                "vendors": 4144000,
+                "other": 166500,
+                "reval": -43080,
+                "net": 12420,
+                "closing": 31279650,
+                "reanchor": 0
+              }
+            },
+            {
+              "mKey": "2026-05",
+              "status": "actual",
+              "dividendExcluded": 1650000,
+              "eur": {
+                "opening": 8455000,
+                "collections": 3420000,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 2200000,
+                "vendors": 1150000,
+                "other": 50000,
+                "reval": 30000,
+                "net": 50000,
+                "closing": 8505000,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 31279650,
+                "collections": 12654000,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 8140000,
+                "vendors": 4255000,
+                "other": 185000,
+                "reval": 107700,
+                "net": 181700,
+                "closing": 31461350,
+                "reanchor": 0
+              }
+            },
+            {
+              "mKey": "2026-06",
+              "status": "actual",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 8505000,
+                "collections": 3450000,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 2220000,
+                "vendors": 1130000,
+                "other": 42000,
+                "reval": -22000,
+                "net": 36000,
+                "closing": 8541000,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 31461350,
+                "collections": 12765000,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 8214000,
+                "vendors": 4181000,
+                "other": 155400,
+                "reval": -78980,
+                "net": 135620,
+                "closing": 31596970,
+                "reanchor": 0
+              }
+            },
+            {
+              "mKey": "2026-07",
+              "status": "actual",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 8541000,
+                "collections": 3470000,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 2250000,
+                "vendors": 1160000,
+                "other": 38000,
+                "reval": 15000,
+                "net": 37000,
+                "closing": 8578000,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 31596970,
+                "collections": 12839000,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 8325000,
+                "vendors": 4292000,
+                "other": 140600,
+                "reval": 53850,
+                "net": 135250,
+                "closing": 31732220,
+                "reanchor": 0
+              }
+            },
+            {
+              "mKey": "2026-08",
+              "status": "actual",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 8578000,
+                "collections": 3440000,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 2240000,
+                "vendors": 1180000,
+                "other": 55000,
+                "reval": 8000,
+                "net": -27000,
+                "closing": 8551000,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 31732220,
+                "collections": 12728000,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 8288000,
+                "vendors": 4366000,
+                "other": 203500,
+                "reval": 28720,
+                "net": -100780,
+                "closing": 31631440,
+                "reanchor": 0
+              }
+            },
+            {
+              "mKey": "2026-09",
+              "status": "actual",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 8551000,
+                "collections": 3520000,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 2260000,
+                "vendors": 1200000,
+                "other": 47000,
+                "reval": -20000,
+                "net": -7000,
+                "closing": 8544000,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 31631440,
+                "collections": 13024000,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 8362000,
+                "vendors": 4440000,
+                "other": 173900,
+                "reval": -71800,
+                "net": -23700,
+                "closing": 31607740,
+                "reanchor": 0
+              }
+            },
+            {
+              "mKey": "2026-10",
+              "status": "current",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 8579000,
+                "collections": 3580000,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 2260000,
+                "vendors": 1190000,
+                "other": 0,
+                "reval": 36000,
+                "net": 166000,
+                "closing": 8745000,
+                "reanchor": 35000
+              },
+              "ils": {
+                "opening": 31742300,
+                "collections": 13246000,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 8362000,
+                "vendors": 4403000,
+                "other": 0,
+                "reval": 129240,
+                "net": 610240,
+                "closing": 32352540,
+                "reanchor": 134560
+              }
+            },
+            {
+              "mKey": "2026-11",
+              "status": "forecast",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 8745000,
+                "collections": 3600000,
+                "pipeline": 55000,
+                "churn": 28000,
+                "salary": 2189600,
+                "vendors": 1125000,
+                "other": 0,
+                "reval": 36000,
+                "net": 348400,
+                "closing": 9093400,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 32352540,
+                "collections": 13320000,
+                "pipeline": 203500,
+                "churn": 103600,
+                "salary": 8101520,
+                "vendors": 4162500,
+                "other": 0,
+                "reval": 129240,
+                "net": 1285120,
+                "closing": 33637660,
+                "reanchor": 0
+              }
+            },
+            {
+              "mKey": "2026-12",
+              "status": "forecast",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 9093400,
+                "collections": 3660000,
+                "pipeline": 125000,
+                "churn": 56000,
+                "salary": 2209600,
+                "vendors": 1125000,
+                "other": 0,
+                "reval": 36000,
+                "net": 430400,
+                "closing": 9523800,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 33637660,
+                "collections": 13542000,
+                "pipeline": 462500,
+                "churn": 207200,
+                "salary": 8175520,
+                "vendors": 4162500,
+                "other": 0,
+                "reval": 129240,
+                "net": 1588520,
+                "closing": 35226180,
+                "reanchor": 0
+              }
+            }
+          ]
+        },
+        {
+          "year": 2027,
+          "kind": "projection",
+          "rows": [
+            {
+              "mKey": "2027-01",
+              "status": "forecast",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 9523800,
+                "collections": 3653333,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 2219734,
+                "vendors": 1050000,
+                "other": 0,
+                "reval": 0,
+                "net": 383599,
+                "closing": 9907399,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 35226180,
+                "collections": 13512775,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 8210247,
+                "vendors": 3883690,
+                "other": 0,
+                "reval": 0,
+                "net": 1418838,
+                "closing": 36645018,
+                "reanchor": 0
+              }
+            },
+            {
+              "mKey": "2027-02",
+              "status": "forecast",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 9907399,
+                "collections": 3653333,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 2219734,
+                "vendors": 1080000,
+                "other": 0,
+                "reval": 0,
+                "net": 353599,
+                "closing": 10260998,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 36645018,
+                "collections": 13512775,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 8210247,
+                "vendors": 3994653,
+                "other": 0,
+                "reval": 0,
+                "net": 1307875,
+                "closing": 37952893,
+                "reanchor": 0
+              }
+            },
+            {
+              "mKey": "2027-03",
+              "status": "forecast",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 10260998,
+                "collections": 3653333,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 2219734,
+                "vendors": 1100000,
+                "other": 0,
+                "reval": 0,
+                "net": 333599,
+                "closing": 10594597,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 37952893,
+                "collections": 13512775,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 8210247,
+                "vendors": 4068628,
+                "other": 0,
+                "reval": 0,
+                "net": 1233900,
+                "closing": 39186793,
+                "reanchor": 0
+              }
+            },
+            {
+              "mKey": "2027-04",
+              "status": "forecast",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 10594597,
+                "collections": 3653333,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 2219734,
+                "vendors": 1120000,
+                "other": 0,
+                "reval": 0,
+                "net": 313599,
+                "closing": 10908196,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 39186793,
+                "collections": 13512775,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 8210247,
+                "vendors": 4142603,
+                "other": 0,
+                "reval": 0,
+                "net": 1159925,
+                "closing": 40346718,
+                "reanchor": 0
+              }
+            },
+            {
+              "mKey": "2027-05",
+              "status": "forecast",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 10908196,
+                "collections": 3653333,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 2219734,
+                "vendors": 1150000,
+                "other": 0,
+                "reval": 0,
+                "net": 283599,
+                "closing": 11191795,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 40346718,
+                "collections": 13512775,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 8210247,
+                "vendors": 4253565,
+                "other": 0,
+                "reval": 0,
+                "net": 1048963,
+                "closing": 41395681,
+                "reanchor": 0
+              }
+            },
+            {
+              "mKey": "2027-06",
+              "status": "forecast",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 11191795,
+                "collections": 3653333,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 2219734,
+                "vendors": 1130000,
+                "other": 0,
+                "reval": 0,
+                "net": 303599,
+                "closing": 11495394,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 41395681,
+                "collections": 13512775,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 8210247,
+                "vendors": 4179590,
+                "other": 0,
+                "reval": 0,
+                "net": 1122938,
+                "closing": 42518619,
+                "reanchor": 0
+              }
+            },
+            {
+              "mKey": "2027-07",
+              "status": "forecast",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 11495394,
+                "collections": 3653333,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 2219734,
+                "vendors": 1160000,
+                "other": 0,
+                "reval": 0,
+                "net": 273599,
+                "closing": 11768993,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 42518619,
+                "collections": 13512775,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 8210247,
+                "vendors": 4290553,
+                "other": 0,
+                "reval": 0,
+                "net": 1011975,
+                "closing": 43530594,
+                "reanchor": 0
+              }
+            },
+            {
+              "mKey": "2027-08",
+              "status": "forecast",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 11768993,
+                "collections": 3653333,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 2219734,
+                "vendors": 1180000,
+                "other": 0,
+                "reval": 0,
+                "net": 253599,
+                "closing": 12022592,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 43530594,
+                "collections": 13512775,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 8210247,
+                "vendors": 4364528,
+                "other": 0,
+                "reval": 0,
+                "net": 938000,
+                "closing": 44468594,
+                "reanchor": 0
+              }
+            },
+            {
+              "mKey": "2027-09",
+              "status": "forecast",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 12022592,
+                "collections": 3653333,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 2219734,
+                "vendors": 1200000,
+                "other": 0,
+                "reval": 0,
+                "net": 233599,
+                "closing": 12256191,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 44468594,
+                "collections": 13512775,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 8210247,
+                "vendors": 4438503,
+                "other": 0,
+                "reval": 0,
+                "net": 864025,
+                "closing": 45332619,
+                "reanchor": 0
+              }
+            },
+            {
+              "mKey": "2027-10",
+              "status": "forecast",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 12256191,
+                "collections": 3653333,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 2219734,
+                "vendors": 1190000,
+                "other": 0,
+                "reval": 0,
+                "net": 243599,
+                "closing": 12499790,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 45332619,
+                "collections": 13512775,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 8210247,
+                "vendors": 4401516,
+                "other": 0,
+                "reval": 0,
+                "net": 901012,
+                "closing": 46233631,
+                "reanchor": 0
+              }
+            },
+            {
+              "mKey": "2027-11",
+              "status": "forecast",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 12499790,
+                "collections": 3653333,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 2130945,
+                "vendors": 1125000,
+                "other": 0,
+                "reval": 0,
+                "net": 397388,
+                "closing": 12897178,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 46233631,
+                "collections": 13512775,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 7881838,
+                "vendors": 4161097,
+                "other": 0,
+                "reval": 0,
+                "net": 1469840,
+                "closing": 47703471,
+                "reanchor": 0
+              }
+            },
+            {
+              "mKey": "2027-12",
+              "status": "forecast",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 12897178,
+                "collections": 3653333,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 2130945,
+                "vendors": 1125000,
+                "other": 0,
+                "reval": 0,
+                "net": 397388,
+                "closing": 13294566,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 47703471,
+                "collections": 13512775,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 7881838,
+                "vendors": 4161097,
+                "other": 0,
+                "reval": 0,
+                "net": 1469840,
+                "closing": 49173311,
+                "reanchor": 0
+              }
+            }
+          ]
+        }
+      ],
+      "rollForward": {
+        "from": "2026-12",
+        "to": "2027-01",
+        "closing": {
+          "eur": 9523800,
+          "ils": 35226180
+        },
+        "opening": {
+          "eur": 9523800,
+          "ils": 35226180
+        },
+        "source": "live",
+        "salaryBasis": {
+          "method": "run-rate",
+          "monthsWithData": 3,
+          "scale": {
+            "eur": 0.9405649717514125,
+            "ils": 0.9405649717514124
+          }
+        }
+      }
+    },
+    "base": {
+      "years": [
+        {
+          "year": 2026,
+          "kind": "current",
+          "rows": [
+            {
+              "mKey": "2026-01",
+              "status": "actual",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 8120000,
+                "collections": 3300000,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 2100000,
+                "vendors": 1050000,
+                "other": 40000,
+                "reval": 25000,
+                "net": 135000,
+                "closing": 8255000,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 30044000,
+                "collections": 12210000,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 7770000,
+                "vendors": 3885000,
+                "other": 148000,
+                "reval": 89750,
+                "net": 496750,
+                "closing": 30540750,
+                "reanchor": 0
+              }
+            },
+            {
+              "mKey": "2026-02",
+              "status": "actual",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 8255000,
+                "collections": 3340000,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 2120000,
+                "vendors": 1080000,
+                "other": 35000,
+                "reval": -18000,
+                "net": 87000,
+                "closing": 8342000,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 30540750,
+                "collections": 12358000,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 7844000,
+                "vendors": 3996000,
+                "other": 129500,
+                "reval": -64620,
+                "net": 323880,
+                "closing": 30864630,
+                "reanchor": 0
+              }
+            },
+            {
+              "mKey": "2026-03",
+              "status": "actual",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 8342000,
+                "collections": 3380000,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 2150000,
+                "vendors": 1100000,
+                "other": 60000,
+                "reval": 40000,
+                "net": 110000,
+                "closing": 8452000,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 30864630,
+                "collections": 12506000,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 7955000,
+                "vendors": 4070000,
+                "other": 222000,
+                "reval": 143600,
+                "net": 402600,
+                "closing": 31267230,
+                "reanchor": 0
+              }
+            },
+            {
+              "mKey": "2026-04",
+              "status": "actual",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 8452000,
+                "collections": 3360000,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 2180000,
+                "vendors": 1120000,
+                "other": 45000,
+                "reval": -12000,
+                "net": 3000,
+                "closing": 8455000,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 31267230,
+                "collections": 12432000,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 8066000,
+                "vendors": 4144000,
+                "other": 166500,
+                "reval": -43080,
+                "net": 12420,
+                "closing": 31279650,
+                "reanchor": 0
+              }
+            },
+            {
+              "mKey": "2026-05",
+              "status": "actual",
+              "dividendExcluded": 1650000,
+              "eur": {
+                "opening": 8455000,
+                "collections": 3420000,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 2200000,
+                "vendors": 1150000,
+                "other": 50000,
+                "reval": 30000,
+                "net": 50000,
+                "closing": 8505000,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 31279650,
+                "collections": 12654000,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 8140000,
+                "vendors": 4255000,
+                "other": 185000,
+                "reval": 107700,
+                "net": 181700,
+                "closing": 31461350,
+                "reanchor": 0
+              }
+            },
+            {
+              "mKey": "2026-06",
+              "status": "actual",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 8505000,
+                "collections": 3450000,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 2220000,
+                "vendors": 1130000,
+                "other": 42000,
+                "reval": -22000,
+                "net": 36000,
+                "closing": 8541000,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 31461350,
+                "collections": 12765000,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 8214000,
+                "vendors": 4181000,
+                "other": 155400,
+                "reval": -78980,
+                "net": 135620,
+                "closing": 31596970,
+                "reanchor": 0
+              }
+            },
+            {
+              "mKey": "2026-07",
+              "status": "actual",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 8541000,
+                "collections": 3470000,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 2250000,
+                "vendors": 1160000,
+                "other": 38000,
+                "reval": 15000,
+                "net": 37000,
+                "closing": 8578000,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 31596970,
+                "collections": 12839000,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 8325000,
+                "vendors": 4292000,
+                "other": 140600,
+                "reval": 53850,
+                "net": 135250,
+                "closing": 31732220,
+                "reanchor": 0
+              }
+            },
+            {
+              "mKey": "2026-08",
+              "status": "actual",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 8578000,
+                "collections": 3440000,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 2240000,
+                "vendors": 1180000,
+                "other": 55000,
+                "reval": 8000,
+                "net": -27000,
+                "closing": 8551000,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 31732220,
+                "collections": 12728000,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 8288000,
+                "vendors": 4366000,
+                "other": 203500,
+                "reval": 28720,
+                "net": -100780,
+                "closing": 31631440,
+                "reanchor": 0
+              }
+            },
+            {
+              "mKey": "2026-09",
+              "status": "actual",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 8551000,
+                "collections": 3520000,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 2260000,
+                "vendors": 1200000,
+                "other": 47000,
+                "reval": -20000,
+                "net": -7000,
+                "closing": 8544000,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 31631440,
+                "collections": 13024000,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 8362000,
+                "vendors": 4440000,
+                "other": 173900,
+                "reval": -71800,
+                "net": -23700,
+                "closing": 31607740,
+                "reanchor": 0
+              }
+            },
+            {
+              "mKey": "2026-10",
+              "status": "current",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 8579000,
+                "collections": 3580000,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 2260000,
+                "vendors": 1190000,
+                "other": 0,
+                "reval": 36000,
+                "net": 166000,
+                "closing": 8745000,
+                "reanchor": 35000
+              },
+              "ils": {
+                "opening": 31742300,
+                "collections": 13246000,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 8362000,
+                "vendors": 4403000,
+                "other": 0,
+                "reval": 129240,
+                "net": 610240,
+                "closing": 32352540,
+                "reanchor": 134560
+              }
+            },
+            {
+              "mKey": "2026-11",
+              "status": "forecast",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 8745000,
+                "collections": 3600000,
+                "pipeline": 55000,
+                "churn": 28000,
+                "salary": 2280000,
+                "vendors": 1190000,
+                "other": 0,
+                "reval": 36000,
+                "net": 193000,
+                "closing": 8938000,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 32352540,
+                "collections": 13320000,
+                "pipeline": 203500,
+                "churn": 103600,
+                "salary": 8436000,
+                "vendors": 4403000,
+                "other": 0,
+                "reval": 129240,
+                "net": 710140,
+                "closing": 33062680,
+                "reanchor": 0
+              }
+            },
+            {
+              "mKey": "2026-12",
+              "status": "forecast",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 8938000,
+                "collections": 3660000,
+                "pipeline": 125000,
+                "churn": 56000,
+                "salary": 2300000,
+                "vendors": 1190000,
+                "other": 0,
+                "reval": 36000,
+                "net": 275000,
+                "closing": 9213000,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 33062680,
+                "collections": 13542000,
+                "pipeline": 462500,
+                "churn": 207200,
+                "salary": 8510000,
+                "vendors": 4403000,
+                "other": 0,
+                "reval": 129240,
+                "net": 1013540,
+                "closing": 34076220,
+                "reanchor": 0
+              }
+            }
+          ]
+        },
+        {
+          "year": 2027,
+          "kind": "projection",
+          "rows": [
+            {
+              "mKey": "2027-01",
+              "status": "forecast",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 9213000,
+                "collections": 3653333,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 2280000,
+                "vendors": 1050000,
+                "other": 0,
+                "reval": 0,
+                "net": 323333,
+                "closing": 9536333,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 34076220,
+                "collections": 13512621,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 8433060,
+                "vendors": 3883646,
+                "other": 0,
+                "reval": 0,
+                "net": 1195915,
+                "closing": 35272135,
+                "reanchor": 0
+              }
+            },
+            {
+              "mKey": "2027-02",
+              "status": "forecast",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 9536333,
+                "collections": 3653333,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 2280000,
+                "vendors": 1080000,
+                "other": 0,
+                "reval": 0,
+                "net": 293333,
+                "closing": 9829666,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 35272135,
+                "collections": 13512621,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 8433060,
+                "vendors": 3994607,
+                "other": 0,
+                "reval": 0,
+                "net": 1084954,
+                "closing": 36357089,
+                "reanchor": 0
+              }
+            },
+            {
+              "mKey": "2027-03",
+              "status": "forecast",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 9829666,
+                "collections": 3653333,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 2280000,
+                "vendors": 1100000,
+                "other": 0,
+                "reval": 0,
+                "net": 273333,
+                "closing": 10102999,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 36357089,
+                "collections": 13512621,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 8433060,
+                "vendors": 4068582,
+                "other": 0,
+                "reval": 0,
+                "net": 1010979,
+                "closing": 37368068,
+                "reanchor": 0
+              }
+            },
+            {
+              "mKey": "2027-04",
+              "status": "forecast",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 10102999,
+                "collections": 3653333,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 2280000,
+                "vendors": 1120000,
+                "other": 0,
+                "reval": 0,
+                "net": 253333,
+                "closing": 10356332,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 37368068,
+                "collections": 13512621,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 8433060,
+                "vendors": 4142556,
+                "other": 0,
+                "reval": 0,
+                "net": 937005,
+                "closing": 38305073,
+                "reanchor": 0
+              }
+            },
+            {
+              "mKey": "2027-05",
+              "status": "forecast",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 10356332,
+                "collections": 3653333,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 2280000,
+                "vendors": 1150000,
+                "other": 0,
+                "reval": 0,
+                "net": 223333,
+                "closing": 10579665,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 38305073,
+                "collections": 13512621,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 8433060,
+                "vendors": 4253517,
+                "other": 0,
+                "reval": 0,
+                "net": 826044,
+                "closing": 39131117,
+                "reanchor": 0
+              }
+            },
+            {
+              "mKey": "2027-06",
+              "status": "forecast",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 10579665,
+                "collections": 3653333,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 2280000,
+                "vendors": 1130000,
+                "other": 0,
+                "reval": 0,
+                "net": 243333,
+                "closing": 10822998,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 39131117,
+                "collections": 13512621,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 8433060,
+                "vendors": 4179543,
+                "other": 0,
+                "reval": 0,
+                "net": 900018,
+                "closing": 40031135,
+                "reanchor": 0
+              }
+            },
+            {
+              "mKey": "2027-07",
+              "status": "forecast",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 10822998,
+                "collections": 3653333,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 2280000,
+                "vendors": 1160000,
+                "other": 0,
+                "reval": 0,
+                "net": 213333,
+                "closing": 11036331,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 40031135,
+                "collections": 13512621,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 8433060,
+                "vendors": 4290504,
+                "other": 0,
+                "reval": 0,
+                "net": 789057,
+                "closing": 40820192,
+                "reanchor": 0
+              }
+            },
+            {
+              "mKey": "2027-08",
+              "status": "forecast",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 11036331,
+                "collections": 3653333,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 2280000,
+                "vendors": 1180000,
+                "other": 0,
+                "reval": 0,
+                "net": 193333,
+                "closing": 11229664,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 40820192,
+                "collections": 13512621,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 8433060,
+                "vendors": 4364478,
+                "other": 0,
+                "reval": 0,
+                "net": 715083,
+                "closing": 41535275,
+                "reanchor": 0
+              }
+            },
+            {
+              "mKey": "2027-09",
+              "status": "forecast",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 11229664,
+                "collections": 3653333,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 2280000,
+                "vendors": 1200000,
+                "other": 0,
+                "reval": 0,
+                "net": 173333,
+                "closing": 11402997,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 41535275,
+                "collections": 13512621,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 8433060,
+                "vendors": 4438453,
+                "other": 0,
+                "reval": 0,
+                "net": 641108,
+                "closing": 42176383,
+                "reanchor": 0
+              }
+            },
+            {
+              "mKey": "2027-10",
+              "status": "forecast",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 11402997,
+                "collections": 3653333,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 2280000,
+                "vendors": 1190000,
+                "other": 0,
+                "reval": 0,
+                "net": 183333,
+                "closing": 11586330,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 42176383,
+                "collections": 13512621,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 8433060,
+                "vendors": 4401466,
+                "other": 0,
+                "reval": 0,
+                "net": 678095,
+                "closing": 42854478,
+                "reanchor": 0
+              }
+            },
+            {
+              "mKey": "2027-11",
+              "status": "forecast",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 11586330,
+                "collections": 3653333,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 2280000,
+                "vendors": 1190000,
+                "other": 0,
+                "reval": 0,
+                "net": 183333,
+                "closing": 11769663,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 42854478,
+                "collections": 13512621,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 8433060,
+                "vendors": 4401466,
+                "other": 0,
+                "reval": 0,
+                "net": 678095,
+                "closing": 43532573,
+                "reanchor": 0
+              }
+            },
+            {
+              "mKey": "2027-12",
+              "status": "forecast",
+              "dividendExcluded": 0,
+              "eur": {
+                "opening": 11769663,
+                "collections": 3653333,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 2280000,
+                "vendors": 1190000,
+                "other": 0,
+                "reval": 0,
+                "net": 183333,
+                "closing": 11952996,
+                "reanchor": 0
+              },
+              "ils": {
+                "opening": 43532573,
+                "collections": 13512621,
+                "pipeline": 0,
+                "churn": 0,
+                "salary": 8433060,
+                "vendors": 4401466,
+                "other": 0,
+                "reval": 0,
+                "net": 678095,
+                "closing": 44210668,
+                "reanchor": 0
+              }
+            }
+          ]
+        }
+      ],
+      "rollForward": {
+        "from": "2026-12",
+        "to": "2027-01",
+        "closing": {
+          "eur": 9213000,
+          "ils": 34076220
+        },
+        "opening": {
+          "eur": 9213000,
+          "ils": 34076220
+        },
+        "source": "live",
+        "salaryBasis": {
+          "method": "run-rate",
+          "monthsWithData": 3,
+          "scale": {
+            "eur": 0.9661016949152542,
+            "ils": 0.9661016949152542
+          }
+        }
+      }
+    }
+  },
+  "cache": {
+    "ageSec": 540,
+    "stale": false,
+    "staleReason": null,
+    "refreshing": false,
+    "lastError": null
+  }
+}
