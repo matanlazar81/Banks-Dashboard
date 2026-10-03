@@ -5,7 +5,7 @@ import type { Ccy, Figures, MonthRow, MonthStatus, ProjectionPayload, Variant, V
 export type LineKey =
   | 'opening' | 'collections' | 'pipeline' | 'churn' | 'inflows'
   | 'salary' | 'vendors' | 'other' | 'outflows'
-  | 'reval' | 'net' | 'dividend' | 'closing' | 'reanchor';
+  | 'reval' | 'net' | 'dividend' | 'closing' | 'reanchor' | 'gap';
 
 export type LineKind = 'balance' | 'item' | 'subtotal' | 'note';
 
@@ -18,6 +18,8 @@ interface LineDef {
   value: (f: Figures) => number;
   /** Full-year column: sum of the months, or the first/last month for balances. */
   fy: 'sum' | 'first' | 'last';
+  /** Shown with an explicit + / − and green / red instead of parentheses. */
+  signed?: boolean;
 }
 
 const inflows = (f: Figures) => f.collections + f.pipeline - f.churn;
@@ -49,6 +51,8 @@ export const LINES: LineDef[] = [
     hint: 'Opening + net change − dividend paid: the cash in the bank at month-end.' },
   { key: 'reanchor', label: 'incl. bank re-anchor', kind: 'note', fy: 'sum', value: (f) => f.reanchor,
     hint: 'The current month opens at the actual NetSuite bank balance of the previous month-end. This is the difference to the model\'s previous closing; it is already inside the opening balance.' },
+  { key: 'gap', label: 'Monthly gap', kind: 'subtotal', fy: 'sum', signed: true, value: (f) => f.closing - f.opening,
+    hint: 'Closing − opening: how much the bank balance rose (+) or fell (−) in the month, after dividends (net change − dividend paid). FY: the sum of the months.' },
 ];
 
 export interface Column {
@@ -73,6 +77,7 @@ export interface TableLine {
   label: string;
   kind: LineKind;
   hint?: string;
+  signed?: boolean;
   /** One value per column, in display sign. */
   values: number[];
 }
@@ -149,7 +154,7 @@ export function buildTable(variant: Variant, ccy: Ccy, view: YearView): Projecti
       for (const r of block.rows) values.push(line.value(r[ccy]));
       values.push(fyValue(line, block.rows, ccy));
     }
-    return { key: line.key, label: line.label, kind: line.kind, hint: line.hint, values };
+    return { key: line.key, label: line.label, kind: line.kind, hint: line.hint, signed: line.signed, values };
   });
 
   // The re-anchor note only appears when it is material (≥ 1 currency unit somewhere).
@@ -189,6 +194,13 @@ export function formatThousands(n: number): string {
   const k = Math.round(n / 1000);
   if (k === 0 || Object.is(k, -0)) return '–';
   return k < 0 ? `(${intFmt.format(-k)})` : intFmt.format(k);
+}
+
+/** Thousands with an explicit sign: '+1,235' / '−1,235' (true minus); '–' when it rounds to zero. */
+export function formatSignedThousands(n: number): string {
+  const k = Math.round(n / 1000);
+  if (k === 0 || Object.is(k, -0)) return '–';
+  return k < 0 ? `−${intFmt.format(-k)}` : `+${intFmt.format(k)}`;
 }
 
 export const CCY_SYMBOL: Record<Ccy, string> = { eur: '€', ils: '₪' };

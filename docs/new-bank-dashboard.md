@@ -57,6 +57,7 @@ thousands (hover any cell for the exact amount).
 | Dividend paid | Dividend distributions and their withholding tax paid from the bank (NetSuite), shown as a deduction. Future dividends are not forecast. |
 | Closing balance | Opening + net change − dividend paid: the cash in the bank at month-end. |
 | incl. bank re-anchor | Only when material: the difference between the model's previous closing and the bank balance the current month opens from. Already inside the opening balance; in the FY column it explains why Jan opening + Σ net change − Σ dividend paid ≠ Dec closing. |
+| Monthly gap | Closing − opening: how much the bank balance rose (+, green) or fell (−, red) in the month, after dividends (= net change − dividend paid). FY: the sum of the months. |
 
 Column status: **Actual** (closed months, from NetSuite bank activity), **Current** (actual so far +
 remaining forecast), **Forecast**. Dividends are kept out of Vendors/Other, as in the Bank Dashboard.
