@@ -2675,6 +2675,15 @@ If the user asks to modify, adjust, or refine an existing scenario (e.g. "reduce
           res.end(JSON.stringify({ error: e.message }));
         }
       });
+
+      // ── GET /api/cash-projection — New Bank Dashboard (server/cash-projection.cjs) ──
+      // Guarded so a problem loading that module can never take the routes above down with it.
+      try {
+        const { createCashProjectionHandler } = require('./cash-projection.cjs');
+        use('/api/cash-projection', createCashProjectionHandler({ getNsClient, getSfClient, queueNsCall }));
+      } catch (e     ) {
+        console.error('[cash-projection] route not mounted:', e && e.message);
+      }
 }
 
 module.exports = { registerApiRoutes, apiCache, getCached, setCache, getNsClient, getSfClient, queueNsCall, getUserEmail, canUserSync };

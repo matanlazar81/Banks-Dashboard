@@ -41,6 +41,10 @@
  *   --scenario=NAME        override the scenario name to match.
  *
  * Exit codes: 0 = computed (and written unless --dry-run); 1 = fatal error.
+ *
+ * Also a module: server/cash-projection.cjs (the New Bank Dashboard's /api/cash-projection)
+ * requires this file for gatherInputs / scenarioKnobs / loadScenarioDataAsync so both run the
+ * exact same input assembly. main() only runs when this file is executed directly.
  */
 
 const fs = require('fs');
@@ -49,8 +53,8 @@ const { pathToFileURL } = require('url');
 
 try { require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') }); } catch { /* env may already be exported */ }
 
-const { createNetSuiteClient } = require('../netsuite-api.cjs');
-const { createSnowflakeClient } = require('../snowflake-api.cjs');
+// The NetSuite/Snowflake client factories are required inside main(): module callers pass
+// their own clients into gatherInputs(), so requiring this file stays dependency-free.
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const SUBSIDIARY = parseInt(process.env.NET_CASH_SUBSIDIARY || '3', 10) || 3; // 3 = LSports
@@ -113,7 +117,10 @@ async function mapLimit(items, limit, worker) {
 // (edits reflect in the next figure). Matches by name; NET_CASH_SCENARIO_OWNER pins the
 // owner email if two scenarios share a name. Returns null if psql/DATABASE_URL is missing
 // or no row matches (caller falls through to the file sources).
-function loadScenarioFromPostgres(scenarioName) {
+
+// psql invocation shared by the sync loader (nightly) and the async one (in-process API callers).
+// Returns null when no connection string is configured.
+function scenarioPsqlQuery(scenarioName) {
   const conn = process.env.NET_CASH_DATABASE_URL || process.env.DATABASE_URL;
   if (!conn) return null;
   const owner = process.env.NET_CASH_SCENARIO_OWNER;
@@ -124,36 +131,71 @@ function loadScenarioFromPostgres(scenarioName) {
   let sql = `SELECT data::text FROM user_scenarios WHERE name = ${lit(scenarioName)} AND COALESCE(company, 'lsports') = 'lsports'`;
   if (owner) sql += ` AND LOWER(TRIM(user_email)) = LOWER(TRIM(${lit(owner)}))`;
   sql += ' ORDER BY updated_at DESC LIMIT 1';
+  return { owner, args: ['-d', conn, '-X', '-t', '-A', '-v', 'ON_ERROR_STOP=1', '-c', sql] };
+}
+const PSQL_OPTS = { encoding: 'utf-8', timeout: 20000, maxBuffer: 10 * 1024 * 1024 };
+
+function scenarioFromPsqlOutput(stdout, scenarioName, owner) {
+  const out = String(stdout || '').trim();
+  if (!out) { console.warn(`[compute] Postgres: no scenario named "${scenarioName}" in user_scenarios.`); return null; }
+  return { data: JSON.parse(out), source: `Postgres user_scenarios (name="${scenarioName}"${owner ? `, owner=${owner}` : ''})` };
+}
+
+function warnPsqlFailure(e) {
+  // NEVER log the connection string (it carries the DB password) — redact any URI, keep the DB error.
+  const raw = (e && e.stderr) ? String(e.stderr) : (e && e.message ? String(e.message) : String(e));
+  const detail = raw.replace(/postgres(?:ql)?:\/\/[^\s'"]+/gi, 'postgresql://<redacted>').trim().split('\n')[0];
+  console.warn(`[compute] Postgres scenario load failed: ${detail}`);
+}
+
+function loadScenarioFromPostgres(scenarioName) {
+  const q = scenarioPsqlQuery(scenarioName);
+  if (!q) return null;
   try {
     const { execFileSync } = require('child_process');
-    const out = execFileSync('psql', ['-d', conn, '-X', '-t', '-A', '-v', 'ON_ERROR_STOP=1', '-c', sql],
-      { encoding: 'utf-8', timeout: 20000, maxBuffer: 10 * 1024 * 1024 }).trim();
-    if (!out) { console.warn(`[compute] Postgres: no scenario named "${scenarioName}" in user_scenarios.`); return null; }
-    return { data: JSON.parse(out), source: `Postgres user_scenarios (name="${scenarioName}"${owner ? `, owner=${owner}` : ''})` };
+    return scenarioFromPsqlOutput(execFileSync('psql', q.args, PSQL_OPTS), scenarioName, q.owner);
   } catch (e) {
-    // NEVER log the connection string (it carries the DB password) — redact any URI, keep the DB error.
-    const raw = (e && e.stderr) ? String(e.stderr) : (e && e.message ? String(e.message) : String(e));
-    const detail = raw.replace(/postgres(?:ql)?:\/\/[^\s'"]+/gi, 'postgresql://<redacted>').trim().split('\n')[0];
-    console.warn(`[compute] Postgres scenario load failed: ${detail}`);
+    warnPsqlFailure(e);
     return null;
   }
 }
 
-function loadScenarioData(scenarioName) {
-  // 1. explicit single-scenario file (test override).
+// Same as loadScenarioFromPostgres, without blocking the event loop (an in-process API server
+// must not freeze for up to the 20s psql timeout).
+function loadScenarioFromPostgresAsync(scenarioName) {
+  const q = scenarioPsqlQuery(scenarioName);
+  if (!q) return Promise.resolve(null);
+  const { execFile } = require('child_process');
+  return new Promise((resolve) => {
+    execFile('psql', q.args, PSQL_OPTS, (err, stdout, stderr) => {
+      if (err) {
+        if (!err.stderr && stderr) err.stderr = stderr;
+        warnPsqlFailure(err);
+        resolve(null);
+        return;
+      }
+      try { resolve(scenarioFromPsqlOutput(stdout, scenarioName, q.owner)); }
+      catch (e) { warnPsqlFailure(e); resolve(null); }
+    });
+  });
+}
+
+// 1. explicit single-scenario file (test override).
+function loadScenarioFromSingleFile() {
   const single = process.env.NET_CASH_SCENARIO_FILE;
-  if (single) {
-    try {
-      const raw = JSON.parse(fs.readFileSync(path.resolve(single), 'utf-8'));
-      return { data: raw.data || raw, source: `NET_CASH_SCENARIO_FILE (${single})` }; // {data} record or bare ScenarioData
-    } catch (e) {
-      console.warn(`[compute] NET_CASH_SCENARIO_FILE unreadable: ${e.message}`);
-    }
+  if (!single) return null;
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.resolve(single), 'utf-8'));
+    return { data: raw.data || raw, source: `NET_CASH_SCENARIO_FILE (${single})` }; // {data} record or bare ScenarioData
+  } catch (e) {
+    console.warn(`[compute] NET_CASH_SCENARIO_FILE unreadable: ${e.message}`);
+    return null;
   }
-  // 2. Postgres — the production store the dashboard writes to (primary prod source).
-  const pg = loadScenarioFromPostgres(scenarioName);
-  if (pg && pg.data && Object.keys(pg.data).length) return pg;
-  // 3. scenarios array file: explicit NET_CASH_SCENARIOS_PATH, else the dev default.
+}
+
+// 3. scenarios array file: explicit NET_CASH_SCENARIOS_PATH, else the dev default. Last tier, so it
+// also returns the "base plan" sentinel when nothing matched.
+function loadScenarioFromScenariosFile(scenarioName) {
   const arrPathEnv = process.env.NET_CASH_SCENARIOS_PATH;
   const arrPath = arrPathEnv ? path.resolve(arrPathEnv) : path.resolve(REPO_ROOT, 'data', 'scenarios.json');
   try {
@@ -166,6 +208,23 @@ function loadScenarioData(scenarioName) {
     if (arrPathEnv) console.warn(`[compute] scenarios file unreadable (${arrPath}): ${e.message}`);
   }
   return { data: {}, source: 'NONE — base plan, no adjustments (forecast will be too high)' };
+}
+
+function loadScenarioData(scenarioName) {
+  const single = loadScenarioFromSingleFile();
+  if (single) return single;
+  // 2. Postgres — the production store the dashboard writes to (primary prod source).
+  const pg = loadScenarioFromPostgres(scenarioName);
+  if (pg && pg.data && Object.keys(pg.data).length) return pg;
+  return loadScenarioFromScenariosFile(scenarioName);
+}
+
+async function loadScenarioDataAsync(scenarioName) {
+  const single = loadScenarioFromSingleFile();
+  if (single) return single;
+  const pg = await loadScenarioFromPostgresAsync(scenarioName);
+  if (pg && pg.data && Object.keys(pg.data).length) return pg;
+  return loadScenarioFromScenariosFile(scenarioName);
 }
 
 // Mirror applyScenarioData (App.tsx): maps reset to {} when omitted; the
@@ -434,6 +493,8 @@ async function main() {
   const { data: scenarioData, source: scenarioSource } = loadScenarioData(scenarioName);
   console.log(`[compute] Scenario: ${scenarioSource}`);
 
+  const { createNetSuiteClient } = require('../netsuite-api.cjs');
+  const { createSnowflakeClient } = require('../snowflake-api.cjs');
   const ns = createNetSuiteClient(process.env, SUBSIDIARY);
   const sf = createSnowflakeClient(process.env);
 
@@ -528,4 +589,8 @@ async function main() {
   process.exit(0);
 }
 
-main().catch((e) => { console.error(`[compute] FATAL: ${e && e.stack ? e.stack : e}`); process.exit(1); });
+if (require.main === module) {
+  main().catch((e) => { console.error(`[compute] FATAL: ${e && e.stack ? e.stack : e}`); process.exit(1); });
+}
+
+module.exports = { gatherInputs, loadScenarioData, loadScenarioDataAsync, scenarioKnobs, ILS_REVAL_RATE, SUBSIDIARY };
