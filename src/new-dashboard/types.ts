@@ -1,7 +1,10 @@
 // Response shapes of GET /api/cash-projection (server/cash-projection.cjs).
+import type { TargetsBase } from '../forecast/targets.mjs';
 
 export type Ccy = 'eur' | 'ils';
 export type VariantKey = 'plan' | 'base';
+/** What the page shows: a variant, or the Plan with the projection-year targets. */
+export type ViewKey = VariantKey | 'targets';
 /** Which years the table shows: both, the current year only, or the projection year only. */
 export type YearView = 'both' | 'current' | 'next';
 export type MonthStatus = 'actual' | 'current' | 'forecast';
@@ -66,6 +69,8 @@ export interface ProjectionPayload {
   failedFeeds: string[];
   warnings: string[];
   variants: Record<VariantKey, Variant>;
+  /** The Plan's projection year for the targets view (src/forecast/targets.mjs); absent in older caches. */
+  targetsBase?: TargetsBase | null;
   cache?: { ageSec: number; stale: boolean; staleReason: string | null; refreshing: boolean; lastError: string | null };
 }
 

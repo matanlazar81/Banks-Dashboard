@@ -1,7 +1,8 @@
-// Movable window with the breakdown of one table cell. Drag it by its title bar; it stays where it was
-// put when another cell is opened. Esc or × closes it. Not modal: the table stays usable behind it.
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import { CheckCircle2, ChevronDown, ChevronRight, ExternalLink, GripHorizontal, Info, Loader2, X } from 'lucide-react';
+// Movable window with the breakdown of one table cell, or of one account row by department. Drag it by
+// its title bar; it stays where it was put when another cell is opened. Esc or × closes it. Not modal:
+// the table stays usable behind it. Account names open the department window (onDrill).
+import { useEffect, useId, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { CheckCircle2, ChevronDown, ChevronRight, ExternalLink, GripHorizontal, Info, Loader2, Users, X } from 'lucide-react';
 import {
   arrangeRows, CASH_BREAKDOWN_ENDPOINT, clampPosition, fetchBreakdown, PANEL_W,
   type BreakdownReady, type BreakdownRequest, type BreakdownRow, type BreakdownSection, type PanelPosition,
@@ -17,13 +18,21 @@ function Amount({ value, ccy, strong }: { value: number; ccy: Ccy; strong?: bool
   return <span className={`tabular-nums ${strong ? 'font-semibold' : ''} ${value < 0 ? 'text-slate-700' : ''}`}>{formatFull(value, ccy)}</span>;
 }
 
-function RowLine({ row, ccy, indent }: { row: BreakdownRow; ccy: Ccy; indent: boolean }) {
+type Drill = { onDrill?: (row: BreakdownRow) => void; activeRow?: string | null };
+
+function RowLine({ row, ccy, indent, onDrill, activeRow }: { row: BreakdownRow; ccy: Ccy; indent: boolean } & Drill) {
   const adjust = row.kind === 'adjust';
+  const canDrill = !!(onDrill && row.drillable);
   return (
-    <tr className={adjust ? 'text-slate-600' : ''}>
+    <tr className={`${adjust ? 'text-slate-600' : ''} ${activeRow === row.key ? 'bg-sky-50' : ''}`}>
       <td className={`py-1 pr-2 align-top ${indent ? 'pl-4' : ''}`}>
         <span className={`inline-flex items-center gap-1 ${adjust ? 'italic' : ''}`}>
-          {row.label}
+          {canDrill ? (
+            <button type="button" onClick={() => onDrill!(row)} title={`${row.label}: by department`}
+              className="inline-flex items-center gap-1 text-left text-slate-900 underline decoration-slate-300 decoration-dotted underline-offset-2 hover:text-sky-800 hover:decoration-sky-500">
+              {row.label}<Users size={11} className="shrink-0 text-slate-400" aria-hidden="true" />
+            </button>
+          ) : row.label}
           {row.hint && (
             <span title={row.hint} aria-label={row.hint} className="cursor-help not-italic text-slate-400"><Info size={12} /></span>
           )}
@@ -41,14 +50,14 @@ function RowLine({ row, ccy, indent }: { row: BreakdownRow; ccy: Ccy; indent: bo
   );
 }
 
-function SectionTable({ section, ccy }: { section: BreakdownSection; ccy: Ccy }) {
+function SectionTable({ section, ccy, onDrill, activeRow }: { section: BreakdownSection; ccy: Ccy } & Drill) {
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const blocks = arrangeRows(section.rows);
   return (
     <table className="w-full text-[13px]">
       <tbody>
         {blocks.map((b, i) => {
-          if (!b.group) return <RowLine key={b.rows[0].key} row={b.rows[0]} ccy={ccy} indent={false} />;
+          if (!b.group) return <RowLine key={b.rows[0].key} row={b.rows[0]} ccy={ccy} indent={false} onDrill={onDrill} activeRow={activeRow} />;
           const expanded = open[b.group] || b.rows.length <= GROUP_PREVIEW;
           const shown = expanded ? b.rows : b.rows.slice(0, GROUP_PREVIEW);
           return [
@@ -56,7 +65,7 @@ function SectionTable({ section, ccy }: { section: BreakdownSection; ccy: Ccy })
               <td className="pt-2 pb-1 pr-2 font-medium text-slate-800">{b.group}</td>
               <td className="whitespace-nowrap pt-2 pb-1 text-right font-medium"><Amount value={b.total} ccy={ccy} /></td>
             </tr>,
-            ...shown.map((r) => <RowLine key={r.key} row={r} ccy={ccy} indent />),
+            ...shown.map((r) => <RowLine key={r.key} row={r} ccy={ccy} indent onDrill={onDrill} activeRow={activeRow} />),
             !expanded && (
               <tr key={`more-${b.group}-${i}`}>
                 <td colSpan={2} className="pb-1 pl-4">
@@ -73,7 +82,7 @@ function SectionTable({ section, ccy }: { section: BreakdownSection; ccy: Ccy })
   );
 }
 
-function SecondarySection({ section, ccy }: { section: BreakdownSection; ccy: Ccy }) {
+function SecondarySection({ section, ccy, onDrill, activeRow }: { section: BreakdownSection; ccy: Ccy } & Drill) {
   const [open, setOpen] = useState(!section.collapsed);
   return (
     <div className="mt-3 rounded-md border border-slate-200">
@@ -85,7 +94,7 @@ function SecondarySection({ section, ccy }: { section: BreakdownSection; ccy: Cc
       {open && (
         <div className="border-t border-slate-200 px-3 py-2">
           {section.note && <p className="mb-1 text-xs text-slate-500">{section.note}</p>}
-          <SectionTable section={section} ccy={ccy} />
+          <SectionTable section={section} ccy={ccy} onDrill={onDrill} activeRow={activeRow} />
         </div>
       )}
     </div>
@@ -99,13 +108,35 @@ interface Props {
   onClose: () => void;
   /** The breakdown API (default: the cash projection's). */
   endpoint?: string;
+  /** Account names become buttons that call this (the department window). */
+  onDrill?: (row: BreakdownRow) => void;
+  /** Row key highlighted as the one open in the department window. */
+  activeRow?: string | null;
+  /** Esc closes this window (default). Off when the parent orders Esc across several windows. */
+  escToClose?: boolean;
+  /** Stacking order (default 50); onFocus fires on any pointer down, to bring it to the front. */
+  zIndex?: number;
+  onFocus?: () => void;
+  /** A change the page makes on top of the server's figures (the targets view): one more row and cell. */
+  extra?: { label: string; hint: string; amount: number } | null;
+}
+
+// The cell's breakdown with the page's own change added as a last row, so it still adds up.
+function withExtra(data: BreakdownReady, extra: { label: string; hint: string; amount: number }): BreakdownReady {
+  const [main, ...rest] = data.sections;
+  const row: BreakdownRow = { key: 'page-extra', label: extra.label, ref: null, group: null, kind: 'adjust', hint: extra.hint, amount: extra.amount };
+  const round = (n: number) => Math.round(n * 100) / 100;
+  return { ...data, cell: round(data.cell + extra.amount), sections: [{ ...main, rows: [...main.rows, row], total: round(main.total + extra.amount) }, ...rest] };
 }
 
 type Load = { phase: 'loading' } | { phase: 'ready'; data: BreakdownReady } | { phase: 'computing' } | { phase: 'error'; error: string };
 
-export default function BreakdownPanel({ request, position, onMove, onClose, endpoint = CASH_BREAKDOWN_ENDPOINT }: Props) {
-  const { line, period, variant, ccy } = request;
-  const reqKey = `${line}|${period}|${variant}|${ccy}`;
+export default function BreakdownPanel({
+  request, position, onMove, onClose, endpoint = CASH_BREAKDOWN_ENDPOINT, onDrill, activeRow = null, escToClose = true, zIndex = 50, onFocus, extra = null,
+}: Props) {
+  const { line, period, variant, ccy, row } = request;
+  const reqKey = `${line}|${period}|${variant}|${ccy}|${row || ''}`;
+  const titleId = useId();
   // Each result remembers the request it answers; a newer request reads as loading until its own arrives.
   const [result, setResult] = useState<{ key: string; load: Load }>({ key: '', load: { phase: 'loading' } });
   const load: Load = result.key === reqKey ? result.load : { phase: 'loading' };
@@ -114,7 +145,7 @@ export default function BreakdownPanel({ request, position, onMove, onClose, end
   useEffect(() => {
     const ctrl = new AbortController();
     const done = (l: Load) => { if (!ctrl.signal.aborted) setResult({ key: reqKey, load: l }); };
-    fetchBreakdown({ line, period, variant, ccy }, ctrl.signal, endpoint)
+    fetchBreakdown({ line, period, variant, ccy, row }, ctrl.signal, endpoint)
       .then((r) => {
         if (r.status === 'ready') done({ phase: 'ready', data: r });
         else if (r.status === 'computing') done({ phase: 'computing' });
@@ -122,16 +153,17 @@ export default function BreakdownPanel({ request, position, onMove, onClose, end
       })
       .catch((e: unknown) => done({ phase: 'error', error: e instanceof Error ? e.message : String(e) }));
     return () => ctrl.abort();
-  }, [reqKey, line, period, variant, ccy, endpoint]);
+  }, [reqKey, line, period, variant, ccy, row, endpoint]);
 
   useEffect(() => {
+    if (!escToClose) return undefined;
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, escToClose]);
 
   const startDrag = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if ((e.target as HTMLElement).closest('button')) return;
+    if ((e.target as HTMLElement).closest('button, a')) return;
     drag.current = { dx: e.clientX - position.x, dy: e.clientY - position.y };
     e.currentTarget.setPointerCapture(e.pointerId);
   };
@@ -143,17 +175,20 @@ export default function BreakdownPanel({ request, position, onMove, onClose, end
     if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
   };
 
-  const data = load.phase === 'ready' ? load.data : null;
+  const loaded = load.phase === 'ready' ? load.data : null;
+  const data = loaded && extra && !loaded.account && Math.abs(extra.amount) >= 0.5 ? withExtra(loaded, extra) : loaded;
   const main = data ? data.sections[0] : null;
   const ties = data && main ? Math.abs(main.total - data.cell) < 1 : false;
+  const account = data ? data.account : undefined;
 
   return (
     <div
       role="dialog"
       aria-modal="false"
-      aria-labelledby="breakdown-title"
-      className="fixed z-50 flex max-h-[75vh] flex-col rounded-lg border border-slate-300 bg-white shadow-2xl"
-      style={{ left: position.x, top: position.y, width: `min(${PANEL_W}px, calc(100vw - 16px))` }}
+      aria-labelledby={titleId}
+      className="fixed flex max-h-[75vh] flex-col rounded-lg border border-slate-300 bg-white shadow-2xl"
+      style={{ left: position.x, top: position.y, width: `min(${PANEL_W}px, calc(100vw - 16px))`, zIndex }}
+      onPointerDownCapture={onFocus}
     >
       <div
         className="flex cursor-move touch-none select-none items-start justify-between gap-3 rounded-t-lg border-b border-slate-200 bg-slate-50 px-4 py-2.5"
@@ -163,13 +198,24 @@ export default function BreakdownPanel({ request, position, onMove, onClose, end
         onPointerCancel={endDrag}
       >
         <div className="min-w-0">
-          <div id="breakdown-title" className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+          <div id={titleId} className="flex items-center gap-2 text-sm font-semibold text-slate-900">
             <GripHorizontal size={14} className="shrink-0 text-slate-400" aria-hidden="true" />
-            <span className="truncate">{data ? `${data.lineLabel} · ${data.periodLabel}` : 'Breakdown'}</span>
+            <span className="truncate">{data ? `${data.lineLabel} · ${data.periodLabel}` : row ? 'By department' : 'Breakdown'}</span>
+            {account && account.link && (
+              <a href={account.link} target="_blank" rel="noopener noreferrer" title={`Open account ${account.acct} in NetSuite (register)`}
+                className="shrink-0 text-sky-700 hover:text-sky-900">
+                <ExternalLink size={13} aria-hidden="true" />
+              </a>
+            )}
           </div>
-          {data && (
+          {data && !account && (
             <div className="mt-0.5 text-xs text-slate-500">
               {STATUS_LABEL[data.periodStatus]} · {data.variant === 'plan' ? 'Plan' : 'Base'} · table cell <Amount value={data.cell} ccy={data.ccy} />
+            </div>
+          )}
+          {data && account && (
+            <div className="mt-0.5 truncate text-xs text-slate-500">
+              By department · {account.of} · account row <Amount value={data.cell} ccy={data.ccy} />
             </div>
           )}
         </div>
@@ -180,7 +226,7 @@ export default function BreakdownPanel({ request, position, onMove, onClose, end
 
       <div className="overflow-y-auto px-4 py-3">
         {load.phase === 'loading' && (
-          <div className="flex items-center gap-2 py-6 text-sm text-slate-500"><Loader2 size={16} className="animate-spin" />Loading the breakdown…</div>
+          <div className="flex items-center gap-2 py-6 text-sm text-slate-500"><Loader2 size={16} className="animate-spin" />{row ? 'Loading the departments…' : 'Loading the breakdown…'}</div>
         )}
         {load.phase === 'computing' && (
           <p className="py-4 text-sm text-slate-600">The projection is being rebuilt. Try again in a minute.</p>
@@ -190,15 +236,19 @@ export default function BreakdownPanel({ request, position, onMove, onClose, end
           <>
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{main.title}</div>
             {main.note && <p className="mt-0.5 text-xs text-slate-500">{main.note}</p>}
-            <div className="mt-2"><SectionTable section={main} ccy={data.ccy} /></div>
+            <div className="mt-2"><SectionTable section={main} ccy={data.ccy} onDrill={onDrill} activeRow={activeRow} /></div>
             <div className="mt-2 flex items-center justify-between border-t-2 border-slate-300 pt-2 text-sm">
               <span className="inline-flex items-center gap-1.5 font-semibold text-slate-900">
                 Total
-                {ties && <span className="inline-flex items-center gap-1 text-xs font-normal text-emerald-700"><CheckCircle2 size={13} />equals the table cell</span>}
+                {ties && (
+                  <span className="inline-flex items-center gap-1 text-xs font-normal text-emerald-700">
+                    <CheckCircle2 size={13} />{account ? 'equals the account row' : 'equals the table cell'}
+                  </span>
+                )}
               </span>
               <Amount value={main.total} ccy={data.ccy} strong />
             </div>
-            {data.sections.slice(1).map((s) => <SecondarySection key={s.id} section={s} ccy={data.ccy} />)}
+            {data.sections.slice(1).map((s) => <SecondarySection key={s.id} section={s} ccy={data.ccy} onDrill={onDrill} activeRow={activeRow} />)}
             {data.notes.map((n) => <p key={n} className="mt-2 text-xs text-slate-500">{n}</p>)}
           </>
         )}

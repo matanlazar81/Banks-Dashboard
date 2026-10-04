@@ -1,5 +1,6 @@
 // Response shapes of GET /api/pnl-projection (server/pnl-projection.cjs).
 import type { Ccy, ComputingResponse, ErrorResponse, MonthStatus, VariantKey } from '../new-dashboard/types.ts';
+import type { TargetsBase } from '../forecast/targets.mjs';
 
 export type { Ccy, MonthStatus, VariantKey };
 
@@ -70,6 +71,8 @@ export interface PnlPayload {
   failedFeeds: string[];
   warnings: string[];
   variants: Record<VariantKey, PnlVariant>;
+  /** The Plan's projection year for the targets view (src/forecast/targets.mjs); absent in older caches. */
+  targetsBase?: TargetsBase | null;
   cache?: { ageSec: number; stale: boolean; staleReason: string | null; refreshing: boolean; lastError: string | null };
 }
 

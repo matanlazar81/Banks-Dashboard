@@ -2697,7 +2697,7 @@ If the user asks to modify, adjust, or refine an existing scenario (e.g. "reduce
       // Same guards and order as the cash projection: breakdown first (prefix match).
       try {
         const { createPnlProjectionBreakdownHandler } = require('./pnl-projection-breakdown.cjs');
-        use('/api/pnl-projection/breakdown', createPnlProjectionBreakdownHandler({ getSfClient }));
+        use('/api/pnl-projection/breakdown', createPnlProjectionBreakdownHandler({ getSfClient, getNsClient, queueNsCall }));
       } catch (e     ) {
         console.error('[pnl-projection] breakdown route not mounted:', e && e.message);
       }
@@ -2706,6 +2706,14 @@ If the user asks to modify, adjust, or refine an existing scenario (e.g. "reduce
         use('/api/pnl-projection', createPnlProjectionHandler({ getNsClient, getSfClient, queueNsCall }));
       } catch (e     ) {
         console.error('[pnl-projection] route not mounted:', e && e.message);
+      }
+
+      // ── GET/PUT /api/projection-targets — 2027 targets of both projection pages ──
+      try {
+        const { createProjectionTargetsHandler } = require('./projection-targets.cjs');
+        use('/api/projection-targets', createProjectionTargetsHandler());
+      } catch (e     ) {
+        console.error('[projection-targets] route not mounted:', e && e.message);
       }
 }
 

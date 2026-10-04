@@ -8,7 +8,11 @@ import type { YearView } from '../new-dashboard/types.ts';
 export type PnlLineKey =
   | 'accOpening' | 'revenue' | 'pipeline' | 'churn' | 'otherRevenue' | 'totalRevenue'
   | 'payroll' | 'capex' | 'opex' | 'totalCosts' | 'ebitda'
-  | 'fx' | 'finance' | 'depreciation' | 'taxOther' | 'net' | 'accClosing';
+  | 'fx' | 'finance' | 'depreciation' | 'taxOther' | 'net'
+  | 'bridgeDepreciation' | 'bridgeFinance' | 'bridgeFx' | 'bridgeTax' | 'bridgeEbitda' | 'accClosing';
+
+// Net profit back to EBITDA: each line below EBITDA reversed (profit-signed, so an expense is added back).
+const bridgeEbitda = (f: PnlFigures) => f.net - f.fx - f.finance - f.depreciation - f.taxOther;
 
 export const PNL_LINES: LineDefOf<PnlFigures, PnlLineKey>[] = [
   { key: 'accOpening', label: 'Accumulated profit, opening', kind: 'balance', fy: 'first', value: (f) => f.accOpening,
@@ -41,6 +45,16 @@ export const PNL_LINES: LineDefOf<PnlFigures, PnlLineKey>[] = [
     hint: 'Income tax, IFRS 16 and other accounts outside EBITDA. Forecast: the budget (Snowflake) when there is one.' },
   { key: 'net', label: 'Net profit', kind: 'subtotal', fy: 'sum', value: (f) => f.net,
     hint: 'EBITDA + the lines below it. Actual months equal the sum of every NetSuite P&L account.' },
+  { key: 'bridgeDepreciation', label: 'Add back: depreciation', kind: 'item', fy: 'sum', value: (f) => -f.depreciation,
+    hint: 'Net profit back to EBITDA: depreciation is not part of EBITDA, so it is added back.' },
+  { key: 'bridgeFinance', label: 'Add back: finance, net', kind: 'item', fy: 'sum', value: (f) => -f.finance,
+    hint: 'Net profit back to EBITDA: finance costs are added back, finance income is taken out.' },
+  { key: 'bridgeFx', label: 'Add back: FX revaluation', kind: 'item', fy: 'sum', value: (f) => -f.fx,
+    hint: 'Net profit back to EBITDA: an FX loss is added back, an FX gain is taken out.' },
+  { key: 'bridgeTax', label: 'Add back: tax & other', kind: 'item', fy: 'sum', value: (f) => -f.taxOther,
+    hint: 'Net profit back to EBITDA: tax, IFRS 16 and the other accounts outside EBITDA are reversed.' },
+  { key: 'bridgeEbitda', label: 'EBITDA (from net profit)', kind: 'subtotal', fy: 'sum', value: bridgeEbitda,
+    hint: 'Net profit + the add-backs above. Equals Operating profit (EBITDA).' },
   { key: 'accClosing', label: 'Accumulated profit, closing', kind: 'balance', fy: 'last', value: (f) => f.accClosing,
     hint: 'Accumulated profit, opening + net profit.' },
 ];

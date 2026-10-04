@@ -96,6 +96,44 @@ movements the cell is built from. Data comes from `GET /api/cash-projection/brea
 the projection itself), plus Snowflake reads cached for `CASH_PROJECTION_TTL_MIN`, each using the same
 table and filters as the feed of its line.
 
+**Accounts by department.** Click an account's name in the breakdown and a second movable window opens
+with that account by department. Its total equals the account row: the departments come from the
+row's own table and months (booked costs from FCT_EXPENSE, budget rows from FCT_BUDGET, a mirrored
+month from the month it mirrors; a full year sums its months). Amounts without a department show as
+"Difference to the account row". Esc closes the department window first; the window clicked last is in
+front. Same request as the cell, plus `&row=<row key>` (for example `row=acct:640001`).
+
+**Account numbers link to NetSuite.** An account number opens the account's register in NetSuite
+(subsidiary LSports Data): the months its amount was booked in, or the last 3 closed months for a budget
+row. The NetSuite account ids are read with the projection (one light query); without them, or without
+`NETSUITE_ACCOUNT_ID`, the numbers show without links.
+
+## 2027 targets
+
+**2027 targets** (header button; always the projection year) opens a side panel; **Targets 2027** in the Plan / Base switch
+shows the Plan with those targets applied. Only the projection year changes: the current year and its
+December closing stay as they are.
+
+| Driver | Effect per month of the projection year |
+|---|---|
+| Revenue: growth % or new MRR €, then churn % | Growth compounds month by month; new MRR adds up from January; churn % compounds on the result. Collections move by the revenue change × the plan's collection % of that month. |
+| Payroll: salary % by department (or all), from a month | That department's share of the month's salary × % (shares from the payroll basis month). |
+| Payroll: hires | Monthly cost × people from the start month. |
+| Operating expenses: % by category | That category's share of the month's vendors × % (shares from the current year's vendor budget of the same month). |
+| Server costs: X% of revenue | The chosen category (Cloud Infrastructure & DevOps by default, not SW Licenses) becomes X% of the revenue after the revenue targets, replacing its baseline. The panel shows the current year's NetSuite share (640xxx ÷ customer revenue) for reference. |
+
+On this page "revenue" is the expected revenue before the collection %. Balances carry the changes
+from January; the panel shows Dec closing cash, collections, salary and vendors for the year, Plan vs
+Targets. A breakdown in the Targets view adds one row, "2027 targets", so it still adds up to the
+cell. Export downloads the Targets view as shown.
+
+**Saving.** Edits show at once and only for you; **Save for everyone** stores them in
+`data/projection-targets.json` (GET/PUT `/api/projection-targets`, `server/projection-targets.cjs`),
+with each save appended to `data/projection-targets-history.jsonl` (who and when). The P&L Projection
+uses the same saved targets. Saves are validated (ranges, known fields only), JSON-only, same-origin and
+carry finance-it's CSRF token. The formulas are `src/forecast/targets.mjs`, checked by
+`scripts/test-projection-targets.cjs`.
+
 ## Same logic as the Bank Dashboard
 
 - **Current year:** identical engine inputs to the nightly net-cash job (`net-cash-forecast-compute.cjs`
@@ -148,8 +186,9 @@ React chunk.
 - If finance-it-backend mounts the shared API (`docs/backend-bank-dashboard-api.ts`; pm2 logs show
   `[bank-dashboard] shared API mounted`), both routes are already included.
 - Otherwise add `docs/backend-cash-projection-route.ts` (one file + one call). It mounts
-  `GET /api/cash-projection` and `GET /api/cash-projection/breakdown`. finance-it-backend has no global
-  `/api` login gate, so the file guards both with the Bank Dashboard role.
+  `GET /api/cash-projection` and `GET /api/cash-projection/breakdown` (and the P&L Projection's routes,
+  and `GET`/`PUT /api/projection-targets` for the 2027 targets). finance-it-backend has no global `/api`
+  login gate, so the file guards every route with the Bank Dashboard role.
 - Server-side changes in this repo (`server/`, `src/forecast/`) take effect after a restart of whatever
   serves `/api/*`; a page-only change needs only the build.
 
@@ -185,6 +224,7 @@ A morning cron right after the nightly job means nobody waits:
 
 ```bash
 node scripts/test-cash-projection.cjs                 # synthetic: roll-forward rules, table arithmetic, cache behaviour, UI model
+node scripts/test-projection-targets.cjs              # synthetic: 2027 target formulas, both pages, the saved-targets store
 node scripts/cash-projection.cjs --dry-run            # real data: both years, Plan and Base
 node scripts/net-cash-forecast-compute.cjs --dry-run  # its December closing must equal the Plan's + FY Dividend paid
 node scripts/cash-projection.cjs --compare=data/parity/rows-2026.json            # vs old dashboard (?fccapture=1)

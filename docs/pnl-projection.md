@@ -66,7 +66,13 @@ Display signs follow the cash page:
 | Depreciation | 7805xx | FCT_BUDGET when the year has a depreciation budget, else the average of the last 3 closed months (it is posted monthly) | Same rule |
 | Tax & other | 9xxxxx, 780030, 180018, anything else | FCT_BUDGET when the year has one, else none | Same rule |
 | **Net profit** | Sum of every P&L account | | |
+| Add back: depreciation / finance, net / FX revaluation / tax & other | Each line below EBITDA, reversed | | |
+| **EBITDA (from net profit)** | Net profit + the four add-backs; equals Operating profit (EBITDA) | | |
 | Accumulated profit, closing | Opening + net profit | | |
+
+The bridge after Net profit shows how net profit comes back to EBITDA, one line per item outside
+EBITDA. A cost is added back (positive), an income is taken out (in parentheses). Its last line always
+equals Operating profit (EBITDA) above; the tests check this for every month and full year.
 
 `scripts/test-pnl-projection.cjs` checks that every account lands on exactly one line, so net profit
 can never miss an account.
@@ -115,6 +121,22 @@ the account's register in NetSuite (subsidiary LSports Data) in a new tab. The r
 The links need `NETSUITE_ACCOUNT_ID` in the server's `.env`, which is already there for the NetSuite
 API. The account's NetSuite internal id is read with the actuals. A projection cached before this
 change shows account numbers without links until the next refresh.
+
+**Accounts by department.** Click an account's name and a second movable window opens with that
+account by department, adding up to the account row. The departments come from the row's own source
+and months: NetSuite GL lines by department for actual months, a mirrored month and the CAPEX month
+(by posting period, like the actuals); FCT_BUDGET for budget rows; FCT_EXPENSE for the Snowflake check.
+A full year sums its months, and a month the forecast repeats counts once per month it is used. Amounts
+without a department show as "Difference to the account row". Request: the cell's breakdown plus
+`&row=<row key>`; the module is `server/breakdown-departments.cjs`.
+
+## 2027 targets
+
+The same targets panel and **Targets 2027** view as the New Bank Dashboard
+(`docs/new-bank-dashboard.md`, "2027 targets"), with the same saved targets. Here revenue is customer
+revenue (accrual, no collection rate), payroll and operating expenses are the P&L lines, and EBITDA, net
+profit, the bridge and the accumulated profit follow. The panel shows FY revenue, payroll, operating
+expenses, EBITDA, net profit and the accumulated profit at December, Plan vs Targets.
 
 ## Deploying
 

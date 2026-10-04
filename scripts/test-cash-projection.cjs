@@ -719,6 +719,117 @@ async function testBreakdown() {
   check(pos.x === 1200 - 560 - 8 && pos.y === 8, 'UI: the window is kept on screen when dragged');
 }
 
+// Department reads (server/breakdown-departments.cjs), stubbed from the same synthetic tables: booked
+// costs 70% R&D / 30% Sales, except 610001 whose last 10% has no department; budget 50% / 50%.
+function fakeDx(calls = []) {
+  const split = (rows, shares) => rows.flatMap((r) => Object.entries(shares).map(([dept, s]) => ({ month: r.month, dept, eur: r.eur * s, ils: r.ils * s })));
+  return {
+    sfExpense: async (acct, months) => {
+      calls.push(`sfExpense:${acct}:${months.join(',')}`);
+      const rows = fakeExpense(Y).filter((r) => r.acct === acct && months.includes(r.month));
+      return split(rows, acct === '610001' ? { 'R&D': 0.6, Sales: 0.3 } : { 'R&D': 0.7, Sales: 0.3 });
+    },
+    sfBudget: async (acct, months) => {
+      calls.push(`sfBudget:${acct}:${months.join(',')}`);
+      return split(fakeBudget(Y).filter((r) => r.acct === acct && months.includes(r.month)), { Product: 0.5, Marketing: 0.5 });
+    },
+  };
+}
+
+async function testBreakdownDepartments() {
+  console.log('\nBREAKDOWN BY DEPARTMENT: an account row of a cell, and NetSuite links (server/breakdown-departments.cjs)');
+  const bd = require(path.join(ROOT, 'server', 'cash-projection-breakdown.cjs'));
+  const { payload, details } = await runProjection();
+  const ids = { 600001: 9001, 600002: 9002, 610001: 9011, 760001: 9760 };
+  const entry = cp.makeEntry(payload, NOW.getTime(), { ...details, accountIds: ids });
+  const sfx = fakeSfx();
+  const calls = [];
+  const dx = fakeDx(calls);
+  const prevNs = process.env.NETSUITE_ACCOUNT_ID;
+  process.env.NETSUITE_ACCOUNT_ID = '1234_SB1';
+  try {
+    const get = (line, period, variant = 'plan', ccy = 'eur') => quiet(() => bd.buildBreakdown({ entry, line, period, variant, ccy, sfx }));
+    const dept = (line, period, rowKey, ccy = 'eur') => quiet(() => bd.buildAccountBreakdown({ entry, line, period, variant: 'plan', ccy, sfx, rowKey, dx }));
+    const rowOf = (out, key) => out.sections.flatMap((s) => s.rows).find((r) => r.key === key);
+
+    const mar = await get('vendors', '2026-03');
+    const acctRows = mar.sections[0].rows.filter((r) => r.ref && /^\d{6}$/.test(r.ref));
+    check(acctRows.length > 0 && acctRows.every((r) => r.drillable), 'account rows can be opened by department');
+    check(rowOf(mar, 'acct:600001').link === 'https://1234-sb1.app.netsuite.com/app/reporting/reportrunner.nl?acctid=9001&reporttype=REGISTER&subsidiary=3&combinebalance=T&startdate=3/1/2026&enddate=3/31/2026',
+      'cash page: account numbers link to their NetSuite register for the month', rowOf(mar, 'acct:600001').link);
+    check(!rowOf(mar, 'acct:620001').link && !mar.sections[0].rows.some((r) => r.kind === 'adjust' && r.drillable), 'no account id → no link; adjustment rows never drill');
+
+    const d1 = await dept('vendors', '2026-03', 'acct:600001');
+    const row1 = rowOf(mar, 'acct:600001');
+    check(d1 && d1.account.acct === '600001' && d1.sections[0].rows.length === 2 && near(d1.sections[0].total, row1.amount, 0.02) && near(d1.cell, row1.amount, 0.01)
+      && /March 2026 · Snowflake booked expenses/.test(d1.periodLabel) && !d1.sections[0].rows.some((r) => r.kind === 'adjust'),
+    'actual month: the account by department adds up to its row (same table, same month)', d1 && d1.periodLabel);
+    check(d1.account.link === row1.link && d1.lineLabel.startsWith('600001 '), 'the department window names the account and links it');
+
+    const gap = await dept('vendors', '2026-03', 'acct:610001');
+    const gapRow = gap.sections[0].rows.find((r) => r.key === 'diff');
+    check(gapRow && gapRow.kind === 'adjust' && near(gap.sections[0].total, gap.cell, 0.02), 'amounts without a department: a "Difference to the account row" line closes the gap');
+
+    const ils = await dept('vendors', '2026-03', 'acct:600001', 'ils');
+    check(near(ils.sections[0].total, ils.cell, 0.02) && near(ils.cell, (await get('vendors', '2026-03', 'plan', 'ils')).sections[0].rows.find((r) => r.key === 'acct:600001').amount, 0.01),
+      '₪: the departments add up to the account row in ₪ too');
+
+    const nov = await get('vendors', '2026-11');
+    const nov2 = await dept('vendors', '2026-11', 'acct:600002');
+    check(near(nov2.sections[0].total, rowOf(nov, 'acct:600002').amount, 0.02) && /November 2026 · Snowflake budget/.test(nov2.periodLabel) && calls.some((c) => c === 'sfBudget:600002:2026-11'),
+      'forecast month: the budget account by department (FCT_BUDGET, same month)');
+    check(rowOf(nov, 'acct:600002').link && rowOf(nov, 'acct:600002').link.endsWith('startdate=7/1/2026&enddate=9/30/2026'),
+      'forecast month: a budget account links to the last 3 closed months');
+
+    const mirror = await get('vendors', '2027-03');
+    const m1 = await dept('vendors', '2027-03', 'mirror:acct:600001');
+    check(m1 && near(m1.sections[0].total, rowOf(mirror, 'mirror:acct:600001').amount, 0.02) && /March 2026 · Snowflake booked expenses/.test(m1.periodLabel),
+      'next year: a mirrored account opens by department from the month it mirrors');
+
+    const sal = await get('salary', '2026-11');
+    const salKey = sal.sections[0].rows.find((r) => r.drillable).key;
+    const s1 = await dept('salary', '2026-11', salKey);
+    check(near(s1.sections[0].total, rowOf(sal, salKey).amount, 0.02) && /September 2026/.test(s1.periodLabel),
+      'forecast salary: the basis month\'s payroll account by department');
+
+    const fy = await get('vendors', `FY-${Y}`);
+    const f1 = await dept('vendors', `FY-${Y}`, 'acct:600001');
+    check(near(f1.sections[0].total, rowOf(fy, 'acct:600001').amount, 0.05) && /Snowflake booked expenses \+ Snowflake budget/.test(f1.periodLabel),
+      'full year: booked months and budget months, each from its own table, add up to the year\'s row', f1.periodLabel);
+
+    check((await dept('vendors', '2026-03', 'acct:999999')) === null, 'an account that is not in the cell → null (404)');
+
+    // Handler contract.
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cash-projection-dept-'));
+    const file = path.join(tmp, 'cache.json');
+    cp.writeCacheEntry(file, entry);
+    const h = bd.createCashProjectionBreakdownHandler({ cacheFile: file, sfx, dx });
+    const url = (q) => `/api/cash-projection/breakdown?${q}`;
+    let r = await callAsync(h, { url: url('line=vendors&period=2026-03&row=acct:600001') });
+    check(r.statusCode === 200 && r.body.status === 'ready' && r.body.account && r.body.account.acct === '600001', 'GET …&row=acct:600001 → 200, the account by department');
+    r = await callAsync(h, { url: url('line=vendors&period=2026-03&row=acct:12') });
+    const r2 = await callAsync(h, { url: url('line=vendors&period=2026-03&row=x;drop') });
+    check(r.statusCode === 400 && r2.statusCode === 400, 'a malformed row key → 400');
+    r = await callAsync(h, { url: url('line=vendors&period=2026-03&row=acct:999999') });
+    check(r.statusCode === 404 && /no department split/.test(r.body.error), 'an account not in the cell → 404');
+    fs.rmSync(tmp, { recursive: true, force: true });
+  } finally {
+    if (prevNs === undefined) delete process.env.NETSUITE_ACCOUNT_ID; else process.env.NETSUITE_ACCOUNT_ID = prevNs;
+  }
+  const tb = payload.targetsBase;
+  check(tb && tb.year === Y + 1 && tb.months.length === 12 && tb.months.every((m, i) => near(m.payroll, payload.variants.plan.years[1].rows[i].eur.salary, 0.01))
+    && tb.months.every((m) => m.revenue > 0 && m.collPct > 0 && m.ilsRate > 0),
+  'targets baseline in the cash payload: the Plan\'s next-year salary, revenue before the collection %, ₪ rate');
+  const bareEntry = cp.makeEntry(payload, NOW.getTime(), details);
+  const bare = await quiet(() => bd.buildBreakdown({ entry: bareEntry, line: 'vendors', period: '2026-03', variant: 'plan', ccy: 'eur', sfx }));
+  check(bare.sections[0].rows.every((r) => !r.link), 'a projection cached before the account ids: no links');
+
+  const ui = await import(pathToFileURL(path.join(ROOT, 'src', 'new-dashboard', 'breakdown.ts')).href);
+  const beside = ui.besidePosition({ x: 640, y: 120 }, { w: 1200, h: 800 });
+  const edge = ui.besidePosition({ x: 100, y: 120 }, { w: 1200, h: 800 });
+  check(beside.x === 640 - 560 - 12 && beside.y === 152 && edge.x === 124, 'UI: the department window opens left of the breakdown window, or just offset when there is no room');
+}
+
 // ── 4. UI table model ───────────────────────────────────────────────────────
 async function testModel(payload) {
   console.log('\nMODEL: table columns, lines and formatting (src/new-dashboard/model.ts)');
@@ -791,6 +902,7 @@ async function main() {
   const payload = await testEndToEnd(rf);
   await testHandler();
   await testBreakdown();
+  await testBreakdownDepartments();
   await testWrapClient();
   await testModel(payload);
   if (process.argv.includes('--write-fixture')) await writeFixture(payload);

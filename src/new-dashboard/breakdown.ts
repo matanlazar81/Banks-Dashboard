@@ -14,6 +14,8 @@ export interface BreakdownRequest {
   period: string;
   variant: VariantKey;
   ccy: Ccy;
+  /** A drillable row's key: answers that account of the cell by department instead. */
+  row?: string;
 }
 
 export interface BreakdownRow {
@@ -23,6 +25,8 @@ export interface BreakdownRow {
   ref: string | null;
   /** NetSuite page of the account (its register for the cell's dates), when the server knows it. */
   link?: string | null;
+  /** An account row that opens by department (request it with `row: key`). */
+  drillable?: boolean;
   /** Rows sharing a group are listed together under it (account category, customers, deals). */
   group: string | null;
   /** 'adjust' rows explain the difference between the listed rows and the cell. */
@@ -58,6 +62,8 @@ export interface BreakdownReady {
   sections: BreakdownSection[];
   notes: string[];
   generatedAt: string;
+  /** Present on a by-department answer: the account row it splits (cell = that row's amount). */
+  account?: { acct: string; name: string; link: string | null; of: string };
 }
 
 export type BreakdownResponse = BreakdownReady | { ok: true; status: 'computing' } | { ok: false; status: 'error'; error: string };
@@ -66,6 +72,13 @@ export interface PanelPosition { x: number; y: number }
 
 /** Width of the breakdown window (narrower on small screens). */
 export const PANEL_W = 560;
+
+/** Where the department window opens: left of the breakdown window, a little lower (kept on screen). */
+export function besidePosition(main: PanelPosition, viewport = { w: window.innerWidth, h: window.innerHeight }): PanelPosition {
+  const w = Math.min(PANEL_W, viewport.w - 16);
+  const left = main.x - w - 12;
+  return clampPosition({ x: left >= 8 ? left : main.x + 24, y: main.y + 32 }, viewport);
+}
 
 /** Keeps at least the window's title bar on screen. */
 export function clampPosition(p: PanelPosition, viewport = { w: window.innerWidth, h: window.innerHeight }): PanelPosition {
@@ -103,6 +116,7 @@ export const CASH_BREAKDOWN_ENDPOINT = '/api/cash-projection/breakdown';
 
 export async function fetchBreakdown(req: BreakdownRequest, signal?: AbortSignal, endpoint = CASH_BREAKDOWN_ENDPOINT): Promise<BreakdownResponse> {
   const q = new URLSearchParams({ line: req.line, period: req.period, variant: req.variant, ccy: req.ccy });
+  if (req.row) q.set('row', req.row);
   const res = await fetch(`${endpoint}?${q}`, { credentials: 'include', headers: { Accept: 'application/json' }, signal });
   if (res.status === 401 || res.status === 403) {
     throw new Error('Your session has expired. Reload the page to sign in again.');

@@ -26,9 +26,10 @@ const path = require('path');
 const cp = require('./cash-projection.cjs');
 const { loadProjectionInputs, wrapClient } = require('./projection-inputs.cjs');
 const { sumByLine, classifyAccount } = require('./pnl-lines.cjs');
+const { pnlTargetsBase } = require('./targets-base.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2; // 2: payload.targetsBase
 const DETAILS_VERSION = 1;
 const DEFAULT_CACHE_FILE = path.join(ROOT, 'data', 'pnl-projection-cache.json');
 const { ProjectionError } = cp;
@@ -209,7 +210,7 @@ function pipelineCohorts(rows, inputs) {
 async function computePnlProjection(opts) {
   const now = opts.now || new Date();
   const cmp = opts.computeModule || require(path.join(ROOT, 'scripts', 'net-cash-forecast-compute.cjs'));
-  const { computeCashflowForecast, rf } = await cp.loadForecastModules();
+  const { computeCashflowForecast, rf, targets } = await cp.loadForecastModules();
 
   if (!process.env.NETSUITE_ACCOUNT_ID) throw new ProjectionError('NetSuite is not configured on this server.');
   const nsClient = opts.getNsClient(cmp.SUBSIDIARY);
@@ -270,6 +271,7 @@ async function computePnlProjection(opts) {
     variants: {},
   };
 
+  let targetsBase = null; // the Plan's projection year, for the 2027 targets (src/forecast/targets.mjs)
   for (const [variant, sd] of [['plan', planData], ['base', {}]]) {
     const inputsY = {
       ...inputs,
@@ -331,6 +333,9 @@ async function computePnlProjection(opts) {
       capT[r.mKey] = { ...captureForecastMonth(r, inputsT, mi, tIdx), ...rules.methodFor(r.mKey) };
       return { mKey: r.mKey, status: 'forecast', eur: finish(forecastFigures(r, x, 'eur')), ils: finish(forecastFigures(r, x, 'ils')) };
     });
+    if (variant === 'plan') {
+      targetsBase = pnlTargetsBase(targets, { Y, T, monthsT, inputsT, sfBudgetByMonth: (inputs.sfBudget || {}).byMonth, details });
+    }
 
     // Accumulated net profit: from 0 on 1 January of the current year, carried into the next year.
     const acc = ZERO();
@@ -390,6 +395,7 @@ async function computePnlProjection(opts) {
     failedFeeds,
     warnings,
     variants,
+    targetsBase,
   };
   return opts.includeRaw ? { payload, details, raw } : { payload, details };
 }
