@@ -2686,9 +2686,11 @@ If the user asks to modify, adjust, or refine an existing scenario (e.g. "reduce
       } catch (e     ) {
         console.error('[cash-projection] breakdown route not mounted:', e && e.message);
       }
+      let cashProjection = null; // shared with the Metrics page (one cache, one computation)
       try {
         const { createCashProjectionHandler } = require('./cash-projection.cjs');
-        use('/api/cash-projection', createCashProjectionHandler({ getNsClient, getSfClient, queueNsCall }));
+        cashProjection = createCashProjectionHandler({ getNsClient, getSfClient, queueNsCall });
+        use('/api/cash-projection', cashProjection);
       } catch (e     ) {
         console.error('[cash-projection] route not mounted:', e && e.message);
       }
@@ -2701,9 +2703,11 @@ If the user asks to modify, adjust, or refine an existing scenario (e.g. "reduce
       } catch (e     ) {
         console.error('[pnl-projection] breakdown route not mounted:', e && e.message);
       }
+      let pnlProjection = null;
       try {
         const { createPnlProjectionHandler } = require('./pnl-projection.cjs');
-        use('/api/pnl-projection', createPnlProjectionHandler({ getNsClient, getSfClient, queueNsCall }));
+        pnlProjection = createPnlProjectionHandler({ getNsClient, getSfClient, queueNsCall });
+        use('/api/pnl-projection', pnlProjection);
       } catch (e     ) {
         console.error('[pnl-projection] route not mounted:', e && e.message);
       }
@@ -2714,6 +2718,18 @@ If the user asks to modify, adjust, or refine an existing scenario (e.g. "reduce
         use('/api/projection-targets', createProjectionTargetsHandler());
       } catch (e     ) {
         console.error('[projection-targets] route not mounted:', e && e.message);
+      }
+
+      // ── GET /api/metrics — the Metrics page (server/metrics.cjs); settings and deposits first (prefix match) ──
+      try {
+        const m = require('./metrics.cjs');
+        use('/api/metrics/settings', m.createMetricsSettingsHandler());
+        use('/api/metrics/deposits', m.createMetricsDepositsHandler());
+        use('/api/metrics', m.createMetricsHandler({
+          cash: cashProjection || undefined, pnl: pnlProjection || undefined, getNsClient, getSfClient, queueNsCall,
+        }));
+      } catch (e     ) {
+        console.error('[metrics] route not mounted:', e && e.message);
       }
 }
 

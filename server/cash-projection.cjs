@@ -439,6 +439,23 @@ function createProjectionHandler(spec) {
   // Resolves once no computation is running (tests, CLI).
   handler.idle = () => state.inflight || Promise.resolve();
 
+  // For other server modules (the Metrics page): the cached entry, refreshed in the background when stale
+  // exactly as a GET would (refreshStale: false leaves that to the page's own handler); { computing } while
+  // the first computation runs; { error } otherwise.
+  handler.current = ({ refreshStale = true } = {}) => {
+    const nowMs = clock();
+    hydrateFromDisk();
+    const entry = isUsable(state.entry, nowMs) ? state.entry : null;
+    if (entry) {
+      const stale = entry.computedMonth !== monthKeyOf(nowMs) || nowMs - entry.generatedAtMs >= ttlMs;
+      if (stale && refreshStale) maybeStart(nowMs, false);
+      return { entry, refreshing: !!state.inflight };
+    }
+    maybeStart(nowMs, false);
+    if (state.inflight) return { computing: true, startedMs: state.inflightStartedMs };
+    return { error: state.lastError || 'The projection is not available yet.' };
+  };
+
   // Opt-in warm-up after start so the first visitor doesn't wait (no timers otherwise).
   if (prewarm) {
     const t = setTimeout(() => {

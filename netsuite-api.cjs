@@ -2669,6 +2669,51 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
     return { basis: byPeriod ? 'period' : 'trandate', byMonth, accountIds };
   }
 
+  // ── Currency conversions of one month (Metrics page) ──
+  // Transfers between bank accounts of different currencies, by transaction date. Each has two posting
+  // lines: the account the money left (negative) and the one it reached. The amount is in the transfer's
+  // currency; eur is its value in the primary book; rate = units of the non-EUR side per € (as banks
+  // quote EUR/USD and EUR/ILS). Returns [{ id, tranid, date, from, fromCurrency, to, toCurrency,
+  // currency, amount, eur, rate }].
+  async function fetchFxConversions({ month } = {}) {
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(String(month || ''))) throw new Error(`fetchFxConversions: bad month ${month}`);
+    const [y, m] = month.split('-').map(Number);
+    const next = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`;
+    const rows = await suiteqlAll(`
+      SELECT t.id AS id, t.tranid AS tranid, TO_CHAR(t.trandate, 'YYYY-MM-DD') AS d,
+             BUILTIN.DF(t.currency) AS cur, BUILTIN.DF(tal.account) AS acct, BUILTIN.DF(a.currency) AS acctcur,
+             tal.amount AS eur, tl.foreignamount AS famt
+      FROM transaction t
+      JOIN transactionaccountingline tal ON tal.transaction = t.id
+      JOIN transactionline tl ON tl.transaction = tal.transaction AND tl.id = tal.transactionline
+      JOIN account a ON a.id = tal.account
+      WHERE t.type = 'Transfer' AND t.subsidiary = ${subsidiaryId}
+        AND tal.accountingbook = 1 AND tal.posting = 'T'
+        AND t.trandate >= TO_DATE('${month}-01', 'YYYY-MM-DD') AND t.trandate < TO_DATE('${next}-01', 'YYYY-MM-DD')
+      ORDER BY t.trandate, t.id
+    `);
+    const byId = new Map();
+    for (const r of rows) {
+      const k = String(r.id);
+      if (!byId.has(k)) byId.set(k, { id: Number(r.id), tranid: String(r.tranid || ''), date: String(r.d || ''), currency: String(r.cur || ''), lines: [] });
+      byId.get(k).lines.push({ acct: String(r.acct || ''), cur: String(r.acctcur || ''), eur: parseFloat(r.eur) || 0, famt: parseFloat(r.famt) || 0 });
+    }
+    const out = [];
+    for (const t of byId.values()) {
+      const from = t.lines.find((l) => l.eur < 0);
+      const to = t.lines.find((l) => l.eur > 0);
+      if (!from || !to || from.cur === to.cur) continue; // same currency: a move, not a conversion
+      const amount = Math.abs(to.famt);
+      const eur = Math.round(Math.abs(to.eur) * 100) / 100;
+      const rate = t.currency !== 'EUR' && eur > 0 ? Math.round((amount / eur) * 10000) / 10000 : null;
+      out.push({
+        id: t.id, tranid: t.tranid, date: t.date, from: from.acct, fromCurrency: from.cur, to: to.acct, toCurrency: to.cur,
+        currency: t.currency, amount: Math.round(amount * 100) / 100, eur, rate,
+      });
+    }
+    return out;
+  }
+
   // { [acct number]: NetSuite internal id } of every P&L account, for links to the account's register.
   // An inactive duplicate of an account number never wins over the active one. {} when unavailable.
   async function fetchAccountIds() {
@@ -2762,7 +2807,7 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
     return Number.isFinite(impact) && impact > 0;
   }
 
-  return { suiteql, suiteqlAll, fetchPnlActuals, fetchAccountIds, fetchAccountByDepartment, fetchAgingData, fetchCollectionData, buildCollectionJson, fetchClientAnomalies, fetchAllSOsByBillingPeriod, fetchRevenueData, fetchMRRData, fetchBankBalance, fetchVendorBills, fetchVendorPaymentHistory, fetchBankAccountList, fetchBankAccountListAsOf, fetchSalaryData, fetchVendorActuals, fetchRevenueActuals, fetchCustomerCashReceipts, fetchCashflowHistory, fetchExpenseCategoryData, fetchPaymentsByCategory, fetchCashflowBreakdown, fetchCashflowTransactions, fetchExpenseTransactions, fetchSalaryBreakdown, fetchInvoiceBasedProjection, fetchMonthlyRevaluation, fetchVendorBillsByAccount, fetchNSBudget, fetchCurrencyDefenseBudget, fetchPaidVendorsYearly, fetchBankClassifiedYearly, fetchDividendDistributions, fetchVendorPaymentsDetail, fetchLatestFxRate, hasPostedMonthEndReval };
+  return { suiteql, suiteqlAll, fetchPnlActuals, fetchAccountIds, fetchAccountByDepartment, fetchFxConversions, fetchAgingData, fetchCollectionData, buildCollectionJson, fetchClientAnomalies, fetchAllSOsByBillingPeriod, fetchRevenueData, fetchMRRData, fetchBankBalance, fetchVendorBills, fetchVendorPaymentHistory, fetchBankAccountList, fetchBankAccountListAsOf, fetchSalaryData, fetchVendorActuals, fetchRevenueActuals, fetchCustomerCashReceipts, fetchCashflowHistory, fetchExpenseCategoryData, fetchPaymentsByCategory, fetchCashflowBreakdown, fetchCashflowTransactions, fetchExpenseTransactions, fetchSalaryBreakdown, fetchInvoiceBasedProjection, fetchMonthlyRevaluation, fetchVendorBillsByAccount, fetchNSBudget, fetchCurrencyDefenseBudget, fetchPaidVendorsYearly, fetchBankClassifiedYearly, fetchDividendDistributions, fetchVendorPaymentsDetail, fetchLatestFxRate, hasPostedMonthEndReval };
 }
 
 

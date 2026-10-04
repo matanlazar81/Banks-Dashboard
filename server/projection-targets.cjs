@@ -10,10 +10,9 @@
 // rebuilds a plan's data from its own state when it saves, which would drop fields it does not know.
 // A PUT must be JSON (so a cross-site form cannot send it), at most 32 KB, and from this site's origin.
 // ─────────────────────────────────────────────────────────────────────────────
-const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
-const { readJsonBody, resolveUserEmail, PayloadTooLargeError } = require('./security.cjs');
+const { readDoc, writeDoc, appendHistory, send, userOf, readWriteBody } = require('./json-store.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
 const DEFAULT_FILE = path.join(ROOT, 'data', 'projection-targets.json');
@@ -28,46 +27,10 @@ function loadTargetsModule() {
   return targetsP;
 }
 
-function readStore(file) {
-  try {
-    const s = JSON.parse(fs.readFileSync(file, 'utf8'));
-    return s && typeof s === 'object' && s.years && typeof s.years === 'object' ? s : null;
-  } catch {
-    return null;
-  }
-}
-
-function writeStore(file, store) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(store, null, 2));
-  fs.renameSync(tmp, file);
-}
-
-function send(res, status, body) {
-  res.statusCode = status;
-  res.setHeader('Content-Type', 'application/json');
-  res.setHeader('Cache-Control', 'no-store');
-  res.end(JSON.stringify(body));
-}
-
-// Same-origin only: a browser always sends Origin on a cross-site PUT.
-function sameOrigin(req) {
-  const h = req.headers || {};
-  if (!h.origin) return true;
-  try {
-    const host = String(h['x-forwarded-host'] || h.host || '').split(',')[0].trim().toLowerCase();
-    return new URL(h.origin).host.toLowerCase() === host;
-  } catch {
-    return false;
-  }
-}
-
-function userOf(req) {
-  const u = req.user || (req.session && req.session.user) || null;
-  const fromApp = u && typeof u.email === 'string' ? u.email.trim().toLowerCase() : '';
-  return fromApp || resolveUserEmail(req) || null;
-}
+const readStore = (file) => {
+  const s = readDoc(file);
+  return s && s.years && typeof s.years === 'object' ? s : null;
+};
 
 /**
  * Express/connect handler. deps (all optional, for tests):
@@ -75,7 +38,6 @@ function userOf(req) {
  */
 function createProjectionTargetsHandler(deps = {}) {
   const file = deps.file || DEFAULT_FILE;
-  const historyFile = deps.historyFile || file.replace(/\.json$/, '-history.jsonl');
   const clock = deps.clock || Date.now;
   const referenceOf = deps.referenceOf || (() => {
     try {
@@ -97,25 +59,11 @@ function createProjectionTargetsHandler(deps = {}) {
       return;
     }
     if (method !== 'PUT') {
-      res.setHeader('Allow', 'GET, PUT');
-      send(res, 405, { ok: false, error: 'Method not allowed' });
+      send(res, 405, { ok: false, error: 'Method not allowed' }, { Allow: 'GET, PUT' });
       return;
     }
-    if (!/^application\/json\b/i.test(String((req.headers || {})['content-type'] || ''))) {
-      send(res, 415, { ok: false, error: 'Send the targets as JSON.' });
-      return;
-    }
-    if (!sameOrigin(req)) {
-      send(res, 403, { ok: false, error: 'Targets can only be saved from the dashboard itself.' });
-      return;
-    }
-    let body;
-    try {
-      body = await readJsonBody(req, MAX_BODY);
-    } catch (e) {
-      send(res, e instanceof PayloadTooLargeError ? 413 : 400, { ok: false, error: e instanceof PayloadTooLargeError ? 'The targets are too large.' : 'The request is not valid JSON.' });
-      return;
-    }
+    const body = await readWriteBody(req, res, MAX_BODY);
+    if (body === null) return;
     const nowYear = new Date(clock()).getFullYear();
     const year = Number(body && body.year);
     if (!Number.isInteger(year) || year < nowYear || year > nowYear + 2) {
@@ -136,8 +84,8 @@ function createProjectionTargetsHandler(deps = {}) {
     store.updatedAt = at;
     store.updatedBy = by;
     try {
-      writeStore(file, store);
-      fs.appendFileSync(historyFile, `${JSON.stringify({ at, by, year, targets: v.targets })}\n`);
+      writeDoc(file, store);
+      appendHistory(file, { at, by, year, targets: v.targets });
     } catch (e) {
       console.error(`[projection-targets] save failed: ${e && e.message}`);
       send(res, 500, { ok: false, error: 'The targets could not be saved. The server log has the details.' });
