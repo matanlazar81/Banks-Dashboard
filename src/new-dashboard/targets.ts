@@ -30,8 +30,19 @@ async function readJson(res: Response): Promise<unknown> {
   return body;
 }
 
+// Only a well-formed answer counts: anything else (a route not mounted yet answers with the host app's own
+// "not found") means targets are unavailable, never a broken page.
+function asStore(body: unknown): TargetsStore {
+  const b = body as Partial<TargetsStore> | null;
+  if (!b || b.ok !== true || !b.years || typeof b.years !== 'object' || Array.isArray(b.years)) {
+    throw new Error('Targets are not installed on this server yet.');
+  }
+  const ratio = b.reference && typeof b.reference.serverRatioYtd === 'number' ? b.reference.serverRatioYtd : null;
+  return { ok: true, years: b.years, updatedAt: b.updatedAt ?? null, updatedBy: b.updatedBy ?? null, reference: { serverRatioYtd: ratio } };
+}
+
 export async function fetchTargets(): Promise<TargetsStore> {
-  return readJson(await fetch(ENDPOINT, { credentials: 'include', headers: { Accept: 'application/json' } })) as Promise<TargetsStore>;
+  return asStore(await readJson(await fetch(ENDPOINT, { credentials: 'include', headers: { Accept: 'application/json' } })));
 }
 
 export async function saveTargets(year: number, targets: Targets): Promise<TargetsStore> {
@@ -47,7 +58,7 @@ export async function saveTargets(year: number, targets: Targets): Promise<Targe
     headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...(csrf ? { 'x-csrf-token': csrf } : {}) },
     body: JSON.stringify({ year, targets }),
   });
-  return readJson(res) as Promise<TargetsStore>;
+  return asStore(await readJson(res));
 }
 
 export interface TargetsState {
@@ -88,7 +99,7 @@ export function useTargets(base: TargetsBase | null | undefined): TargetsState {
     return () => { alive = false; };
   }, []);
 
-  const savedRaw = store && year ? store.years[String(year)] : undefined;
+  const savedRaw = store && store.years && year ? store.years[String(year)] : undefined;
   const saved = savedRaw ? (validateTargets(savedRaw).targets || emptyTargets()) : emptyTargets();
   const shown = draft || saved;
   const setDraft = useCallback((t: Targets) => setDraftState(t), []);
@@ -120,7 +131,7 @@ export function useTargets(base: TargetsBase | null | undefined): TargetsState {
     error,
     updatedAt: savedRaw && store ? store.updatedAt : null,
     updatedBy: savedRaw && store ? store.updatedBy : null,
-    serverRatioYtd: (base && base.serverRatioYtd != null) ? base.serverRatioYtd : (store ? store.reference.serverRatioYtd : null),
+    serverRatioYtd: (base && base.serverRatioYtd != null) ? base.serverRatioYtd : (store && store.reference ? store.reference.serverRatioYtd : null),
     save,
     reset: () => setDraftState(null),
     clear: () => setDraftState(emptyTargets()),
