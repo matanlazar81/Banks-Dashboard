@@ -5,6 +5,7 @@
 //   GET /api/pnl-projection              the P&L projection (same pattern)
 //   GET /api/pnl-projection/breakdown    what makes up one P&L cell
 //   GET/PUT /api/projection-targets      the 2027 targets both pages apply on top of the Plan
+//   GET /api/metrics (+ GET/PUT /api/metrics/settings, /api/metrics/deposits)  the Metrics page
 //
 // ONLY NEEDED IF the shared bank-dashboard API mount (docs/backend-bank-dashboard-api.ts →
 // mountBankDashboardApi) is NOT installed. That mount registers every route of
@@ -48,6 +49,8 @@ const BANK_DASHBOARD_DIR =
 
 export function mountCashProjection(app: express.Express): void {
   const bankRole = requireRole(UserRole.BANK_DASHBOARD) as any;
+  // The Metrics page has its own permission once finance-it has the role (else the Bank Dashboard's).
+  const metricsRole = requireRole(((UserRole as any).METRICS ?? UserRole.BANK_DASHBOARD)) as any;
   try {
     // Runtime require: CommonJS module inside the checkout, resolving its own node_modules.
     // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -109,5 +112,22 @@ export function mountCashProjection(app: express.Express): void {
     console.error(
       `[projection-targets] FAILED to mount from ${BANK_DASHBOARD_DIR}: ${e instanceof Error ? e.message : String(e)}.`
     );
+  }
+  // Metrics page: the pack (GET), its settings and its deposit tracker (GET/PUT). It reads the cash and
+  // P&L projections from their cache files and computes them itself when there is none yet.
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const m = require(`${BANK_DASHBOARD_DIR}/server/metrics.cjs`);
+    const settings = m.createMetricsSettingsHandler();
+    const deposits = m.createMetricsDepositsHandler();
+    const metrics = m.createMetricsHandler();
+    app.get('/api/metrics/settings', metricsRole, (req, res) => settings(req, res));
+    app.put('/api/metrics/settings', metricsRole, (req, res) => settings(req, res));
+    app.get('/api/metrics/deposits', metricsRole, (req, res) => deposits(req, res));
+    app.put('/api/metrics/deposits', metricsRole, (req, res) => deposits(req, res));
+    app.get('/api/metrics', metricsRole, (req, res) => metrics(req, res));
+    console.log(`[metrics] mounted from ${BANK_DASHBOARD_DIR}`);
+  } catch (e) {
+    console.error(`[metrics] FAILED to mount from ${BANK_DASHBOARD_DIR}: ${e instanceof Error ? e.message : String(e)}.`);
   }
 }

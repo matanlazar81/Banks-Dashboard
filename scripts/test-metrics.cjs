@@ -1,0 +1,270 @@
+#!/usr/bin/env node
+// ─────────────────────────────────────────────────────────────────────────────
+// Checks for the Metrics page (server/metrics.cjs, server/metrics-settings.cjs): the pack from synthetic
+// projection payloads, NRR, the cloud cap, the innovation envelope, FX conversions, deposits, and the
+// handlers. No network, no real figures.
+//   node scripts/test-metrics.cjs
+// ─────────────────────────────────────────────────────────────────────────────
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { Readable } = require('stream');
+
+const ROOT = path.resolve(__dirname, '..');
+const m = require(path.join(ROOT, 'server', 'metrics.cjs'));
+const ms = require(path.join(ROOT, 'server', 'metrics-settings.cjs'));
+
+let failures = 0;
+function check(ok, label, detail) {
+  if (ok) console.log(`  ✓ ${label}`);
+  else { failures++; console.log(`  ✗ ${label}${detail !== undefined ? ` — ${detail}` : ''}`); }
+}
+const near = (a, b, tol = 0.011) => Math.abs(a - b) <= tol;
+
+const Y = 2026;
+const T = 2027;
+const NOW = new Date('2026-10-15T09:00:00').getTime();
+const mk = (y, mo) => `${y}-${String(mo).padStart(2, '0')}`;
+const CLOUD = 'Cloud Infrastructure & DevOps';
+
+function pnlPayload() {
+  const year = (y) => ({
+    year: y, kind: y === Y ? 'current' : 'projection',
+    rows: Array.from({ length: 12 }, (_, i) => {
+      const status = y === Y ? (i < 9 ? 'actual' : i === 9 ? 'current' : 'forecast') : 'forecast';
+      const f = { revenue: 4_900_000, pipeline: status === 'actual' ? 0 : 50_000, churn: status === 'actual' ? 0 : 20_000, otherRevenue: 100_000 - (status === 'actual' ? 0 : 30_000), totalRevenue: 5_000_000, payroll: 2_000_000, capex: -1_000_000, opex: 2_000_000, totalCosts: 3_000_000, ebitda: 2_000_000, net: 1_000_000 };
+      return { mKey: mk(y, i + 1), status, eur: f, ils: f };
+    }),
+  });
+  return {
+    ok: true, status: 'ready', generatedAt: '2026-10-15T08:00:00.000Z', years: [Y, T], plan: { name: 'Synthetic plan' },
+    actuals: { source: 'netsuite', basis: 'period', through: mk(Y, 9) },
+    variants: { plan: { years: [year(Y), year(T)] }, base: { years: [year(Y), year(T)] } },
+    targetsBase: {
+      year: T, categories: [CLOUD, 'Marketing', 'SW Licenses'], serverCategory: CLOUD,
+      months: Array.from({ length: 12 }, (_, i) => ({ mKey: mk(T, i + 1), opexByCategory: { [CLOUD]: 220_000, Marketing: 1_000_000, 'SW Licenses': 780_000 } })),
+    },
+  };
+}
+function pnlDetails() {
+  const accounts = {};
+  for (let i = 1; i <= 9; i++) accounts[mk(Y, i)] = { opex: [{ acct: '640001', eur: -200_000 }, { acct: '640002', eur: -5_000 }, { acct: '620001', eur: -300_000 }] };
+  const months = {};
+  for (let i = 10; i <= 12; i++) months[mk(Y, i)] = { categories: { [CLOUD]: 100, Marketing: 500, 'SW Licenses': 400 } };
+  return { accounts, variants: { plan: { [Y]: { months } } } };
+}
+function cashPayload() {
+  const year = (y, open) => ({
+    year: y, kind: y === Y ? 'current' : 'projection',
+    rows: Array.from({ length: 12 }, (_, i) => {
+      const f = { opening: open + i * 250_000, closing: open + (i + 1) * 250_000 };
+      return { mKey: mk(y, i + 1), status: y === Y && i < 9 ? 'actual' : 'forecast', eur: f, ils: f };
+    }),
+  });
+  return {
+    ok: true, status: 'ready', generatedAt: '2026-10-15T08:00:00.000Z', years: [Y, T],
+    bankToday: { eur: 9_100_000, ils: 0, asOf: '2026-09-30' },
+    variants: { plan: { years: [year(Y, 7_000_000), year(T, 10_000_000)] } },
+  };
+}
+const EXTRAS = {
+  arr: { arr: 59_000_000, mrr: 4_916_667, liveDate: '2026-10-15', snapDate: '2026-09-30' },
+  churnQuarters: [
+    { qs: '2026-04-01', q: 'Q2 2026', amount: 30_000, partial: false },
+    { qs: '2026-07-01', q: 'Q3 2026', amount: 40_000, partial: false },
+    { qs: '2026-10-01', q: 'Q4 2026', amount: 5_000, partial: true },
+    { qs: '2025-10-01', q: 'Q4 2025', amount: 99_000, partial: false },
+  ],
+  nrr: [{ month: mk(Y, 9), nrr: 104.5, grr: 93.2, customers: 400 }],
+  fx: [
+    { tranid: 'T1', date: '2026-09-02', fromCurrency: 'USD', toCurrency: 'EUR', currency: 'USD', amount: 117_150, eur: 100_000, rate: 1.1715 },
+    { tranid: 'T2', date: '2026-09-20', fromCurrency: 'USD', toCurrency: 'EUR', currency: 'USD', amount: 58_000, eur: 50_000, rate: 1.16 },
+    { tranid: 'T3', date: '2026-09-07', fromCurrency: 'EUR', toCurrency: 'ILS', currency: 'ILS', amount: 349_300, eur: 100_000, rate: 3.493 },
+  ],
+  fxMonth: mk(Y, 9),
+  usdLive: { rate: 1.17, date: '2026-10-14', source: 'ECB (Frankfurter)' },
+};
+
+function build(settings = ms.emptySettings(), deposits = [], extras = EXTRAS, failed = []) {
+  return m.buildMetrics({ nowMs: NOW, cash: cashPayload(), pnl: pnlPayload(), pnlDetails: pnlDetails(), settings, deposits, extras, failed });
+}
+const metric = (out, key) => out.metrics.find((x) => x.key === key);
+
+function testPack() {
+  console.log('\nPACK: the same rows every month, each figure actual or forecast');
+  const out = build();
+  check(JSON.stringify(out.metrics.map((x) => x.key)) === JSON.stringify(['revenue', 'ebitda', 'netCash', 'arr', 'nrr', 'churn']), 'rows: revenue, EBITDA, net cash, ARR, NRR, churn');
+  const rev = metric(out, 'revenue');
+  check(rev.lastMonth.value === 5_000_000 && rev.lastMonth.status === 'actual' && rev.lastMonth.label === 'Sep 2026'
+    && rev.ytd.value === 45_000_000 && rev.ytd.label === 'Jan–Sep 2026'
+    && rev.fy[0].value === 60_000_000 && rev.fy[0].status === 'actual+forecast' && rev.fy[0].actual === 45_000_000 && rev.fy[0].forecast === 15_000_000
+    && rev.fy[1].status === 'forecast', 'revenue: last month and YTD actual, FY actual + forecast, next FY forecast');
+  const cash = metric(out, 'netCash');
+  check(cash.lastMonth.value === 9_100_000 && cash.lastMonth.status === 'actual' && cash.ytd.value === 2_100_000
+    && cash.fy[0].value === 10_000_000 && cash.fy[1].value === 13_000_000 && cash.fy[1].status === 'forecast',
+  'net cash: bank at the month-end, change since 1 January, December closings');
+  const arr = metric(out, 'arr');
+  check(arr.lastMonth.value === 59_000_000 && arr.fy[0].value === (4_900_000 + 50_000 - 20_000) * 12 && arr.fy[0].status === 'forecast',
+    'ARR: Snowflake now; December run-rate × 12 forecast');
+  const nrr = metric(out, 'nrr');
+  check(nrr.unit === 'pct' && nrr.lastMonth.value === 104.5 && nrr.lastMonth.grr === 93.2 && /GRR 93.2%/.test(nrr.note), 'NRR: trailing 12 months, with GRR');
+  const churn = metric(out, 'churn');
+  check(churn.lastMonth.value === 40_000 && churn.lastMonth.label === 'Q3 2026' && churn.ytd.value === 75_000 && churn.fy[0].value === 60_000 && churn.fy[1] === null,
+    'churn: last full quarter, this year so far (in-progress quarter included), revenue lost in forecast months');
+}
+
+function testCloud() {
+  console.log('\nCLOUD: against the cap on projected revenue');
+  let out = build();
+  const [cy, ct] = out.cloud.years;
+  // Actual: 9 × 205K (640001 + 640002); forecast: 3 × 2M × 10% (budget's cloud share).
+  check(cy.actual === 1_845_000 && cy.forecast === 600_000 && cy.total === 2_445_000 && cy.cap === 4_800_000 && cy.within && cy.status === 'actual+forecast',
+    'this year: NetSuite 640xxx in closed months + the budget\'s cloud share of opex after', JSON.stringify(cy));
+  check(ct.total === 12 * 220_000 && ct.cap === 4_800_000 && ct.within && ct.status === 'forecast' && near(ct.pctOfRevenue, 4.4), 'next year: the cloud category of the targets baseline');
+  const s = ms.emptySettings();
+  s.cloudCapPct = 4;
+  out = build(s);
+  check(!out.cloud.years[1].within && out.cloud.years[1].headroom === 2_400_000 - 2_640_000, 'a lower cap: over, with the overrun as negative headroom');
+  check(out.cloud.category === CLOUD, 'the cloud category is found by name when none is set');
+}
+
+function testEnvelope() {
+  console.log('\nINNOVATION ENVELOPE: in or out of the forecast');
+  const s = ms.emptySettings();
+  s.innovation = { amountEur: 1_200_000, year: T, startMonth: 1, included: false };
+  let out = build(s);
+  check(metric(out, 'ebitda').fy[1].value === 24_000_000 && out.innovation.applied === 1_200_000 && out.innovation.ebitda.with === 22_800_000 && out.innovation.ebitda.without === 24_000_000,
+    'out: the pack shows the forecast without it, and both figures side by side');
+  s.innovation.included = true;
+  out = build(s);
+  check(metric(out, 'ebitda').fy[1].value === 22_800_000 && metric(out, 'netCash').fy[1].value === 13_000_000 - 1_200_000 && metric(out, 'netCash').fy[0].value === 10_000_000,
+    'in: next year\'s EBITDA and December cash carry it; this year is untouched');
+  s.innovation = { amountEur: 1_200_000, year: Y, startMonth: 7, included: true };
+  out = build(s);
+  // 1.2M over Jul–Dec = 200K a month, but Jul–Sep are closed: only Oct–Dec take it.
+  check(out.innovation.months === 3 && out.innovation.applied === 600_000 && metric(out, 'ebitda').fy[0].value === 24_000_000 - 600_000
+    && metric(out, 'netCash').fy[1].value === 13_000_000 - 600_000, 'this year from July: only the forecast months take their share, and next year\'s cash carries it');
+}
+
+function testFxDepositsRates() {
+  console.log('\nFX, RATES, DEPOSITS');
+  const out = build(undefined, [
+    { id: 'a', bank: 'Bank A', amount: 1_000_000, currency: 'EUR', placedOn: '2026-09-01', maturity: '2026-12-01', confirmed: true, confirmedOn: '2026-09-02', note: '' },
+    { id: 'b', bank: 'Bank B', amount: 500_000, currency: 'USD', placedOn: '2026-09-25', maturity: null, confirmed: false, confirmedOn: null, note: 'waiting' },
+    { id: 'c', bank: 'Bank C', amount: 2_000_000, currency: 'ILS', placedOn: '2026-09-10', maturity: null, confirmed: false, confirmedOn: null, note: '' },
+  ]);
+  const usd = out.fx.totals.find((t) => t.pair === 'USD → EUR');
+  check(out.fx.month === mk(Y, 9) && out.fx.items.length === 3 && usd.count === 2 && usd.amount === 175_150 && usd.rate === Math.round((175_150 / 150_000) * 10000) / 10000,
+    'FX conversions of last month, totals per pair at the weighted rate');
+  check(out.deposits.openCount === 2 && out.deposits.open[0].id === 'c' && out.deposits.total === 3, 'open deposit confirmations, oldest first');
+  check(out.rates.usdEurPlanning === null && out.rates.usdEurLive.rate === 1.17, 'rates: the planning rate (unset) and today\'s ECB rate');
+  const noArr = build(undefined, [], { ...EXTRAS, arr: null, usdLive: null }, ['arr', 'usd']);
+  check(metric(noArr, 'arr').lastMonth === null && noArr.warnings.length === 2 && /ARR/.test(noArr.warnings[0]), 'a source that fails: an empty cell and a warning, the rest still shows');
+}
+
+function testNrr() {
+  console.log('\nNRR: from revenue by customer');
+  const rows = [
+    { month: '2025-09', customer: 'A', rev: 100 }, { month: '2025-09', customer: 'B', rev: 100 }, { month: '2025-09', customer: 'Z', rev: 0 },
+    { month: '2026-09', customer: 'A', rev: 120 }, { month: '2026-09', customer: 'C', rev: 50 }, { month: '2026-09', customer: 'Z', rev: 10 },
+  ];
+  const [s] = m.nrrSeries(rows, ['2026-09']);
+  check(s.nrr === 60 && s.grr === 50 && s.customers === 2, 'NRR = what last year\'s customers pay now ÷ what they paid then; new customers excluded; GRR caps growth', JSON.stringify(s));
+  check(m.nrrSeries(rows, ['2026-08']).length === 0, 'no month a year earlier: no figure');
+}
+
+function testValidation() {
+  console.log('\nSETTINGS AND DEPOSITS: what can be saved');
+  const ok = ms.validateSettings({ value: { usdEurPlanningRate: 1.15, cloudCapPct: 8, innovation: { amountEur: 2_000_000, year: 2027, startMonth: 1, included: true } } });
+  check(ok.ok && ok.value.innovation.included && ok.value.cloudCategory === '', 'valid settings are completed with defaults');
+  const bads = [
+    { value: { usdEurPlanningRate: 9 } }, { value: { cloudCapPct: -1 } }, { value: { innovation: { startMonth: 0 } } },
+    { value: { innovation: { included: 'yes' } } }, { value: { other: 1 } }, { value: { cloudCategory: '__proto__' } }, {},
+  ];
+  check(bads.every((b) => !ms.validateSettings(b).ok), `${bads.length} kinds of bad settings are refused`);
+  const dep = { id: 'x1', bank: 'Bank', amount: 10, currency: 'EUR', placedOn: '2026-09-01', maturity: null, confirmed: false, confirmedOn: null, note: '' };
+  check(ms.validateDeposits({ value: [dep] }).ok, 'a valid deposit');
+  const badDeps = [[dep, dep], [{ ...dep, currency: 'XYZ' }], [{ ...dep, placedOn: '2026-13-01' }], [{ ...dep, id: 'a b' }], [{ ...dep, extra: 1 }], [{ ...dep, amount: -5 }]];
+  check(badDeps.every((d) => !ms.validateDeposits({ value: d }).ok), `${badDeps.length} kinds of bad deposits are refused (duplicate id, currency, date, id, field, amount)`);
+}
+
+function call(handler, { method = 'GET', url = '/api/metrics', body, headers = {} } = {}) {
+  return new Promise((resolve) => {
+    const raw = body === undefined ? '' : JSON.stringify(body);
+    const req = Readable.from(raw ? [Buffer.from(raw)] : []);
+    Object.assign(req, { method, url, headers: { host: 'finance.example', ...headers } });
+    const res = {
+      statusCode: 200, headers: {},
+      setHeader(k, v) { this.headers[k.toLowerCase()] = v; },
+      end(b) { resolve({ status: this.statusCode, body: b ? JSON.parse(b) : null }); },
+    };
+    handler(req, res);
+  });
+}
+
+async function testHandlers() {
+  console.log('\nHANDLERS: GET /api/metrics, settings and deposits');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'metrics-'));
+  const settingsFile = path.join(tmp, 's.json');
+  const depositsFile = path.join(tmp, 'd.json');
+  const entry = (payload, details) => ({ entry: { payload, details } });
+  let state = { cash: entry(cashPayload()), pnl: entry(pnlPayload(), pnlDetails()) };
+  let reads = 0;
+  const stubReads = {
+    arr: async () => { reads++; return EXTRAS.arr; },
+    churnQuarters: async () => EXTRAS.churnQuarters,
+    customerRevenue: async () => [{ month: '2025-09', customer: 'A', rev: 100 }, { month: '2026-09', customer: 'A', rev: 110 }],
+    fx: async () => { throw new Error('NetSuite down'); },
+    usdLive: async () => EXTRAS.usdLive,
+  };
+  const h = m.createMetricsHandler({
+    cash: { current: () => state.cash }, pnl: { current: () => state.pnl }, reads: stubReads, settingsFile, depositsFile, clock: () => NOW,
+  });
+  let r = await call(h);
+  check(r.status === 200 && r.body.status === 'ready' && r.body.metrics.length === 6 && metric(r.body, 'nrr').lastMonth.value === 110,
+    'GET: the pack from the cached projections and the reads');
+  check(r.body.fx.items.length === 0 && r.body.warnings.some((w) => /FX conversions/.test(w)), 'a failing read: a warning, not an error');
+  await call(h);
+  check(reads === 1, 'reads are cached between requests');
+  await call(h, { url: '/api/metrics?refresh=true' });
+  check(reads === 2, '?refresh=true reads again');
+  state = { cash: { computing: true, startedMs: NOW - 4000 }, pnl: state.pnl };
+  r = await call(h);
+  check(r.status === 202 && r.body.status === 'computing' && r.body.elapsedSec === 4, 'a projection still computing → 202 computing');
+  state = { cash: { error: 'NetSuite is not configured on this server.' }, pnl: entry(pnlPayload(), pnlDetails()) };
+  r = await call(h);
+  check(r.status === 200 && r.body.status === 'error' && /NetSuite/.test(r.body.error), 'a projection that failed → its error');
+
+  const sh = m.createMetricsSettingsHandler({ file: settingsFile, clock: () => NOW });
+  r = await call(sh, { url: '/api/metrics/settings' });
+  check(r.body.ok && r.body.value.cloudCapPct === 8 && r.body.updatedAt === null, 'settings GET: the defaults before any save');
+  const json = { 'content-type': 'application/json' };
+  r = await call(sh, { method: 'PUT', url: '/api/metrics/settings', body: { value: { cloudCapPct: 9, usdEurPlanningRate: 1.15 } }, headers: json });
+  const r2 = await call(sh, { method: 'PUT', url: '/api/metrics/settings', body: { value: { cloudCapPct: 900 } }, headers: json });
+  const r3 = await call(sh, { method: 'PUT', url: '/api/metrics/settings', body: { value: {} }, headers: { ...json, origin: 'https://evil.example' } });
+  check(r.status === 200 && r.body.value.cloudCapPct === 9 && r2.status === 400 && r3.status === 403, 'settings PUT: saved; out of range 400; another site 403');
+  state = { cash: entry(cashPayload()), pnl: entry(pnlPayload(), pnlDetails()) };
+  r = await call(h);
+  check(r.body.settings.cloudCapPct === 9 && r.body.cloud.capPct === 9 && r.body.rates.usdEurPlanning === 1.15, 'the pack uses the saved settings');
+  const dh = m.createMetricsDepositsHandler({ file: depositsFile, clock: () => NOW });
+  r = await call(dh, { method: 'PUT', url: '/api/metrics/deposits', headers: json, body: { value: [{ id: 'd1', bank: 'Bank', amount: 100, currency: 'EUR', placedOn: '2026-10-01', maturity: null, confirmed: false, confirmedOn: null, note: '' }] } });
+  const pack = await call(h);
+  check(r.status === 200 && pack.body.deposits.openCount === 1 && fs.readFileSync(depositsFile.replace(/\.json$/, '-history.jsonl'), 'utf8').trim().split('\n').length === 1,
+    'deposits PUT: saved with a history line, and the pack lists it as open');
+  fs.rmSync(tmp, { recursive: true, force: true });
+}
+
+async function main() {
+  console.log('=== metrics checks (synthetic data) ===');
+  testPack();
+  testCloud();
+  testEnvelope();
+  testFxDepositsRates();
+  testNrr();
+  testValidation();
+  await testHandlers();
+  console.log(failures ? `\n❌ FAIL — ${failures} check(s) failed.` : '\n✅ PASS — all checks green.');
+  process.exit(failures ? 1 : 0);
+}
+
+main().catch((e) => { console.error(e); process.exit(1); });
