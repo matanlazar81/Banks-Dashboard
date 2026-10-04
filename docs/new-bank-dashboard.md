@@ -188,7 +188,8 @@ React chunk.
 - Otherwise add `docs/backend-cash-projection-route.ts` (one file + one call). It mounts
   `GET /api/cash-projection` and `GET /api/cash-projection/breakdown` (and the P&L Projection's routes,
   and `GET`/`PUT /api/projection-targets` for the 2027 targets). finance-it-backend has no global `/api`
-  login gate, so the file guards every route with the Bank Dashboard role.
+  login gate, so the file guards every route with its page's own role (`new_bank_dashboard`,
+  `pnl_projection`, `metrics`: one checkbox each in Users Management, from finance-it's `BUSINESS_TOOLS` list).
 - Server-side changes in this repo (`server/`, `src/forecast/`) take effect after a restart of whatever
   serves `/api/*`; a page-only change needs only the build.
 
