@@ -55,6 +55,14 @@ export function packRows(p: MetricsPayload): (string | number)[][] {
     ['Metric', 'Last month', 'Year to date', `FY ${y0}`, `FY ${y1}`, 'Basis'],
     ...p.metrics.map((m) => [m.label, tagged(m.lastMonth, m.unit), tagged(m.ytd, m.unit), tagged(m.fy[0], m.unit), tagged(m.fy[1], m.unit), m.note]),
     [],
+    ...(p.people && p.people.ytd ? [
+      [`Payroll / revenue and revenue per employee, through ${monthName(p.people.through)} (the last payroll JE posted)`],
+      ['Month', 'Payroll (76xxxx, gross)', 'Revenue', 'Payroll / revenue', 'Employees (month-end)', 'Revenue per employee'],
+      ...p.people.months.map((m) => [monthName(m.mKey), m.payroll, m.revenue, formatPct(m.payrollPct, 1), m.headcount ?? '–', m.revenuePerEmployee ?? '–']),
+      [p.people.ytd.label, p.people.ytd.payroll, p.people.ytd.revenue, formatPct(p.people.ytd.payrollPct, 1),
+        p.people.ytd.avgHeadcount === null ? '–' : `${p.people.ytd.avgHeadcount} average`, p.people.ytd.revenuePerEmployee ?? '–'],
+      [],
+    ] : []),
     [`Cloud (${p.cloud.category || 'cloud'}, NetSuite ${p.cloud.accounts}) against ${formatPct(p.cloud.capPct, 1)} of projected revenue`],
     ['Year', 'Cloud', 'Cap', 'Headroom', '% of revenue', 'Status'],
     ...p.cloud.years.map((c) => [

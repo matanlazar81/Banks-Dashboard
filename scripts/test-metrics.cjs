@@ -84,6 +84,16 @@ const EXTRAS = {
   ],
   fxMonth: mk(Y, 9),
   usdLive: { rate: 1.17, date: '2026-10-14', source: 'ECB (Frankfurter)' },
+  // 100 employees all year; 10 more from 15 March; 5 leave on 30 June (counted at June's end); a contractor
+  // from August; one starting in November (after the months shown).
+  employees: [
+    ...Array.from({ length: 100 }, () => ({ start: '2020-01-01', end: null, type: 'Full Time' })),
+    ...Array.from({ length: 10 }, () => ({ start: '2026-03-15', end: null, type: 'Full Time' })),
+    ...Array.from({ length: 5 }, () => ({ start: '2021-05-01', end: '2026-06-30', type: 'Full Time' })),
+    { start: '2026-08-01', end: null, type: 'Contractor' },
+    { start: '2026-11-01', end: null, type: 'Full Time' },
+  ],
+  company: 'LSports',
 };
 
 function build(settings = ms.emptySettings(), deposits = [], extras = EXTRAS, failed = []) {
@@ -199,6 +209,40 @@ async function testTargets() {
   check(fy(noLib, 'revenue', 1) === 60_000_000 && !noLib.targets.active, 'without the targets module: the Plan, not an error');
 }
 
+function testPeople() {
+  console.log('\nPAYROLL / REVENUE AND REVENUE PER EMPLOYEE: through the last payroll JE');
+  const hc = m.headcountByMonth(EXTRAS.employees, ['2026-02', '2026-03', '2026-06', '2026-07', '2026-08']);
+  check(hc['2026-02'].total === 105 && hc['2026-03'].total === 115 && hc['2026-06'].total === 115 && hc['2026-07'].total === 110
+    && hc['2026-08'].total === 111 && hc['2026-08'].byType.Contractor === 1,
+  'employees at month-end: started by the last day, not left before it (a leaver on the last day still counts)', JSON.stringify(hc));
+
+  let p = build().people;
+  // Fixture: Jan–Sep closed, payroll 2M and total revenue 5M a month.
+  check(p.through === mk(Y, 9) && p.months.length === 9 && p.pending.length === 0 && p.months.every((x) => x.payrollPct === 40)
+    && p.ytd.payrollPct === 40 && p.ytd.label === 'Jan–Sep 2026' && p.company === 'LSports',
+  'payroll / revenue each month Jan–Sep and year to date');
+  check(p.months[2].revenuePerEmployee === Math.round((5_000_000 / 115) * 100) / 100 && p.months[8].headcount === 111,
+    'revenue per employee: the month\'s revenue ÷ employees at its end');
+  const headMonths = 105 * 2 + 115 * 4 + 110 + 111 * 2;
+  check(near(p.ytd.revenuePerEmployeeMonthly, 45_000_000 / headMonths) && near(p.ytd.avgHeadcount, Math.round((headMonths / 9) * 10) / 10)
+    && near(p.ytd.revenuePerEmployee, 45_000_000 / (headMonths / 9)) && near(p.ytd.revenuePerEmployeeAnnualised, (45_000_000 / (headMonths / 9)) * 12 / 9),
+  'year to date: a month per employee (comparable with the months), per average employee, and at that pace a year');
+
+  // September's payroll JE not posted yet (only a stray line): the series ends in August.
+  const pnl = pnlPayload();
+  pnl.variants.plan.years[0].rows[8].eur = { ...pnl.variants.plan.years[0].rows[8].eur, payroll: 40_000 };
+  p = m.buildMetrics({ nowMs: NOW, cash: cashPayload(), pnl, pnlDetails: pnlDetails(), settings: ms.emptySettings(), deposits: [], extras: EXTRAS }).people;
+  check(p.through === mk(Y, 8) && p.months.length === 8 && JSON.stringify(p.pending) === JSON.stringify([mk(Y, 9)]) && p.ytd.label === 'Jan–Aug 2026',
+    'a month whose payroll JE is not posted ends the series before it, and is listed as pending');
+
+  p = build(undefined, [], { ...EXTRAS, employees: null }, ['employees']).people;
+  const out = build(undefined, [], { ...EXTRAS, employees: null }, ['employees']);
+  check(p.months[0].payrollPct === 40 && p.months[0].revenuePerEmployee === null && p.ytd.revenuePerEmployee === null && out.warnings.some((w) => /HiBob/.test(w)),
+    'employees unavailable: payroll / revenue still shows, revenue per employee is empty with a warning');
+  const none = m.peopleMetrics(pnlPayload().variants.plan.years[1].rows, EXTRAS.employees, 'LSports');
+  check(none.months.length === 0 && none.ytd === null && none.through === null, 'no closed month yet: nothing to show');
+}
+
 function testFxDepositsRates() {
   console.log('\nFX, RATES, DEPOSITS');
   const out = build(undefined, [
@@ -270,6 +314,7 @@ async function testHandlers() {
     customerRevenue: async () => [{ month: '2025-09', customer: 'A', rev: 100 }, { month: '2026-09', customer: 'A', rev: 110 }],
     fx: async () => { throw new Error('NetSuite down'); },
     usdLive: async () => EXTRAS.usdLive,
+    employees: async (company) => (company === 'LSports' ? EXTRAS.employees : []),
   };
   const h = m.createMetricsHandler({
     cash: { current: () => state.cash }, pnl: { current: () => state.pnl }, reads: stubReads, settingsFile, depositsFile, targetsFile, clock: () => NOW,
@@ -278,6 +323,8 @@ async function testHandlers() {
   check(r.status === 200 && r.body.status === 'ready' && r.body.metrics.length === 6 && metric(r.body, 'nrr').lastMonth.value === 110,
     'GET: the pack from the cached projections and the reads');
   check(r.body.fx.items.length === 0 && r.body.warnings.some((w) => /FX conversions/.test(w)), 'a failing read: a warning, not an error');
+  check(r.body.people.months.length === 9 && r.body.people.months[8].headcount === 111 && r.body.people.company === 'LSports',
+    'the employees of the P&L\'s company (LSports by default) are read for revenue per employee');
   await call(h);
   check(reads === 1, 'reads are cached between requests');
   await call(h, { url: '/api/metrics?refresh=true' });
@@ -327,6 +374,9 @@ async function testModel() {
     'export: title and the same header every month');
   check(at('Revenue')[1] === '€5,000,000 (A)' && at('Revenue')[3] === '€60,000,000 (A+F)' && at('Revenue')[4] === '€60,000,000 (F)' && at('NRR')[1] === '104.5% (A)',
     'export: each figure tagged A, F or A+F', at('Revenue').join(' | '));
+  check(rows.some((r) => /^Payroll \/ revenue and revenue per employee, through Sep 2026/.test(String(r[0])))
+    && at('Jan–Sep 2026') && at('Jan–Sep 2026')[3] === '40.0%' && at('Sep 2026') && at('Sep 2026')[4] === 111,
+  'export: payroll / revenue and revenue per employee by month and year to date');
   check(rows.some((r) => /Innovation envelope: €1,200,000 for 2027 from Jan: IN the forecast/.test(String(r[0])))
     && rows.some((r) => r[0] === 'Bank B') && rows.some((r) => String(r[0]).startsWith('FX conversions, Sep 2026')),
   'export: cloud, the envelope in or out, the rate, FX conversions and open deposits');
@@ -338,6 +388,7 @@ async function main() {
   testCloud();
   testEnvelope();
   await testTargets();
+  testPeople();
   testFxDepositsRates();
   testNrr();
   testValidation();
