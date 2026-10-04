@@ -5,6 +5,7 @@ import { CheckCircle2, Download, Loader2, Plus, RefreshCw, Trash2 } from 'lucide
 import { ComputingCard, ErrorCard, Segmented, Skeleton, Warnings } from '../new-dashboard/PageParts.tsx';
 import { fetchDeposits, fetchMetrics, saveDeposits, saveSettings } from './api.ts';
 import { formatCell, formatEur, formatEurFull, formatPct, MONTH_NAMES, monthName, STATUS_LONG, STATUS_SHORT } from './model.ts';
+import PeopleCharts from './PeopleCharts.tsx';
 import type { Cell, Deposit, Metric, MetricsPayload, MetricsSettings } from './types.ts';
 
 // ── loading ─────────────────────────────────────────────────────────────────
@@ -225,6 +226,12 @@ export default function Metrics() {
             <Card title="The pack">
               <PackTable data={data} />
             </Card>
+
+            {data.people && (
+              <Card title="Payroll / revenue and revenue per employee">
+                <PeopleCharts people={data.people} />
+              </Card>
+            )}
 
             <div className="grid gap-4 lg:grid-cols-2">
               <CloudCard data={data} saving={saving} onSave={save} />

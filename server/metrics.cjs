@@ -12,6 +12,9 @@
 //   Churn                 churned MRR by quarter (Snowflake), and the revenue the forecast loses to churn
 //   Cloud vs cap          cloud (NetSuite 640xxx; forecast: the budget's cloud share of operating
 //                         expenses) against cap % × projected FY revenue
+//   Payroll / revenue,    each closed month through the last one whose payroll JE is posted in NetSuite
+//   revenue per employee  (76xxxx, gross of capitalised salaries; P&L total revenue), plus year to date;
+//                         employees = HiBob (Snowflake) employees of the P&L's company active at month-end
 //   Projection year       the 2027 targets saved on the New Bank Dashboard apply, as in both pages'
 //                         Targets view (src/forecast/targets.mjs): revenue, EBITDA, December cash, ARR,
 //                         and cloud (server costs as a % of revenue, or the category's % change)
@@ -181,11 +184,95 @@ async function sfCustomerRevenue(sf, from, to) {
   return rows.map((r) => ({ month: String(r.M || ''), customer: String(r.C || ''), rev: num(r.REV) }));
 }
 
+// ── payroll and revenue per employee ────────────────────────────────────────
+const lastDayOf = (mKey) => `${mKey}-${pad2(new Date(Date.UTC(Number(mKey.slice(0, 4)), Number(mKey.slice(5)), 0)).getUTCDate())}`;
+
+/** Employees active at each month-end ({ start, end, type }: 'YYYY-MM-DD', end null while employed):
+ *  started on or before the last day and not left before it. { mKey: { total, byType } } */
+function headcountByMonth(spans, months) {
+  return Object.fromEntries(months.map((mKey) => {
+    const day = lastDayOf(mKey);
+    const byType = {};
+    let total = 0;
+    for (const s of spans) {
+      if (!s.start || s.start > day || (s.end && s.end < day)) continue;
+      total++;
+      const t = s.type || 'Unspecified';
+      byType[t] = (byType[t] || 0) + 1;
+    }
+    return [mKey, { total, byType }];
+  }));
+}
+
+/**
+ * Payroll / revenue and revenue per employee, month by month through the last payroll JE (pure).
+ *   rows: the P&L's current-year rows (eur: payroll = 76xxxx gross, totalRevenue); only closed months count.
+ *   A closed month's payroll counts as posted when it is at least half the year's largest month, so a
+ *   partly posted JE does not end the series early or late.
+ *   spans: employees ({ start, end, type }) or null when they could not be read.
+ */
+function peopleMetrics(rows, spans, company) {
+  const closed = rows.filter(isActual);
+  const top = Math.max(0, ...closed.map((r) => num(r.eur.payroll)));
+  const lastIdx = top > 0 ? closed.reduce((last, r, i) => (num(r.eur.payroll) >= top / 2 ? i : last), -1) : -1;
+  const shown = closed.slice(0, lastIdx + 1);
+  const heads = spans ? headcountByMonth(spans, shown.map((r) => r.mKey)) : null;
+  const months = shown.map((r) => {
+    const payroll = num(r.eur.payroll);
+    const revenue = num(r.eur.totalRevenue);
+    const hc = heads ? heads[r.mKey] : null;
+    return {
+      mKey: r.mKey, payroll: round2(payroll), revenue: round2(revenue),
+      payrollPct: revenue > 0 ? Math.round((payroll / revenue) * 10000) / 100 : null,
+      headcount: hc ? hc.total : null, byType: hc ? hc.byType : null,
+      revenuePerEmployee: hc && hc.total > 0 ? round2(revenue / hc.total) : null,
+    };
+  });
+  const payroll = sumOf(months, (m) => m.payroll);
+  const revenue = sumOf(months, (m) => m.revenue);
+  const counted = months.filter((m) => m.headcount);
+  const headMonths = sumOf(counted, (m) => m.headcount);
+  const avgHeadcount = counted.length ? headMonths / counted.length : null;
+  const revCounted = sumOf(counted, (m) => m.revenue);
+  const n = months.length;
+  return {
+    company,
+    through: n ? months[n - 1].mKey : null,
+    pending: closed.slice(lastIdx + 1).map((r) => r.mKey),
+    months,
+    ytd: n ? {
+      label: n > 1 ? `Jan–${monthShort(months[n - 1].mKey)}` : monthShort(months[0].mKey),
+      payroll: round2(payroll), revenue: round2(revenue),
+      payrollPct: revenue > 0 ? Math.round((payroll / revenue) * 10000) / 100 : null,
+      avgHeadcount: avgHeadcount === null ? null : Math.round(avgHeadcount * 10) / 10,
+      // Comparable with the monthly bars: revenue a month per employee, over the months counted.
+      revenuePerEmployeeMonthly: headMonths > 0 ? round2(revCounted / headMonths) : null,
+      // Accumulated: the months' revenue per average employee, and that pace over a full year.
+      revenuePerEmployee: avgHeadcount ? round2(revCounted / avgHeadcount) : null,
+      revenuePerEmployeeAnnualised: avgHeadcount && counted.length ? round2((revCounted / avgHeadcount) * (12 / counted.length)) : null,
+    } : null,
+  };
+}
+
+/** HiBob employees of one company with their start and leave dates (Snowflake; no names or ids). */
+async function sfEmployeeSpans(sf, company) {
+  const T = require(path.join(ROOT, 'snowflake-api.cjs')).SF_TABLES;
+  const rows = await sf.query(`
+    SELECT TO_VARCHAR(START_DATE, 'YYYY-MM-DD') AS S,
+           TO_VARCHAR(TERMINATION_DATE, 'YYYY-MM-DD') AS E,
+           EMPLOYMENT_TYPE AS T
+    FROM ${T.DIM_EMPLOYEE}
+    WHERE COMPANY_NAME = ? AND START_DATE IS NOT NULL
+  `, [company]);
+  return rows.map((r) => ({ start: String(r.S || ''), end: r.E ? String(r.E) : null, type: r.T ? String(r.T) : null }));
+}
+
 // ── the pack ────────────────────────────────────────────────────────────────
 /**
  * The Metrics payload from its inputs (pure; unit-tested).
  *   cash, pnl: the projection payloads (Plan); pnlDetails: the P&L's server-side details
- *   extras: { arr, churnQuarters, nrr: [{ month, nrr, grr, customers }], fx: [...], fxMonth, usdLive }
+ *   extras: { arr, churnQuarters, nrr: [{ month, nrr, grr, customers }], fx: [...], fxMonth, usdLive,
+ *             employees: [{ start, end, type }], company }
  *   failed: names of the extras that could not be read
  *   targets: the saved targets store ({ years: { 'YYYY': targets }, updatedAt, updatedBy }) or null;
  *   targetsLib: src/forecast/targets.mjs (without it, or without saved targets, the Plan as it is)
@@ -331,6 +418,7 @@ function buildMetrics({ nowMs, cash, pnl, pnlDetails, settings, deposits, extras
     fx: 'Last month\'s FX conversions could not be read from NetSuite right now.',
     usd: 'Today\'s ECB rate is unavailable right now.',
     targets: `The ${T} targets could not be applied right now: FY ${T} shows the Plan.`,
+    employees: 'Employees could not be read from HiBob (Snowflake) right now: revenue per employee is empty.',
   }[f] || `${f} is unavailable right now.`));
 
   return {
@@ -346,6 +434,7 @@ function buildMetrics({ nowMs, cash, pnl, pnlDetails, settings, deposits, extras
     nrrTrend: extras.nrr || [],
     cloud,
     innovation,
+    people: peopleMetrics(pY.rows, extras.employees || null, extras.company || null),
     rates: { usdEurPlanning: settings.usdEurPlanningRate, usdEurLive: extras.usdLive || null },
     fx: {
       month: extras.fxMonth, items: fx,
@@ -385,7 +474,8 @@ async function fetchUsdLive() {
  * Express/connect handler for GET /api/metrics. deps (all optional):
  *   cash, pnl        the projection handlers (their .current()); default: own instances on the same caches
  *   getSfClient(), getNsClient(sub), queueNsCall(fn)
- *   reads            override every external read (tests): { arr, churnQuarters, customerRevenue(from, to), fx(month), usdLive }
+ *   reads            override every external read (tests): { arr, churnQuarters, customerRevenue(from, to), fx(month), usdLive, employees(company) }
+ *   company          the HiBob company of the P&L's subsidiary (default METRICS_HEADCOUNT_COMPANY or 'LSports')
  *   settingsFile, depositsFile, targetsFile (the saved 2027 targets), clock(), ttlMs
  */
 function createMetricsHandler(deps = {}) {
@@ -394,6 +484,7 @@ function createMetricsHandler(deps = {}) {
   const settingsFile = deps.settingsFile || SETTINGS_FILE;
   const depositsFile = deps.depositsFile || DEPOSITS_FILE;
   const targetsFile = deps.targetsFile || projectionTargets.DEFAULT_FILE;
+  const company = deps.company || process.env.METRICS_HEADCOUNT_COMPANY || 'LSports';
   // Without the page handlers (finance-it's own route file), own instances read the same cache files and
   // compute only when there is no usable cache at all; refreshing stale figures stays with the pages.
   let own = null;
@@ -428,6 +519,7 @@ function createMetricsHandler(deps = {}) {
       customerRevenue: (from, to) => sfCustomerRevenue(sf(), from, to),
       fx: (month) => queue(() => ns().fetchFxConversions({ month })),
       usdLive: fetchUsdLive,
+      employees: (co) => sfEmployeeSpans(sf(), co),
     };
   })();
 
@@ -471,8 +563,9 @@ function createMetricsHandler(deps = {}) {
       cached(`nrr:${closed}`, async () => nrrSeries(await reads.customerRevenue(shiftMonth(nrrMonths[0], -12), closed), nrrMonths)),
       cached(`fx:${closed}`, () => reads.fx(closed)),
       cached('usd', reads.usdLive, Math.min(ttlMs, 60 * MIN)),
+      cached(`employees:${company}`, () => reads.employees(company)),
     ]);
-    const names = ['arr', 'churn', 'nrr', 'fx', 'usd'];
+    const names = ['arr', 'churn', 'nrr', 'fx', 'usd', 'employees'];
     const failed = [];
     const val = (i) => {
       if (settled[i].status === 'fulfilled') return settled[i].value;
@@ -480,7 +573,7 @@ function createMetricsHandler(deps = {}) {
       console.warn(`[metrics] ${names[i]} unavailable: ${settled[i].reason && settled[i].reason.message}`);
       return null;
     };
-    const extras = { arr: val(0), churnQuarters: val(1), nrr: val(2), fx: val(3), fxMonth: closed, usdLive: val(4) };
+    const extras = { arr: val(0), churnQuarters: val(1), nrr: val(2), fx: val(3), fxMonth: closed, usdLive: val(4), employees: val(5), company };
     const settingsDoc = readDoc(settingsFile);
     const depositsDoc = readDoc(depositsFile);
     // The saved targets, read on every request so a save on the New Bank Dashboard shows at once.
@@ -517,5 +610,5 @@ function createMetricsDepositsHandler(deps = {}) {
 
 module.exports = {
   createMetricsHandler, createMetricsSettingsHandler, createMetricsDepositsHandler,
-  buildMetrics, nrrSeries, envelopeMonths, shiftMonth, lastClosedMonth, cloudTargetsOf,
+  buildMetrics, nrrSeries, envelopeMonths, shiftMonth, lastClosedMonth, cloudTargetsOf, headcountByMonth, peopleMetrics,
 };

@@ -38,6 +38,32 @@ export interface CloudYear {
   targets?: { kind: 'server' | 'category'; pct: number } | null;
 }
 
+export interface PeopleMonth {
+  mKey: string;
+  /** NetSuite 76xxxx, gross of capitalised salaries (€). */
+  payroll: number;
+  /** P&L total revenue (€). */
+  revenue: number;
+  payrollPct: number | null;
+  /** Employees active at month-end (HiBob), by employment type; null when they could not be read. */
+  headcount: number | null;
+  byType: Record<string, number> | null;
+  revenuePerEmployee: number | null;
+}
+
+export interface People {
+  company: string | null;
+  /** The last month whose payroll JE is posted (the series ends there). */
+  through: string | null;
+  /** Closed months after it whose payroll JE is not posted yet. */
+  pending: string[];
+  months: PeopleMonth[];
+  ytd: {
+    label: string; payroll: number; revenue: number; payrollPct: number | null; avgHeadcount: number | null;
+    revenuePerEmployeeMonthly: number | null; revenuePerEmployee: number | null; revenuePerEmployeeAnnualised: number | null;
+  } | null;
+}
+
 export interface FxConversion {
   id?: number;
   tranid: string;
@@ -87,6 +113,8 @@ export interface MetricsPayload {
     ebitda: { year: number; without: number; with: number } | null;
     netCash: { year: number; without: number; with: number } | null;
   };
+  /** Payroll / revenue and revenue per employee (absent from servers before this page had them). */
+  people?: People;
   rates: { usdEurPlanning: number | null; usdEurLive: { rate: number; date: string; source: string } | null };
   fx: { month: string; items: FxConversion[]; totals: { pair: string; currency: string; count: number; amount: number; eur: number; rate: number | null }[] };
   deposits: { open: Deposit[]; openCount: number; total: number };

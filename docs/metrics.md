@@ -42,6 +42,35 @@ then. Customers new since then are not counted. **GRR** caps each customer at th
 measures only what was kept. Source: Snowflake revenue by customer and month (actual months, test
 customers excluded). The page shows the last closed month; the API also returns the last 6 months.
 
+## Payroll / revenue and revenue per employee
+
+Two column charts. Each has one column per month from January to the **last month whose payroll JE is
+posted** in NetSuite, then a year-to-date column (darker, set apart). Hover a column for its figures;
+**Show the figures** lists them all, and the export carries them too.
+
+**Which months are shown.** A closed month's payroll counts as posted when it is at least half the
+year's largest month. If September is closed but its payroll JE isn't posted yet, the charts end in
+August, and the page says September is pending.
+
+**Payroll / revenue**
+- **Payroll:** NetSuite 76xxxx by posting period, gross: before the capitalised salaries (950000).
+- **Revenue:** the P&L's total revenue, the same as the pack.
+- **Year to date:** Σ payroll ÷ Σ revenue.
+
+**Revenue per employee**
+- **Monthly column:** the month's revenue ÷ employees at month-end.
+- **Employees:** HiBob (Snowflake `DIM_EMPLOYEE__FINANCE`) employees of the P&L's company (LSports,
+  `METRICS_HEADCOUNT_COMPANY`), any employment type. An employee counts when they started on or before
+  the month's last day and had not left before it. Hover a month for the split by employment type.
+- **Year-to-date column:** the months' revenue ÷ employee-months, i.e. revenue a month per employee, so it
+  compares with the monthly columns.
+- **The figure above the chart:** the months' revenue per average employee, and that pace over a full
+  year.
+- **Data read:** only start dates, leave dates and the employment type, with no names or ids, cached like
+  the other reads.
+- **If HiBob can't be read:** payroll / revenue still shows, and revenue per employee is empty with a
+  warning.
+
 ## Cloud against the cap
 
 - **Cloud** = NetSuite accounts 640xxx (Cloud Infrastructure & DevOps) in closed months. In forecast
@@ -121,5 +150,5 @@ there adds its sidebar item, checkbox and hub entry.
 ## Checking it
 
 ```bash
-node scripts/test-metrics.cjs   # synthetic: every pack item, NRR, cloud cap, envelope, FX, deposits, handlers, export rows
+node scripts/test-metrics.cjs   # synthetic: every pack item, NRR, cloud cap, envelope, targets, payroll ratios, FX, deposits, handlers, export rows
 ```
