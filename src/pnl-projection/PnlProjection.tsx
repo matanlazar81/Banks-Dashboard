@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import { Download, Loader2, RefreshCw, SlidersHorizontal } from 'lucide-react';
-import { applyPnlTargets, variantWithTargets } from '../forecast/targets.mjs';
+import { applyPnlTargets, isEmptyTargets, variantWithTargets } from '../forecast/targets.mjs';
 import { cellDelta, useTargets } from '../new-dashboard/targets.ts';
 import TargetsDrawer, { type ImpactLine } from '../new-dashboard/TargetsDrawer.tsx';
 import { useProjection } from '../new-dashboard/useProjection.ts';
@@ -54,11 +54,12 @@ export default function PnlProjection() {
   }, []);
   const closePanel = useCallback(() => setOpenCell(null), []);
 
-  // The Targets view is the Plan with the projection-year targets (saved or being edited) applied.
+  // The Targets view is the Plan with the projection-year targets applied. They are set on the New Bank
+  // Dashboard; this page applies the saved ones and never edits them.
   const base = data && data.targetsBase ? data.targetsBase : null;
   const targetsVariant = useMemo(
-    () => (data && base ? variantWithTargets(data.variants.plan, base, targets.draft, applyPnlTargets) : null),
-    [data, base, targets.draft],
+    () => (data && base ? variantWithTargets(data.variants.plan, base, targets.saved, applyPnlTargets) : null),
+    [data, base, targets.saved],
   );
   const showTargets = variant === 'targets' && !!targetsVariant;
   const key = variant === 'base' ? 'base' : 'plan';
@@ -138,10 +139,10 @@ export default function PnlProjection() {
                 type="button"
                 onClick={openTargets}
                 className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100"
-                title={`Set the ${base.year} targets and see their effect`}
+                title={`The ${base.year} targets set on the New Bank Dashboard, and their effect on the P&L`}
               >
                 <SlidersHorizontal size={14} />
-                {base.year} targets{targets.dirty ? ' •' : ''}
+                {base.year} targets
               </button>
             )}
             <Segmented label="Currency" value={ccy} onChange={chooseCcy} options={[{ value: 'eur', label: 'EUR' }, { value: 'ils', label: 'ILS' }]} />
@@ -189,7 +190,7 @@ export default function PnlProjection() {
               <span aria-hidden="true">·</span>
               <span>
                 {showTargets && base
-                  ? `Targets ${base.year}: plan "${data.plan.name}" with the ${base.year} targets${targets.dirty ? ' (unsaved changes)' : ''}`
+                  ? `Targets ${base.year}: plan "${data.plan.name}" with the ${base.year} targets set on the New Bank Dashboard${!targets.loading && isEmptyTargets(targets.saved) ? ' (none saved yet)' : ''}`
                   : variant === 'base' ? 'Base: no plan adjustments' : `Plan: ${data.plan.name}`}
               </span>
               {variant === 'targets' && !base && <span className="text-amber-700">Targets need the projection to be refreshed once.</span>}
@@ -236,6 +237,7 @@ export default function PnlProjection() {
                 ccy={ccy}
                 revenueNote="Revenue here is customer revenue (accrual), before any collection rate."
                 onClose={() => setTargetsOpen(false)}
+                editedOn="the New Bank Dashboard"
               />
             )}
 

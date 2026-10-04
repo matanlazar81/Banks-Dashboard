@@ -135,6 +135,58 @@ export function isEmptyTargets(t) {
     && !Object.values(t.opex.categoryPct).some((p) => p !== 0) && !t.server.enabled;
 }
 
+// ── in plain words (a page that applies the saved targets without editing them) ──
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const groupThousands = (n) => String(Math.round(Math.abs(n))).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+const pctText = (n) => `${Number(n.toFixed(2))}%`;
+const signedPct = (n) => `${n > 0 ? '+' : ''}${pctText(n)}`;
+const eurText = (n) => `${n < 0 ? '-' : ''}€${groupThousands(n)}`;
+
+// Runs of equal months, zeros left out: 'Jan–Jun 3%, Sep 1%'.
+function monthRuns(values, fmt) {
+  const out = [];
+  for (let i = 0; i < values.length;) {
+    let j = i;
+    while (j + 1 < values.length && values[j + 1] === values[i]) j++;
+    if (values[i] !== 0) out.push(`${MONTH_NAMES[i]}${j > i ? `–${MONTH_NAMES[j]}` : ''} ${fmt(values[i])}`);
+    i = j + 1;
+  }
+  return out.join(', ');
+}
+
+/** One line per driver that changes something, e.g. 'Revenue growth 3% a month, compounding'. */
+export function describeTargets(t) {
+  if (!t) return [];
+  const lines = [];
+  const same = (a) => a.every((v) => v === a[0]);
+  const any = (a) => a.some((v) => v !== 0);
+  const r = t.revenue;
+  if (r.mode === 'growth' && any(r.growthPct)) {
+    lines.push(same(r.growthPct) ? `Revenue growth ${pctText(r.growthPct[0])} a month, compounding`
+      : `Revenue growth a month, compounding: ${monthRuns(r.growthPct, pctText)}`);
+  }
+  if (r.mode === 'newMrr' && any(r.newMrr)) {
+    lines.push(same(r.newMrr) ? `New MRR ${eurText(r.newMrr[0])} a month, cumulative`
+      : `New MRR a month, cumulative: ${monthRuns(r.newMrr, eurText)}`);
+  }
+  if (any(r.churnPct)) {
+    lines.push(same(r.churnPct) ? `Churn ${pctText(r.churnPct[0])} of revenue a month`
+      : `Churn a month (% of revenue): ${monthRuns(r.churnPct, pctText)}`);
+  }
+  for (const d of t.payroll.deptPct) {
+    if (d.pct !== 0) lines.push(`Salaries ${signedPct(d.pct)} for ${d.dept === ALL_DEPARTMENTS ? 'all departments' : d.dept} from ${MONTH_NAMES[d.from - 1]}`);
+  }
+  for (const h of t.payroll.hires) {
+    if (h.monthlyCost !== 0) lines.push(`${h.count} ${h.count === 1 ? 'hire' : 'hires'} in ${h.dept} at ${eurText(h.monthlyCost)} a month each from ${MONTH_NAMES[h.start - 1]}`);
+  }
+  const serverCat = t.server.enabled ? t.server.category : '';
+  for (const [cat, pct] of Object.entries(t.opex.categoryPct).sort(([a], [b]) => a.localeCompare(b))) {
+    if (pct !== 0 && cat !== serverCat) lines.push(`Operating expenses, ${cat}: ${signedPct(pct)}`);
+  }
+  if (serverCat) lines.push(`Server costs (${serverCat}) at ${pctText(t.server.pctOfRevenue)} of revenue`);
+  return lines;
+}
+
 // ── baseline (server) ───────────────────────────────────────────────────────
 const shares = (byKey) => {
   const entries = Object.entries(byKey || {}).map(([k, v]) => [k, Number(v) || 0]);
