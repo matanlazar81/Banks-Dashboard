@@ -66,7 +66,13 @@ Display signs follow the cash page:
 | Depreciation | 7805xx | FCT_BUDGET when the year has a depreciation budget, else the average of the last 3 closed months (it is posted monthly) | Same rule |
 | Tax & other | 9xxxxx, 780030, 180018, anything else | FCT_BUDGET when the year has one, else none | Same rule |
 | **Net profit** | Sum of every P&L account | | |
+| Add back: depreciation / finance, net / FX revaluation / tax & other | Each line below EBITDA, reversed | | |
+| **EBITDA (from net profit)** | Net profit + the four add-backs; equals Operating profit (EBITDA) | | |
 | Accumulated profit, closing | Opening + net profit | | |
+
+The bridge after Net profit shows how net profit comes back to EBITDA, one line per item outside
+EBITDA. A cost is added back (positive), an income is taken out (in parentheses). Its last line always
+equals Operating profit (EBITDA) above; the tests check this for every month and full year.
 
 `scripts/test-pnl-projection.cjs` checks that every account lands on exactly one line, so net profit
 can never miss an account.

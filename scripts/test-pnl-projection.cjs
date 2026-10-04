@@ -550,6 +550,18 @@ async function testModel(payload) {
   check(near(line('net').values[fyY], yRows.reduce((s, r) => s + r.eur.net, 0), 0.05), 'FY net profit = sum of the months');
   check(line('accOpening').values[fyY] === 0 && near(line('accClosing').values[fyY], yRows[11].eur.accClosing), 'FY accumulated: opening of January, closing of December');
   check(near(line('churn').values[10], -yRows[10].eur.churn), 'churn is shown as a deduction');
+  const bridge = ['bridgeDepreciation', 'bridgeFinance', 'bridgeFx', 'bridgeTax', 'bridgeEbitda'];
+  check(JSON.stringify(keys.slice(keys.indexOf('net') + 1, keys.indexOf('net') + 6)) === JSON.stringify(bridge),
+    'after net profit: depreciation, finance, FX and tax & other added back, then EBITDA', keys.join(','));
+  const offBridge = [];
+  for (const [i, c] of table.columns.entries()) {
+    const back = ['bridgeDepreciation', 'bridgeFinance', 'bridgeFx', 'bridgeTax'].reduce((s, k) => s + line(k).values[i], 0);
+    if (!near(line('net').values[i] + back, line('bridgeEbitda').values[i], 0.01)) offBridge.push(`${c.id}: net + add-backs ≠ bridge EBITDA`);
+    if (!near(line('bridgeEbitda').values[i], line('ebitda').values[i], 0.01)) offBridge.push(`${c.id}: bridge ${line('bridgeEbitda').values[i]} ≠ EBITDA ${line('ebitda').values[i]}`);
+  }
+  check(!offBridge.length, `net profit + add-backs = EBITDA in all ${table.columns.length} columns (months and FY)`, offBridge.slice(0, 3).join('; '));
+  check(near(line('bridgeDepreciation').values[fyY], -yRows.reduce((s, r) => s + r.eur.depreciation, 0), 0.05),
+    'the depreciation add-back reverses the depreciation line');
   const janT = table.columns.findIndex((c) => c.mKey === mk(T, 1));
   check(table.columns[janT].rollForward && near(line('accOpening').values[janT], yRows[11].eur.accClosing), `January ${T} is rolled forward: it opens at December's accumulated profit`);
   const kpis = model.computePnlKpis(payload, 'plan', 'eur');
