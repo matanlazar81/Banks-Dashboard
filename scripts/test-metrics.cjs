@@ -9,6 +9,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { Readable } = require('stream');
+const { pathToFileURL } = require('url');
 
 const ROOT = path.resolve(__dirname, '..');
 const m = require(path.join(ROOT, 'server', 'metrics.cjs'));
@@ -254,6 +255,24 @@ async function testHandlers() {
   fs.rmSync(tmp, { recursive: true, force: true });
 }
 
+async function testModel() {
+  console.log('\nPAGE MODEL: formatting and the exported rows (src/metrics/model.ts)');
+  const model = await import(pathToFileURL(path.join(ROOT, 'src', 'metrics', 'model.ts')).href);
+  check(model.formatEur(5_000_000) === '€5.00M' && model.formatEur(-40_000) === '-€40K' && model.formatEur(0) === '–' && model.formatEur(null) === '–'
+    && model.formatPct(104.5) === '104.5%', 'figures: € millions / thousands, percentages, a dash for nothing');
+  const s = ms.emptySettings();
+  s.innovation = { amountEur: 1_200_000, year: T, startMonth: 1, included: true };
+  const rows = model.packRows(build(s, [{ id: 'b', bank: 'Bank B', amount: 500_000, currency: 'USD', placedOn: '2026-09-25', maturity: null, confirmed: false, confirmedOn: null, note: '' }]));
+  const at = (label) => rows.find((r) => r[0] === label);
+  check(rows[0][0] === 'LSports metrics pack, as of Sep 2026' && at('Metric').join('|') === 'Metric|Last month|Year to date|FY 2026|FY 2027|Basis',
+    'export: title and the same header every month');
+  check(at('Revenue')[1] === '€5,000,000 (A)' && at('Revenue')[3] === '€60,000,000 (A+F)' && at('Revenue')[4] === '€60,000,000 (F)' && at('NRR')[1] === '104.5% (A)',
+    'export: each figure tagged A, F or A+F', at('Revenue').join(' | '));
+  check(rows.some((r) => /Innovation envelope: €1,200,000 for 2027 from Jan: IN the forecast/.test(String(r[0])))
+    && rows.some((r) => r[0] === 'Bank B') && rows.some((r) => String(r[0]).startsWith('FX conversions, Sep 2026')),
+  'export: cloud, the envelope in or out, the rate, FX conversions and open deposits');
+}
+
 async function main() {
   console.log('=== metrics checks (synthetic data) ===');
   testPack();
@@ -263,6 +282,7 @@ async function main() {
   testNrr();
   testValidation();
   await testHandlers();
+  await testModel();
   console.log(failures ? `\n❌ FAIL — ${failures} check(s) failed.` : '\n✅ PASS — all checks green.');
   process.exit(failures ? 1 : 0);
 }
