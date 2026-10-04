@@ -81,7 +81,7 @@ async function buildActual(ctx) {
   const sign = SIGN[line];
   const accts = ((details.accounts[mKey] || {})[line]) || [];
   const main = {
-    id: 'accounts', title: 'NetSuite P&L by account', note: BASIS_NOTE[details.basis] || BASIS_NOTE.trandate,
+    id: 'accounts', title: 'NetSuite P&L by account', note: BASIS_NOTE[details.basis] || BASIS_NOTE.period,
     rows: accts.map((a) => item(`acct:${a.acct}`, a.name || a.acct, sign * a.eur, sign * a.ils, { ref: a.acct })),
     tie: { key: 'rounding', label: 'Rounding' },
   };

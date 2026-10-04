@@ -9,9 +9,9 @@
 //                                                   a running server serves it on its next request
 //   node scripts/pnl-projection.cjs --reconcile [--year=2026]
 //        the NetSuite P&L of every closed month by line (Sales, Overheads, Operating Profit = EBITDA,
-//        below-EBITDA lines, Net profit), by transaction date AND by posting period, in €, to compare
-//        with NetSuite's "EBITDA_Profit and Loss" report. PNL_NS_DATE_BASIS (trandate | period) picks
-//        the one the page uses.
+//        below-EBITDA lines, Net profit), by posting period AND by transaction date, in €, to compare
+//        with NetSuite's Profit and Loss report. The page uses posting periods (PNL_NS_DATE_BASIS=trandate
+//        switches it to transaction dates).
 //
 // Needs the same .env as the nightly job (NetSuite, Snowflake, and DATABASE_URL for the plan).
 // Output contains internal financial figures: keep it on the server.
@@ -53,7 +53,9 @@ function sections(totals) {
   const overheads = -(t('payroll') + t('capex') + t('opex'));
   const ebitda = sales - overheads;
   const below = t('fx') + t('finance') + t('depreciation') + t('taxOther');
-  return { sales, overheads, ebitda, fx: t('fx'), finance: t('finance'), depreciation: t('depreciation'), taxOther: t('taxOther'), net: ebitda + below };
+  // NetSuite's Profit and Loss puts depreciation and the finance accounts inside Overheads.
+  const operating = ebitda + t('depreciation') + t('finance');
+  return { sales, overheads, ebitda, operating, fx: t('fx'), finance: t('finance'), depreciation: t('depreciation'), taxOther: t('taxOther'), net: ebitda + below };
 }
 
 async function reconcile(ns) {
@@ -62,10 +64,10 @@ async function reconcile(ns) {
   const lastMonth = year < now.getFullYear() ? 12 : now.getMonth(); // closed months only
   if (lastMonth < 1) { console.log(`No closed month in ${year} yet.`); return; }
   const [byDate, byPeriod] = [await ns.fetchPnlActuals({ fromYear: year, toYear: year, basis: 'trandate' }), await ns.fetchPnlActuals({ fromYear: year, toYear: year, basis: 'period' })];
-  const using = process.env.PNL_NS_DATE_BASIS === 'period' ? 'posting period' : 'transaction date';
+  const using = process.env.PNL_NS_DATE_BASIS === 'trandate' ? 'transaction date' : 'posting period';
   console.log(`\nNetSuite P&L ${year}, subsidiary LSports Data, € (primary book). The page uses: ${using}.`);
-  console.log('Compare "Operating Profit" with the EBITDA_Profit and Loss report for the same month.\n');
-  const cols = ['sales', 'overheads', 'ebitda', 'fx', 'finance', 'depreciation', 'taxOther', 'net'];
+  console.log('Compare with NetSuite\'s Profit and Loss for the same month: "Total - Sales" = sales, "Operating Profit" = operating, "Net Profit/(Loss)" = net.\n');
+  const cols = ['sales', 'overheads', 'ebitda', 'operating', 'fx', 'finance', 'depreciation', 'taxOther', 'net'];
   console.log(`  month    basis        ${cols.map((c) => c.padStart(16)).join('')}`);
   const ytd = { trandate: Object.fromEntries(cols.map((c) => [c, 0])), period: Object.fromEntries(cols.map((c) => [c, 0])) };
   for (let m = 1; m <= lastMonth; m++) {

@@ -2,7 +2,7 @@
   "ok": true,
   "schemaVersion": 1,
   "status": "ready",
-  "generatedAt": "2026-10-04T13:16:44.251Z",
+  "generatedAt": "2026-10-04T14:22:50.782Z",
   "computedMonth": "2026-10",
   "company": "lsports",
   "years": [
@@ -16,7 +16,7 @@
   },
   "actuals": {
     "source": "netsuite",
-    "basis": "trandate",
+    "basis": "period",
     "through": "2026-09"
   },
   "degraded": false,

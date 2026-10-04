@@ -75,16 +75,17 @@ can never miss an account.
 
 - Actual months are not modelled: each line is the sum of its NetSuite accounts, so lines, EBITDA and
   net profit equal NetSuite by construction (€: primary book, ₪: ILS book).
-- The page says which basis it uses:
-  - **Transaction date** is the default. It is the same basis as every other NetSuite feed in this
-    repository, and it reproduces the closed-month revenue figures previously checked against the
-    NetSuite P&L.
-  - `PNL_NS_DATE_BASIS=period` switches to accounting (posting) periods.
+- Months are **accounting (posting) periods**, as in NetSuite's Profit and Loss report (subsidiary
+  LSports Data). Checked against that report for Jan–Sep 2026: Sales, Payroll, Depreciation, CAPEX and
+  Other Expenses match it to the cent. `PNL_NS_DATE_BASIS=trandate` switches to transaction dates.
+- The page's **Operating profit (EBITDA)** excludes depreciation and finance. The Profit and Loss
+  report's "Operating Profit" includes them (it equals the page's EBITDA + Finance, net + Depreciation);
+  **Net profit** is the same figure on both.
+- Expense reports must be visible to the NetSuite login the server uses. A role that cannot see them
+  leaves out employee expenses (per diem, taxi, hotels, …), a few thousand euros a month.
 - To check a month against the report, run `node scripts/pnl-projection.cjs --reconcile` on the
-  server. It prints Sales, Overheads, Operating Profit, the lines below it and Net profit for every
-  closed month, by both bases. Compare the Operating Profit with "EBITDA_Profit and Loss"
-  (subsidiary LSports Data) for the same month.
-  - If the report matches the posting-period rows, set `PNL_NS_DATE_BASIS=period`.
+  server. It prints Sales, Overheads, the lines below them and Net profit for every closed month, by
+  posting period and by transaction date.
 - The cell breakdown of an actual cost line also shows Snowflake's FCT_EXPENSE for the same accounts,
   with the difference to NetSuite, as a check of the Snowflake data.
 
@@ -146,7 +147,7 @@ A short manual change in finance-it (not in this repository):
 
 | Env var | Default | Meaning |
 |---|---|---|
-| `PNL_NS_DATE_BASIS` | `trandate` | `period`: NetSuite actuals by posting period instead of transaction date |
+| `PNL_NS_DATE_BASIS` | `period` | `trandate`: NetSuite actuals by transaction date instead of posting period |
 | `PNL_PROJECTION_TTL_MIN` | `CASH_PROJECTION_TTL_MIN` (30) | Minutes before cached figures are refreshed in the background |
 | `PNL_PROJECTION_TIMEOUT_MIN` | `CASH_PROJECTION_TIMEOUT_MIN` (10) | A computation running longer is abandoned |
 | `PNL_PROJECTION_PREWARM` | `CASH_PROJECTION_PREWARM` | `1` = compute 30 s after the server starts if the cache is empty |
