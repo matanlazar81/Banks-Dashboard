@@ -11,3 +11,7 @@ figures, so it must not be committed or shared. The test runs fine without it
 `cash-projection-sample.json` is a **synthetic** `/api/cash-projection` payload
 (made-up numbers, not LSports data) used for New Bank Dashboard UI checks and
 screenshots. Regenerate it with `node scripts/test-cash-projection.cjs --write-fixture`.
+
+`pnl-projection-sample.json` is a **synthetic** `/api/pnl-projection` payload (made-up
+numbers, not LSports data) used for P&L Projection UI checks and screenshots.
+Regenerate it with `node scripts/test-pnl-projection.cjs --write-fixture`.

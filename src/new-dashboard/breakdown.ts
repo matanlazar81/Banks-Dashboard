@@ -1,4 +1,5 @@
 // GET /api/cash-projection/breakdown (server/cash-projection-breakdown.cjs): what makes up one cell.
+// The P&L Projection's /api/pnl-projection/breakdown answers in the same shape (pass its endpoint).
 import type { Ccy, VariantKey } from './types.ts';
 
 export type BreakdownLine = 'collections' | 'pipeline' | 'churn' | 'salary' | 'vendors' | 'other' | 'reval' | 'dividend';
@@ -7,7 +8,8 @@ export type BreakdownLine = 'collections' | 'pipeline' | 'churn' | 'salary' | 'v
 export const BREAKDOWN_LINES: ReadonlySet<string> = new Set<BreakdownLine>(['collections', 'pipeline', 'churn', 'salary', 'vendors', 'other', 'reval', 'dividend']);
 
 export interface BreakdownRequest {
-  line: BreakdownLine;
+  /** A BreakdownLine on the cash page; the P&L page has its own lines. */
+  line: string;
   /** 'YYYY-MM' or 'FY-YYYY' */
   period: string;
   variant: VariantKey;
@@ -42,7 +44,7 @@ export interface BreakdownSection {
 export interface BreakdownReady {
   ok: true;
   status: 'ready';
-  line: BreakdownLine;
+  line: string;
   lineLabel: string;
   period: string;
   periodLabel: string;
@@ -95,9 +97,11 @@ export function arrangeRows(rows: BreakdownRow[]): RowBlock[] {
   return blocks;
 }
 
-export async function fetchBreakdown(req: BreakdownRequest, signal?: AbortSignal): Promise<BreakdownResponse> {
+export const CASH_BREAKDOWN_ENDPOINT = '/api/cash-projection/breakdown';
+
+export async function fetchBreakdown(req: BreakdownRequest, signal?: AbortSignal, endpoint = CASH_BREAKDOWN_ENDPOINT): Promise<BreakdownResponse> {
   const q = new URLSearchParams({ line: req.line, period: req.period, variant: req.variant, ccy: req.ccy });
-  const res = await fetch(`/api/cash-projection/breakdown?${q}`, { credentials: 'include', headers: { Accept: 'application/json' }, signal });
+  const res = await fetch(`${endpoint}?${q}`, { credentials: 'include', headers: { Accept: 'application/json' }, signal });
   if (res.status === 401 || res.status === 403) {
     throw new Error('Your session has expired. Reload the page to sign in again.');
   }

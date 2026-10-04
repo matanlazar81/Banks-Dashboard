@@ -2611,6 +2611,62 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
     return null;
   }
 
+  // ── P&L actuals by account and month (P&L Projection page) ──
+  // Every income-statement account (Income, COGS, Expense, OthIncome, OthExpense) of this subsidiary,
+  // per month, in both books: book 1 (€, primary) and book 2 (₪). Amounts are profit-signed
+  // (credit − debit): revenue positive, costs negative, so the sum of all accounts is net profit.
+  //   basis 'trandate' (default) — months by transaction date, like every other NS feed here
+  //   basis 'period'             — months by accounting (posting) period
+  // Returns { basis, byMonth: { 'YYYY-MM': { [acct]: { acct, name, type, eur, ils } } } }.
+  const PERIOD_MONTHS = { Jan: '01', Feb: '02', Mar: '03', Apr: '04', May: '05', Jun: '06', Jul: '07', Aug: '08', Sep: '09', Oct: '10', Nov: '11', Dec: '12' };
+  async function fetchPnlActuals({ fromYear, toYear, basis = 'trandate' } = {}) {
+    const y0 = parseInt(fromYear, 10);
+    const y1 = parseInt(toYear ?? fromYear, 10);
+    if (!Number.isInteger(y0) || !Number.isInteger(y1) || y0 > y1 || y0 < 2000 || y1 > 2100) throw new Error(`fetchPnlActuals: bad years ${fromYear}–${toYear}`);
+    const byPeriod = basis === 'period';
+    const monthExpr = byPeriod ? 'BUILTIN.DF(t.postingperiod)' : "TO_CHAR(t.trandate, 'YYYY-MM')";
+    const years = Array.from({ length: y1 - y0 + 1 }, (_, i) => y0 + i);
+    const dateFilter = byPeriod
+      ? `(${years.map((y) => `BUILTIN.DF(t.postingperiod) LIKE '% ${y}'`).join(' OR ')})`
+      : `t.trandate >= TO_DATE('${y0}-01-01', 'YYYY-MM-DD') AND t.trandate <= TO_DATE('${y1}-12-31', 'YYYY-MM-DD')`;
+    const toMonth = (raw) => {
+      const s = String(raw || '');
+      if (!byPeriod) return /^\d{4}-\d{2}$/.test(s) ? s : null;
+      const m = /^([A-Za-z]{3}) (\d{4})$/.exec(s); // 'Aug 2026'; quarters/years never carry postings
+      return m && PERIOD_MONTHS[m[1]] ? `${m[2]}-${PERIOD_MONTHS[m[1]]}` : null;
+    };
+    const bookQuery = (book) => suiteqlAll(`
+      SELECT ${monthExpr} AS m, NVL(a.acctnumber, 'COGS') AS acct, a.accttype AS atype,
+             MAX(a.accountsearchdisplaynamecopy) AS name, SUM(NVL(tal.amount, 0)) AS amt
+      FROM transactionaccountingline tal
+      JOIN transaction t ON tal.transaction = t.id
+      JOIN account a ON tal.account = a.id
+      WHERE t.subsidiary = ${subsidiaryId}
+        AND tal.posting = 'T' AND tal.accountingbook = ${book}
+        AND a.accttype IN ('Income', 'COGS', 'Expense', 'OthIncome', 'OthExpense')
+        AND ${dateFilter}
+      GROUP BY ${monthExpr}, NVL(a.acctnumber, 'COGS'), a.accttype
+    `);
+    // Sequential: the two books share NetSuite's concurrency limit with every other feed.
+    const eurRows = await bookQuery(1);
+    const ilsRows = await bookQuery(2);
+    const byMonth = {};
+    const add = (rows, field) => {
+      for (const r of rows) {
+        const mKey = toMonth(r.m);
+        if (!mKey) continue;
+        const acct = String(r.acct || 'COGS');
+        if (!byMonth[mKey]) byMonth[mKey] = {};
+        const cell = byMonth[mKey][acct] || (byMonth[mKey][acct] = { acct, name: String(r.name || acct), type: String(r.atype || ''), eur: 0, ils: 0 });
+        cell[field] = Math.round((cell[field] - (parseFloat(r.amt) || 0)) * 100) / 100; // debit-positive → profit-signed
+      }
+    };
+    add(eurRows, 'eur');
+    add(ilsRows, 'ils');
+    console.log(`[NS API] P&L actuals ${y0}–${y1} (${byPeriod ? 'posting period' : 'transaction date'}): ${Object.keys(byMonth).length} month(s), ${eurRows.length}+${ilsRows.length} rows`);
+    return { basis: byPeriod ? 'period' : 'trandate', byMonth };
+  }
+
   // ── Posted month-end FX revaluation check ──
   // True when NetSuite already carries the POSTED month-end FxReval mark dated exactly
   // `dateStr` (the positive month-end entry on Bank/CredCard accounts, EUR primary book).
@@ -2633,7 +2689,7 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
     return Number.isFinite(impact) && impact > 0;
   }
 
-  return { suiteql, suiteqlAll, fetchAgingData, fetchCollectionData, buildCollectionJson, fetchClientAnomalies, fetchAllSOsByBillingPeriod, fetchRevenueData, fetchMRRData, fetchBankBalance, fetchVendorBills, fetchVendorPaymentHistory, fetchBankAccountList, fetchBankAccountListAsOf, fetchSalaryData, fetchVendorActuals, fetchRevenueActuals, fetchCustomerCashReceipts, fetchCashflowHistory, fetchExpenseCategoryData, fetchPaymentsByCategory, fetchCashflowBreakdown, fetchCashflowTransactions, fetchExpenseTransactions, fetchSalaryBreakdown, fetchInvoiceBasedProjection, fetchMonthlyRevaluation, fetchVendorBillsByAccount, fetchNSBudget, fetchCurrencyDefenseBudget, fetchPaidVendorsYearly, fetchBankClassifiedYearly, fetchDividendDistributions, fetchVendorPaymentsDetail, fetchLatestFxRate, hasPostedMonthEndReval };
+  return { suiteql, suiteqlAll, fetchPnlActuals, fetchAgingData, fetchCollectionData, buildCollectionJson, fetchClientAnomalies, fetchAllSOsByBillingPeriod, fetchRevenueData, fetchMRRData, fetchBankBalance, fetchVendorBills, fetchVendorPaymentHistory, fetchBankAccountList, fetchBankAccountListAsOf, fetchSalaryData, fetchVendorActuals, fetchRevenueActuals, fetchCustomerCashReceipts, fetchCashflowHistory, fetchExpenseCategoryData, fetchPaymentsByCategory, fetchCashflowBreakdown, fetchCashflowTransactions, fetchExpenseTransactions, fetchSalaryBreakdown, fetchInvoiceBasedProjection, fetchMonthlyRevaluation, fetchVendorBillsByAccount, fetchNSBudget, fetchCurrencyDefenseBudget, fetchPaidVendorsYearly, fetchBankClassifiedYearly, fetchDividendDistributions, fetchVendorPaymentsDetail, fetchLatestFxRate, hasPostedMonthEndReval };
 }
 
 

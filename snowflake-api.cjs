@@ -627,6 +627,39 @@ function createSnowflakeClient(env) {
     return byMonth;
   }
 
+  // ── P&L Projection: budget of the lines the cash engine does not forecast ──
+  // Depreciation (7805xx), tax / IFRS16 / equity share (9xxxxx) and FA gain/loss (780030), by month
+  // and account, for the given years. Amounts as FCT_BUDGET stores them (costs positive); the P&L
+  // Projection turns them profit-signed.
+  async function fetchPnlBudgetExtras(fromYear, toYear) {
+    const y0 = parseInt(fromYear, 10);
+    const y1 = parseInt(toYear ?? fromYear, 10);
+    if (!Number.isInteger(y0) || !Number.isInteger(y1) || y0 > y1 || y0 < 2000 || y1 > 2100) throw new Error(`fetchPnlBudgetExtras: bad years ${fromYear}–${toYear}`);
+    console.log(`[Snowflake] Fetching P&L budget extras for ${y0}–${y1}...`);
+    const rows = await query(`
+      SELECT TO_VARCHAR(b.BUDGET_MONTH_DATE, 'YYYY-MM') AS M,
+             g.GL_ACCOUNT_NUMBER AS ACCT,
+             MAX(g.GL_ACCOUNT_NAME) AS NAME,
+             MAX(g.GL_ACCOUNT_TYPE) AS ACCT_TYPE,
+             SUM(b.AMOUNT_EUR_CC) AS EUR,
+             SUM(b.AMOUNT_ILS_CC) AS ILS
+      FROM ${T_FCT_BUDGET} b
+      JOIN ${T_DIM_GL_ACCOUNT} g ON b.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
+      WHERE b.SUBSIDIARY_ID = 3
+        AND (g.GL_ACCOUNT_NUMBER LIKE '7805%' OR g.GL_ACCOUNT_NUMBER LIKE '9%' OR g.GL_ACCOUNT_NUMBER = '780030')
+        AND b.BUDGET_MONTH_DATE >= '${y0}-01-01'
+        AND b.BUDGET_MONTH_DATE <= '${y1}-12-31'
+      GROUP BY 1, 2
+      HAVING ABS(SUM(b.AMOUNT_EUR_CC)) > 0.5 OR ABS(SUM(b.AMOUNT_ILS_CC)) > 0.5
+    `);
+    const out = rows.map((r) => ({
+      month: String(r.M || ''), acct: String(r.ACCT || ''), name: String(r.NAME || ''), type: String(r.ACCT_TYPE || ''),
+      eur: Number(r.EUR) || 0, ils: Number(r.ILS) || 0,
+    }));
+    console.log(`[Snowflake] P&L budget extras: ${out.length} account-months`);
+    return out;
+  }
+
   // ── Salary budget per month (payroll accounts from FCT_BUDGET) ──
   async function fetchSalaryBudget(year) {
     const yr = year || 2026;
@@ -1829,6 +1862,7 @@ function createSnowflakeClient(env) {
     query,
     testConnection,
     fetchBudgetByCategory,
+    fetchPnlBudgetExtras,
     fetchActualExpenses,
     fetchRevenueProjection,
     fetchMonthlyActualsSplit,

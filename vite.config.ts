@@ -36,12 +36,13 @@ export default defineConfig({
   resolve: { alias: { 'xlsx': 'xlsx-js-style' } },
   build: {
     chunkSizeWarningLimit: 2000,
-    // Two pages: the Bank Dashboard (index.html) and the New Bank Dashboard (new-bank-dashboard.html,
-    // its own small bundle that never loads App.tsx).
+    // Three pages: the Bank Dashboard (index.html), the New Bank Dashboard (new-bank-dashboard.html) and
+    // the P&L Projection (pnl-projection.html); the last two are small bundles that never load App.tsx.
     rolldownOptions: {
       input: {
         main: path.resolve(__dirname, 'index.html'),
         newBankDashboard: path.resolve(__dirname, 'new-bank-dashboard.html'),
+        pnlProjection: path.resolve(__dirname, 'pnl-projection.html'),
       },
     },
   },

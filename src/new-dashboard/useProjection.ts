@@ -1,14 +1,20 @@
 import { useCallback, useEffect, useState } from 'react';
-import { fetchProjection } from './api.ts';
-import type { ProjectionPayload } from './types.ts';
+import type { ComputingResponse, ErrorResponse, ProjectionPayload } from './types.ts';
 
 const POLL_MS = 5000;
 
 export type Phase = 'loading' | 'computing' | 'ready' | 'error';
 
-export interface ProjectionState {
+/** What both projection pages' payloads share (the cached-handler envelope). */
+export interface ReadyPayload {
+  status: 'ready';
+  cache?: { ageSec: number; stale: boolean; staleReason: string | null; refreshing: boolean; lastError: string | null };
+}
+export type Fetcher<P extends ReadyPayload> = (refresh: boolean) => Promise<P | ComputingResponse | ErrorResponse>;
+
+export interface ProjectionState<P extends ReadyPayload = ProjectionPayload> {
   phase: Phase;
-  data: ProjectionPayload | null;
+  data: P | null;
   /** Last error; with data present it means a refresh failed and the shown data is older. */
   error: string | null;
   /** Seconds the first computation has been running (from the server). */
@@ -19,11 +25,12 @@ export interface ProjectionState {
 
 /**
  * Loads the projection and keeps polling while the server is computing it (first load) or
- * refreshing it in the background, so new figures appear without a reload.
+ * refreshing it in the background, so new figures appear without a reload. `fetcher` must be
+ * stable (a module-level function).
  */
-export function useProjection(): ProjectionState {
+export function useProjection<P extends ReadyPayload>(fetcher: Fetcher<P>): ProjectionState<P> {
   const [phase, setPhase] = useState<Phase>('loading');
-  const [data, setData] = useState<ProjectionPayload | null>(null);
+  const [data, setData] = useState<P | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [computingElapsedSec, setComputingElapsedSec] = useState<number | null>(null);
   const [refreshRequested, setRefreshRequested] = useState(false);
@@ -34,7 +41,7 @@ export function useProjection(): ProjectionState {
   const load = useCallback(async (refresh: boolean) => {
     let again = false;
     try {
-      const body = await fetchProjection(refresh);
+      const body = await fetcher(refresh);
       if (body.status === 'ready') {
         setData(body);
         setPhase('ready');
@@ -58,7 +65,7 @@ export function useProjection(): ProjectionState {
     }
     setPolling(again);
     if (again) setPollToken((t) => t + 1);
-  }, []);
+  }, [fetcher]);
 
   useEffect(() => {
     void load(false);

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { CheckCircle2, ChevronDown, ChevronRight, GripHorizontal, Info, Loader2, X } from 'lucide-react';
 import {
-  arrangeRows, clampPosition, fetchBreakdown, PANEL_W,
+  arrangeRows, CASH_BREAKDOWN_ENDPOINT, clampPosition, fetchBreakdown, PANEL_W,
   type BreakdownReady, type BreakdownRequest, type BreakdownRow, type BreakdownSection, type PanelPosition,
 } from './breakdown.ts';
 import { formatFull } from './model.ts';
@@ -91,11 +91,13 @@ interface Props {
   position: PanelPosition;
   onMove: (p: PanelPosition) => void;
   onClose: () => void;
+  /** The breakdown API (default: the cash projection's). */
+  endpoint?: string;
 }
 
 type Load = { phase: 'loading' } | { phase: 'ready'; data: BreakdownReady } | { phase: 'computing' } | { phase: 'error'; error: string };
 
-export default function BreakdownPanel({ request, position, onMove, onClose }: Props) {
+export default function BreakdownPanel({ request, position, onMove, onClose, endpoint = CASH_BREAKDOWN_ENDPOINT }: Props) {
   const { line, period, variant, ccy } = request;
   const reqKey = `${line}|${period}|${variant}|${ccy}`;
   // Each result remembers the request it answers; a newer request reads as loading until its own arrives.
@@ -106,7 +108,7 @@ export default function BreakdownPanel({ request, position, onMove, onClose }: P
   useEffect(() => {
     const ctrl = new AbortController();
     const done = (l: Load) => { if (!ctrl.signal.aborted) setResult({ key: reqKey, load: l }); };
-    fetchBreakdown({ line, period, variant, ccy }, ctrl.signal)
+    fetchBreakdown({ line, period, variant, ccy }, ctrl.signal, endpoint)
       .then((r) => {
         if (r.status === 'ready') done({ phase: 'ready', data: r });
         else if (r.status === 'computing') done({ phase: 'computing' });
@@ -114,7 +116,7 @@ export default function BreakdownPanel({ request, position, onMove, onClose }: P
       })
       .catch((e: unknown) => done({ phase: 'error', error: e instanceof Error ? e.message : String(e) }));
     return () => ctrl.abort();
-  }, [reqKey, line, period, variant, ccy]);
+  }, [reqKey, line, period, variant, ccy, endpoint]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };

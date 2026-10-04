@@ -1,6 +1,6 @@
 // Pure table model for the New Bank Dashboard: turns the API payload into columns, line items and
 // KPI values. No React, no DOM — unit-tested directly by scripts/test-cash-projection.cjs.
-import type { Ccy, Figures, MonthRow, MonthStatus, ProjectionPayload, Variant, VariantKey, YearBlock, YearView } from './types.ts';
+import type { Ccy, Figures, MonthStatus, ProjectionPayload, Variant, VariantKey, YearBlock, YearView } from './types.ts';
 
 export type LineKey =
   | 'opening' | 'collections' | 'pipeline' | 'churn' | 'inflows'
@@ -9,17 +9,26 @@ export type LineKey =
 
 export type LineKind = 'balance' | 'item' | 'subtotal' | 'note';
 
-interface LineDef {
-  key: LineKey;
+/** One table line over a month's figures F (shared with the P&L Projection, which has its own F). */
+export interface LineDefOf<F, K extends string = string> {
+  key: K;
   label: string;
   kind: LineKind;
   hint?: string;
   /** Displayed value for one month. Outflow lines show positive amounts; churn shows as a deduction. */
-  value: (f: Figures) => number;
+  value: (f: F) => number;
   /** Full-year column: sum of the months, or the first/last month for balances. */
   fy: 'sum' | 'first' | 'last';
   /** Shown with an explicit + / − and green / red instead of parentheses. */
   signed?: boolean;
+}
+type LineDef = LineDefOf<Figures, LineKey>;
+
+/** A year of month rows with the figures in both currencies (both pages' payloads have this shape). */
+export interface YearOf<F> {
+  year: number;
+  kind: YearBlock['kind'];
+  rows: { mKey: string; status: MonthStatus; eur: F; ils: F }[];
 }
 
 const inflows = (f: Figures) => f.collections + f.pipeline - f.churn;
@@ -72,8 +81,8 @@ export interface Column {
   rollForward: boolean;
 }
 
-export interface TableLine {
-  key: LineKey;
+export interface TableLine<K extends string = LineKey> {
+  key: K;
   label: string;
   kind: LineKind;
   hint?: string;
@@ -82,9 +91,9 @@ export interface TableLine {
   values: number[];
 }
 
-export interface ProjectionTable {
+export interface ProjectionTable<K extends string = LineKey> {
   columns: Column[];
-  lines: TableLine[];
+  lines: TableLine<K>[];
   /** Year groups for the top header row. */
   groups: { year: number; kind: YearBlock['kind']; span: number; label: string }[];
 }
@@ -104,21 +113,21 @@ export function monthLongLabel(mKey: string): string {
   return d.toLocaleString('en-GB', { month: 'long', year: 'numeric' });
 }
 
-function yearsForView(variant: Variant, view: YearView): YearBlock[] {
-  if (view === 'current') return variant.years.filter((y) => y.kind === 'current');
-  if (view === 'next') return variant.years.filter((y) => y.kind === 'projection');
-  return variant.years;
+function yearsForView<F>(years: YearOf<F>[], view: YearView): YearOf<F>[] {
+  if (view === 'current') return years.filter((y) => y.kind === 'current');
+  if (view === 'next') return years.filter((y) => y.kind === 'projection');
+  return years;
 }
 
-function fyValue(line: LineDef, rows: MonthRow[], ccy: Ccy): number {
+function fyValue<F>(line: LineDefOf<F>, rows: YearOf<F>['rows'], ccy: Ccy): number {
   if (line.fy === 'first') return line.value(rows[0][ccy]);
   if (line.fy === 'last') return line.value(rows[rows.length - 1][ccy]);
   return rows.reduce((s, r) => s + line.value(r[ccy]), 0);
 }
 
-/** Columns + line values for the selected variant, currency and year view. */
-export function buildTable(variant: Variant, ccy: Ccy, view: YearView): ProjectionTable {
-  const blocks = yearsForView(variant, view);
+/** Columns + line values of any line set over the years of a variant (currency and year view applied). */
+export function buildYearTable<F, K extends string>(years: YearOf<F>[], ccy: Ccy, view: YearView, defs: LineDefOf<F, K>[]): ProjectionTable<K> {
+  const blocks = yearsForView(years, view);
   const columns: Column[] = [];
   const groups: ProjectionTable['groups'] = [];
   for (const block of blocks) {
@@ -148,7 +157,7 @@ export function buildTable(variant: Variant, ccy: Ccy, view: YearView): Projecti
     });
   }
 
-  const lines: TableLine[] = LINES.map((line) => {
+  const lines: TableLine<K>[] = defs.map((line) => {
     const values: number[] = [];
     for (const block of blocks) {
       for (const r of block.rows) values.push(line.value(r[ccy]));
@@ -156,10 +165,14 @@ export function buildTable(variant: Variant, ccy: Ccy, view: YearView): Projecti
     }
     return { key: line.key, label: line.label, kind: line.kind, hint: line.hint, signed: line.signed, values };
   });
+  return { columns, lines, groups };
+}
 
+/** Columns + line values for the selected variant, currency and year view. */
+export function buildTable(variant: Variant, ccy: Ccy, view: YearView): ProjectionTable {
+  const table = buildYearTable<Figures, LineKey>(variant.years, ccy, view, LINES);
   // The re-anchor note only appears when it is material (≥ 1 currency unit somewhere).
-  const visible = lines.filter((l) => l.key !== 'reanchor' || l.values.some((v) => Math.abs(v) >= 1));
-  return { columns, lines: visible, groups };
+  return { ...table, lines: table.lines.filter((l) => l.key !== 'reanchor' || l.values.some((v) => Math.abs(v) >= 1)) };
 }
 
 export interface Kpis {

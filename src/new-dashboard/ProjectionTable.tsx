@@ -1,8 +1,21 @@
 import { useEffect, useRef } from 'react';
 import { Info } from 'lucide-react';
 import type { Ccy } from './types.ts';
-import { CCY_SYMBOL, formatFull, formatSignedThousands, formatThousands, monthLongLabel, type Column, type LineKey, type ProjectionTable as Table, type TableLine } from './model.ts';
+import { CCY_SYMBOL, formatFull, formatSignedThousands, formatThousands, monthLongLabel, type Column, type ProjectionTable as Table, type TableLine } from './model.ts';
 import { BREAKDOWN_LINES } from './breakdown.ts';
+
+/** Which lines get the table's markers. The defaults are the cash projection's lines. */
+export interface TableMarkers {
+  /** Its current-month cell opens at the NetSuite bank balance (⚓). null: no anchor. */
+  anchorLine: string | null;
+  /** Its first projection-year cell is the previous December carried forward (↩). */
+  rollForwardLine: string;
+  /** Drawn with a heavy rule above it. */
+  closingLine: string;
+  /** Shown in red when negative (balances always are). */
+  negativeLines: ReadonlySet<string>;
+}
+const CASH_MARKERS: TableMarkers = { anchorLine: 'opening', rollForwardLine: 'opening', closingLine: 'closing', negativeLines: new Set(['net']) };
 
 const LABEL_W = 'w-52 min-w-52';
 
@@ -28,8 +41,9 @@ function StatusChip({ col }: { col: Column }) {
 }
 
 interface CellProps {
-  line: TableLine;
+  line: TableLine<string>;
   col: Column;
+  markers: TableMarkers;
   value: number;
   ccy: Ccy;
   anchorDate: string | null;
@@ -39,15 +53,15 @@ interface CellProps {
   active?: boolean;
 }
 
-function Cell({ line, col, value, ccy, anchorDate, prevClosingLabel, onOpen, active }: CellProps) {
+function Cell({ line, col, markers, value, ccy, anchorDate, prevClosingLabel, onOpen, active }: CellProps) {
   const emphasize = line.kind === 'balance' || line.kind === 'subtotal';
   const k = Math.round(value / 1000);
-  const negativeBad = (line.key === 'net' || line.kind === 'balance') && k < 0;
+  const negativeBad = (markers.negativeLines.has(line.key) || line.kind === 'balance') && k < 0;
   const tone = line.signed
     ? (k > 0 ? 'text-emerald-700' : k < 0 ? 'text-rose-600' : '')
     : negativeBad ? 'text-rose-600' : '';
-  const isAnchor = line.key === 'opening' && col.status === 'current';
-  const isRollForward = line.key === 'opening' && col.rollForward;
+  const isAnchor = line.key === markers.anchorLine && col.status === 'current';
+  const isRollForward = line.key === markers.rollForwardLine && col.rollForward;
   const where = col.kind === 'fy' ? `FY ${col.year}` : monthLongLabel(col.mKey!);
   let title = `${line.label} · ${where}: ${formatFull(value, ccy)}`;
   if (isAnchor && anchorDate) title += ` (re-anchored to the NetSuite bank balance of ${anchorDate})`;
@@ -71,17 +85,20 @@ function Cell({ line, col, value, ccy, anchorDate, prevClosingLabel, onOpen, act
 }
 
 interface Props {
-  table: Table;
+  table: Table<string>;
   ccy: Ccy;
   /** 'YYYY-MM-DD' of the bank balance the current month opens from. */
   anchorDate: string | null;
-  /** Opens the breakdown of a cell (lines in BREAKDOWN_LINES with an amount). */
-  onOpenCell?: (line: LineKey, col: Column) => void;
+  /** Opens the breakdown of a cell (lines in breakdownLines with an amount). */
+  onOpenCell?: (line: string, col: Column) => void;
   /** The cell whose breakdown is open: `${line}|${columnId}`. */
   activeCell?: string | null;
+  /** Lines whose cells open a breakdown (default: the cash projection's). */
+  breakdownLines?: ReadonlySet<string>;
+  markers?: TableMarkers;
 }
 
-export default function ProjectionTable({ table, ccy, anchorDate, onOpenCell, activeCell }: Props) {
+export default function ProjectionTable({ table, ccy, anchorDate, onOpenCell, activeCell, breakdownLines = BREAKDOWN_LINES, markers = CASH_MARKERS }: Props) {
   const scroller = useRef<HTMLDivElement>(null);
   const layoutKey = table.columns.map((c) => c.id).join('|');
 
@@ -137,7 +154,7 @@ export default function ProjectionTable({ table, ccy, anchorDate, onOpenCell, ac
         </thead>
         <tbody>
           {table.lines.map((line) => {
-            const rowBorder = line.key === 'closing'
+            const rowBorder = line.key === markers.closingLine
               ? '[&>*]:border-t-2 [&>*]:border-t-slate-300'
               : line.kind === 'subtotal'
                 ? '[&>*]:border-t [&>*]:border-t-slate-200'
@@ -161,12 +178,13 @@ export default function ProjectionTable({ table, ccy, anchorDate, onOpenCell, ac
                 {table.columns.map((col, i) => {
                   const prev = col.rollForward ? table.columns.find((c) => c.kind === 'month' && c.year === col.year - 1 && c.mKey?.endsWith('-12')) : null;
                   const value = line.values[i];
-                  const opens = !!onOpenCell && BREAKDOWN_LINES.has(line.key) && Math.abs(value) >= 1;
+                  const opens = !!onOpenCell && breakdownLines.has(line.key) && Math.abs(value) >= 1;
                   return (
                     <Cell
                       key={col.id}
                       line={line}
                       col={col}
+                      markers={markers}
                       value={value}
                       ccy={ccy}
                       anchorDate={anchorLabel}
