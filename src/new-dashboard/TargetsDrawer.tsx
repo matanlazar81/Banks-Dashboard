@@ -1,13 +1,21 @@
-// Side panel for the projection-year targets (both projection pages). Every change shows at once in
-// the Targets view behind it; Save shares them with everyone who opens the pages.
-import { useState, type ReactNode } from 'react';
-import { ChevronDown, ChevronRight, Loader2, Plus, Trash2, X } from 'lucide-react';
+// Movable window with the projection-year targets (both projection pages). Drag it by its title bar,
+// like the breakdown windows; it opens where it was last left. Every change shows at once in the
+// Targets view behind it; Save shares them with everyone who opens the pages.
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { ChevronDown, ChevronRight, GripHorizontal, Loader2, Plus, Trash2, X } from 'lucide-react';
 import { ALL_DEPARTMENTS, type Targets, type TargetsBase } from '../forecast/targets.mjs';
+import { clampPosition, type PanelPosition } from './breakdown.ts';
 import { formatFull } from './model.ts';
 import type { Ccy } from './types.ts';
 import type { TargetsState } from './targets.ts';
+import { useDrag } from './useDrag.ts';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** Width of the targets window (narrower on small screens). */
+const TARGETS_W = 448;
+// Where the window was last left, so reopening it puts it back there (until the page reloads).
+let lastPosition: PanelPosition | null = null;
 
 export interface ImpactLine { label: string; plan: number; withTargets: number }
 
@@ -93,14 +101,41 @@ export default function TargetsDrawer({ base, state, impact, ccy, revenueNote, o
   const firstDept = depts[0] || '';
   const fyServerBase = base.months.reduce((s, m) => s + (m.opexByCategory[t.server.category || base.serverCategory] || 0), 0);
 
+  const titleId = useId();
+  const [position, setPosition] = useState<PanelPosition>(
+    () => clampPosition(lastPosition ?? { x: window.innerWidth - TARGETS_W - 16, y: 64 }, undefined, TARGETS_W),
+  );
+  const dragBar = useDrag(position, (p) => { lastPosition = p; setPosition(p); }, TARGETS_W);
+  // In front of the breakdown windows while in use; behind them once anything else on the page is clicked.
+  const [front, setFront] = useState(true);
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const onDown = (e: PointerEvent) => { if (!root.current?.contains(e.target as Node)) setFront(false); };
+    document.addEventListener('pointerdown', onDown, true);
+    return () => document.removeEventListener('pointerdown', onDown, true);
+  }, []);
+
   return (
-    <aside
-      aria-label={`${base.year} targets`}
-      className="fixed inset-y-0 right-0 z-40 flex w-full max-w-md flex-col border-l border-slate-300 bg-white shadow-2xl"
+    <div
+      ref={root}
+      role="dialog"
+      aria-modal="false"
+      aria-labelledby={titleId}
+      className="fixed flex flex-col rounded-lg border border-slate-300 bg-white shadow-2xl"
+      style={{
+        left: position.x, top: position.y, width: `min(${TARGETS_W}px, calc(100vw - 16px))`,
+        maxHeight: `calc(100vh - ${position.y + 8}px)`, zIndex: front ? 52 : 45,
+      }}
+      onPointerDownCapture={() => setFront(true)}
     >
-      <div className="flex items-start justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3">
+      <div
+        className="flex cursor-move touch-none select-none items-start justify-between gap-3 rounded-t-lg border-b border-slate-200 bg-slate-50 px-4 py-3"
+        {...dragBar}
+      >
         <div>
-          <h2 className="text-sm font-semibold text-slate-900">{base.year} targets</h2>
+          <h2 id={titleId} className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+            <GripHorizontal size={14} className="shrink-0 text-slate-400" aria-hidden="true" />{base.year} targets
+          </h2>
           <p className="text-xs text-slate-500">On top of the Plan, {base.year} only. Changes show in the Targets view at once.</p>
         </div>
         <button type="button" onClick={onClose} aria-label="Close" className="rounded p-1 text-slate-500 hover:bg-slate-200 hover:text-slate-800"><X size={16} /></button>
@@ -228,7 +263,7 @@ export default function TargetsDrawer({ base, state, impact, ccy, revenueNote, o
         </Section>
       </div>
 
-      <div className="mt-auto border-t border-slate-200 bg-slate-50 px-4 py-3">
+      <div className="mt-auto rounded-b-lg border-t border-slate-200 bg-slate-50 px-4 py-3">
         {state.error && <p className="mb-2 text-xs text-rose-700">{state.error}</p>}
         <div className="flex items-center gap-2">
           <button type="button" onClick={() => void state.save()} disabled={!state.dirty || state.saving}
@@ -244,6 +279,6 @@ export default function TargetsDrawer({ base, state, impact, ccy, revenueNote, o
             : 'No targets saved yet.'}
         </p>
       </div>
-    </aside>
+    </div>
   );
 }

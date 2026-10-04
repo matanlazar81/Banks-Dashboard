@@ -1,14 +1,15 @@
 // Movable window with the breakdown of one table cell, or of one account row by department. Drag it by
 // its title bar; it stays where it was put when another cell is opened. Esc or × closes it. Not modal:
 // the table stays usable behind it. Account names open the department window (onDrill).
-import { useEffect, useId, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { CheckCircle2, ChevronDown, ChevronRight, ExternalLink, GripHorizontal, Info, Loader2, Users, X } from 'lucide-react';
 import {
-  arrangeRows, CASH_BREAKDOWN_ENDPOINT, clampPosition, fetchBreakdown, PANEL_W,
+  arrangeRows, CASH_BREAKDOWN_ENDPOINT, fetchBreakdown, PANEL_W,
   type BreakdownReady, type BreakdownRequest, type BreakdownRow, type BreakdownSection, type PanelPosition,
 } from './breakdown.ts';
 import { formatFull } from './model.ts';
 import type { Ccy } from './types.ts';
+import { useDrag } from './useDrag.ts';
 
 const GROUP_PREVIEW = 12;
 
@@ -140,7 +141,7 @@ export default function BreakdownPanel({
   // Each result remembers the request it answers; a newer request reads as loading until its own arrives.
   const [result, setResult] = useState<{ key: string; load: Load }>({ key: '', load: { phase: 'loading' } });
   const load: Load = result.key === reqKey ? result.load : { phase: 'loading' };
-  const drag = useRef<{ dx: number; dy: number } | null>(null);
+  const dragBar = useDrag(position, onMove);
 
   useEffect(() => {
     const ctrl = new AbortController();
@@ -162,19 +163,6 @@ export default function BreakdownPanel({
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose, escToClose]);
 
-  const startDrag = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if ((e.target as HTMLElement).closest('button, a')) return;
-    drag.current = { dx: e.clientX - position.x, dy: e.clientY - position.y };
-    e.currentTarget.setPointerCapture(e.pointerId);
-  };
-  const moveDrag = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (drag.current) onMove(clampPosition({ x: e.clientX - drag.current.dx, y: e.clientY - drag.current.dy }));
-  };
-  const endDrag = (e: ReactPointerEvent<HTMLDivElement>) => {
-    drag.current = null;
-    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
-  };
-
   const loaded = load.phase === 'ready' ? load.data : null;
   const data = loaded && extra && !loaded.account && Math.abs(extra.amount) >= 0.5 ? withExtra(loaded, extra) : loaded;
   const main = data ? data.sections[0] : null;
@@ -192,10 +180,7 @@ export default function BreakdownPanel({
     >
       <div
         className="flex cursor-move touch-none select-none items-start justify-between gap-3 rounded-t-lg border-b border-slate-200 bg-slate-50 px-4 py-2.5"
-        onPointerDown={startDrag}
-        onPointerMove={moveDrag}
-        onPointerUp={endDrag}
-        onPointerCancel={endDrag}
+        {...dragBar}
       >
         <div className="min-w-0">
           <div id={titleId} className="flex items-center gap-2 text-sm font-semibold text-slate-900">
