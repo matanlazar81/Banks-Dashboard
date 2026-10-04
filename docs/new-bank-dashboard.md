@@ -113,7 +113,8 @@ row. The NetSuite account ids are read with the projection (one light query); wi
 **2027 targets** (header button; always the projection year) opens a window that moves like the breakdown
 windows (drag its title bar; it reopens where it was left until the page reloads); **Targets 2027** in the Plan / Base switch
 shows the Plan with those targets applied. Only the projection year changes: the current year and its
-December closing stay as they are.
+December closing stay as they are. The targets are set here only: once saved, the P&L Projection applies
+the same assumptions in its own Targets 2027 view (read-only there).
 
 | Driver | Effect per month of the projection year |
 |---|---|

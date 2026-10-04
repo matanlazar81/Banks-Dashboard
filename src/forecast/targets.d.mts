@@ -57,6 +57,8 @@ export const ALL_DEPARTMENTS: '*';
 export function emptyTargets(): Targets;
 export function validateTargets(input: unknown): { ok: boolean; targets: Targets | null; errors: string[] };
 export function isEmptyTargets(t: Targets | null | undefined): boolean;
+/** One line per driver that changes something, in plain words. */
+export function describeTargets(t: Targets | null | undefined): string[];
 export function buildTargetsBase(args: {
   year: number;
   months: { mKey: string; revenue: number; collPct: number; payroll: number; opex: number; ilsRate: number }[];

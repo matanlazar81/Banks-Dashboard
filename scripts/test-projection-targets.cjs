@@ -153,6 +153,36 @@ async function testValidation(t) {
   check(ok.ok && ok.targets.payroll.hires.length === 0 && ok.targets.revenue.churnPct.length === 12, 'partial targets are completed with no-change defaults');
 }
 
+async function testDescribe(t) {
+  console.log('\nIN PLAIN WORDS: the assumptions the P&L page lists');
+  check(t.describeTargets(t.emptyTargets()).length === 0 && t.describeTargets(null).length === 0, 'no targets: no lines');
+  const all = t.validateTargets({
+    revenue: { mode: 'growth', growthPct: Array(12).fill(3), churnPct: Array(12).fill(1) },
+    payroll: { deptPct: [{ dept: '*', pct: -18, from: 1 }, { dept: 'Sales', pct: 0, from: 3 }], hires: [{ dept: 'R&D', monthlyCost: 8000, start: 3, count: 2 }, { dept: 'Sales', monthlyCost: 6500.5, start: 7, count: 1 }] },
+    opex: { categoryPct: { Marketing: 10, 'Cloud Infrastructure & DevOps': 5, Travel: -5 } },
+    server: { enabled: true, pctOfRevenue: 8, category: 'Cloud Infrastructure & DevOps' },
+  }).targets;
+  const want = [
+    'Revenue growth 3% a month, compounding',
+    'Churn 1% of revenue a month',
+    'Salaries -18% for all departments from Jan',
+    '2 hires in R&D at €8,000 a month each from Mar',
+    '1 hire in Sales at €6,501 a month each from Jul',
+    'Operating expenses, Marketing: +10%',
+    'Operating expenses, Travel: -5%',
+    'Server costs (Cloud Infrastructure & DevOps) at 8% of revenue',
+  ];
+  const got = t.describeTargets(all);
+  check(JSON.stringify(got) === JSON.stringify(want), 'every driver in its words; zero changes and the category the server % replaces are left out', JSON.stringify(got));
+  const varies = t.describeTargets(t.validateTargets({
+    revenue: { mode: 'newMrr', newMrr: [50000, 50000, 50000, 0, 0, 0, 0, 0, 0, 25000, 25000, 25000], churnPct: [0.5, 0.5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1.25] },
+  }).targets);
+  check(varies[0] === 'New MRR a month, cumulative: Jan–Mar €50,000, Oct–Dec €25,000' && varies[1] === 'Churn a month (% of revenue): Jan–Feb 0.5%, Dec 1.25%',
+    'values that vary by month are listed as runs of months', JSON.stringify(varies));
+  const unused = t.describeTargets(t.validateTargets({ revenue: { mode: 'none', growthPct: Array(12).fill(3) } }).targets);
+  check(unused.length === 0, 'growth values with "No change" selected are not listed (they change nothing)');
+}
+
 function call(handler, { method = 'GET', body, headers = {}, user } = {}) {
   return new Promise((resolve) => {
     const raw = body === undefined ? '' : typeof body === 'string' ? body : JSON.stringify(body);
@@ -210,6 +240,7 @@ async function main() {
   await testFormulas(t);
   await testApply(t);
   await testValidation(t);
+  await testDescribe(t);
   await testStore(t);
   console.log(failures ? `\n❌ FAIL — ${failures} check(s) failed.` : '\n✅ PASS — all checks green.');
   process.exit(failures ? 1 : 0);

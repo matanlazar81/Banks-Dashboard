@@ -4,7 +4,8 @@
 //   GET /api/cash-projection/breakdown   what makes up one cell (the movable breakdown window)
 //   GET /api/pnl-projection              the P&L projection (same pattern)
 //   GET /api/pnl-projection/breakdown    what makes up one P&L cell
-//   GET/PUT /api/projection-targets      the 2027 targets both pages apply on top of the Plan
+//   GET/PUT /api/projection-targets      the 2027 targets both pages apply on top of the Plan (set on the
+//                                        New Bank Dashboard only: PUT needs its role)
 //   GET /api/metrics (+ GET/PUT /api/metrics/settings, /api/metrics/deposits)  the Metrics page
 //
 // ONLY NEEDED IF the shared bank-dashboard API mount (docs/backend-bank-dashboard-api.ts →
@@ -102,14 +103,15 @@ export function mountCashProjection(app: express.Express): void {
       `[pnl-projection] FAILED to mount from ${BANK_DASHBOARD_DIR}: ${e instanceof Error ? e.message : String(e)}.`
     );
   }
-  // 2027 targets of both projection pages: GET reads them, PUT saves them (JSON, same origin; the
-  // handler reads the body itself when no body parser ran).
+  // 2027 targets of both projection pages: GET reads them (both pages), PUT saves them (the New Bank
+  // Dashboard only: the P&L Projection applies the saved targets and does not edit them). JSON, same
+  // origin; the handler reads the body itself when no body parser ran.
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { createProjectionTargetsHandler } = require(`${BANK_DASHBOARD_DIR}/server/projection-targets.cjs`);
     const targets = createProjectionTargetsHandler();
     app.get('/api/projection-targets', targetsRole, (req, res) => targets(req, res));
-    app.put('/api/projection-targets', targetsRole, (req, res) => targets(req, res));
+    app.put('/api/projection-targets', cashRole, (req, res) => targets(req, res));
     console.log(`[projection-targets] mounted from ${BANK_DASHBOARD_DIR}`);
   } catch (e) {
     console.error(

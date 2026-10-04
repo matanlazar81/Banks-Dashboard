@@ -1,9 +1,10 @@
 // Movable window with the projection-year targets (both projection pages). Drag it by its title bar,
-// like the breakdown windows; it opens where it was last left. Every change shows at once in the
-// Targets view behind it; Save shares them with everyone who opens the pages.
+// like the breakdown windows; it opens where it was last left. On the New Bank Dashboard every change
+// shows at once in the Targets view behind it and Save shares them with everyone who opens the pages;
+// the P&L Projection shows the saved targets read-only (editedOn) with their effect.
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { ChevronDown, ChevronRight, GripHorizontal, Loader2, Plus, Trash2, X } from 'lucide-react';
-import { ALL_DEPARTMENTS, type Targets, type TargetsBase } from '../forecast/targets.mjs';
+import { ALL_DEPARTMENTS, describeTargets, type Targets, type TargetsBase } from '../forecast/targets.mjs';
 import { clampPosition, type PanelPosition } from './breakdown.ts';
 import { formatFull } from './model.ts';
 import type { Ccy } from './types.ts';
@@ -92,10 +93,18 @@ interface Props {
   /** What "revenue" means on this page (cash: expected revenue before the collection %). */
   revenueNote: string;
   onClose: () => void;
+  /** Where the targets are set (e.g. 'the New Bank Dashboard'): the window then only shows the saved ones. */
+  editedOn?: string;
 }
 
-export default function TargetsDrawer({ base, state, impact, ccy, revenueNote, onClose }: Props) {
-  const t = state.draft;
+const savedLine = (state: TargetsState) => (state.updatedAt
+  ? `Saved ${new Date(state.updatedAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}${state.updatedBy ? ` by ${state.updatedBy}` : ''}.`
+  : 'No targets saved yet.');
+
+export default function TargetsDrawer({ base, state, impact, ccy, revenueNote, onClose, editedOn }: Props) {
+  const readOnly = !!editedOn;
+  const t = readOnly ? state.saved : state.draft;
+  const assumptions = readOnly ? describeTargets(t) : [];
   const set = (patch: (d: Targets) => Targets) => state.setDraft(patch(JSON.parse(JSON.stringify(t)) as Targets));
   const depts = base.departments;
   const firstDept = depts[0] || '';
@@ -136,7 +145,11 @@ export default function TargetsDrawer({ base, state, impact, ccy, revenueNote, o
           <h2 id={titleId} className="flex items-center gap-2 text-sm font-semibold text-slate-900">
             <GripHorizontal size={14} className="shrink-0 text-slate-400" aria-hidden="true" />{base.year} targets
           </h2>
-          <p className="text-xs text-slate-500">On top of the Plan, {base.year} only. Changes show in the Targets view at once.</p>
+          <p className="text-xs text-slate-500">
+            {readOnly
+              ? `On top of the Plan, ${base.year} only. Set on ${editedOn}; the Targets view applies the saved targets.`
+              : `On top of the Plan, ${base.year} only. Changes show in the Targets view at once.`}
+          </p>
         </div>
         <button type="button" onClick={onClose} aria-label="Close" className="rounded p-1 text-slate-500 hover:bg-slate-200 hover:text-slate-800"><X size={16} /></button>
       </div>
@@ -163,6 +176,13 @@ export default function TargetsDrawer({ base, state, impact, ccy, revenueNote, o
           </table>
         </div>
 
+        {readOnly ? (
+          <Section title="Applied assumptions">
+            {assumptions.length
+              ? <ul className="list-disc space-y-1 pl-4 text-xs text-slate-700">{assumptions.map((l, i) => <li key={`a-${i}`}>{l}</li>)}</ul>
+              : <p className="text-xs text-slate-500">No {base.year} targets saved yet. Set them on {editedOn}.</p>}
+          </Section>
+        ) : (<>
         <Section title="Revenue">
           <p className="mb-2 text-[11px] text-slate-500">{revenueNote}</p>
           <div role="radiogroup" aria-label="Revenue target" className="mb-2 flex gap-3 text-xs">
@@ -261,10 +281,14 @@ export default function TargetsDrawer({ base, state, impact, ccy, revenueNote, o
             </div>
           )}
         </Section>
+        </>)}
       </div>
 
       <div className="mt-auto rounded-b-lg border-t border-slate-200 bg-slate-50 px-4 py-3">
         {state.error && <p className="mb-2 text-xs text-rose-700">{state.error}</p>}
+        {readOnly ? (
+          <p className="text-[11px] text-slate-500">Set on {editedOn}. {savedLine(state)}</p>
+        ) : (<>
         <div className="flex items-center gap-2">
           <button type="button" onClick={() => void state.save()} disabled={!state.dirty || state.saving}
             className="inline-flex items-center gap-1.5 rounded-md bg-slate-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-700 disabled:opacity-50">
@@ -274,10 +298,9 @@ export default function TargetsDrawer({ base, state, impact, ccy, revenueNote, o
           <button type="button" onClick={state.clear} className="rounded-md px-2 py-1.5 text-xs text-slate-500 hover:text-rose-700">Clear all</button>
         </div>
         <p className="mt-1.5 text-[11px] text-slate-500">
-          {state.dirty ? 'Unsaved changes: only you see them until you save.' : state.updatedAt
-            ? `Saved ${new Date(state.updatedAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}${state.updatedBy ? ` by ${state.updatedBy}` : ''}.`
-            : 'No targets saved yet.'}
+          {state.dirty ? 'Unsaved changes: only you see them until you save.' : savedLine(state)}
         </p>
+        </>)}
       </div>
     </div>
   );

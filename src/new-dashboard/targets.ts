@@ -1,7 +1,7 @@
 // The projection-year targets shared by both projection pages: GET/PUT /api/projection-targets
 // (server/projection-targets.cjs), a hook holding the saved targets and the unsaved draft, and the
 // Targets view (the Plan with the targets applied, src/forecast/targets.mjs).
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { emptyTargets, isEmptyTargets, validateTargets, type Targets, type TargetsBase } from '../forecast/targets.mjs';
 
 export interface TargetsStore {
@@ -100,7 +100,8 @@ export function useTargets(base: TargetsBase | null | undefined): TargetsState {
   }, []);
 
   const savedRaw = store && store.years && year ? store.years[String(year)] : undefined;
-  const saved = savedRaw ? (validateTargets(savedRaw).targets || emptyTargets()) : emptyTargets();
+  // The same object until the store changes, so the Targets view is recomputed only then.
+  const saved = useMemo(() => (savedRaw ? (validateTargets(savedRaw).targets || emptyTargets()) : emptyTargets()), [savedRaw]);
   const shown = draft || saved;
   const setDraft = useCallback((t: Targets) => setDraftState(t), []);
 

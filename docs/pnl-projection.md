@@ -132,11 +132,17 @@ without a department show as "Difference to the account row". Request: the cell'
 
 ## 2027 targets
 
-The same targets panel and **Targets 2027** view as the New Bank Dashboard
-(`docs/new-bank-dashboard.md`, "2027 targets"), with the same saved targets. Here revenue is customer
-revenue (accrual, no collection rate), payroll and operating expenses are the P&L lines, and EBITDA, net
-profit, the bridge and the accumulated profit follow. The panel shows FY revenue, payroll, operating
-expenses, EBITDA, net profit and the accumulated profit at December, Plan vs Targets.
+The targets are **set on the New Bank Dashboard** (`docs/new-bank-dashboard.md`, "2027 targets"). This
+page applies the **saved** targets in its **Targets 2027** view and does not edit them; saving needs the
+New Bank Dashboard role (`PUT /api/projection-targets`). Here revenue is customer revenue (accrual, no
+collection rate), payroll and operating expenses are the P&L lines, and EBITDA, net profit, the bridge
+and the accumulated profit follow.
+
+The **2027 targets** button opens a read-only movable window:
+- FY revenue, payroll, operating expenses, EBITDA, net profit and the accumulated profit at December,
+  Plan vs Targets;
+- the applied assumptions in plain words (`describeTargets` in `src/forecast/targets.mjs`);
+- who saved them and when.
 
 ## Deploying
 
