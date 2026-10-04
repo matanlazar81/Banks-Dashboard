@@ -45,7 +45,8 @@ customers excluded). The page shows the last closed month; the API also returns 
 ## Payroll / revenue and revenue per employee
 
 Two column charts. Each has one column per month from January to the **last month whose payroll JE is
-posted** in NetSuite, then a year-to-date column (darker, set apart). Hover a column for its figures;
+posted** in NetSuite, then a year-to-date column (darker, set apart). Each column shows its value on top
+(payroll / revenue to one decimal); hover a column for its figures;
 **Show the figures** lists them all, and the export carries them too.
 
 **Which months are shown.** A closed month's payroll counts as posted when it is at least half the
