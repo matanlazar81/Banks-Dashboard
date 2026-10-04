@@ -207,6 +207,15 @@ export default function Metrics() {
               <span>Updated {new Date(data.generatedAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
               <span aria-hidden="true">·</span>
               <span>Plan: {data.asOf.plan || '–'}</span>
+              {data.targets && data.targets.active && (
+                <>
+                  <span aria-hidden="true">·</span>
+                  <span className="cursor-help text-sky-800 underline decoration-dotted underline-offset-2" title={data.targets.assumptions.join('\n')}>
+                    FY {data.targets.year} includes the {data.targets.year} targets set on the New Bank Dashboard
+                    {data.targets.updatedAt ? ` (saved ${new Date(data.targets.updatedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}${data.targets.updatedBy ? ` by ${data.targets.updatedBy}` : ''})` : ''}
+                  </span>
+                </>
+              )}
               {data.refreshing && <span className="text-sky-700">The projections are being refreshed in the background.</span>}
               {error && <span className="text-amber-700">Last update failed: {error}</span>}
               {saveError && <span className="text-rose-700">{saveError}</span>}
@@ -234,7 +243,8 @@ export default function Metrics() {
               Dashboard (cash in the bank; there is no debt). ARR is MRR × 12 from Snowflake; its forecast is December
               customer revenue × 12. NRR compares what last year&apos;s customers pay now with what they paid 12 months
               earlier (GRR caps each at its old amount). Cloud is NetSuite 640xxx in closed months and the budget&apos;s
-              cloud share of operating expenses after. All figures follow the Plan.
+              cloud share of operating expenses after. All figures follow the Plan; the projection year adds the targets
+              saved on the New Bank Dashboard (the same figures as both pages&apos; Targets view).
             </p>
           </>
         )}
@@ -268,6 +278,13 @@ function CloudCard({ data, saving, onSave }: { data: MetricsPayload; saving: str
               <span>Cloud {formatEur(c.total)} = {formatPct(c.pctOfRevenue, 2)} of revenue {formatEur(c.revenue)}</span>
               <span>Cap {formatEur(c.cap)}</span>
             </div>
+            {c.targets && (
+              <p className="mt-0.5 text-[11px] text-sky-800">
+                {c.targets.kind === 'server'
+                  ? `Server costs set at ${formatPct(c.targets.pct, 1)} of customer revenue in the ${c.year} targets (the cap is on total revenue, so the share shown can be a little lower).`
+                  : `The ${c.year} targets change this category by ${c.targets.pct > 0 ? '+' : ''}${formatPct(c.targets.pct, 1)}.`}
+              </p>
+            )}
           </div>
         ))}
         <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-2 text-xs text-slate-600">
@@ -306,6 +323,10 @@ function InnovationCard({ data, saving, onSave }: { data: MetricsPayload; saving
         />
       )}
     >
+      <p className="mb-2 text-[11px] text-slate-500">
+        Extra innovation spending on top of the forecast, spread evenly from its start month to December (forecast months only).
+        In: counted in EBITDA and December cash. Out: not counted. Leave it empty if there is none or it is already in the budget.
+      </p>
       <p className={`text-sm font-semibold ${inv.included ? 'text-sky-800' : 'text-slate-700'}`}>
         {inv.amountEur ? `${formatEur(inv.amountEur)} for ${inv.year}: ${inv.included ? 'IN the forecast' : 'OUT of the forecast'}` : 'No envelope set.'}
       </p>

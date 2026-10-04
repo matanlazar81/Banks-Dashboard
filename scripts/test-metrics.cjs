@@ -147,6 +147,58 @@ function testEnvelope() {
     && metric(out, 'netCash').fy[1].value === 13_000_000 - 600_000, 'this year from July: only the forecast months take their share, and next year\'s cash carries it');
 }
 
+// The projection year with the targets saved on the New Bank Dashboard: the same figures as both pages'
+// Targets view. The baselines are built by the real targets module, matching the payloads above.
+async function testTargets() {
+  console.log('\nTARGETS: the projection year follows the saved 2027 targets');
+  const tl = await import(pathToFileURL(path.join(ROOT, 'src', 'forecast', 'targets.mjs')).href);
+  const cats = Object.fromEntries(Array.from({ length: 12 }, (_, i) => [String(i + 1).padStart(2, '0'), { [CLOUD]: 220, Marketing: 1000, 'SW Licenses': 780 }]));
+  const baseOf = (collPct) => tl.buildTargetsBase({
+    year: T, serverCategory: CLOUD, deptAmounts: { 'R&D': 1 }, categoryAmountsByMonth: cats,
+    months: Array.from({ length: 12 }, (_, i) => ({ mKey: mk(T, i + 1), revenue: 4_900_000, collPct, payroll: 2_000_000, opex: 2_000_000, ilsRate: 1 })),
+  });
+  const pnl = { ...pnlPayload(), targetsBase: baseOf(100) };
+  const cash = { ...cashPayload(), targetsBase: baseOf(90) };
+  const run = (years, extra = {}) => m.buildMetrics({
+    nowMs: NOW, cash, pnl, pnlDetails: pnlDetails(), settings: ms.emptySettings(), deposits: [], extras: EXTRAS,
+    targets: years ? { years, updatedAt: '2026-10-04T16:53:00.000Z', updatedBy: 'someone@example.com' } : null, targetsLib: tl, ...extra,
+  });
+  const fy = (out, key, i) => metric(out, key).fy[i].value;
+  const sum = (rows, f) => rows.reduce((s, r) => s + f(r), 0);
+
+  const plain = run(null);
+  check(fy(plain, 'revenue', 1) === 60_000_000 && plain.cloud.years[1].total === 2_640_000 && plain.cloud.years[1].targets === null && !plain.targets.active,
+    'no saved targets: the Plan as before');
+
+  const targets = tl.validateTargets({ revenue: { mode: 'growth', growthPct: Array(12).fill(1) }, server: { enabled: true, pctOfRevenue: 8, category: CLOUD } }).targets;
+  const out = run({ [String(T)]: targets });
+  const deltas = tl.computeTargetDeltas(pnl.targetsBase, targets);
+  const pT = tl.variantWithTargets(pnl.variants.plan, pnl.targetsBase, targets, tl.applyPnlTargets).years[1];
+  const cT = tl.variantWithTargets(cash.variants.plan, cash.targetsBase, targets, tl.applyCashTargets).years[1];
+  check(near(fy(out, 'revenue', 1), sum(pT.rows, (r) => r.eur.totalRevenue)) && near(fy(out, 'ebitda', 1), sum(pT.rows, (r) => r.eur.ebitda), 0.05)
+    && near(fy(out, 'netCash', 1), cT.rows[11].eur.closing) && fy(out, 'revenue', 1) > 60_000_000,
+    'FY 2027 revenue, EBITDA and December cash equal the pages\' Targets view');
+  const dec = pT.rows[11].eur;
+  check(near(fy(out, 'arr', 1), (dec.revenue + dec.pipeline - dec.churn) * 12), 'ARR December 2027 after the revenue targets');
+  const ct = out.cloud.years[1];
+  check(near(ct.total, sum(deltas, (d) => d.server)) && near(ct.total, sum(deltas, (d) => d.revenue) * 0.08, 0.1)
+    && ct.targets.kind === 'server' && ct.targets.pct === 8 && near(ct.revenue, fy(out, 'revenue', 1)),
+    'cloud 2027 = 8% of customer revenue after the targets; the cap on revenue after the targets', JSON.stringify(ct));
+  check(fy(out, 'revenue', 0) === 60_000_000 && out.cloud.years[0].total === plain.cloud.years[0].total && fy(out, 'netCash', 0) === fy(plain, 'netCash', 0),
+    'this year is untouched');
+  check(out.targets.active && out.targets.year === T && out.targets.updatedBy === 'someone@example.com'
+    && out.targets.assumptions.includes('Revenue growth 1% a month, compounding') && /2027 targets/.test(metric(out, 'revenue').note),
+    'the pack says FY 2027 includes the targets, with the assumptions');
+
+  const pctOnly = run({ [String(T)]: tl.validateTargets({ opex: { categoryPct: { [CLOUD]: 10, Marketing: -5 } } }).targets });
+  check(near(pctOnly.cloud.years[1].total, 2_640_000 * 1.1) && pctOnly.cloud.years[1].targets.kind === 'category',
+    'a % change of the cloud category scales it (no server %)');
+  const otherYear = run({ [String(T + 1)]: targets });
+  check(fy(otherYear, 'revenue', 1) === 60_000_000 && !otherYear.targets.active, 'targets saved for another year change nothing');
+  const noLib = run({ [String(T)]: targets }, { targetsLib: null });
+  check(fy(noLib, 'revenue', 1) === 60_000_000 && !noLib.targets.active, 'without the targets module: the Plan, not an error');
+}
+
 function testFxDepositsRates() {
   console.log('\nFX, RATES, DEPOSITS');
   const out = build(undefined, [
@@ -208,6 +260,7 @@ async function testHandlers() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'metrics-'));
   const settingsFile = path.join(tmp, 's.json');
   const depositsFile = path.join(tmp, 'd.json');
+  const targetsFile = path.join(tmp, 't.json');
   const entry = (payload, details) => ({ entry: { payload, details } });
   let state = { cash: entry(cashPayload()), pnl: entry(pnlPayload(), pnlDetails()) };
   let reads = 0;
@@ -219,7 +272,7 @@ async function testHandlers() {
     usdLive: async () => EXTRAS.usdLive,
   };
   const h = m.createMetricsHandler({
-    cash: { current: () => state.cash }, pnl: { current: () => state.pnl }, reads: stubReads, settingsFile, depositsFile, clock: () => NOW,
+    cash: { current: () => state.cash }, pnl: { current: () => state.pnl }, reads: stubReads, settingsFile, depositsFile, targetsFile, clock: () => NOW,
   });
   let r = await call(h);
   check(r.status === 200 && r.body.status === 'ready' && r.body.metrics.length === 6 && metric(r.body, 'nrr').lastMonth.value === 110,
@@ -252,6 +305,12 @@ async function testHandlers() {
   const pack = await call(h);
   check(r.status === 200 && pack.body.deposits.openCount === 1 && fs.readFileSync(depositsFile.replace(/\.json$/, '-history.jsonl'), 'utf8').trim().split('\n').length === 1,
     'deposits PUT: saved with a history line, and the pack lists it as open');
+  check(pack.body.targets && !pack.body.targets.active, 'no targets file: the projection year is the Plan');
+  // Targets saved on the New Bank Dashboard show at the next request (no cache to wait for). The fixture's
+  // baseline has no revenue, so only the server % changes something: cloud = 8% of nothing.
+  fs.writeFileSync(targetsFile, JSON.stringify({ version: 1, years: { [String(T)]: { server: { enabled: true, pctOfRevenue: 8, category: CLOUD } } }, updatedAt: null, updatedBy: null }));
+  const withTargets = await call(h);
+  check(withTargets.body.targets.active && withTargets.body.cloud.years[1].targets.kind === 'server', 'a saved targets file applies at the next request');
   fs.rmSync(tmp, { recursive: true, force: true });
 }
 
@@ -278,6 +337,7 @@ async function main() {
   testPack();
   testCloud();
   testEnvelope();
+  await testTargets();
   testFxDepositsRates();
   testNrr();
   testValidation();

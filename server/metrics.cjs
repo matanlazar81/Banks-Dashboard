@@ -12,6 +12,9 @@
 //   Churn                 churned MRR by quarter (Snowflake), and the revenue the forecast loses to churn
 //   Cloud vs cap          cloud (NetSuite 640xxx; forecast: the budget's cloud share of operating
 //                         expenses) against cap % × projected FY revenue
+//   Projection year       the 2027 targets saved on the New Bank Dashboard apply, as in both pages'
+//                         Targets view (src/forecast/targets.mjs): revenue, EBITDA, December cash, ARR,
+//                         and cloud (server costs as a % of revenue, or the category's % change)
 //   Innovation envelope   an amount for a year, spread over its forecast months from a start month, in
 //                         or out of the forecast (EBITDA and net cash are shown both ways)
 //   USD/EUR planning rate saved setting, next to today's ECB rate
@@ -25,6 +28,7 @@
 const path = require('path');
 const { readDoc, createDocHandler, send } = require('./json-store.cjs');
 const { emptySettings, validateSettings, validateDeposits } = require('./metrics-settings.cjs');
+const projectionTargets = require('./projection-targets.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
 const SETTINGS_FILE = path.join(ROOT, 'data', 'metrics-settings.json');
@@ -79,8 +83,30 @@ const shareOf = (cats, name) => {
   return Math.abs(total) >= 0.5 ? num(v && typeof v === 'object' ? v.eur : v) / total : 0;
 };
 
-/** One year of cloud: NetSuite 640xxx in closed months, the budget's cloud share of opex in the others. */
-function cloudYear({ block, details, targetsBase, category, capPct, revenue }) {
+/**
+ * The projection year's cloud under the saved targets, per month: server costs set as a % of revenue
+ * replace the category (the month's `server` of computeTargetDeltas); otherwise the category's % change
+ * scales it. null when the targets leave the cloud category alone.
+ */
+function cloudTargetsOf(targets, deltas, category) {
+  if (!targets || !deltas || !category) return null;
+  const server = !!(targets.server.enabled && targets.server.category === category);
+  const pct = num(targets.opex.categoryPct[category]);
+  if (!server && !pct) return null;
+  const byKey = new Map(deltas.map((d) => [d.mKey, d]));
+  return {
+    kind: server ? 'server' : 'category', pct: server ? num(targets.server.pctOfRevenue) : pct,
+    adjust: (mKey, baseline) => {
+      const d = byKey.get(mKey);
+      if (!d) return baseline;
+      return server ? num(d.server) : baseline * (1 + pct / 100);
+    },
+  };
+}
+
+/** One year of cloud: NetSuite 640xxx in closed months, the budget's cloud share of opex in the others
+ *  (block: the Plan's year; withTargets: the projection year's targets, cloudTargetsOf). */
+function cloudYear({ block, details, targetsBase, category, capPct, revenue, withTargets = null }) {
   let actual = 0;
   let forecast = 0;
   block.rows.forEach((r, i) => {
@@ -91,8 +117,10 @@ function cloudYear({ block, details, targetsBase, category, capPct, revenue }) {
     }
     const capM = (((details.variants || {}).plan || {})[block.year] || {}).months || {};
     const cats = capM[r.mKey] && capM[r.mKey].categories;
-    if (cats) forecast += num(r.eur.opex) * shareOf(cats, category);
-    else if (targetsBase && targetsBase.year === block.year && targetsBase.months[i]) forecast += num(targetsBase.months[i].opexByCategory[category]);
+    let month = 0;
+    if (cats) month = num(r.eur.opex) * shareOf(cats, category);
+    else if (targetsBase && targetsBase.year === block.year && targetsBase.months[i]) month = num(targetsBase.months[i].opexByCategory[category]);
+    forecast += withTargets ? withTargets.adjust(r.mKey, month) : month;
   });
   const total = actual + forecast;
   const cap = (capPct / 100) * revenue;
@@ -101,6 +129,7 @@ function cloudYear({ block, details, targetsBase, category, capPct, revenue }) {
     actual: round2(actual), forecast: round2(forecast), total: round2(total), revenue: round2(revenue),
     capPct, cap: round2(cap), headroom: round2(cap - total), pctOfRevenue: revenue ? Math.round((total / revenue) * 10000) / 100 : null,
     within: total <= cap,
+    targets: withTargets ? { kind: withTargets.kind, pct: withTargets.pct } : null,
   };
 }
 
@@ -158,11 +187,24 @@ async function sfCustomerRevenue(sf, from, to) {
  *   cash, pnl: the projection payloads (Plan); pnlDetails: the P&L's server-side details
  *   extras: { arr, churnQuarters, nrr: [{ month, nrr, grr, customers }], fx: [...], fxMonth, usdLive }
  *   failed: names of the extras that could not be read
+ *   targets: the saved targets store ({ years: { 'YYYY': targets }, updatedAt, updatedBy }) or null;
+ *   targetsLib: src/forecast/targets.mjs (without it, or without saved targets, the Plan as it is)
  */
-function buildMetrics({ nowMs, cash, pnl, pnlDetails, settings, deposits, extras, failed = [] }) {
+function buildMetrics({ nowMs, cash, pnl, pnlDetails, settings, deposits, extras, failed = [], targets = null, targetsLib = null }) {
   const [Y, T] = pnl.years;
-  const pBlocks = pnl.variants.plan.years;
-  const cBlocks = cash.variants.plan.years;
+  // The projection year follows the targets saved on the New Bank Dashboard, as both pages' Targets view.
+  const tl = targetsLib;
+  const savedRaw = tl && targets && targets.years ? targets.years[String(T)] : null;
+  const saved = savedRaw ? tl.validateTargets(savedRaw).targets : null;
+  const tActive = !!(saved && !tl.isEmptyTargets(saved));
+  const blocksOf = (payload, apply) => (tActive && payload.targetsBase && payload.targetsBase.year === T
+    ? tl.variantWithTargets(payload.variants.plan, payload.targetsBase, saved, apply).years
+    : payload.variants.plan.years);
+  const pBlocks = blocksOf(pnl, tl && tl.applyPnlTargets);
+  const cBlocks = blocksOf(cash, tl && tl.applyCashTargets);
+  const pnlTargeted = pBlocks !== pnl.variants.plan.years;
+  const cashTargeted = cBlocks !== cash.variants.plan.years;
+  const withT = (text, on = pnlTargeted) => (on ? `${text}; FY ${T} with the ${T} targets` : text);
   const pY = pBlocks.find((b) => b.year === Y);
   const pT = pBlocks.find((b) => b.year === T);
   const cY = cBlocks.find((b) => b.year === Y);
@@ -208,20 +250,20 @@ function buildMetrics({ nowMs, cash, pnl, pnlDetails, settings, deposits, extras
   const churnYtd = quarters.filter((q) => String(q.qs).startsWith(`${Y}-`));
 
   const metrics = [
-    { key: 'revenue', label: 'Revenue', unit: 'eur', note: 'Total revenue (P&L, Plan)', ...lastAndYtd('totalRevenue'), fy: [fyOf(pY, 'totalRevenue', false), fyOf(pT, 'totalRevenue', false)] },
+    { key: 'revenue', label: 'Revenue', unit: 'eur', note: withT('Total revenue (P&L, Plan)'), ...lastAndYtd('totalRevenue'), fy: [fyOf(pY, 'totalRevenue', false), fyOf(pT, 'totalRevenue', false)] },
     {
       key: 'ebitda', label: 'EBITDA', unit: 'eur',
-      note: useEnv && inv.amountEur ? 'P&L, Plan, with the innovation envelope' : 'P&L, Plan',
+      note: withT(useEnv && inv.amountEur ? 'P&L, Plan, with the innovation envelope' : 'P&L, Plan'),
       ...lastAndYtd('ebitda'), fy: [fyOf(pY, 'ebitda', useEnv), fyOf(pT, 'ebitda', useEnv)],
     },
     {
-      key: 'netCash', label: 'Net cash', unit: 'eur', note: 'Cash in the bank (no debt); forecast: New Bank Dashboard, Plan',
+      key: 'netCash', label: 'Net cash', unit: 'eur', note: withT('Cash in the bank (no debt); forecast: New Bank Dashboard, Plan', cashTargeted),
       lastMonth: bank ? cell(bank.eur, 'actual', `Bank, ${bank.asOf}`) : null,
       ytd: bank && janOpen !== null ? cell(num(bank.eur) - janOpen, 'actual', 'Change since 1 Jan') : null,
       fy: [cY ? decClose(cY) : null, cT ? decClose(cT) : null],
     },
     {
-      key: 'arr', label: 'ARR', unit: 'eur', note: 'MRR × 12',
+      key: 'arr', label: 'ARR', unit: 'eur', note: withT('MRR × 12'),
       lastMonth: arr ? cell(arr.arr, 'actual', `Now (${arr.liveDate || arr.snapDate || 'latest'})`) : null,
       ytd: null,
       fy: [decRunRate(pY), decRunRate(pT)],
@@ -242,9 +284,17 @@ function buildMetrics({ nowMs, cash, pnl, pnlDetails, settings, deposits, extras
   const categories = (pnl.targetsBase && pnl.targetsBase.categories) || [];
   const category = cloudCategoryOf(settings, categories, pnl.targetsBase);
   const capPct = num(settings.cloudCapPct);
+  // The baseline cloud comes from the Plan's year (its opex already holds no targets); the projection
+  // year then takes the targets' cloud, and the cap the revenue after the targets.
+  const deltas = pnlTargeted ? tl.computeTargetDeltas(pnl.targetsBase, saved) : null;
+  const cloudTargets = cloudTargetsOf(saved, deltas, category);
+  const planBlock = (year) => pnl.variants.plan.years.find((b) => b.year === year);
   const cloud = {
     category, categories, capPct, accounts: '640xxx',
-    years: [pY, pT].map((b) => cloudYear({ block: b, details: pnlDetails || {}, targetsBase: pnl.targetsBase, category, capPct, revenue: fyOf(b, 'totalRevenue', false).value })),
+    years: [pY, pT].map((b) => cloudYear({
+      block: planBlock(b.year), details: pnlDetails || {}, targetsBase: pnl.targetsBase, category, capPct,
+      revenue: fyOf(b, 'totalRevenue', false).value, withTargets: b.year === T ? cloudTargets : null,
+    })),
   };
 
   const fyEbitda = (b) => fyOf(b, 'ebitda', false).value;
@@ -280,11 +330,18 @@ function buildMetrics({ nowMs, cash, pnl, pnlDetails, settings, deposits, extras
     nrr: 'NRR could not be computed from Snowflake right now.',
     fx: 'Last month\'s FX conversions could not be read from NetSuite right now.',
     usd: 'Today\'s ECB rate is unavailable right now.',
+    targets: `The ${T} targets could not be applied right now: FY ${T} shows the Plan.`,
   }[f] || `${f} is unavailable right now.`));
 
   return {
     ok: true, status: 'ready', generatedAt: new Date(nowMs).toISOString(), years: [Y, T],
     asOf: { lastClosed: through, cash: cash.generatedAt, pnl: pnl.generatedAt, plan: pnl.plan ? pnl.plan.name : null },
+    targets: {
+      year: T, active: pnlTargeted || cashTargeted,
+      updatedAt: savedRaw && targets.updatedAt ? targets.updatedAt : null,
+      updatedBy: savedRaw && targets.updatedBy ? targets.updatedBy : null,
+      assumptions: pnlTargeted || cashTargeted ? tl.describeTargets(saved) : [],
+    },
     metrics,
     nrrTrend: extras.nrr || [],
     cloud,
@@ -329,13 +386,14 @@ async function fetchUsdLive() {
  *   cash, pnl        the projection handlers (their .current()); default: own instances on the same caches
  *   getSfClient(), getNsClient(sub), queueNsCall(fn)
  *   reads            override every external read (tests): { arr, churnQuarters, customerRevenue(from, to), fx(month), usdLive }
- *   settingsFile, depositsFile, clock(), ttlMs
+ *   settingsFile, depositsFile, targetsFile (the saved 2027 targets), clock(), ttlMs
  */
 function createMetricsHandler(deps = {}) {
   const clock = deps.clock || Date.now;
   const ttlMs = deps.ttlMs ?? envMinutes('METRICS_TTL_MIN', 30) * MIN;
   const settingsFile = deps.settingsFile || SETTINGS_FILE;
   const depositsFile = deps.depositsFile || DEPOSITS_FILE;
+  const targetsFile = deps.targetsFile || projectionTargets.DEFAULT_FILE;
   // Without the page handlers (finance-it's own route file), own instances read the same cache files and
   // compute only when there is no usable cache at all; refreshing stale figures stays with the pages.
   let own = null;
@@ -425,12 +483,21 @@ function createMetricsHandler(deps = {}) {
     const extras = { arr: val(0), churnQuarters: val(1), nrr: val(2), fx: val(3), fxMonth: closed, usdLive: val(4) };
     const settingsDoc = readDoc(settingsFile);
     const depositsDoc = readDoc(depositsFile);
+    // The saved targets, read on every request so a save on the New Bank Dashboard shows at once.
+    const targets = projectionTargets.readStore(targetsFile);
+    let targetsLib = null;
+    if (targets) {
+      try { targetsLib = await projectionTargets.loadTargetsModule(); } catch (e) {
+        console.warn(`[metrics] targets module unavailable: ${e && e.message}`);
+        failed.push('targets');
+      }
+    }
     try {
       const out = buildMetrics({
         nowMs, cash: c.entry.payload, pnl: p.entry.payload, pnlDetails: p.entry.details,
         settings: { ...emptySettings(), ...((settingsDoc && settingsDoc.value) || {}) },
         deposits: (depositsDoc && depositsDoc.value) || [],
-        extras, failed,
+        extras, failed, targets, targetsLib,
       });
       out.refreshing = !!(c.refreshing || p.refreshing);
       send(res, 200, out);
@@ -450,5 +517,5 @@ function createMetricsDepositsHandler(deps = {}) {
 
 module.exports = {
   createMetricsHandler, createMetricsSettingsHandler, createMetricsDepositsHandler,
-  buildMetrics, nrrSeries, envelopeMonths, shiftMonth, lastClosedMonth,
+  buildMetrics, nrrSeries, envelopeMonths, shiftMonth, lastClosedMonth, cloudTargetsOf,
 };
