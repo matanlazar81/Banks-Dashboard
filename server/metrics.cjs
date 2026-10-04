@@ -18,13 +18,14 @@
 //   Projection year       the 2027 targets saved on the New Bank Dashboard apply, as in both pages'
 //                         Targets view (src/forecast/targets.mjs): revenue, EBITDA, December cash, ARR,
 //                         and cloud (server costs as a % of revenue, or the category's % change)
-//   USD/EUR planning rate saved setting, next to today's ECB rate
-//   FX conversions        last month's NetSuite transfers between accounts of different currencies
-//   Deposit confirmations the page's tracker: deposits whose confirmation has not come back
+//
+// GET /api/metrics?detail=<item> answers what one figure is made of (NRR, the churn cells): the formula,
+// the source, the steps and the customers behind it (DETAILS, buildDetail).
 //
 // The projections come from their cached handlers (no second NetSuite pull); the other reads are cached
-// for METRICS_TTL_MIN (default 30). GET/PUT /api/metrics/settings and /api/metrics/deposits save what
-// the page edits (server/json-store.cjs, server/metrics-settings.cjs).
+// for METRICS_TTL_MIN (default 30). GET/PUT /api/metrics/settings saves what the page edits (the cloud
+// cap; server/json-store.cjs, server/metrics-settings.cjs). /api/metrics/deposits stays mounted for
+// finance-it's route file, but the page no longer has the deposit tracker.
 // ─────────────────────────────────────────────────────────────────────────────
 const path = require('path');
 const { readDoc, createDocHandler, send } = require('./json-store.cjs');
@@ -146,6 +147,245 @@ function nrrSeries(rows, months) {
   }).filter(Boolean);
 }
 
+/**
+ * How one month's NRR is made (pure): the bridge from the base customers' revenue a year earlier to
+ * their revenue now, and the customers behind each step. rows: [{ month, customer, name, rev }].
+ * The figures equal nrrSeries' for the month. limit: customers listed per group (the rest are counted).
+ */
+function nrrDetail(rows, month, { limit = 40 } = {}) {
+  const prev = shiftMonth(month, -12);
+  const at = (m) => {
+    const out = new Map();
+    for (const r of rows) {
+      if (r.month !== m) continue;
+      const c = out.get(r.customer) || { name: r.name || r.customer, rev: 0 };
+      c.rev += num(r.rev);
+      out.set(r.customer, c);
+    }
+    return out;
+  };
+  const before = at(prev);
+  const now = at(month);
+  if (!before.size || !now.size) return null;
+  const groups = { churned: [], contracted: [], expanded: [], flat: [], added: [] };
+  let base = 0;
+  let kept = 0;
+  let gross = 0;
+  for (const [id, b] of before) {
+    if (b.rev <= 0) continue;
+    const cur = Math.max(0, now.has(id) ? now.get(id).rev : 0);
+    base += b.rev;
+    kept += cur;
+    gross += Math.min(cur, b.rev);
+    const row = { customer: b.name, then: round2(b.rev), now: round2(cur), change: round2(cur - b.rev) };
+    if (cur <= 0) groups.churned.push(row);
+    else if (Math.abs(cur - b.rev) < 0.5) groups.flat.push(row);
+    else (cur > b.rev ? groups.expanded : groups.contracted).push(row);
+  }
+  for (const [id, c] of now) {
+    if (c.rev > 0 && !(before.has(id) && before.get(id).rev > 0)) groups.added.push({ customer: c.name, then: 0, now: round2(c.rev), change: round2(c.rev) });
+  }
+  if (!(base > 0)) return null;
+  const total = (list, f) => round2(sumOf(list, f));
+  const expansion = total(groups.expanded, (r) => r.change);
+  const contraction = total(groups.contracted, (r) => -r.change);
+  const churn = total(groups.churned, (r) => r.then);
+  const P = monthShort(prev);
+  const N = monthShort(month);
+  const byImpact = (list) => list.slice().sort((a, b) => Math.abs(b.change) - Math.abs(a.change));
+  const table = (title, list, note) => {
+    const sorted = byImpact(list);
+    return {
+      title: `${title} (${list.length})`, note,
+      columns: [{ key: 'customer', label: 'Customer', unit: 'text' }, { key: 'then', label: P, unit: 'eur' }, { key: 'now', label: N, unit: 'eur' }, { key: 'change', label: 'Change', unit: 'eur' }],
+      rows: sorted.slice(0, limit), more: Math.max(0, sorted.length - limit),
+      total: { customer: 'Total', then: total(list, (r) => r.then), now: total(list, (r) => r.now), change: total(list, (r) => r.change) },
+    };
+  };
+  const customers = groups.churned.length + groups.contracted.length + groups.expanded.length + groups.flat.length;
+  return {
+    item: 'nrr', title: `NRR, ${N}`, subtitle: `Last year's customers: ${P} → ${N}`,
+    value: { value: Math.round((kept / base) * 10000) / 100, unit: 'pct' },
+    formula: [
+      `NRR = the revenue in ${N} of the customers who had revenue in ${P}, ÷ their revenue in ${P}.`,
+      `GRR = the same with each customer capped at its ${P} revenue, so growth doesn't count: only what was kept.`,
+      `Customers new since ${P} are left out (listed at the end, not counted).`,
+    ],
+    source: [
+      'Snowflake FCT_CUSTOMER__MONTHLY__FINANCE: revenue by customer and month, actual months only (DATE_STATUS = \'actual\').',
+      'Test customers excluded (DIM_CUSTOMER__FINANCE.IS_TEST = FALSE); names from DIM_CUSTOMER__FINANCE.',
+      'Read when the page loads and kept for 30 minutes; Refresh reads it again.',
+    ],
+    summary: [
+      { label: `Customers with revenue in ${P}`, value: customers, unit: 'int' },
+      { label: `Their revenue, ${P}`, value: round2(base), unit: 'eur' },
+      { label: `+ Expansion (${groups.expanded.length} customers)`, value: expansion, unit: 'eur', sign: true },
+      { label: `− Contraction (${groups.contracted.length} customers)`, value: -contraction, unit: 'eur', sign: true },
+      { label: `− Churned (${groups.churned.length} customers, no revenue in ${N})`, value: -churn, unit: 'eur', sign: true },
+      { label: `= Their revenue, ${N}`, value: round2(kept), unit: 'eur', strong: true },
+      { label: `NRR = ${N} ÷ ${P}`, value: Math.round((kept / base) * 10000) / 100, unit: 'pct', strong: true },
+      { label: 'GRR (each capped at its old revenue)', value: Math.round((gross / base) * 10000) / 100, unit: 'pct' },
+      { label: `Not counted: ${groups.added.length} new customers, revenue ${N}`, value: total(groups.added, (r) => r.now), unit: 'eur' },
+    ],
+    tables: [
+      table('Churned', groups.churned, `Revenue in ${P}, none in ${N}.`),
+      table('Contracted', groups.contracted, `Less revenue in ${N} than in ${P}.`),
+      table('Expanded', groups.expanded, `More revenue in ${N} than in ${P}.`),
+      table('New since then (not counted)', groups.added, `No revenue in ${P}: outside NRR.`),
+    ],
+  };
+}
+
+// ── churn: what each figure is made of ──────────────────────────────────────
+const quarterLabel = (mKey) => `Q${Math.ceil(Number(mKey.slice(5)) / 3)} ${mKey.slice(0, 4)}`;
+const quarterMonths = (qs) => [0, 1, 2].map((i) => shiftMonth(qs.slice(0, 7), i));
+const OPP_SOURCE = [
+  'Snowflake DIM_OPPORTUNITY__FINANCE: opportunities with IS_OPPORTUNITY_CHURNED = TRUE, by their churn month (OPPORTUNITY_CHURN_MONTH_START_DATE); MRR = OPPORTUNITY_AMOUNT.',
+  'Customer names from DIM_CUSTOMER__FINANCE (by CUSTOMER_ID). The same read the New Bank Dashboard\'s churn run-rate uses.',
+];
+const oppTable = (title, list, { withQuarter = false, note } = {}) => ({
+  title, note,
+  columns: [
+    ...(withQuarter ? [{ key: 'quarter', label: 'Quarter', unit: 'text' }] : []),
+    { key: 'customer', label: 'Customer', unit: 'text' }, { key: 'opportunity', label: 'Opportunity', unit: 'text' },
+    { key: 'month', label: 'Churn month', unit: 'text' }, { key: 'currency', label: 'Currency', unit: 'text' },
+    { key: 'amount', label: 'MRR', unit: 'eur' },
+  ],
+  rows: list.map((o) => ({ quarter: quarterLabel(o.month), customer: o.customer || '–', opportunity: o.opportunity, month: monthShort(o.month), currency: o.currency || '–', amount: round2(o.amount) })),
+  more: 0,
+  total: { [withQuarter ? 'quarter' : 'customer']: 'Total', amount: round2(sumOf(list, (o) => o.amount)) },
+});
+// Amounts in other currencies are added as they are, as the quarterly figure does: say so when it happens.
+const currencyNote = (list) => {
+  const other = [...new Set(list.map((o) => o.currency).filter((c) => c && c !== 'EUR'))];
+  return other.length ? `Some opportunities are in ${other.join(', ')}: their amounts are added as they are, as in the pack's figure.` : null;
+};
+
+/** The last full quarter's churned MRR, opportunity by opportunity (pure). opps: [{ month, opportunity, customer, currency, amount }]. */
+function churnQuarterDetail(quarter, opps) {
+  const months = quarterMonths(quarter.qs);
+  const list = opps.filter((o) => months.includes(o.month)).sort((a, b) => b.amount - a.amount);
+  const total = round2(sumOf(list, (o) => o.amount));
+  const notes = [currencyNote(list), Math.abs(total - num(quarter.amount)) >= 0.5
+    ? `The pack shows ${round2(quarter.amount)} (read earlier); this list was read now.` : null].filter(Boolean);
+  return {
+    item: 'churn-quarter', title: `Churn, ${quarter.q}`, subtitle: `Churned MRR, ${monthShort(months[0])}–${monthShort(months[2])}`,
+    value: { value: total, unit: 'eur' },
+    formula: [
+      `Churned MRR, ${quarter.q} = the MRR of every opportunity marked churned whose churn month is in ${quarter.q}.`,
+      'One row per opportunity: a customer can have several.',
+    ],
+    source: [...OPP_SOURCE, 'The last full quarter: the quarter in progress is not complete yet.'],
+    summary: [
+      { label: 'Opportunities churned', value: list.length, unit: 'int' },
+      { label: 'Customers', value: new Set(list.map((o) => o.customer || o.opportunity)).size, unit: 'int' },
+      { label: `Churned MRR, ${quarter.q}`, value: total, unit: 'eur', strong: true },
+    ],
+    notes,
+    tables: [oppTable(`Opportunities churned in ${quarter.q} (${list.length})`, list)],
+  };
+}
+
+/** This year's churned MRR so far, quarter by quarter (the quarter in progress included). */
+function churnYtdDetail(year, quarters, opps) {
+  const qs = quarters.filter((q) => String(q.qs).startsWith(`${year}-`)).sort((a, b) => String(a.qs).localeCompare(String(b.qs)));
+  const inYear = opps.filter((o) => o.month.startsWith(`${year}-`))
+    .sort((a, b) => a.month.slice(0, 7).localeCompare(b.month.slice(0, 7)) || b.amount - a.amount);
+  const total = round2(sumOf(inYear, (o) => o.amount));
+  return {
+    item: 'churn-ytd', title: `Churn, ${year} so far`, subtitle: `Churned MRR, ${qs.map((q) => q.q).join(' + ') || year}`,
+    value: { value: total, unit: 'eur' },
+    formula: [
+      `Churned MRR, ${year} so far = the churned MRR of each quarter of ${year}, the quarter in progress included.`,
+      'Each quarter: the MRR of every opportunity marked churned whose churn month is in it.',
+    ],
+    source: OPP_SOURCE,
+    summary: [
+      ...qs.map((q) => {
+        const sum = round2(sumOf(inYear.filter((o) => quarterLabel(o.month) === q.q), (o) => o.amount));
+        return { label: `${q.q}${q.partial ? ' (in progress)' : ''}: ${inYear.filter((o) => quarterLabel(o.month) === q.q).length} opportunities`, value: sum, unit: 'eur' };
+      }),
+      { label: `Churned MRR, ${year} so far`, value: total, unit: 'eur', strong: true },
+    ],
+    notes: [currencyNote(inYear)].filter(Boolean),
+    tables: [oppTable(`Opportunities churned in ${year} (${inYear.length})`, inYear, { withQuarter: true })],
+  };
+}
+
+/**
+ * The forecast's churn for the year: a run-rate, not a list of customers. Each forecast month loses the
+ * run-rate × its place in the forecast (churn piles up); a month the Plan sets by hand keeps its figure.
+ *   rows: the P&L year (eur.churn); months: details.variants.plan[year].months ({ churnIndex, churnOverride });
+ *   quarters: the churn quarters; opps: the churned opportunities (context only).
+ */
+function churnForecastDetail(year, rows, months, quarters, opps) {
+  const fc = rows.filter((r) => !isActual(r)).map((r) => {
+    const d = (months || {})[r.mKey] || {};
+    return { mKey: r.mKey, n: num(d.churnIndex), override: !!d.churnOverride, churn: num(r.eur.churn) };
+  });
+  const ruled = fc.find((m) => !m.override && m.n > 0 && m.churn > 0);
+  const rate = ruled ? ruled.churn / ruled.n : 0;
+  // The quarter the run-rate comes from: the latest full quarter before the forecast starts.
+  const first = fc.length ? fc[0].mKey : null;
+  const fromQ = first ? quarters.filter((q) => !q.partial && quarterMonths(q.qs)[2] < first).sort((a, b) => String(a.qs).localeCompare(String(b.qs))).pop() : null;
+  const matches = fromQ && Math.abs(num(fromQ.amount) / 3 - rate) < 1;
+  const total = round2(sumOf(fc, (m) => m.churn));
+  const context = fromQ ? opps.filter((o) => quarterMonths(fromQ.qs).includes(o.month)).sort((a, b) => b.amount - a.amount) : [];
+  return {
+    item: 'churn-forecast', title: `Churn, FY ${year} forecast months`, subtitle: 'Revenue the forecast loses to churn (a run-rate, not a list of customers)',
+    value: { value: total, unit: 'eur' },
+    formula: [
+      matches ? `Run-rate = ${fromQ.q} churned MRR ÷ 3 (a month of it).` : 'Run-rate = the forecast engine\'s monthly churn.',
+      'Each forecast month loses the run-rate × its place in the forecast (1st month × 1, 2nd × 2, …): a customer lost in one month stays lost in the next.',
+      'A month the Plan sets by hand keeps its own figure.',
+      `FY ${year} forecast months = the sum of those months.`,
+    ],
+    source: [
+      'The P&L Projection, Plan: the churn line of each forecast month (the same engine as the New Bank Dashboard).',
+      ...(matches ? [`${fromQ.q} churned MRR: ${OPP_SOURCE[0]}`] : []),
+    ],
+    summary: [
+      ...(matches ? [{ label: `${fromQ.q} churned MRR`, value: round2(fromQ.amount), unit: 'eur' }] : []),
+      { label: matches ? 'Run-rate a month (÷ 3)' : 'Run-rate a month', value: round2(rate), unit: 'eur' },
+      { label: 'Forecast months', value: fc.length, unit: 'int' },
+      { label: `Churn, FY ${year} forecast months`, value: total, unit: 'eur', strong: true },
+    ],
+    notes: [],
+    tables: [
+      {
+        title: 'By forecast month', note: null,
+        columns: [{ key: 'month', label: 'Month', unit: 'text' }, { key: 'how', label: 'How', unit: 'text' }, { key: 'churn', label: 'Churn', unit: 'eur' }],
+        rows: fc.map((m) => ({ month: monthShort(m.mKey), how: m.override ? 'Set in the Plan' : `${m.n} × run-rate`, churn: round2(m.churn) })),
+        more: 0, total: { month: 'Total', churn: total },
+      },
+      ...(context.length ? [{
+        ...oppTable(`For context: churned in ${fromQ.q} (${context.length})`, context),
+        note: `The run-rate comes from these. The forecast does not name customers: it assumes ${fromQ.q}'s pace goes on.`,
+      }] : []),
+    ],
+  };
+}
+
+/** Churned opportunities with a churn month from..to (YYYY-MM, inclusive), the quarterly figure's filters. */
+async function sfChurnedOpportunities(sf, from, to) {
+  if (!/^\d{4}-\d{2}$/.test(from) || !/^\d{4}-\d{2}$/.test(to)) throw new Error('sfChurnedOpportunities: bad months');
+  const T = require(path.join(ROOT, 'snowflake-api.cjs')).SF_TABLES;
+  const rows = await sf.query(`
+    SELECT TO_VARCHAR(DATE_TRUNC('month', o.OPPORTUNITY_CHURN_MONTH_START_DATE), 'YYYY-MM') AS M,
+           COALESCE(o.OPPORTUNITY_NAME, '(no name)') AS OPP,
+           c.CUSTOMER_NAME AS CUST,
+           o.CURRENCY AS CUR,
+           SUM(o.OPPORTUNITY_AMOUNT) AS AMT
+    FROM ${T.DIM_OPPORTUNITY} o
+    LEFT JOIN (SELECT CUSTOMER_ID, MAX(CUSTOMER_NAME) AS CUSTOMER_NAME FROM ${T.DIM_CUSTOMER} GROUP BY 1) c ON c.CUSTOMER_ID = o.CUSTOMER_ID
+    WHERE o.IS_OPPORTUNITY_CHURNED = TRUE
+      AND o.OPPORTUNITY_CHURN_MONTH_START_DATE >= '${from}-01'
+      AND o.OPPORTUNITY_CHURN_MONTH_START_DATE < '${shiftMonth(to, 1)}-01'
+    GROUP BY 1, 2, 3, 4
+  `);
+  return rows.map((r) => ({ month: String(r.M || ''), opportunity: String(r.OPP || ''), customer: r.CUST ? String(r.CUST) : null, currency: r.CUR ? String(r.CUR) : null, amount: num(r.AMT) }));
+}
+
 /** Revenue by customer and month (actual months, test customers excluded), from..to inclusive. */
 async function sfCustomerRevenue(sf, from, to) {
   if (!/^\d{4}-\d{2}$/.test(from) || !/^\d{4}-\d{2}$/.test(to)) throw new Error('sfCustomerRevenue: bad months');
@@ -153,6 +393,7 @@ async function sfCustomerRevenue(sf, from, to) {
   const rows = await sf.query(`
     SELECT TO_VARCHAR(DATE_TRUNC('month', m.CAL_MONTH_START_DATE), 'YYYY-MM') AS M,
            m.CUSTOMER_ID AS C,
+           MAX(c.CUSTOMER_NAME) AS N,
            SUM(m.REVENUE) AS REV
     FROM ${T.FCT_CUSTOMER_MONTHLY} m
     JOIN ${T.DIM_CUSTOMER} c ON c.CUSTOMER_ID = m.CUSTOMER_ID
@@ -162,7 +403,7 @@ async function sfCustomerRevenue(sf, from, to) {
       AND m.CAL_MONTH_START_DATE < '${shiftMonth(to, 1)}-01'
     GROUP BY 1, 2
   `);
-  return rows.map((r) => ({ month: String(r.M || ''), customer: String(r.C || ''), rev: num(r.REV) }));
+  return rows.map((r) => ({ month: String(r.M || ''), customer: String(r.C || ''), name: r.N ? String(r.N) : null, rev: num(r.REV) }));
 }
 
 // ── payroll and revenue per employee ────────────────────────────────────────
@@ -252,13 +493,13 @@ async function sfEmployeeSpans(sf, company) {
 /**
  * The Metrics payload from its inputs (pure; unit-tested).
  *   cash, pnl: the projection payloads (Plan); pnlDetails: the P&L's server-side details
- *   extras: { arr, churnQuarters, nrr: [{ month, nrr, grr, customers }], fx: [...], fxMonth, usdLive,
+ *   extras: { arr, churnQuarters, nrr: [{ month, nrr, grr, customers }],
  *             employees: [{ start, end, type }], company }
  *   failed: names of the extras that could not be read
  *   targets: the saved targets store ({ years: { 'YYYY': targets }, updatedAt, updatedBy }) or null;
  *   targetsLib: src/forecast/targets.mjs (without it, or without saved targets, the Plan as it is)
  */
-function buildMetrics({ nowMs, cash, pnl, pnlDetails, settings, deposits, extras, failed = [], targets = null, targetsLib = null }) {
+function buildMetrics({ nowMs, cash, pnl, pnlDetails, settings, extras, failed = [], targets = null, targetsLib = null }) {
   const [Y, T] = pnl.years;
   // The projection year follows the targets saved on the New Bank Dashboard, as both pages' Targets view.
   const tl = targetsLib;
@@ -326,14 +567,14 @@ function buildMetrics({ nowMs, cash, pnl, pnlDetails, settings, deposits, extras
     },
     {
       key: 'nrr', label: 'NRR', unit: 'pct', note: nrrLast ? `Trailing 12 months; GRR ${nrrLast.grr}%` : 'Trailing 12 months',
-      lastMonth: nrrLast ? cell(nrrLast.nrr, 'actual', monthShort(nrrLast.month), { grr: nrrLast.grr, customers: nrrLast.customers }) : null,
+      lastMonth: nrrLast ? cell(nrrLast.nrr, 'actual', monthShort(nrrLast.month), { grr: nrrLast.grr, customers: nrrLast.customers, detail: 'nrr' }) : null,
       ytd: null, fy: [null, null],
     },
     {
       key: 'churn', label: 'Churn', unit: 'eur', note: 'Churned MRR (actual); revenue lost to churn (forecast)',
-      lastMonth: lastFullQ ? cell(lastFullQ.amount, 'actual', lastFullQ.q || String(lastFullQ.qs)) : null,
-      ytd: churnYtd.length ? cell(sumOf(churnYtd, (q) => q.amount), 'actual', `${Y} so far`) : null,
-      fy: [cell(sumOf(pY.rows.filter((r) => !isActual(r)), (r) => r.eur.churn), 'forecast', `FY ${Y} forecast months`), null],
+      lastMonth: lastFullQ ? cell(lastFullQ.amount, 'actual', lastFullQ.q || String(lastFullQ.qs), { detail: 'churn-quarter' }) : null,
+      ytd: churnYtd.length ? cell(sumOf(churnYtd, (q) => q.amount), 'actual', `${Y} so far`, { detail: 'churn-ytd' }) : null,
+      fy: [cell(sumOf(pY.rows.filter((r) => !isActual(r)), (r) => r.eur.churn), 'forecast', `FY ${Y} forecast months`, { detail: 'churn-forecast' }), null],
     },
   ];
 
@@ -353,24 +594,10 @@ function buildMetrics({ nowMs, cash, pnl, pnlDetails, settings, deposits, extras
     })),
   };
 
-  const fx = (extras.fx || []);
-  const totals = new Map();
-  for (const c of fx) {
-    const k = `${c.fromCurrency}→${c.toCurrency}|${c.currency}`;
-    const t = totals.get(k) || { pair: `${c.fromCurrency} → ${c.toCurrency}`, currency: c.currency, amount: 0, eur: 0, count: 0 };
-    t.amount += c.amount;
-    t.eur += c.eur;
-    t.count++;
-    totals.set(k, t);
-  }
-
-  const open = (deposits || []).filter((d) => !d.confirmed).sort((a, b) => String(a.placedOn).localeCompare(String(b.placedOn)));
   const warnings = failed.map((f) => ({
     arr: 'ARR could not be read from Snowflake right now.',
     churn: 'Churn by quarter could not be read from Snowflake right now.',
     nrr: 'NRR could not be computed from Snowflake right now.',
-    fx: 'Last month\'s FX conversions could not be read from NetSuite right now.',
-    usd: 'Today\'s ECB rate is unavailable right now.',
     targets: `The ${T} targets could not be applied right now: FY ${T} shows the Plan.`,
     employees: 'Employees could not be read from HiBob (Snowflake) right now: revenue per employee is empty.',
   }[f] || `${f} is unavailable right now.`));
@@ -388,18 +615,49 @@ function buildMetrics({ nowMs, cash, pnl, pnlDetails, settings, deposits, extras
     nrrTrend: extras.nrr || [],
     cloud,
     people: peopleMetrics(pY.rows, extras.employees || null, extras.company || null),
-    rates: { usdEurPlanning: settings.usdEurPlanningRate, usdEurLive: extras.usdLive || null },
-    fx: {
-      month: extras.fxMonth, items: fx,
-      totals: [...totals.values()].map((t) => ({
-        pair: t.pair, currency: t.currency, count: t.count, amount: round2(t.amount), eur: round2(t.eur),
-        rate: t.currency !== 'EUR' && t.eur > 0 ? Math.round((t.amount / t.eur) * 10000) / 10000 : null,
-      })),
-    },
-    deposits: { open, openCount: open.length, total: (deposits || []).length },
     settings,
     warnings,
   };
+}
+
+// ── ?detail=: what one figure is made of ────────────────────────────────────
+const DETAILS = ['nrr', 'churn-quarter', 'churn-ytd', 'churn-forecast'];
+
+/**
+ * The breakdown of one pack figure, from the same reads as the pack (null when there is nothing yet).
+ *   ctx: { pnl, pnlDetails, closed, nrrMonths, quarters(), customerRevenue(), churnedOpps(from, to) }
+ */
+async function buildDetail(item, ctx) {
+  const Y = ctx.pnl.years[0];
+  if (item === 'nrr') {
+    const rows = await ctx.customerRevenue();
+    const series = nrrSeries(rows, ctx.nrrMonths);
+    const last = series[series.length - 1];
+    if (!last) return null;
+    const d = nrrDetail(rows, last.month);
+    if (d) {
+      d.tables.push({
+        title: 'NRR, the last 6 months', note: 'Each month against the same month a year earlier.',
+        columns: [{ key: 'month', label: 'Month', unit: 'text' }, { key: 'customers', label: 'Base customers', unit: 'int' }, { key: 'nrr', label: 'NRR', unit: 'pct' }, { key: 'grr', label: 'GRR', unit: 'pct' }],
+        rows: series.map((s) => ({ month: monthShort(s.month), customers: s.customers, nrr: s.nrr, grr: s.grr })), more: 0, total: null,
+      });
+    }
+    return d;
+  }
+  const quarters = ((await ctx.quarters()) || []).slice().sort((a, b) => String(a.qs).localeCompare(String(b.qs)));
+  const lastFull = quarters.filter((q) => !q.partial).pop();
+  // One read of the churned opportunities covers the last full quarter and this year so far.
+  const from = [lastFull ? String(lastFull.qs).slice(0, 7) : null, `${Y}-01`].filter(Boolean).sort()[0];
+  const to = shiftMonth(ctx.closed, 3);
+  const opps = await ctx.churnedOpps(from, to);
+  if (item === 'churn-quarter') return lastFull ? churnQuarterDetail(lastFull, opps) : null;
+  if (item === 'churn-ytd') return churnYtdDetail(Y, quarters, opps);
+  if (item === 'churn-forecast') {
+    const block = ctx.pnl.variants.plan.years.find((b) => b.year === Y);
+    const months = (((ctx.pnlDetails || {}).variants || {}).plan || {})[Y];
+    return block ? churnForecastDetail(Y, block.rows, months ? months.months : {}, quarters, opps) : null;
+  }
+  return null;
 }
 
 // ── handler ─────────────────────────────────────────────────────────────────
@@ -408,34 +666,18 @@ function envMinutes(name, fallback) {
   return Number.isFinite(v) && v > 0 ? v : fallback;
 }
 
-async function fetchUsdLive() {
-  const fetchJson = async (u) => {
-    const r = await fetch(u, { signal: AbortSignal.timeout(5000) });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    return r.json();
-  };
-  try {
-    const d = await fetchJson('https://api.frankfurter.app/latest?from=EUR&to=USD');
-    if (d && d.rates && Number.isFinite(d.rates.USD)) return { rate: Math.round(d.rates.USD * 10000) / 10000, date: d.date, source: 'ECB (Frankfurter)' };
-  } catch { /* backup below */ }
-  const d = await fetchJson('https://open.er-api.com/v6/latest/EUR');
-  if (d && d.rates && Number.isFinite(d.rates.USD)) return { rate: Math.round(d.rates.USD * 10000) / 10000, date: String(d.time_last_update_utc || '').slice(0, 16), source: 'open.er-api.com' };
-  throw new Error('no USD rate');
-}
-
 /**
  * Express/connect handler for GET /api/metrics. deps (all optional):
  *   cash, pnl        the projection handlers (their .current()); default: own instances on the same caches
- *   getSfClient(), getNsClient(sub), queueNsCall(fn)
- *   reads            override every external read (tests): { arr, churnQuarters, customerRevenue(from, to), fx(month), usdLive, employees(company) }
+ *   getSfClient()
+ *   reads            override every external read (tests): { arr, churnQuarters, customerRevenue(from, to), churnedOpps(from, to), employees(company) }
  *   company          the HiBob company of the P&L's subsidiary (default METRICS_HEADCOUNT_COMPANY or 'LSports')
- *   settingsFile, depositsFile, targetsFile (the saved 2027 targets), clock(), ttlMs
+ *   settingsFile, targetsFile (the saved 2027 targets), clock(), ttlMs
  */
 function createMetricsHandler(deps = {}) {
   const clock = deps.clock || Date.now;
   const ttlMs = deps.ttlMs ?? envMinutes('METRICS_TTL_MIN', 30) * MIN;
   const settingsFile = deps.settingsFile || SETTINGS_FILE;
-  const depositsFile = deps.depositsFile || DEPOSITS_FILE;
   const targetsFile = deps.targetsFile || projectionTargets.DEFAULT_FILE;
   const company = deps.company || process.env.METRICS_HEADCOUNT_COMPANY || 'LSports';
   // Without the page handlers (finance-it's own route file), own instances read the same cache files and
@@ -459,19 +701,11 @@ function createMetricsHandler(deps = {}) {
       if (!c) throw new Error('Snowflake is not configured');
       return c;
     };
-    const ns = () => {
-      const sub = cmp().SUBSIDIARY;
-      const c = deps.getNsClient ? deps.getNsClient(sub) : require('./cash-projection.cjs').defaultGetNsClient(sub);
-      if (!c) throw new Error('NetSuite is not configured');
-      return c;
-    };
-    const queue = deps.queueNsCall || require('./cash-projection.cjs').defaultQueueNsCall;
     return {
       arr: () => sf().fetchCurrentARR(),
       churnQuarters: () => sf().fetchQuarterlyChurnMRR(),
       customerRevenue: (from, to) => sfCustomerRevenue(sf(), from, to),
-      fx: (month) => queue(() => ns().fetchFxConversions({ month })),
-      usdLive: fetchUsdLive,
+      churnedOpps: (from, to) => sfChurnedOpportunities(sf(), from, to),
       employees: (co) => sfEmployeeSpans(sf(), co),
     };
   })();
@@ -492,7 +726,16 @@ function createMetricsHandler(deps = {}) {
       return;
     }
     let refresh = false;
-    try { refresh = /^(1|true)$/.test(new URL(req.url || '', 'http://localhost').searchParams.get('refresh') || ''); } catch { /* plain read */ }
+    let detail = null;
+    try {
+      const q = new URL(req.url || '', 'http://localhost').searchParams;
+      refresh = /^(1|true)$/.test(q.get('refresh') || '');
+      detail = q.get('detail');
+    } catch { /* plain read */ }
+    if (detail !== null && !DETAILS.includes(detail)) {
+      send(res, 404, { ok: false, status: 'error', error: 'There is no breakdown for that figure.' });
+      return;
+    }
     if (refresh) memo.clear();
 
     const { cash, pnl } = projections();
@@ -510,15 +753,33 @@ function createMetricsHandler(deps = {}) {
     const nowMs = clock();
     const closed = lastClosedMonth(nowMs);
     const nrrMonths = Array.from({ length: 6 }, (_, i) => shiftMonth(closed, i - 5));
+    // Revenue by customer is kept as read: the NRR series and its breakdown both come from it.
+    const customerRevenue = () => cached(`custrev:${closed}`, () => reads.customerRevenue(shiftMonth(nrrMonths[0], -12), closed));
+
+    if (detail !== null) {
+      try {
+        const out = await buildDetail(detail, {
+          pnl: p.entry.payload, pnlDetails: p.entry.details, closed, nrrMonths,
+          quarters: () => cached('churn', reads.churnQuarters),
+          customerRevenue,
+          churnedOpps: (from, to) => cached(`churnOpps:${from}:${to}`, () => reads.churnedOpps(from, to)),
+        });
+        if (out) send(res, 200, { ok: true, status: 'ready', detail: out });
+        else send(res, 200, { ok: false, status: 'error', error: 'There is nothing to break down for this figure yet.' });
+      } catch (e) {
+        console.warn(`[metrics] detail ${detail} unavailable: ${e && e.message}`);
+        send(res, 200, { ok: false, status: 'error', error: 'The breakdown could not be read from Snowflake right now. Try again in a minute.' });
+      }
+      return;
+    }
+
     const settled = await Promise.allSettled([
       cached('arr', reads.arr),
       cached('churn', reads.churnQuarters),
-      cached(`nrr:${closed}`, async () => nrrSeries(await reads.customerRevenue(shiftMonth(nrrMonths[0], -12), closed), nrrMonths)),
-      cached(`fx:${closed}`, () => reads.fx(closed)),
-      cached('usd', reads.usdLive, Math.min(ttlMs, 60 * MIN)),
+      customerRevenue().then((rows) => nrrSeries(rows, nrrMonths)),
       cached(`employees:${company}`, () => reads.employees(company)),
     ]);
-    const names = ['arr', 'churn', 'nrr', 'fx', 'usd', 'employees'];
+    const names = ['arr', 'churn', 'nrr', 'employees'];
     const failed = [];
     const val = (i) => {
       if (settled[i].status === 'fulfilled') return settled[i].value;
@@ -526,11 +787,10 @@ function createMetricsHandler(deps = {}) {
       console.warn(`[metrics] ${names[i]} unavailable: ${settled[i].reason && settled[i].reason.message}`);
       return null;
     };
-    const extras = { arr: val(0), churnQuarters: val(1), nrr: val(2), fx: val(3), fxMonth: closed, usdLive: val(4), employees: val(5), company };
+    const extras = { arr: val(0), churnQuarters: val(1), nrr: val(2), employees: val(3), company };
     const settingsDoc = readDoc(settingsFile);
-    // Settings saved before the innovation envelope was removed still carry it: it no longer counts.
-    const { innovation: _removed, ...savedSettings } = (settingsDoc && settingsDoc.value) || {};
-    const depositsDoc = readDoc(depositsFile);
+    // Settings saved before the innovation envelope and the planning rate were removed still carry them.
+    const { innovation: _envelope, usdEurPlanningRate: _rate, ...savedSettings } = (settingsDoc && settingsDoc.value) || {};
     // The saved targets, read on every request so a save on the New Bank Dashboard shows at once.
     const targets = projectionTargets.readStore(targetsFile);
     let targetsLib = null;
@@ -544,7 +804,6 @@ function createMetricsHandler(deps = {}) {
       const out = buildMetrics({
         nowMs, cash: c.entry.payload, pnl: p.entry.payload, pnlDetails: p.entry.details,
         settings: { ...emptySettings(), ...savedSettings },
-        deposits: (depositsDoc && depositsDoc.value) || [],
         extras, failed, targets, targetsLib,
       });
       out.refreshing = !!(c.refreshing || p.refreshing);
@@ -565,5 +824,6 @@ function createMetricsDepositsHandler(deps = {}) {
 
 module.exports = {
   createMetricsHandler, createMetricsSettingsHandler, createMetricsDepositsHandler,
-  buildMetrics, nrrSeries, shiftMonth, lastClosedMonth, cloudTargetsOf, headcountByMonth, peopleMetrics,
+  buildMetrics, buildDetail, nrrSeries, nrrDetail, churnQuarterDetail, churnYtdDetail, churnForecastDetail, DETAILS,
+  shiftMonth, lastClosedMonth, cloudTargetsOf, headcountByMonth, peopleMetrics,
 };

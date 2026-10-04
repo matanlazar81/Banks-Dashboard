@@ -1,16 +1,16 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // What the Metrics page saves for everyone, and what may be saved (server/json-store.cjs stores it):
-//   settings  the USD/EUR planning rate and the cloud cap (% of projected revenue, which category is cloud)
-//   deposits  the deposit tracker: each deposit placed and whether the bank's confirmation came back
+//   settings  the cloud cap (% of projected revenue, which category is cloud)
+//   deposits  the deposit tracker (no longer on the page; its route stays mounted for finance-it's route file)
 // ─────────────────────────────────────────────────────────────────────────────
 
 const DEFAULT_SETTINGS = Object.freeze({
-  usdEurPlanningRate: null,
   cloudCapPct: 8,
   cloudCategory: '',
 });
-// The innovation envelope was removed from the page; settings saved with it still validate, without it.
-const LEGACY_KEYS = ['innovation'];
+// Removed from the page (the innovation envelope, the USD/EUR planning rate): settings saved with them
+// still validate, without them.
+const LEGACY_KEYS = ['innovation', 'usdEurPlanningRate'];
 const emptySettings = () => JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
 
 const CURRENCIES = ['EUR', 'USD', 'ILS', 'GBP', 'PLN', 'CHF'];
@@ -46,11 +46,10 @@ function dateIn(v, where, errors, { optional = false } = {}) {
 function validateSettings(body) {
   const errors = [];
   const out = emptySettings();
-  if (!keysOnly(body, ['value'], 'body', errors) || !keysOnly(body.value, ['usdEurPlanningRate', 'cloudCapPct', 'cloudCategory', ...LEGACY_KEYS], 'settings', errors)) {
+  if (!keysOnly(body, ['value'], 'body', errors) || !keysOnly(body.value, ['cloudCapPct', 'cloudCategory', ...LEGACY_KEYS], 'settings', errors)) {
     return { ok: false, value: null, errors };
   }
   const v = body.value;
-  if (v.usdEurPlanningRate !== undefined && v.usdEurPlanningRate !== null) out.usdEurPlanningRate = numIn(v.usdEurPlanningRate, 0.5, 2, 'usdEurPlanningRate (USD per €)', errors);
   if (v.cloudCapPct !== undefined) out.cloudCapPct = numIn(v.cloudCapPct, 0, 100, 'cloudCapPct', errors);
   if (v.cloudCategory !== undefined) out.cloudCategory = textIn(v.cloudCategory, 120, 'cloudCategory', errors, { optional: true });
   return errors.length ? { ok: false, value: null, errors } : { ok: true, value: out, errors: [] };

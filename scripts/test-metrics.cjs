@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // ─────────────────────────────────────────────────────────────────────────────
 // Checks for the Metrics page (server/metrics.cjs, server/metrics-settings.cjs): the pack from synthetic
-// projection payloads, NRR, the cloud cap, the 2027 targets, payroll ratios, FX conversions, deposits, and the
+// projection payloads, NRR, the cloud cap, the 2027 targets, payroll ratios, the breakdowns (NRR, churn), and the
 // handlers. No network, no real figures.
 //   node scripts/test-metrics.cjs
 // ─────────────────────────────────────────────────────────────────────────────
@@ -77,13 +77,6 @@ const EXTRAS = {
     { qs: '2025-10-01', q: 'Q4 2025', amount: 99_000, partial: false },
   ],
   nrr: [{ month: mk(Y, 9), nrr: 104.5, grr: 93.2, customers: 400 }],
-  fx: [
-    { tranid: 'T1', date: '2026-09-02', fromCurrency: 'USD', toCurrency: 'EUR', currency: 'USD', amount: 117_150, eur: 100_000, rate: 1.1715 },
-    { tranid: 'T2', date: '2026-09-20', fromCurrency: 'USD', toCurrency: 'EUR', currency: 'USD', amount: 58_000, eur: 50_000, rate: 1.16 },
-    { tranid: 'T3', date: '2026-09-07', fromCurrency: 'EUR', toCurrency: 'ILS', currency: 'ILS', amount: 349_300, eur: 100_000, rate: 3.493 },
-  ],
-  fxMonth: mk(Y, 9),
-  usdLive: { rate: 1.17, date: '2026-10-14', source: 'ECB (Frankfurter)' },
   // 100 employees all year; 10 more from 15 March; 5 leave on 30 June (counted at June's end); a contractor
   // from August; one starting in November (after the months shown).
   employees: [
@@ -96,9 +89,28 @@ const EXTRAS = {
   company: 'LSports',
 };
 
-function build(settings = ms.emptySettings(), deposits = [], extras = EXTRAS, failed = []) {
-  return m.buildMetrics({ nowMs: NOW, cash: cashPayload(), pnl: pnlPayload(), pnlDetails: pnlDetails(), settings, deposits, extras, failed });
+function build(settings = ms.emptySettings(), extras = EXTRAS, failed = []) {
+  return m.buildMetrics({ nowMs: NOW, cash: cashPayload(), pnl: pnlPayload(), pnlDetails: pnlDetails(), settings, extras, failed });
 }
+
+// Revenue by customer for the NRR breakdown: A grows, B stays, C shrinks, D leaves; N and Z are new
+// (Z had a zero month a year earlier).
+const CUSTREV = [
+  { month: '2025-09', customer: '1', name: 'Alpha', rev: 100 }, { month: '2025-09', customer: '2', name: 'Beta', rev: 100 },
+  { month: '2025-09', customer: '3', name: 'Gamma', rev: 50 }, { month: '2025-09', customer: '4', name: 'Delta', rev: 30 },
+  { month: '2025-09', customer: '9', name: 'Zeta', rev: 0 },
+  { month: '2026-09', customer: '1', name: 'Alpha', rev: 120 }, { month: '2026-09', customer: '2', name: 'Beta', rev: 100 },
+  { month: '2026-09', customer: '3', name: 'Gamma', rev: 20 }, { month: '2026-09', customer: '8', name: 'Nu', rev: 40 },
+  { month: '2026-09', customer: '9', name: 'Zeta', rev: 10 },
+];
+// Churned opportunities matching EXTRAS.churnQuarters: Q2 30K, Q3 40K (one in USD), Q4 so far 5K.
+const OPPS = [
+  { month: '2026-04', opportunity: 'Opp a', customer: 'Cust A', currency: 'EUR', amount: 10_000 },
+  { month: '2026-06', opportunity: 'Opp b', customer: 'Cust B', currency: 'EUR', amount: 20_000 },
+  { month: '2026-07', opportunity: 'Opp c', customer: 'Cust C', currency: 'EUR', amount: 25_000 },
+  { month: '2026-09', opportunity: 'Opp d', customer: 'Cust C', currency: 'USD', amount: 15_000 },
+  { month: '2026-10', opportunity: 'Opp e', customer: null, currency: 'EUR', amount: 5_000 },
+];
 const metric = (out, key) => out.metrics.find((x) => x.key === key);
 
 function testPack() {
@@ -152,7 +164,7 @@ async function testTargets() {
   const pnl = { ...pnlPayload(), targetsBase: baseOf(100) };
   const cash = { ...cashPayload(), targetsBase: baseOf(90) };
   const run = (years, extra = {}) => m.buildMetrics({
-    nowMs: NOW, cash, pnl, pnlDetails: pnlDetails(), settings: ms.emptySettings(), deposits: [], extras: EXTRAS,
+    nowMs: NOW, cash, pnl, pnlDetails: pnlDetails(), settings: ms.emptySettings(), extras: EXTRAS,
     targets: years ? { years, updatedAt: '2026-10-04T16:53:00.000Z', updatedBy: 'someone@example.com' } : null, targetsLib: tl, ...extra,
   });
   const fy = (out, key, i) => metric(out, key).fy[i].value;
@@ -213,32 +225,90 @@ function testPeople() {
   // September's payroll JE not posted yet (only a stray line): the series ends in August.
   const pnl = pnlPayload();
   pnl.variants.plan.years[0].rows[8].eur = { ...pnl.variants.plan.years[0].rows[8].eur, payroll: 40_000 };
-  p = m.buildMetrics({ nowMs: NOW, cash: cashPayload(), pnl, pnlDetails: pnlDetails(), settings: ms.emptySettings(), deposits: [], extras: EXTRAS }).people;
+  p = m.buildMetrics({ nowMs: NOW, cash: cashPayload(), pnl, pnlDetails: pnlDetails(), settings: ms.emptySettings(), extras: EXTRAS }).people;
   check(p.through === mk(Y, 8) && p.months.length === 8 && JSON.stringify(p.pending) === JSON.stringify([mk(Y, 9)]) && p.ytd.label === 'Jan–Aug 2026',
     'a month whose payroll JE is not posted ends the series before it, and is listed as pending');
 
-  p = build(undefined, [], { ...EXTRAS, employees: null }, ['employees']).people;
-  const out = build(undefined, [], { ...EXTRAS, employees: null }, ['employees']);
+  p = build(undefined, { ...EXTRAS, employees: null }, ['employees']).people;
+  const out = build(undefined, { ...EXTRAS, employees: null }, ['employees']);
   check(p.months[0].payrollPct === 40 && p.months[0].revenuePerEmployee === null && p.ytd.revenuePerEmployee === null && out.warnings.some((w) => /HiBob/.test(w)),
     'employees unavailable: payroll / revenue still shows, revenue per employee is empty with a warning');
   const none = m.peopleMetrics(pnlPayload().variants.plan.years[1].rows, EXTRAS.employees, 'LSports');
   check(none.months.length === 0 && none.ytd === null && none.through === null, 'no closed month yet: nothing to show');
 }
 
-function testFxDepositsRates() {
-  console.log('\nFX, RATES, DEPOSITS');
-  const out = build(undefined, [
-    { id: 'a', bank: 'Bank A', amount: 1_000_000, currency: 'EUR', placedOn: '2026-09-01', maturity: '2026-12-01', confirmed: true, confirmedOn: '2026-09-02', note: '' },
-    { id: 'b', bank: 'Bank B', amount: 500_000, currency: 'USD', placedOn: '2026-09-25', maturity: null, confirmed: false, confirmedOn: null, note: 'waiting' },
-    { id: 'c', bank: 'Bank C', amount: 2_000_000, currency: 'ILS', placedOn: '2026-09-10', maturity: null, confirmed: false, confirmedOn: null, note: '' },
-  ]);
-  const usd = out.fx.totals.find((t) => t.pair === 'USD → EUR');
-  check(out.fx.month === mk(Y, 9) && out.fx.items.length === 3 && usd.count === 2 && usd.amount === 175_150 && usd.rate === Math.round((175_150 / 150_000) * 10000) / 10000,
-    'FX conversions of last month, totals per pair at the weighted rate');
-  check(out.deposits.openCount === 2 && out.deposits.open[0].id === 'c' && out.deposits.total === 3, 'open deposit confirmations, oldest first');
-  check(out.rates.usdEurPlanning === null && out.rates.usdEurLive.rate === 1.17, 'rates: the planning rate (unset) and today\'s ECB rate');
-  const noArr = build(undefined, [], { ...EXTRAS, arr: null, usdLive: null }, ['arr', 'usd']);
-  check(metric(noArr, 'arr').lastMonth === null && noArr.warnings.length === 2 && /ARR/.test(noArr.warnings[0]), 'a source that fails: an empty cell and a warning, the rest still shows');
+function testWarnings() {
+  console.log('\nA SOURCE THAT FAILS');
+  const noArr = build(undefined, { ...EXTRAS, arr: null }, ['arr']);
+  check(metric(noArr, 'arr').lastMonth === null && noArr.warnings.length === 1 && /ARR/.test(noArr.warnings[0]), 'an empty cell and a warning, the rest still shows');
+  const out = build();
+  check(!('fx' in out) && !('rates' in out) && !('deposits' in out) && !('innovation' in out), 'the removed cards are not in the pack (FX conversions, rates, deposits, envelope)');
+}
+
+async function testDetails() {
+  console.log('\nBREAKDOWNS: what NRR and the churn figures are made of');
+  const [s] = m.nrrSeries(CUSTREV, ['2026-09']);
+  const d = m.nrrDetail(CUSTREV, '2026-09');
+  const line = (label) => d.summary.find((x) => x.label.startsWith(label));
+  check(s.nrr === 85.71 && d.value.value === s.nrr && line('NRR').value === s.nrr && line('GRR').value === s.grr && line('Customers with revenue').value === s.customers,
+    'NRR breakdown: the same NRR, GRR and base customers as the pack', JSON.stringify({ s, v: d.value }));
+  check(line('Their revenue, Sep 2025').value === 280 && line('+ Expansion').value === 20 && line('− Contraction').value === -30 && line('− Churned').value === -30
+    && line('= Their revenue, Sep 2026').value === 240 && 280 + 20 - 30 - 30 === 240,
+    'the bridge: base + expansion − contraction − churned = their revenue now');
+  const t = (title) => d.tables.find((x) => x.title.startsWith(title));
+  check(t('Churned').rows[0].customer === 'Delta' && t('Contracted').rows[0].customer === 'Gamma' && t('Expanded').rows[0].customer === 'Alpha'
+    && t('New since then').rows.length === 2 && /2 new customers/.test(line('Not counted').label) && line('Not counted').value === 50,
+    'the customers behind each step, by name; new customers listed but not counted');
+  const many = Array.from({ length: 50 }, (_, i) => [{ month: '2025-09', customer: `c${i}`, name: `C${i}`, rev: 10 + i }]).flat();
+  const cut = m.nrrDetail([...many, { month: '2026-09', customer: 'x', name: 'X', rev: 1 }], '2026-09', { limit: 40 });
+  check(t('Churned').total.then === 30 && cut.tables[0].rows.length === 40 && cut.tables[0].more === 10 && cut.tables[0].total.then === many.reduce((a, r) => a + r.rev, 0),
+    'long lists: the largest first, the rest counted, the total over all');
+
+  const q3 = EXTRAS.churnQuarters.find((q) => q.q === 'Q3 2026');
+  const cq = m.churnQuarterDetail(q3, OPPS);
+  check(cq.value.value === 40_000 && cq.tables[0].rows.length === 2 && cq.tables[0].rows[0].opportunity === 'Opp c' && cq.summary[1].value === 1
+    && cq.notes.some((n) => /USD/.test(n)) && !cq.notes.some((n) => /read earlier/.test(n)),
+    'churn, last full quarter: the opportunities add up to the figure; one customer with two; other currencies said');
+  check(m.churnQuarterDetail({ ...q3, amount: 41_000 }, OPPS).notes.some((n) => /read earlier/.test(n)), 'a list read later than the pack says so when it differs');
+  const cy = m.churnYtdDetail(Y, EXTRAS.churnQuarters, OPPS);
+  check(cy.value.value === 75_000 && cy.value.value === metric(build(), 'churn').ytd.value && cy.summary.some((x) => /Q4 2026 \(in progress\)/.test(x.label))
+    && cy.tables[0].rows.length === 5 && cy.tables[0].rows[0].quarter === 'Q2 2026',
+    'churn, year so far: quarter by quarter (the one in progress included), the same total as the pack');
+  const rows = pnlPayload().variants.plan.years[0].rows.map((r) => (r.mKey < '2026-10' ? r
+    : { ...r, eur: { ...r.eur, churn: r.mKey === '2026-10' ? 40_000 / 3 : r.mKey === '2026-11' ? 80_000 / 3 : 50_000 } }));
+  const months = { '2026-10': { churnIndex: 1 }, '2026-11': { churnIndex: 2 }, '2026-12': { churnIndex: 3, churnOverride: true } };
+  const cf = m.churnForecastDetail(Y, rows, months, EXTRAS.churnQuarters, OPPS);
+  check(near(cf.value.value, 40_000 / 3 + 80_000 / 3 + 50_000) && /Q3 2026 churned MRR ÷ 3/.test(cf.formula[0]) && near(cf.summary.find((x) => /Run-rate/.test(x.label)).value, 13_333.33)
+    && cf.tables[0].rows[1].how === '2 × run-rate' && cf.tables[0].rows[2].how === 'Set in the Plan' && /context/.test(cf.tables[1].title),
+    'churn, forecast: run-rate = Q3 ÷ 3, piling up month by month, a Plan override kept, Q3\'s customers as context');
+
+  // Through the handler: each clickable cell answers with the same figure the pack shows.
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'metrics-detail-'));
+  let oppReads = 0;
+  let failOpps = false;
+  const h = m.createMetricsHandler({
+    cash: { current: () => ({ entry: { payload: cashPayload() } }) }, pnl: { current: () => ({ entry: { payload: pnlPayload(), details: pnlDetails() } }) },
+    reads: {
+      arr: async () => EXTRAS.arr, churnQuarters: async () => EXTRAS.churnQuarters, customerRevenue: async () => CUSTREV,
+      churnedOpps: async () => { oppReads++; if (failOpps) throw new Error('Snowflake down'); return OPPS; }, employees: async () => EXTRAS.employees,
+    },
+    settingsFile: path.join(tmp, 's.json'), targetsFile: path.join(tmp, 't.json'), clock: () => NOW,
+  });
+  const pack = (await call(h)).body;
+  const cellOf = (key, at) => (at === 'fy' ? metric(pack, key).fy[0] : metric(pack, key)[at]);
+  const same = [];
+  for (const [key, at] of [['nrr', 'lastMonth'], ['churn', 'lastMonth'], ['churn', 'ytd'], ['churn', 'fy']]) {
+    const c = cellOf(key, at);
+    const r = await call(h, { url: `/api/metrics?detail=${c.detail}` });
+    same.push(r.status === 200 && r.body.ok && near(r.body.detail.value.value, c.value, 0.02) ? 'ok' : `${c.detail}: ${JSON.stringify(r.body).slice(0, 120)}`);
+  }
+  check(same.every((x) => x === 'ok') && oppReads === 1, 'the NRR and churn cells are clickable and their breakdown equals the cell (one opportunity read, cached)', same.join(', '));
+  const bogus = await call(h, { url: '/api/metrics?detail=revenue' });
+  failOpps = true;
+  const fresh = await call(h, { url: '/api/metrics?detail=churn-ytd&refresh=true' });
+  check(bogus.status === 404 && fresh.status === 200 && fresh.body.ok === false && /Snowflake/.test(fresh.body.error),
+    'a figure without a breakdown → 404; a read that fails → a message, not a crash');
+  fs.rmSync(tmp, { recursive: true, force: true });
 }
 
 function testNrr() {
@@ -254,13 +324,15 @@ function testNrr() {
 
 function testValidation() {
   console.log('\nSETTINGS AND DEPOSITS: what can be saved');
-  const ok = ms.validateSettings({ value: { usdEurPlanningRate: 1.15, cloudCapPct: 8 } });
-  check(ok.ok && ok.value.cloudCategory === '' && ok.value.usdEurPlanningRate === 1.15, 'valid settings are completed with defaults');
+  const ok = ms.validateSettings({ value: { cloudCapPct: 8 } });
+  check(ok.ok && ok.value.cloudCategory === '' && ok.value.cloudCapPct === 8, 'valid settings are completed with defaults');
   // Settings saved while the page had the innovation envelope still save, without it.
   const legacy = ms.validateSettings({ value: { cloudCapPct: 9, innovation: { amountEur: 2_000_000, year: 2027, startMonth: 1, included: true } } });
   check(legacy.ok && legacy.value.cloudCapPct === 9 && !('innovation' in legacy.value), 'the removed innovation envelope is accepted and dropped');
+  const rate = ms.validateSettings({ value: { cloudCapPct: 9, usdEurPlanningRate: 1.15 } });
+  check(rate.ok && !('usdEurPlanningRate' in rate.value), 'the removed USD/EUR planning rate is accepted and dropped');
   const bads = [
-    { value: { usdEurPlanningRate: 9 } }, { value: { cloudCapPct: -1 } },
+    { value: { cloudCapPct: -1 } },
     { value: { other: 1 } }, { value: { cloudCategory: '__proto__' } }, {},
   ];
   check(bads.every((b) => !ms.validateSettings(b).ok), `${bads.length} kinds of bad settings are refused`);
@@ -285,7 +357,7 @@ function call(handler, { method = 'GET', url = '/api/metrics', body, headers = {
 }
 
 async function testHandlers() {
-  console.log('\nHANDLERS: GET /api/metrics, settings and deposits');
+  console.log('\nHANDLERS: GET /api/metrics, settings, and the deposits route kept for finance-it');
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'metrics-'));
   const settingsFile = path.join(tmp, 's.json');
   const depositsFile = path.join(tmp, 'd.json');
@@ -297,8 +369,7 @@ async function testHandlers() {
     arr: async () => { reads++; return EXTRAS.arr; },
     churnQuarters: async () => EXTRAS.churnQuarters,
     customerRevenue: async () => [{ month: '2025-09', customer: 'A', rev: 100 }, { month: '2026-09', customer: 'A', rev: 110 }],
-    fx: async () => { throw new Error('NetSuite down'); },
-    usdLive: async () => EXTRAS.usdLive,
+    churnedOpps: async () => OPPS,
     employees: async (company) => (company === 'LSports' ? EXTRAS.employees : []),
   };
   const h = m.createMetricsHandler({
@@ -307,7 +378,7 @@ async function testHandlers() {
   let r = await call(h);
   check(r.status === 200 && r.body.status === 'ready' && r.body.metrics.length === 6 && metric(r.body, 'nrr').lastMonth.value === 110,
     'GET: the pack from the cached projections and the reads');
-  check(r.body.fx.items.length === 0 && r.body.warnings.some((w) => /FX conversions/.test(w)), 'a failing read: a warning, not an error');
+  check(r.body.warnings.length === 0 && metric(r.body, 'churn').lastMonth.detail === 'churn-quarter', 'no warnings when every read works; the churn cells carry their breakdown');
   check(r.body.people.months.length === 9 && r.body.people.months[8].headcount === 111 && r.body.people.company === 'LSports',
     'the employees of the P&L\'s company (LSports by default) are read for revenue per employee');
   await call(h);
@@ -331,7 +402,7 @@ async function testHandlers() {
   check(r.status === 200 && r.body.value.cloudCapPct === 9 && r2.status === 400 && r3.status === 403, 'settings PUT: saved; out of range 400; another site 403');
   state = { cash: entry(cashPayload()), pnl: entry(pnlPayload(), pnlDetails()) };
   r = await call(h);
-  check(r.body.settings.cloudCapPct === 9 && r.body.cloud.capPct === 9 && r.body.rates.usdEurPlanning === 1.15, 'the pack uses the saved settings');
+  check(r.body.settings.cloudCapPct === 9 && r.body.cloud.capPct === 9 && !('usdEurPlanningRate' in r.body.settings), 'the pack uses the saved settings (the planning rate dropped)');
   // A settings file saved with the (removed) innovation envelope IN: it no longer changes anything.
   const before = metric(r.body, 'ebitda').fy[1].value;
   fs.writeFileSync(settingsFile, JSON.stringify({ value: { cloudCapPct: 9, usdEurPlanningRate: 1.15, cloudCategory: '', innovation: { amountEur: 1_200_000, year: T, startMonth: 1, included: true } } }));
@@ -341,8 +412,8 @@ async function testHandlers() {
   const dh = m.createMetricsDepositsHandler({ file: depositsFile, clock: () => NOW });
   r = await call(dh, { method: 'PUT', url: '/api/metrics/deposits', headers: json, body: { value: [{ id: 'd1', bank: 'Bank', amount: 100, currency: 'EUR', placedOn: '2026-10-01', maturity: null, confirmed: false, confirmedOn: null, note: '' }] } });
   const pack = await call(h);
-  check(r.status === 200 && pack.body.deposits.openCount === 1 && fs.readFileSync(depositsFile.replace(/\.json$/, '-history.jsonl'), 'utf8').trim().split('\n').length === 1,
-    'deposits PUT: saved with a history line, and the pack lists it as open');
+  check(r.status === 200 && !('deposits' in pack.body) && fs.readFileSync(depositsFile.replace(/\.json$/, '-history.jsonl'), 'utf8').trim().split('\n').length === 1,
+    'the deposits route still answers (finance-it mounts it); the pack no longer lists deposits');
   check(pack.body.targets && !pack.body.targets.active, 'no targets file: the projection year is the Plan');
   // Targets saved on the New Bank Dashboard show at the next request (no cache to wait for). The fixture's
   // baseline has no revenue, so only the server % changes something: cloud = 8% of nothing.
@@ -357,7 +428,7 @@ async function testModel() {
   const model = await import(pathToFileURL(path.join(ROOT, 'src', 'metrics', 'model.ts')).href);
   check(model.formatEur(5_000_000) === '€5.00M' && model.formatEur(-40_000) === '-€40K' && model.formatEur(0) === '–' && model.formatEur(null) === '–'
     && model.formatPct(104.5) === '104.5%', 'figures: € millions / thousands, percentages, a dash for nothing');
-  const rows = model.packRows(build(undefined, [{ id: 'b', bank: 'Bank B', amount: 500_000, currency: 'USD', placedOn: '2026-09-25', maturity: null, confirmed: false, confirmedOn: null, note: '' }]));
+  const rows = model.packRows(build());
   const at = (label) => rows.find((r) => r[0] === label);
   check(rows[0][0] === 'LSports metrics pack, as of Sep 2026' && at('Metric').join('|') === 'Metric|Last month|Year to date|FY 2026|FY 2027|Basis',
     'export: title and the same header every month');
@@ -366,10 +437,11 @@ async function testModel() {
   check(rows.some((r) => /^Payroll \/ revenue and revenue per employee, through Sep 2026/.test(String(r[0])))
     && at('Jan–Sep 2026') && at('Jan–Sep 2026')[3] === '40.0%' && at('Sep 2026') && at('Sep 2026')[4] === 111,
   'export: payroll / revenue and revenue per employee by month and year to date');
-  check(rows.some((r) => String(r[0]).startsWith('Cloud (')) && at('USD/EUR planning rate')
-    && rows.some((r) => r[0] === 'Bank B') && rows.some((r) => String(r[0]).startsWith('FX conversions, Sep 2026'))
-    && !rows.some((r) => /innovation/i.test(String(r[0]))),
-  'export: cloud, the rate, FX conversions and open deposits (no innovation envelope)');
+  check(rows.some((r) => String(r[0]).startsWith('Cloud (')) && !rows.some((r) => /innovation|USD\/EUR|FX conversions|Deposits/i.test(String(r[0]))),
+    'export: cloud; no envelope, rate, FX conversions or deposits');
+  check(model.formatExplain(1234.5, 'eur') === '€1,235' && model.formatExplain(-30, 'eur', true) === '-€30' && model.formatExplain(20, 'eur', true) === '+€20'
+    && model.formatExplain(85.714, 'pct') === '85.7%' && model.formatExplain(4, 'int') === '4' && model.formatExplain('Alpha', 'text') === 'Alpha' && model.formatExplain(null, 'eur') === '–',
+  'breakdown figures: € in full, signed steps, % to one decimal, counts and names');
 }
 
 async function main() {
@@ -378,10 +450,11 @@ async function main() {
   testCloud();
   await testTargets();
   testPeople();
-  testFxDepositsRates();
+  testWarnings();
   testNrr();
   testValidation();
   await testHandlers();
+  await testDetails();
   await testModel();
   console.log(failures ? `\n❌ FAIL — ${failures} check(s) failed.` : '\n✅ PASS — all checks green.');
   process.exit(failures ? 1 : 0);

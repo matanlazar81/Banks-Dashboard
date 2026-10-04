@@ -10,9 +10,10 @@ figures follow the Plan.
 | Where | What |
 |---|---|
 | `metrics.html` | the page (a small bundle, never loads the old dashboard) |
-| `GET /api/metrics` | the pack (`server/metrics.cjs`); `?refresh=true` reads ARR, NRR, churn, FX and the ECB rate again |
-| `GET/PUT /api/metrics/settings` | planning rate and cloud cap (`server/metrics-settings.cjs`) |
-| `GET/PUT /api/metrics/deposits` | the deposit tracker |
+| `GET /api/metrics` | the pack (`server/metrics.cjs`); `?refresh=true` reads ARR, NRR, churn and employees again |
+| `GET /api/metrics?detail=<item>` | what one figure is made of: `nrr`, `churn-quarter`, `churn-ytd`, `churn-forecast` |
+| `GET/PUT /api/metrics/settings` | the cloud cap (`server/metrics-settings.cjs`) |
+| `GET/PUT /api/metrics/deposits` | the old deposit tracker: no longer on the page, kept mounted for finance-it's route file |
 | finance-it | sidebar item → iframe of `<bank-dashboard static base>/metrics.html` (see Deploying) |
 
 ## The pack
@@ -87,40 +88,47 @@ August, and the page says September is pending.
 - Shown for both years: cloud, cap, headroom (negative when over) and cloud as a % of revenue.
 - The cap % and the category are settings on the page.
 
-## Rates and FX conversions
+## Click a figure: how it is calculated
 
-- **USD/EUR planning rate**: a setting (USD per €), shown next to today's ECB rate (Frankfurter, with
-  open.er-api.com as backup) and the difference in %.
-- **FX conversions**: last month's NetSuite transfers between bank accounts in different currencies,
-  by transaction date. Each one shows the amount in the transfer's currency, its € value (primary book)
-  and the rate (units per €), with totals per currency pair. Transfers within one currency are moves,
-  not conversions, and are left out.
+The underlined figures open a movable window with what they are made of: the steps from the source to
+the figure, how it is calculated, where the data comes from, and the items behind it. Each one adds up
+to the figure in the cell.
 
-## Deposits awaiting confirmation
+- **NRR**:
+  - the bridge: last year's customers' revenue then, + expansion, − contraction, − churned, = their
+    revenue now, then NRR and GRR;
+  - the customers in each group, by name, with the new customers listed but not counted;
+  - the last 6 months of NRR and GRR.
+  - Source: Snowflake revenue by customer and month (the same rows as the figure).
+- **Churn, last full quarter** and **year so far**: every opportunity marked churned in Snowflake
+  (`DIM_OPPORTUNITY__FINANCE`) with its customer, churn month, currency and MRR, by quarter. Amounts in
+  another currency are added as they are, as the figure does, and the window says so.
+- **Churn, FY forecast months**:
+  - the forecast's churn is a run-rate, not a list of customers: last full quarter's churned MRR ÷ 3,
+    times each month's place in the forecast (it piles up);
+  - month by month, with the Plan's hand-set months marked;
+  - the quarter's churned customers shown as context.
 
-NetSuite and Snowflake hold no confirmation status, so the page keeps a small tracker:
-
-- **Manage** lists every deposit and adds one (bank, amount, currency, placed, maturity, note).
-- **Confirmation received** closes it.
-- The pack lists the open ones, oldest first.
+The breakdown reads only when clicked, and is cached like the pack's reads.
 
 ## Saving
 
-- Settings and deposits are shared by everyone who can open the page. They are stored in
-  `data/metrics-settings.json` and `data/metrics-deposits.json` (git-ignored).
+- Settings (the cloud cap) are shared by everyone who can open the page. They are stored in
+  `data/metrics-settings.json` (git-ignored).
 - Every save is appended to a `-history.jsonl` file next to them, with who and when.
 - Saves are validated (ranges, known fields only), JSON only, same-origin, and carry finance-it's CSRF
   token (`server/json-store.cjs`, shared with the 2027 targets).
-- The innovation envelope was removed from the page. Settings saved with it still load and save; the
-  envelope is ignored and changes nothing.
+- The innovation envelope, the USD/EUR planning rate, FX conversions and the deposit tracker were
+  removed from the page. Settings saved with the envelope or the rate still load and save; those fields
+  are ignored.
 
 ## How it is computed
 
 - The two projections come from their cached handlers (`handler.current()`), so the page adds no
   NetSuite pull.
 - The saved targets (`data/projection-targets.json`) are read on every request.
-- ARR, churn, NRR, FX conversions and the ECB rate are read once and cached for `METRICS_TTL_MIN`
-  (default 30 minutes; the ECB rate for at most an hour).
+- ARR, churn, NRR (revenue by customer) and employees are read once and cached for `METRICS_TTL_MIN`
+  (default 30 minutes).
 - A source that fails shows as an empty cell and a warning. The rest of the pack still shows.
 - While a projection is computing for the first time, the page shows "computing" and polls.
 
@@ -140,5 +148,5 @@ there adds its sidebar item, checkbox and hub entry.
 ## Checking it
 
 ```bash
-node scripts/test-metrics.cjs   # synthetic: every pack item, NRR, cloud cap, targets, payroll ratios, FX, deposits, handlers, export rows
+node scripts/test-metrics.cjs   # synthetic: every pack item, NRR, cloud cap, targets, payroll ratios, breakdowns, handlers, export rows
 ```

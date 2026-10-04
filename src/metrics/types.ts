@@ -10,6 +10,8 @@ export interface Cell {
   forecast?: number;
   grr?: number;
   customers?: number;
+  /** Click to see what it is made of (GET /api/metrics?detail=…). */
+  detail?: string;
 }
 
 export interface Metric {
@@ -64,34 +66,7 @@ export interface People {
   } | null;
 }
 
-export interface FxConversion {
-  id?: number;
-  tranid: string;
-  date: string;
-  from?: string;
-  to?: string;
-  fromCurrency: string;
-  toCurrency: string;
-  currency: string;
-  amount: number;
-  eur: number;
-  rate: number | null;
-}
-
-export interface Deposit {
-  id: string;
-  bank: string;
-  amount: number;
-  currency: string;
-  placedOn: string;
-  maturity: string | null;
-  confirmed: boolean;
-  confirmedOn: string | null;
-  note: string;
-}
-
 export interface MetricsSettings {
-  usdEurPlanningRate: number | null;
   cloudCapPct: number;
   cloudCategory: string;
 }
@@ -109,9 +84,6 @@ export interface MetricsPayload {
   cloud: { category: string; categories: string[]; capPct: number; accounts: string; years: CloudYear[] };
   /** Payroll / revenue and revenue per employee (absent from servers before this page had them). */
   people?: People;
-  rates: { usdEurPlanning: number | null; usdEurLive: { rate: number; date: string; source: string } | null };
-  fx: { month: string; items: FxConversion[]; totals: { pair: string; currency: string; count: number; amount: number; eur: number; rate: number | null }[] };
-  deposits: { open: Deposit[]; openCount: number; total: number };
   settings: MetricsSettings;
   warnings: string[];
   refreshing?: boolean;
@@ -121,5 +93,28 @@ export type MetricsResponse =
   | MetricsPayload
   | { ok: true; status: 'computing'; startedAt: string | null; elapsedSec: number }
   | { ok: false; status: 'error'; error: string };
+
+/** What one figure is made of (server/metrics.cjs buildDetail). */
+export type ExplainUnit = 'eur' | 'pct' | 'int' | 'text';
+export interface ExplainTable {
+  title: string;
+  note?: string | null;
+  columns: { key: string; label: string; unit: ExplainUnit }[];
+  rows: Record<string, string | number | null>[];
+  /** Rows left out of the list (counted in the total). */
+  more: number;
+  total: Record<string, string | number | null> | null;
+}
+export interface Explain {
+  item: string;
+  title: string;
+  subtitle: string;
+  value: { value: number; unit: ExplainUnit };
+  formula: string[];
+  source: string[];
+  summary: { label: string; value: number | null; unit: ExplainUnit; strong?: boolean; sign?: boolean }[];
+  notes?: string[];
+  tables: ExplainTable[];
+}
 
 export interface SavedDoc<T> { ok: true; value: T; updatedAt: string | null; updatedBy: string | null }
