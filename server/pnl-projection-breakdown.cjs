@@ -11,8 +11,11 @@
 //   • forecast months — the components the projection used (expected revenue and deals, pipeline
 //                       cohorts, payroll basis by department, budget by category, run-rate months, …)
 //                       and labelled adjustment rows for what they do not explain
-// Facts come from the server-only `details` saved with the cached projection; the Snowflake check is
-// read on demand and cached for PNL_PROJECTION_TTL_MIN.
+// Facts come from the server-only `details` saved with the cached projection; Snowflake (the expense
+// check, the vendor budget by account) is read on demand and cached for PNL_PROJECTION_TTL_MIN.
+// Rows of a NetSuite account carry a link to its register in NetSuite: the month itself for an actual
+// month, the year's closed months for a full year, the last 3 closed months for a forecast month, or
+// the month a figure is taken from (a mirrored month of last year, the CAPEX month carried flat).
 // ─────────────────────────────────────────────────────────────────────────────
 const fs = require('fs');
 const path = require('path');
@@ -117,6 +120,38 @@ function lastMonthsRows(ctx, line, months) {
   });
 }
 
+// Item rows grouped for display: groups by size, rows by size within each group.
+function byGroup(rows) {
+  const total = new Map();
+  for (const r of rows) total.set(r.group, (total.get(r.group) || 0) + r.eur);
+  return rows.sort((a, b) => (Math.abs(total.get(b.group)) - Math.abs(total.get(a.group))) || String(a.group).localeCompare(String(b.group)) || (Math.abs(b.eur) - Math.abs(a.eur)));
+}
+
+// ── NetSuite links ──────────────────────────────────────────────────────────
+const lastDay = (y, m) => new Date(y, m, 0).getDate();
+const usDate = (y, m, d) => `${m}/${d}/${y}`;
+/** [from, to] of a 'YYYY-MM' month as NetSuite report dates (m/d/yyyy). */
+function monthSpan(mKey) {
+  const [y, m] = String(mKey).split('-').map(Number);
+  return [usDate(y, m, 1), usDate(y, m, lastDay(y, m))];
+}
+/** The account register in NetSuite for a date range, or null without an account id or NetSuite host. */
+function registerLink(details, acct, span) {
+  const host = String(process.env.NETSUITE_ACCOUNT_ID || '').replace(/_/g, '-').toLowerCase();
+  const id = details.accountIds && details.accountIds[acct];
+  if (!/^[a-z0-9-]+$/.test(host) || !id || !span) return null;
+  return `https://${host}.app.netsuite.com/app/reporting/reportrunner.nl?acctid=${id}&reporttype=REGISTER&subsidiary=3&combinebalance=T&startdate=${span[0]}&enddate=${span[1]}`;
+}
+/** The dates a cell's account links cover: its month when actual, else the closed months behind it. */
+function linkSpan(details, block, period, status) {
+  const last3 = (details.rules && details.rules.last3) || [];
+  const recent = last3.length ? [monthSpan(last3[0])[0], monthSpan(last3[last3.length - 1])[1]] : null;
+  if (status === 'actual') return monthSpan(period);
+  if (status !== 'fy') return recent;
+  const actual = block.rows.filter((r) => r.status === 'actual');
+  return actual.length ? [monthSpan(actual[0].mKey)[0], monthSpan(actual[actual.length - 1].mKey)[1]] : recent;
+}
+
 const FORECAST = {
   revenue(ctx) {
     const { M, yearKind, ilsOf, year } = ctx;
@@ -165,20 +200,49 @@ const FORECAST = {
     if (Math.abs(plan) >= 0.5) rows.push(adjust('plan', 'Plan changes (salary % and departments)', plan, ilsOf(plan)));
     return { id: 'components', title: 'Projected payroll', rows };
   },
-  opex(ctx) {
-    const { M, ilsOf, cell, yearKind, mKey, year } = ctx;
+  async opex(ctx) {
+    const { M, ilsOf, cell, yearKind, mKey, year, details, sfx } = ctx;
     const rows = [];
+    // The vendor budget by NetSuite account (same table and filters as the forecast's budget).
+    const budgetAccounts = async (y, k, group) => {
+      if (!sfx || !sfx.budget) return null;
+      try {
+        const list = (await sfx.budget(y)).filter((a) => a.month === k && Math.abs(a.eur) >= 0.5);
+        return list.length ? byGroup(list.map((a) => item(`acct:${a.acct}`, a.name || a.acct, a.eur, ilsOf(a.eur), { ref: a.acct, group: group || a.category || 'Other' }))) : null;
+      } catch {
+        return null;
+      }
+    };
     if (yearKind === 'projection') {
       const same = `${year - 1}${mKey.slice(4)}`;
-      rows.push(item('mirror', `Same month of ${year - 1} (${monthLong(same)})`, M.vendorsBase, ilsOf(M.vendorsBase)));
-    } else if (M.categories) {
-      for (const [c, v] of Object.entries(M.categories).sort((a, b) => b[1] - a[1])) {
-        if (Math.abs(num(v)) >= 0.5) rows.push(item(`cat:${c}`, c, num(v), ilsOf(num(v)), { group: 'Vendor budget by category (Snowflake)' }));
+      const group = `Same month of ${year - 1} (${monthLong(same)})`;
+      const booked = (details.accounts[same] || {}).opex;
+      const src = booked && booked.length
+        ? byGroup(booked.map((a) => item(`acct:${a.acct}`, a.name || a.acct, -a.eur, ilsOf(-a.eur), { ref: a.acct, group, span: monthSpan(same) })))
+        : await budgetAccounts(year - 1, same, group);
+      if (src) {
+        rows.push(...src);
+        const rest = M.vendorsBase - sum(rows, 'eur');
+        if (Math.abs(rest) >= 0.5) rows.push(adjust('mirror-diff', `Overrides and plan changes of ${monthLong(same)}`, rest, ilsOf(rest)));
+      } else {
+        rows.push(item('mirror', group, M.vendorsBase, ilsOf(M.vendorsBase)));
       }
-      const rest = M.vendorsBase - sum(rows, 'eur');
-      if (Math.abs(rest) >= 0.5) rows.push(adjust('overrides', 'Budget overrides', rest, ilsOf(rest)));
     } else {
-      rows.push(item('budget', 'Vendor budget (Snowflake)', M.vendorsBase, ilsOf(M.vendorsBase)));
+      const accts = await budgetAccounts(year, mKey, null);
+      if (accts) {
+        rows.push(...accts);
+        const rest = M.vendorsBase - sum(rows, 'eur');
+        if (Math.abs(rest) >= 0.5) rows.push(adjust('overrides', 'Budget overrides', rest, ilsOf(rest)));
+      } else if (M.categories) {
+        // Snowflake unavailable: the budget by category the projection holds.
+        for (const [c, v] of Object.entries(M.categories).sort((a, b) => b[1] - a[1])) {
+          if (Math.abs(num(v)) >= 0.5) rows.push(item(`cat:${c}`, c, num(v), ilsOf(num(v)), { group: 'Vendor budget by category (Snowflake)' }));
+        }
+        const rest = M.vendorsBase - sum(rows, 'eur');
+        if (Math.abs(rest) >= 0.5) rows.push(adjust('overrides', 'Budget overrides', rest, ilsOf(rest)));
+      } else {
+        rows.push(item('budget', 'Vendor budget (Snowflake)', M.vendorsBase, ilsOf(M.vendorsBase)));
+      }
     }
     const plan = cell.eur - M.vendorsBase;
     if (Math.abs(plan) >= 0.5) rows.push(adjust('plan', 'Plan changes (vendor categories and accounts)', plan, ilsOf(plan)));
@@ -187,7 +251,7 @@ const FORECAST = {
   capex(ctx) {
     const from = ctx.details.rules.capexFrom;
     const label = from ? `Salaries CAPEX of ${monthLong(from)}, carried flat` : 'No Salaries CAPEX in the last 12 closed months';
-    return { id: 'components', title: 'Last closed month (NetSuite account 950000)', rows: [item('capex', label, ctx.cell.eur, ctx.cell.ils, { ref: '950000' })] };
+    return { id: 'components', title: 'Last closed month (NetSuite account 950000)', rows: [item('capex', label, ctx.cell.eur, ctx.cell.ils, { ref: '950000', span: from ? monthSpan(from) : null })] };
   },
   fx(ctx) {
     const { M, cell } = ctx;
@@ -215,7 +279,7 @@ async function buildMonth(ctx) {
     return out;
   }
   if (!ctx.M) throw new BreakdownError('Nothing to break down for this cell.');
-  const main = FORECAST[ctx.line](ctx);
+  const main = await FORECAST[ctx.line](ctx);
   tieOut(main, ctx.cell, FX_TIE);
   return { sections: [main], notes: [] };
 }
@@ -262,7 +326,7 @@ function monthCtx(yearCtx, row) {
   return ctx;
 }
 
-/** One breakdown from a cache entry. sfx: { expense(year) } (Snowflake check; optional). */
+/** One breakdown from a cache entry. sfx: { expense(year), budget(year) } (Snowflake; optional). */
 async function buildBreakdown({ entry, line, period, variant, ccy, sfx }) {
   const fy = /^FY-(\d{4})$/.exec(period);
   const year = fy ? Number(fy[1]) : Number(String(period).slice(0, 4));
@@ -286,9 +350,11 @@ async function buildBreakdown({ entry, line, period, variant, ccy, sfx }) {
     built = await buildMonth(ctx);
     status = row.status;
   }
+  const span = linkSpan(entry.details, block, period, status);
+  const linkOf = (ref, own) => (ref && /^\d{4,6}$/.test(ref) ? registerLink(entry.details, ref, own || span) : null);
   const sections = built.sections.map((s) => {
     const rows = s.rows
-      .map((r) => ({ key: r.key, label: r.label, ref: r.ref || null, group: r.group || null, kind: r.kind, hint: r.hint || null, amount: cents(r[ccy]) }))
+      .map((r) => ({ key: r.key, label: r.label, ref: r.ref || null, link: linkOf(r.ref, r.span), group: r.group || null, kind: r.kind, hint: r.hint || null, amount: cents(r[ccy]) }))
       .filter((r) => Math.abs(r.amount) >= 0.5);
     return {
       id: s.id, title: s.title, note: s.note || null, collapsed: !!s.collapsed, informational: !!s.informational,
@@ -308,26 +374,27 @@ function envMinutes(name, fallback) {
   return Number.isFinite(v) && v > 0 ? v : fallback;
 }
 
-function snowflakeExpense(getSf, clock, ttlMs) {
-  const { sfExpenseByAccount } = require('./cash-projection-breakdown.cjs');
+// Snowflake reads shared by all requests, each cached per year for ttlMs (a failure is not cached).
+function snowflakeReads(getSf, clock, ttlMs) {
+  const { sfExpenseByAccount, sfBudgetByAccount } = require('./cash-projection-breakdown.cjs');
   const memo = new Map();
-  return {
-    expense(year) {
-      const hit = memo.get(year);
-      if (hit && clock() - hit.at < ttlMs) return hit.p;
-      const sf = getSf();
-      if (!sf) return Promise.reject(new BreakdownError('Snowflake is not configured on this server.'));
-      const p = sfExpenseByAccount(sf, year);
-      memo.set(year, { at: clock(), p });
-      p.catch(() => { if (memo.get(year) && memo.get(year).p === p) memo.delete(year); });
-      return p;
-    },
+  const cached = (name, fn) => (year) => {
+    const key = `${name}:${year}`;
+    const hit = memo.get(key);
+    if (hit && clock() - hit.at < ttlMs) return hit.p;
+    const sf = getSf();
+    if (!sf) return Promise.reject(new BreakdownError('Snowflake is not configured on this server.'));
+    const p = fn(sf, year);
+    memo.set(key, { at: clock(), p });
+    p.catch(() => { if (memo.get(key) && memo.get(key).p === p) memo.delete(key); });
+    return p;
   };
+  return { expense: cached('expense', sfExpenseByAccount), budget: cached('budget', sfBudgetByAccount) };
 }
 
 /**
  * Express/connect handler for GET /api/pnl-projection/breakdown. deps (all optional):
- *   getSfClient(), sfx ({ expense(year) } — tests), cacheFile, clock(), ttlMs
+ *   getSfClient(), sfx ({ expense(year), budget(year) } — tests), cacheFile, clock(), ttlMs
  */
 function createPnlProjectionBreakdownHandler(deps = {}) {
   const cp = require('./cash-projection.cjs');
@@ -339,7 +406,7 @@ function createPnlProjectionBreakdownHandler(deps = {}) {
     require(path.join(ROOT, 'scripts', 'net-cash-forecast-compute.cjs')); // loads the checkout's .env
     return cp.defaultGetSfClient();
   });
-  const sfx = deps.sfx || snowflakeExpense(getSf, clock, ttlMs);
+  const sfx = deps.sfx || snowflakeReads(getSf, clock, ttlMs);
   const state = { entry: null, mtimeMs: 0 };
 
   function currentEntry() {

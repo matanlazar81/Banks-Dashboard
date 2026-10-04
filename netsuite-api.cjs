@@ -2617,7 +2617,8 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
   // (credit − debit): revenue positive, costs negative, so the sum of all accounts is net profit.
   //   basis 'period' (default) — months by accounting (posting) period, as NetSuite's P&L report
   //   basis 'trandate'         — months by transaction date, like the cash feeds here
-  // Returns { basis, byMonth: { 'YYYY-MM': { [acct]: { acct, name, type, eur, ils } } } }.
+  // Returns { basis, byMonth: { 'YYYY-MM': { [acct]: { acct, name, type, eur, ils } } }, accountIds },
+  // accountIds = { [acct number]: NetSuite internal id } of every P&L account (for register links).
   const PERIOD_MONTHS = { Jan: '01', Feb: '02', Mar: '03', Apr: '04', May: '05', Jun: '06', Jul: '07', Aug: '08', Sep: '09', Oct: '10', Nov: '11', Dec: '12' };
   async function fetchPnlActuals({ fromYear, toYear, basis = 'period' } = {}) {
     const y0 = parseInt(fromYear, 10);
@@ -2663,8 +2664,23 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
     };
     add(eurRows, 'eur');
     add(ilsRows, 'ils');
+    // Internal ids for links; an inactive duplicate of an account number never wins over the active one.
+    const accountIds = {};
+    try {
+      const idRows = await suiteqlAll(`
+        SELECT a.id AS id, a.acctnumber AS acct, a.isinactive AS inactive
+        FROM account a
+        WHERE a.accttype IN ('Income', 'COGS', 'Expense', 'OthIncome', 'OthExpense') AND a.acctnumber IS NOT NULL
+      `);
+      for (const r of idRows) {
+        const k = String(r.acct);
+        if (!accountIds[k] || r.inactive === 'F') accountIds[k] = Number(r.id);
+      }
+    } catch (e) {
+      console.warn(`[NS API] P&L account ids unavailable (no NetSuite links): ${e.message}`);
+    }
     console.log(`[NS API] P&L actuals ${y0}–${y1} (${byPeriod ? 'posting period' : 'transaction date'}): ${Object.keys(byMonth).length} month(s), ${eurRows.length}+${ilsRows.length} rows`);
-    return { basis: byPeriod ? 'period' : 'trandate', byMonth };
+    return { basis: byPeriod ? 'period' : 'trandate', byMonth, accountIds };
   }
 
   // ── Posted month-end FX revaluation check ──

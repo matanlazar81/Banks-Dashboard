@@ -1,7 +1,7 @@
 // Movable window with the breakdown of one table cell. Drag it by its title bar; it stays where it was
 // put when another cell is opened. Esc or × closes it. Not modal: the table stays usable behind it.
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import { CheckCircle2, ChevronDown, ChevronRight, GripHorizontal, Info, Loader2, X } from 'lucide-react';
+import { CheckCircle2, ChevronDown, ChevronRight, ExternalLink, GripHorizontal, Info, Loader2, X } from 'lucide-react';
 import {
   arrangeRows, CASH_BREAKDOWN_ENDPOINT, clampPosition, fetchBreakdown, PANEL_W,
   type BreakdownReady, type BreakdownRequest, type BreakdownRow, type BreakdownSection, type PanelPosition,
@@ -28,7 +28,13 @@ function RowLine({ row, ccy, indent }: { row: BreakdownRow; ccy: Ccy; indent: bo
             <span title={row.hint} aria-label={row.hint} className="cursor-help not-italic text-slate-400"><Info size={12} /></span>
           )}
         </span>
-        {row.ref && <span className="ml-1.5 font-mono text-[11px] text-slate-400">{row.ref}</span>}
+        {row.ref && row.link && (
+          <a href={row.link} target="_blank" rel="noopener noreferrer" title={`Open account ${row.ref} in NetSuite (register)`}
+            className="ml-1.5 inline-flex items-center gap-0.5 font-mono text-[11px] text-sky-700 underline decoration-dotted underline-offset-2 hover:text-sky-900">
+            {row.ref}<ExternalLink size={10} aria-hidden="true" />
+          </a>
+        )}
+        {row.ref && !row.link && <span className="ml-1.5 font-mono text-[11px] text-slate-400">{row.ref}</span>}
       </td>
       <td className="whitespace-nowrap py-1 text-right align-top"><Amount value={row.amount} ccy={ccy} /></td>
     </tr>
