@@ -80,9 +80,9 @@ export function besidePosition(main: PanelPosition, viewport = { w: window.inner
   return clampPosition({ x: left >= 8 ? left : main.x + 24, y: main.y + 32 }, viewport);
 }
 
-/** Keeps at least the window's title bar on screen. */
-export function clampPosition(p: PanelPosition, viewport = { w: window.innerWidth, h: window.innerHeight }): PanelPosition {
-  const w = Math.min(PANEL_W, viewport.w - 16);
+/** Keeps at least the window's title bar on screen (a window `width` wide, the breakdown's by default). */
+export function clampPosition(p: PanelPosition, viewport = { w: window.innerWidth, h: window.innerHeight }, width = PANEL_W): PanelPosition {
+  const w = Math.min(width, viewport.w - 16);
   return {
     x: Math.min(Math.max(8, p.x), Math.max(8, viewport.w - w - 8)),
     y: Math.min(Math.max(8, p.y), Math.max(8, viewport.h - 56)),

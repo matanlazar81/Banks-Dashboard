@@ -717,6 +717,8 @@ async function testBreakdown() {
     'UI: consecutive rows of a group share a header and subtotal; adjustments stand alone');
   const pos = ui.clampPosition({ x: 5000, y: -40 }, { w: 1200, h: 800 });
   check(pos.x === 1200 - 560 - 8 && pos.y === 8, 'UI: the window is kept on screen when dragged');
+  const narrow = ui.clampPosition({ x: 5000, y: 5000 }, { w: 1200, h: 800 }, 448);
+  check(narrow.x === 1200 - 448 - 8 && narrow.y === 800 - 56, 'UI: a narrower window (2027 targets) is kept on screen by its own width');
 }
 
 // Department reads (server/breakdown-departments.cjs), stubbed from the same synthetic tables: booked

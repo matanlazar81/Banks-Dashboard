@@ -110,7 +110,8 @@ row. The NetSuite account ids are read with the projection (one light query); wi
 
 ## 2027 targets
 
-**2027 targets** (header button; always the projection year) opens a side panel; **Targets 2027** in the Plan / Base switch
+**2027 targets** (header button; always the projection year) opens a window that moves like the breakdown
+windows (drag its title bar; it reopens where it was left until the page reloads); **Targets 2027** in the Plan / Base switch
 shows the Plan with those targets applied. Only the projection year changes: the current year and its
 December closing stay as they are.
 
