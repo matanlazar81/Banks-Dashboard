@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // ─────────────────────────────────────────────────────────────────────────────
 // Checks for the Metrics page (server/metrics.cjs, server/metrics-settings.cjs): the pack from synthetic
-// projection payloads, NRR, the cloud cap, the innovation envelope, FX conversions, deposits, and the
+// projection payloads, NRR, the cloud cap, the 2027 targets, payroll ratios, FX conversions, deposits, and the
 // handlers. No network, no real figures.
 //   node scripts/test-metrics.cjs
 // ─────────────────────────────────────────────────────────────────────────────
@@ -139,24 +139,6 @@ function testCloud() {
   check(out.cloud.category === CLOUD, 'the cloud category is found by name when none is set');
 }
 
-function testEnvelope() {
-  console.log('\nINNOVATION ENVELOPE: in or out of the forecast');
-  const s = ms.emptySettings();
-  s.innovation = { amountEur: 1_200_000, year: T, startMonth: 1, included: false };
-  let out = build(s);
-  check(metric(out, 'ebitda').fy[1].value === 24_000_000 && out.innovation.applied === 1_200_000 && out.innovation.ebitda.with === 22_800_000 && out.innovation.ebitda.without === 24_000_000,
-    'out: the pack shows the forecast without it, and both figures side by side');
-  s.innovation.included = true;
-  out = build(s);
-  check(metric(out, 'ebitda').fy[1].value === 22_800_000 && metric(out, 'netCash').fy[1].value === 13_000_000 - 1_200_000 && metric(out, 'netCash').fy[0].value === 10_000_000,
-    'in: next year\'s EBITDA and December cash carry it; this year is untouched');
-  s.innovation = { amountEur: 1_200_000, year: Y, startMonth: 7, included: true };
-  out = build(s);
-  // 1.2M over Jul–Dec = 200K a month, but Jul–Sep are closed: only Oct–Dec take it.
-  check(out.innovation.months === 3 && out.innovation.applied === 600_000 && metric(out, 'ebitda').fy[0].value === 24_000_000 - 600_000
-    && metric(out, 'netCash').fy[1].value === 13_000_000 - 600_000, 'this year from July: only the forecast months take their share, and next year\'s cash carries it');
-}
-
 // The projection year with the targets saved on the New Bank Dashboard: the same figures as both pages'
 // Targets view. The baselines are built by the real targets module, matching the payloads above.
 async function testTargets() {
@@ -272,11 +254,14 @@ function testNrr() {
 
 function testValidation() {
   console.log('\nSETTINGS AND DEPOSITS: what can be saved');
-  const ok = ms.validateSettings({ value: { usdEurPlanningRate: 1.15, cloudCapPct: 8, innovation: { amountEur: 2_000_000, year: 2027, startMonth: 1, included: true } } });
-  check(ok.ok && ok.value.innovation.included && ok.value.cloudCategory === '', 'valid settings are completed with defaults');
+  const ok = ms.validateSettings({ value: { usdEurPlanningRate: 1.15, cloudCapPct: 8 } });
+  check(ok.ok && ok.value.cloudCategory === '' && ok.value.usdEurPlanningRate === 1.15, 'valid settings are completed with defaults');
+  // Settings saved while the page had the innovation envelope still save, without it.
+  const legacy = ms.validateSettings({ value: { cloudCapPct: 9, innovation: { amountEur: 2_000_000, year: 2027, startMonth: 1, included: true } } });
+  check(legacy.ok && legacy.value.cloudCapPct === 9 && !('innovation' in legacy.value), 'the removed innovation envelope is accepted and dropped');
   const bads = [
-    { value: { usdEurPlanningRate: 9 } }, { value: { cloudCapPct: -1 } }, { value: { innovation: { startMonth: 0 } } },
-    { value: { innovation: { included: 'yes' } } }, { value: { other: 1 } }, { value: { cloudCategory: '__proto__' } }, {},
+    { value: { usdEurPlanningRate: 9 } }, { value: { cloudCapPct: -1 } },
+    { value: { other: 1 } }, { value: { cloudCategory: '__proto__' } }, {},
   ];
   check(bads.every((b) => !ms.validateSettings(b).ok), `${bads.length} kinds of bad settings are refused`);
   const dep = { id: 'x1', bank: 'Bank', amount: 10, currency: 'EUR', placedOn: '2026-09-01', maturity: null, confirmed: false, confirmedOn: null, note: '' };
@@ -347,6 +332,12 @@ async function testHandlers() {
   state = { cash: entry(cashPayload()), pnl: entry(pnlPayload(), pnlDetails()) };
   r = await call(h);
   check(r.body.settings.cloudCapPct === 9 && r.body.cloud.capPct === 9 && r.body.rates.usdEurPlanning === 1.15, 'the pack uses the saved settings');
+  // A settings file saved with the (removed) innovation envelope IN: it no longer changes anything.
+  const before = metric(r.body, 'ebitda').fy[1].value;
+  fs.writeFileSync(settingsFile, JSON.stringify({ value: { cloudCapPct: 9, usdEurPlanningRate: 1.15, cloudCategory: '', innovation: { amountEur: 1_200_000, year: T, startMonth: 1, included: true } } }));
+  r = await call(h);
+  check(metric(r.body, 'ebitda').fy[1].value === before && !('innovation' in r.body) && !('innovation' in r.body.settings),
+    'an innovation envelope saved before its removal no longer counts');
   const dh = m.createMetricsDepositsHandler({ file: depositsFile, clock: () => NOW });
   r = await call(dh, { method: 'PUT', url: '/api/metrics/deposits', headers: json, body: { value: [{ id: 'd1', bank: 'Bank', amount: 100, currency: 'EUR', placedOn: '2026-10-01', maturity: null, confirmed: false, confirmedOn: null, note: '' }] } });
   const pack = await call(h);
@@ -366,9 +357,7 @@ async function testModel() {
   const model = await import(pathToFileURL(path.join(ROOT, 'src', 'metrics', 'model.ts')).href);
   check(model.formatEur(5_000_000) === '€5.00M' && model.formatEur(-40_000) === '-€40K' && model.formatEur(0) === '–' && model.formatEur(null) === '–'
     && model.formatPct(104.5) === '104.5%', 'figures: € millions / thousands, percentages, a dash for nothing');
-  const s = ms.emptySettings();
-  s.innovation = { amountEur: 1_200_000, year: T, startMonth: 1, included: true };
-  const rows = model.packRows(build(s, [{ id: 'b', bank: 'Bank B', amount: 500_000, currency: 'USD', placedOn: '2026-09-25', maturity: null, confirmed: false, confirmedOn: null, note: '' }]));
+  const rows = model.packRows(build(undefined, [{ id: 'b', bank: 'Bank B', amount: 500_000, currency: 'USD', placedOn: '2026-09-25', maturity: null, confirmed: false, confirmedOn: null, note: '' }]));
   const at = (label) => rows.find((r) => r[0] === label);
   check(rows[0][0] === 'LSports metrics pack, as of Sep 2026' && at('Metric').join('|') === 'Metric|Last month|Year to date|FY 2026|FY 2027|Basis',
     'export: title and the same header every month');
@@ -377,16 +366,16 @@ async function testModel() {
   check(rows.some((r) => /^Payroll \/ revenue and revenue per employee, through Sep 2026/.test(String(r[0])))
     && at('Jan–Sep 2026') && at('Jan–Sep 2026')[3] === '40.0%' && at('Sep 2026') && at('Sep 2026')[4] === 111,
   'export: payroll / revenue and revenue per employee by month and year to date');
-  check(rows.some((r) => /Innovation envelope: €1,200,000 for 2027 from Jan: IN the forecast/.test(String(r[0])))
-    && rows.some((r) => r[0] === 'Bank B') && rows.some((r) => String(r[0]).startsWith('FX conversions, Sep 2026')),
-  'export: cloud, the envelope in or out, the rate, FX conversions and open deposits');
+  check(rows.some((r) => String(r[0]).startsWith('Cloud (')) && at('USD/EUR planning rate')
+    && rows.some((r) => r[0] === 'Bank B') && rows.some((r) => String(r[0]).startsWith('FX conversions, Sep 2026'))
+    && !rows.some((r) => /innovation/i.test(String(r[0]))),
+  'export: cloud, the rate, FX conversions and open deposits (no innovation envelope)');
 }
 
 async function main() {
   console.log('=== metrics checks (synthetic data) ===');
   testPack();
   testCloud();
-  testEnvelope();
   await testTargets();
   testPeople();
   testFxDepositsRates();

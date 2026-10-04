@@ -94,7 +94,6 @@ export interface MetricsSettings {
   usdEurPlanningRate: number | null;
   cloudCapPct: number;
   cloudCategory: string;
-  innovation: { amountEur: number; year: number | null; startMonth: number; included: boolean };
 }
 
 export interface MetricsPayload {
@@ -108,11 +107,6 @@ export interface MetricsPayload {
   metrics: Metric[];
   nrrTrend: { month: string; nrr: number; grr: number; customers: number }[];
   cloud: { category: string; categories: string[]; capPct: number; accounts: string; years: CloudYear[] };
-  innovation: {
-    amountEur: number; year: number; startMonth: number; included: boolean; monthly: number; months: number; applied: number;
-    ebitda: { year: number; without: number; with: number } | null;
-    netCash: { year: number; without: number; with: number } | null;
-  };
   /** Payroll / revenue and revenue per employee (absent from servers before this page had them). */
   people?: People;
   rates: { usdEurPlanning: number | null; usdEurLive: { rate: number; date: string; source: string } | null };

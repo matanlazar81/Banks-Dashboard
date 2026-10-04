@@ -11,7 +11,7 @@ figures follow the Plan.
 |---|---|
 | `metrics.html` | the page (a small bundle, never loads the old dashboard) |
 | `GET /api/metrics` | the pack (`server/metrics.cjs`); `?refresh=true` reads ARR, NRR, churn, FX and the ECB rate again |
-| `GET/PUT /api/metrics/settings` | planning rate, cloud cap, innovation envelope (`server/metrics-settings.cjs`) |
+| `GET/PUT /api/metrics/settings` | planning rate and cloud cap (`server/metrics-settings.cjs`) |
 | `GET/PUT /api/metrics/deposits` | the deposit tracker |
 | finance-it | sidebar item → iframe of `<bank-dashboard static base>/metrics.html` (see Deploying) |
 
@@ -87,19 +87,6 @@ August, and the page says September is pending.
 - Shown for both years: cloud, cap, headroom (negative when over) and cloud as a % of revenue.
 - The cap % and the category are settings on the page.
 
-## Innovation envelope
-
-Extra innovation spending on top of the forecast (from Dotan's pack: "say if the innovation envelope is
-in or out"). It is an amount for a year, spread evenly over the months from a start month to December.
-It only applies to forecast months: a closed month keeps what was booked. The card explains this in one
-line.
-
-- **In**: the pack's EBITDA and December cash include it.
-- **Out**: they don't.
-
-Either way, the envelope card shows EBITDA and December cash both with and without it. The envelope is
-treated as **on top of** the forecast. If it is already inside the budget, set it to Out.
-
 ## Rates and FX conversions
 
 - **USD/EUR planning rate**: a setting (USD per €), shown next to today's ECB rate (Frankfurter, with
@@ -124,6 +111,8 @@ NetSuite and Snowflake hold no confirmation status, so the page keeps a small tr
 - Every save is appended to a `-history.jsonl` file next to them, with who and when.
 - Saves are validated (ranges, known fields only), JSON only, same-origin, and carry finance-it's CSRF
   token (`server/json-store.cjs`, shared with the 2027 targets).
+- The innovation envelope was removed from the page. Settings saved with it still load and save; the
+  envelope is ignored and changes nothing.
 
 ## How it is computed
 
@@ -151,5 +140,5 @@ there adds its sidebar item, checkbox and hub entry.
 ## Checking it
 
 ```bash
-node scripts/test-metrics.cjs   # synthetic: every pack item, NRR, cloud cap, envelope, targets, payroll ratios, FX, deposits, handlers, export rows
+node scripts/test-metrics.cjs   # synthetic: every pack item, NRR, cloud cap, targets, payroll ratios, FX, deposits, handlers, export rows
 ```
