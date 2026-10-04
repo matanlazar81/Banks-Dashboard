@@ -9,7 +9,7 @@ interface CardProps {
   tone?: 'default' | 'warn';
 }
 
-function KpiCard({ label, value, ccy, note, tone = 'default' }: CardProps) {
+export function KpiCard({ label, value, ccy, note, tone = 'default' }: CardProps) {
   const negative = value != null && value < 0;
   return (
     <div className="rounded-lg border border-slate-200 bg-white px-4 py-3">

@@ -821,6 +821,7 @@ module.exports = {
   createCashProjectionBreakdownHandler,
   captureDetails,
   buildBreakdown,
+  sfExpenseByAccount,
   BreakdownError,
   LINES,
   DETAILS_VERSION,

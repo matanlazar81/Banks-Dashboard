@@ -31,6 +31,7 @@ const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
 const { captureDetails } = require('./cash-projection-breakdown.cjs');
+const { loadProjectionInputs, wrapClient } = require('./projection-inputs.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
 // 2: balances are cash in the bank with a separate `dividend` figure (1 was the operating view).
@@ -62,36 +63,6 @@ function loadForecastModules() {
       .catch((e) => { modulesP = null; throw e; });
   }
   return modulesP;
-}
-
-// Route every client method through `queue` (when given) and record which ones failed. Failures are
-// rethrown so gatherInputs' own fallbacks still apply; the names surface as data warnings.
-function wrapClient(client, label, failures, queue) {
-  return new Proxy(client, {
-    get(target, prop) {
-      const value = target[prop];
-      if (typeof value !== 'function') return value;
-      return (...args) => new Promise((resolve) => {
-        const run = () => value(...args);
-        resolve(queue ? queue(run) : run());
-      }).catch((e) => {
-        failures.push(`${label}.${String(prop)}`);
-        throw e;
-      });
-    },
-  });
-}
-
-// Extra Snowflake reads the roll-forward needs beyond gatherInputs(): the plain budgets (gatherInputs
-// merges overrides into its copies) and the Oct–Dec payroll budget by department.
-async function fetchRollForwardExtras(sf, year) {
-  const settle = (p) => p.then((v) => v, () => null);
-  const [rawSfBudget, rawSfSalaryBudget, ...breakdowns] = await Promise.all([
-    settle(sf.fetchBudgetByCategory(year)),
-    settle(sf.fetchSalaryBudget(year)),
-    ...[10, 11, 12].map((m) => settle(sf.fetchSalaryBudgetBreakdown(`${year}-${pad2(m)}`))),
-  ]);
-  return { rawSfBudget, rawSfSalaryBudget, breakdowns };
 }
 
 const FEED_LABELS = {
@@ -140,17 +111,14 @@ async function computeCashProjection(opts) {
   if (!nsClient) throw new ProjectionError('The NetSuite client is unavailable on this server.');
   if (!sfClient) throw new ProjectionError('Snowflake is not configured on this server.');
 
-  const failures = [];
-  const ns = wrapClient(nsClient, 'ns', failures, opts.queueNsCall);
-  const sf = wrapClient(sfClient, 'sf', failures, null);
   const Y = now.getFullYear();
   const T = Y + 1;
   const scenarioName = process.env.NET_CASH_SCENARIO_NAME || DEFAULT_SCENARIO;
 
-  const scenarioP = cmp.loadScenarioDataAsync(scenarioName);
-  const { inputs, meta } = await cmp.gatherInputs(ns, sf, Y);
-  const extras = await fetchRollForwardExtras(sf, Y);
-  const scenario = await scenarioP;
+  // Shared with the P&L Projection: one NetSuite/Snowflake pull serves both pages (read-only here).
+  const { inputs, meta, extras, scenario, failures } = await loadProjectionInputs({
+    now, cmp, nsClient, sfClient, queueNsCall: opts.queueNsCall, scenarioName,
+  });
 
   // Without any opening anchor the whole table would start from 0 — report instead of showing it.
   if (!inputs.yearStartBalance && !inputs.book) {
@@ -262,9 +230,9 @@ async function computeCashProjection(opts) {
 
 // ── cache file ──────────────────────────────────────────────────────────────
 // `details` (optional) stays server-side: the handler only ever sends `payload`.
-function makeEntry(payload, nowMs, details = null) {
+function makeEntry(payload, nowMs, details = null, schemaVersion = SCHEMA_VERSION) {
   return {
-    schemaVersion: SCHEMA_VERSION,
+    schemaVersion,
     company: payload.company,
     year: payload.years[0],
     scenarioName: payload.plan.name,
@@ -278,14 +246,14 @@ function makeEntry(payload, nowMs, details = null) {
 function writeCacheEntry(file, entry) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify({ schemaVersion: SCHEMA_VERSION, entry }));
+  fs.writeFileSync(tmp, JSON.stringify({ schemaVersion: entry.schemaVersion, entry }));
   fs.renameSync(tmp, file); // atomic: readers never see a half-written file
 }
 
-function readCacheEntry(file) {
+function readCacheEntry(file, schemaVersion = SCHEMA_VERSION) {
   try {
     const saved = JSON.parse(fs.readFileSync(file, 'utf-8'));
-    if (saved && saved.schemaVersion === SCHEMA_VERSION && saved.entry && saved.entry.payload) return saved.entry;
+    if (saved && saved.schemaVersion === schemaVersion && saved.entry && saved.entry.payload) return saved.entry;
   } catch { /* missing or unreadable — treated as no cache */ }
   return null;
 }
@@ -309,30 +277,29 @@ function defaultQueueNsCall(fn) {
 }
 
 /**
- * Express/connect handler for GET /api/cash-projection. deps (all optional):
- *   getNsClient, getSfClient, queueNsCall — share the API module's clients and NetSuite queue
- *   compute(nowDate) → { payload }        — override the computation (tests)
- *   clock() → ms, cacheFile (null = memory only), ttlMs, timeoutMs, refreshCooldownMs, failureBackoffMs
+ * The cached, background-refreshed GET handler shared by the projection pages. spec:
+ *   compute(nowDate) → { payload, details? }   (required)
+ *   schemaVersion, cacheFile (null = memory only), logTag ('cash-projection'), envPrefix ('CASH_PROJECTION':
+ *   reads <prefix>_TTL_MIN, _TIMEOUT_MIN, _PREWARM, falling back to the CASH_PROJECTION_* values)
+ *   clock() → ms, ttlMs, timeoutMs, refreshCooldownMs, failureBackoffMs
  */
-function createCashProjectionHandler(deps = {}) {
-  const clock = deps.clock || Date.now;
-  const ttlMs = deps.ttlMs ?? envMinutes('CASH_PROJECTION_TTL_MIN', 30) * MIN;
-  const timeoutMs = deps.timeoutMs ?? envMinutes('CASH_PROJECTION_TIMEOUT_MIN', 10) * MIN;
-  const refreshCooldownMs = deps.refreshCooldownMs ?? MIN;
-  const failureBackoffMs = deps.failureBackoffMs ?? 2 * MIN;
-  const cacheFile = deps.cacheFile === undefined ? DEFAULT_CACHE_FILE : deps.cacheFile;
-  const compute = deps.compute || ((nowDate) => computeCashProjection({
-    now: nowDate,
-    getNsClient: deps.getNsClient || defaultGetNsClient,
-    getSfClient: deps.getSfClient || defaultGetSfClient,
-    queueNsCall: deps.queueNsCall || defaultQueueNsCall,
-  }));
+function createProjectionHandler(spec) {
+  const { compute, schemaVersion } = spec;
+  const logTag = spec.logTag || 'cash-projection';
+  const prefix = spec.envPrefix || 'CASH_PROJECTION';
+  const clock = spec.clock || Date.now;
+  const ttlMs = spec.ttlMs ?? envMinutes(`${prefix}_TTL_MIN`, envMinutes('CASH_PROJECTION_TTL_MIN', 30)) * MIN;
+  const timeoutMs = spec.timeoutMs ?? envMinutes(`${prefix}_TIMEOUT_MIN`, envMinutes('CASH_PROJECTION_TIMEOUT_MIN', 10)) * MIN;
+  const refreshCooldownMs = spec.refreshCooldownMs ?? MIN;
+  const failureBackoffMs = spec.failureBackoffMs ?? 2 * MIN;
+  const cacheFile = spec.cacheFile ?? null;
+  const prewarm = (process.env[`${prefix}_PREWARM`] ?? process.env.CASH_PROJECTION_PREWARM) === '1';
 
   const state = { entry: null, fileMtimeMs: 0, inflight: null, inflightStartedMs: 0, lastStartMs: -Infinity, lastFailureMs: -Infinity, lastError: null };
 
   const scenarioName = () => process.env.NET_CASH_SCENARIO_NAME || DEFAULT_SCENARIO;
   const isUsable = (entry, nowMs) => !!entry
-    && entry.schemaVersion === SCHEMA_VERSION
+    && entry.schemaVersion === schemaVersion
     && entry.company === COMPANY
     && entry.year === new Date(nowMs).getFullYear()
     && entry.scenarioName === scenarioName();
@@ -344,7 +311,7 @@ function createCashProjectionHandler(deps = {}) {
     try { mtimeMs = fs.statSync(cacheFile).mtimeMs; } catch { return; }
     if (mtimeMs <= state.fileMtimeMs) return;
     state.fileMtimeMs = mtimeMs;
-    const entry = readCacheEntry(cacheFile);
+    const entry = readCacheEntry(cacheFile, schemaVersion);
     if (entry && (!state.entry || entry.generatedAtMs > state.entry.generatedAtMs)) state.entry = entry;
   }
 
@@ -354,7 +321,7 @@ function createCashProjectionHandler(deps = {}) {
       writeCacheEntry(cacheFile, entry);
       state.fileMtimeMs = fs.statSync(cacheFile).mtimeMs;
     } catch (e) {
-      console.warn(`[cash-projection] cache write failed: ${e.message}`);
+      console.warn(`[${logTag}] cache write failed: ${e.message}`);
     }
   }
 
@@ -372,7 +339,7 @@ function createCashProjectionHandler(deps = {}) {
       .then((result) => {
         const payload = result && result.payload;
         if (!payload || payload.status !== 'ready') throw new Error('compute returned no payload');
-        const entry = makeEntry(payload, clock(), result.details);
+        const entry = makeEntry(payload, clock(), result.details, schemaVersion);
         state.entry = entry;
         state.lastError = null;
         state.lastFailureMs = -Infinity;
@@ -381,7 +348,7 @@ function createCashProjectionHandler(deps = {}) {
       .catch((e) => {
         state.lastFailureMs = clock();
         state.lastError = e instanceof ProjectionError ? e.message : 'The projection could not be computed. The server log has the details.';
-        console.error(`[cash-projection] compute failed: ${e && e.stack ? e.stack : e}`);
+        console.error(`[${logTag}] compute failed: ${e && e.stack ? e.stack : e}`);
       })
       .finally(() => {
         clearTimeout(timer);
@@ -458,7 +425,7 @@ function createCashProjectionHandler(deps = {}) {
   handler.idle = () => state.inflight || Promise.resolve();
 
   // Opt-in warm-up after start so the first visitor doesn't wait (no timers otherwise).
-  if (process.env.CASH_PROJECTION_PREWARM === '1') {
+  if (prewarm) {
     const t = setTimeout(() => {
       hydrateFromDisk();
       if (!isUsable(state.entry, clock())) maybeStart(clock(), false);
@@ -469,8 +436,31 @@ function createCashProjectionHandler(deps = {}) {
   return handler;
 }
 
+/**
+ * Express/connect handler for GET /api/cash-projection. deps (all optional):
+ *   getNsClient, getSfClient, queueNsCall — share the API module's clients and NetSuite queue
+ *   compute(nowDate) → { payload }        — override the computation (tests)
+ *   clock() → ms, cacheFile (null = memory only), ttlMs, timeoutMs, refreshCooldownMs, failureBackoffMs
+ */
+function createCashProjectionHandler(deps = {}) {
+  return createProjectionHandler({
+    ...deps,
+    schemaVersion: SCHEMA_VERSION,
+    logTag: 'cash-projection',
+    envPrefix: 'CASH_PROJECTION',
+    cacheFile: deps.cacheFile === undefined ? DEFAULT_CACHE_FILE : deps.cacheFile,
+    compute: deps.compute || ((nowDate) => computeCashProjection({
+      now: nowDate,
+      getNsClient: deps.getNsClient || defaultGetNsClient,
+      getSfClient: deps.getSfClient || defaultGetSfClient,
+      queueNsCall: deps.queueNsCall || defaultQueueNsCall,
+    })),
+  });
+}
+
 module.exports = {
   createCashProjectionHandler,
+  createProjectionHandler,
   computeCashProjection,
   wrapClient,
   makeEntry,
@@ -479,5 +469,11 @@ module.exports = {
   ProjectionError,
   SCHEMA_VERSION,
   DEFAULT_CACHE_FILE,
+  DEFAULT_SCENARIO,
+  COMPANY,
+  FEED_LABELS,
+  defaultGetNsClient,
   defaultGetSfClient,
+  defaultQueueNsCall,
+  loadForecastModules,
 };

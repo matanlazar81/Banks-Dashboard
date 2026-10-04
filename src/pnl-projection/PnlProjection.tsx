@@ -1,30 +1,38 @@
 import { useCallback, useMemo, useState } from 'react';
 import { Download, Loader2, RefreshCw } from 'lucide-react';
-import { useProjection } from './useProjection.ts';
-import { fetchProjection } from './api.ts';
-import { buildTable, computeKpis, type Column } from './model.ts';
-import KpiStrip from './KpiStrip.tsx';
-import ProjectionTable from './ProjectionTable.tsx';
-import BreakdownPanel from './BreakdownPanel.tsx';
-import { clampPosition, type PanelPosition } from './breakdown.ts';
-import type { Ccy, VariantKey, YearView } from './types.ts';
-import { ComputingCard, ErrorCard, Segmented, Skeleton, Warnings } from './PageParts.tsx';
-import { readParam, writeParam } from './urlParams.ts';
+import { useProjection } from '../new-dashboard/useProjection.ts';
+import ProjectionTable, { type TableMarkers } from '../new-dashboard/ProjectionTable.tsx';
+import BreakdownPanel from '../new-dashboard/BreakdownPanel.tsx';
+import { clampPosition, type PanelPosition } from '../new-dashboard/breakdown.ts';
+import { ComputingCard, ErrorCard, Segmented, Skeleton, Warnings } from '../new-dashboard/PageParts.tsx';
+import { readParam, writeParam } from '../new-dashboard/urlParams.ts';
+import { monthLongLabel, type Column } from '../new-dashboard/model.ts';
+import type { YearView } from '../new-dashboard/types.ts';
+import { fetchPnlProjection, PNL_BREAKDOWN_ENDPOINT } from './api.ts';
+import { buildPnlTable, computePnlKpis, PNL_BREAKDOWN_LINES } from './model.ts';
+import PnlKpiStrip from './PnlKpiStrip.tsx';
+import type { Ccy, VariantKey } from './types.ts';
+
+const MARKERS: TableMarkers = {
+  anchorLine: null,
+  rollForwardLine: 'accOpening',
+  closingLine: 'accClosing',
+  negativeLines: new Set(['ebitda', 'net']),
+};
 
 function Legend() {
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-600">
-      <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 rounded-sm border border-slate-300 bg-slate-100" />Actual</span>
-      <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 rounded-sm border border-sky-300 bg-sky-50" />Current month</span>
+      <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 rounded-sm border border-slate-300 bg-slate-100" />Actual (NetSuite)</span>
+      <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 rounded-sm border border-sky-300 bg-sky-50" />Current month (projected)</span>
       <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 rounded-sm border border-slate-300 bg-white" />Forecast</span>
-      <span><span className="text-sky-600">⚓</span> opens at the NetSuite bank balance</span>
-      <span><span className="text-emerald-600">↩</span> rolled forward from December</span>
+      <span><span className="text-emerald-600">↩</span> accumulated profit rolled forward from December</span>
     </div>
   );
 }
 
-export default function NewBankDashboard() {
-  const { phase, data, error, computingElapsedSec, refreshing, refresh } = useProjection(fetchProjection);
+export default function PnlProjection() {
+  const { phase, data, error, computingElapsedSec, refreshing, refresh } = useProjection(fetchPnlProjection);
   const [variant, setVariant] = useState<VariantKey>(() => (readParam('plan') === 'base' ? 'base' : 'plan'));
   const [ccy, setCcy] = useState<Ccy>(() => (readParam('ccy') === 'ils' ? 'ils' : 'eur'));
   const [view, setView] = useState<YearView>(() => {
@@ -33,7 +41,6 @@ export default function NewBankDashboard() {
   });
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
-  // The breakdown window: which cell is open, and where the window was last dragged to.
   const [openCell, setOpenCell] = useState<{ line: string; period: string; id: string } | null>(null);
   const [panelPos, setPanelPos] = useState<PanelPosition>(() => clampPosition({ x: window.innerWidth - 580, y: 120 }));
   const onOpenCell = useCallback((line: string, col: Column) => {
@@ -41,8 +48,8 @@ export default function NewBankDashboard() {
   }, []);
   const closePanel = useCallback(() => setOpenCell(null), []);
 
-  const table = useMemo(() => (data ? buildTable(data.variants[variant], ccy, view) : null), [data, variant, ccy, view]);
-  const kpis = useMemo(() => (data ? computeKpis(data, variant, ccy) : null), [data, variant, ccy]);
+  const table = useMemo(() => (data ? buildPnlTable(data.variants[variant], ccy, view) : null), [data, variant, ccy, view]);
+  const kpis = useMemo(() => (data ? computePnlKpis(data, variant, ccy) : null), [data, variant, ccy]);
 
   const chooseVariant = (v: VariantKey) => { setVariant(v); writeParam('plan', v === 'base' ? 'base' : null); };
   const chooseCcy = (c: Ccy) => { setCcy(c); writeParam('ccy', c === 'ils' ? 'ils' : null); };
@@ -53,8 +60,8 @@ export default function NewBankDashboard() {
     setExporting(true);
     setExportError(null);
     try {
-      const { exportProjectionXlsx } = await import('./exportXlsx.ts');
-      await exportProjectionXlsx(data, table, variant, ccy);
+      const { exportTableXlsx } = await import('../new-dashboard/exportXlsx.ts');
+      await exportTableXlsx({ what: 'P&L projection', years: data.years, planName: data.plan.name, generatedAt: data.generatedAt, table, variant, ccy });
     } catch (e) {
       setExportError(e instanceof Error ? e.message : 'The export failed.');
     } finally {
@@ -66,15 +73,15 @@ export default function NewBankDashboard() {
   const planTitle = data ? `Scenario "${data.plan.name}", the plan behind the official net-cash figure` : undefined;
   const updated = data ? new Date(data.generatedAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : null;
   const updatedDay = data ? new Date(data.generatedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : null;
-  const warnings = data ? data.warnings : [];
+  const through = data && data.actuals.through ? monthLongLabel(data.actuals.through) : null;
 
   return (
     <div className="min-h-screen bg-slate-50">
       <header className="border-b border-slate-200 bg-white">
         <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
           <div>
-            <h1 className="text-lg font-semibold text-slate-900">New Bank Dashboard</h1>
-            <p className="text-sm text-slate-500">LSports · cash projection{y0 ? ` ${y0}–${y1}` : ''}</p>
+            <h1 className="text-lg font-semibold text-slate-900">P&amp;L Projection</h1>
+            <p className="text-sm text-slate-500">LSports · P&amp;L projection{y0 ? ` ${y0}–${y1}` : ''}, accrual basis</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Segmented
@@ -127,18 +134,24 @@ export default function NewBankDashboard() {
               <span>Updated {updatedDay} {updated}</span>
               <span aria-hidden="true">·</span>
               <span>{variant === 'plan' ? `Plan: ${data.plan.name}` : 'Base: no plan adjustments'}</span>
+              <span aria-hidden="true">·</span>
+              <span>
+                {through
+                  ? `Actuals: NetSuite P&L through ${through}, by ${data.actuals.basis === 'period' ? 'posting period' : 'transaction date'}`
+                  : 'No closed month yet this year'}
+              </span>
               {error && <span className="text-amber-700">Last update failed: {error} Showing the previous figures.</span>}
               {exportError && <span className="text-rose-700">Export failed: {exportError}</span>}
             </div>
 
-            <Warnings warnings={warnings} />
+            <Warnings warnings={data.warnings} />
 
-            <KpiStrip kpis={kpis} ccy={ccy} />
+            <PnlKpiStrip kpis={kpis} ccy={ccy} firstYear={data.years[0]} />
 
             <section className="rounded-lg border border-slate-200 bg-white">
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-2.5">
                 <div className="flex items-baseline gap-2">
-                  <h2 className="text-sm font-semibold text-slate-800">Cash projection by month</h2>
+                  <h2 className="text-sm font-semibold text-slate-800">P&amp;L projection by month</h2>
                   <span className="text-xs text-slate-500">Click an underlined figure for its breakdown.</span>
                 </div>
                 <Legend />
@@ -146,9 +159,11 @@ export default function NewBankDashboard() {
               <ProjectionTable
                 table={table}
                 ccy={ccy}
-                anchorDate={data.bankToday ? data.bankToday.asOf : null}
+                anchorDate={null}
                 onOpenCell={onOpenCell}
                 activeCell={openCell ? openCell.id : null}
+                breakdownLines={PNL_BREAKDOWN_LINES}
+                markers={MARKERS}
               />
             </section>
 
@@ -158,16 +173,20 @@ export default function NewBankDashboard() {
                 position={panelPos}
                 onMove={setPanelPos}
                 onClose={closePanel}
+                endpoint={PNL_BREAKDOWN_ENDPOINT}
               />
             )}
 
             <p className="max-w-5xl text-xs leading-relaxed text-slate-500">
-              Same engine and inputs as the Bank Dashboard and the nightly net-cash figure: revenue from the pipeline
-              methodology, salary from the last closed payroll month. Actual months come from NetSuite bank activity, and
-              the current month opens at the NetSuite bank balance. {y1} rolls forward from the December {y0} closing:
-              salary at the Oct–Dec {y0} run-rate, vendors mirrored month by month and collections at the Oct–Dec average.
-              No new pipeline, churn or FX revaluation is projected for {y1}. Dividends paid are shown on their own line,
-              so every balance is the cash in the bank.
+              The New Bank Dashboard's projection on an accrual basis. Actual months are NetSuite's P&amp;L line by line:
+              operating profit equals the EBITDA P&amp;L, net profit is the sum of every P&amp;L account, and Salaries CAPEX
+              (950000) lowers payroll costs. Forecast months use the same engine, inputs and plan as the cash projection,
+              without a collection rate: customer revenue from Snowflake's monthly revenue, pipeline and churn, payroll from
+              the last closed payroll month, operating expenses from the vendor budget. Lines the cash projection does not
+              model use NetSuite run-rates (other revenue, finance and depreciation: last 3 months; CAPEX: last month) or the
+              Snowflake budget when there is one. {y1} rolls forward from {y0}: payroll at the Oct–Dec run-rate,
+              operating expenses mirrored month by month, revenue at the Oct–Dec run-rate, no new pipeline, churn or FX
+              revaluation. The accumulated profit runs from 1 January {y0} and carries into {y1}.
             </p>
           </>
         )}

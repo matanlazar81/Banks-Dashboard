@@ -16,17 +16,33 @@ interface XlsxApi {
 
 const NUM_FMT = '#,##0;(#,##0);"-"';
 
+/** What a projection page needs to export its table. */
+export interface TableExport {
+  /** 'cash projection' / 'P&L projection' (title and file name). */
+  what: string;
+  years: [number, number];
+  planName: string;
+  generatedAt: string;
+  table: ProjectionTable<string>;
+  variant: VariantKey;
+  ccy: Ccy;
+}
+
 export async function exportProjectionXlsx(payload: ProjectionPayload, table: ProjectionTable, variant: VariantKey, ccy: Ccy): Promise<void> {
+  await exportTableXlsx({ what: 'cash projection', years: payload.years, planName: payload.plan.name, generatedAt: payload.generatedAt, table, variant, ccy });
+}
+
+export async function exportTableXlsx({ what, years, planName, generatedAt, table, variant, ccy }: TableExport): Promise<void> {
   const mod = (await import('xlsx-js-style')) as unknown as { default?: XlsxApi } & XlsxApi;
   const XLSX: XlsxApi = mod.default ?? mod;
 
   const unit = ccy === 'eur' ? 'EUR' : 'ILS';
-  const planLabel = variant === 'plan' ? `Plan: ${payload.plan.name}` : 'Base forecast (no plan adjustments)';
-  const generated = new Date(payload.generatedAt).toLocaleString('en-GB');
+  const planLabel = variant === 'plan' ? `Plan: ${planName}` : 'Base forecast (no plan adjustments)';
+  const generated = new Date(generatedAt).toLocaleString('en-GB');
   const header = ['Line item', ...table.columns.map((c) => c.label)];
   const status = ['', ...table.columns.map((c) => c.statusLabel || 'Full year')];
   const rows: unknown[][] = [
-    [`LSports cash projection ${payload.years[0]}–${payload.years[1]}`],
+    [`LSports ${what} ${years[0]}–${years[1]}`],
     [`${planLabel} · ${unit} · generated ${generated}`],
     [],
     header,
@@ -56,5 +72,5 @@ export async function exportProjectionXlsx(payload: ProjectionPayload, table: Pr
 
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Projection');
-  XLSX.writeFile(wb, `cash-projection-${payload.years[0]}-${payload.years[1]}-${variant}-${unit}.xlsx`);
+  XLSX.writeFile(wb, `${what.replace(/[^A-Za-z0-9]+/g, '-').toLowerCase()}-${years[0]}-${years[1]}-${variant}-${unit}.xlsx`);
 }

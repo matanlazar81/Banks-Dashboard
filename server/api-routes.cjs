@@ -2692,6 +2692,21 @@ If the user asks to modify, adjust, or refine an existing scenario (e.g. "reduce
       } catch (e     ) {
         console.error('[cash-projection] route not mounted:', e && e.message);
       }
+
+      // ── GET /api/pnl-projection — P&L Projection (server/pnl-projection.cjs) ──
+      // Same guards and order as the cash projection: breakdown first (prefix match).
+      try {
+        const { createPnlProjectionBreakdownHandler } = require('./pnl-projection-breakdown.cjs');
+        use('/api/pnl-projection/breakdown', createPnlProjectionBreakdownHandler({ getSfClient }));
+      } catch (e     ) {
+        console.error('[pnl-projection] breakdown route not mounted:', e && e.message);
+      }
+      try {
+        const { createPnlProjectionHandler } = require('./pnl-projection.cjs');
+        use('/api/pnl-projection', createPnlProjectionHandler({ getNsClient, getSfClient, queueNsCall }));
+      } catch (e     ) {
+        console.error('[pnl-projection] route not mounted:', e && e.message);
+      }
 }
 
 module.exports = { registerApiRoutes, apiCache, getCached, setCache, getNsClient, getSfClient, queueNsCall, getUserEmail, canUserSync };

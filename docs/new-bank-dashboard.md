@@ -10,6 +10,9 @@ answer. The server computes the projection, caches it on disk, and refreshes it 
 The page bundle is React plus a few small files; it never downloads the 12k-line `App.tsx`, recharts
 or html2canvas, and the Excel library loads only when someone clicks Export.
 
+Its accrual twin, the **P&L Projection** (same engine and inputs, NetSuite P&L actuals, accumulated
+profit), is described in [pnl-projection.md](pnl-projection.md).
+
 ## URLs
 
 | Where | URL |
