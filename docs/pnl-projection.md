@@ -101,8 +101,20 @@ and every breakdown adds up to the cell.
 | Pipeline / Churn | – | Cohorts by month + pipeline %; run-rate × months |
 | Payroll | NetSuite accounts + Snowflake check | Basis month by department + hires/leavers/overrides + plan changes |
 | Salaries CAPEX | NetSuite 950000 + Snowflake check | The month carried flat |
-| Operating expenses | NetSuite accounts + Snowflake check | Vendor budget by category + overrides + plan changes; the next year's mirrored month |
+| Operating expenses | NetSuite accounts + Snowflake check | Vendor budget by account, grouped by category + overrides + plan changes; the next year: the same month's NetSuite accounts (its budget by account while that month is not closed) |
 | FX, Finance, Depreciation, Tax | NetSuite accounts + Snowflake check | Defense budget × %; the months of the average; budget by account |
+
+**Account numbers link to NetSuite.** On a row that is a NetSuite account, the account number opens
+the account's register in NetSuite (subsidiary LSports Data) in a new tab. The register covers:
+- an actual month: that month;
+- the FY column: the year's closed months;
+- the next year's operating expenses: the month they mirror;
+- Salaries CAPEX: the month carried flat;
+- any other forecast month: the last 3 closed months.
+
+The links need `NETSUITE_ACCOUNT_ID` in the server's `.env`, which is already there for the NetSuite
+API. The account's NetSuite internal id is read with the actuals. A projection cached before this
+change shows account numbers without links until the next refresh.
 
 ## Deploying
 

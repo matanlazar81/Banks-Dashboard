@@ -135,6 +135,19 @@ const ACCOUNTS = [
   ['900009', 'Expense', 'tax expenses', -40_000],
   ['780030', 'OthIncome', 'FA Gain/Loss', 2_000],
 ];
+// Snowflake vendor budget by account (FCT_BUDGET), adding up to CATEGORIES each month.
+const BUDGET_ACCOUNTS = [
+  // category, acct, name, € per month
+  ['Cloud', '640001', 'Servers and cloud services', 300_000],
+  ['Cloud', '640002', 'Software subscriptions', 120_000],
+  ['Marketing', '610005', 'Events and conferences', 260_000],
+  ['Data', '620001', 'Data providers', 300_000],
+  ['Office', '710008', 'Rent', 120_000],
+  ['Professional services', '660004', 'Legal fees', 90_000],
+];
+function syntheticBudgetByAccount(year) {
+  return range(1, 12).flatMap((m) => BUDGET_ACCOUNTS.map(([category, acct, name, eur]) => ({ month: mk(year, m), category, acct, name, eur, ils: eur * R })));
+}
 function syntheticActuals() {
   const byMonth = {};
   const months = [...range(1, 12).map((m) => mk(Y - 1, m)), ...range(1, 9).map((m) => mk(Y, m))];
@@ -150,7 +163,9 @@ function syntheticActuals() {
   });
   // A partial current month: must not reach the table.
   byMonth[mk(Y, 10)] = { 400001: { acct: '400001', name: 'Revenues', type: 'Income', eur: 900_000, ils: 3_330_000 } };
-  return { basis: 'trandate', byMonth };
+  // NetSuite internal ids of the P&L accounts (for the register links).
+  const accountIds = Object.fromEntries([...new Set([...ACCOUNTS.map((a) => a[0]), ...BUDGET_ACCOUNTS.map((a) => a[1])])].map((acct, i) => [acct, 500 + i]));
+  return { basis: 'trandate', byMonth, accountIds };
 }
 
 // Snowflake budget extras: depreciation budget for the next year only, tax budget for both years.
@@ -404,7 +419,24 @@ async function testBreakdowns(computed, cacheFile) {
       }
       return out;
     },
+    budget: async (year) => syntheticBudgetByAccount(year),
   };
+  await withAccountId('1234_SB1', () => breakdownChecks({ computed, cacheFile, entry, sfx, sfReads: () => sfReads }));
+  const bare = await withAccountId(undefined, () => bd.buildBreakdown({ entry, line: 'opex', period: mk(Y, 6), variant: 'plan', ccy: 'eur', sfx }));
+  check(bare.sections[0].rows.every((r) => r.link === null), 'no NETSUITE_ACCOUNT_ID → no links');
+  const old = cp.makeEntry(computed.payload, NOW.getTime(), { ...computed.details, accountIds: undefined }, pnl.SCHEMA_VERSION);
+  const oldOut = await withAccountId('1234_SB1', () => bd.buildBreakdown({ entry: old, line: 'opex', period: mk(Y, 6), variant: 'plan', ccy: 'eur', sfx }));
+  check(oldOut.sections[0].rows.every((r) => r.link === null && r.ref), 'a projection cached before the account ids: account numbers without links');
+}
+
+// Runs fn with NETSUITE_ACCOUNT_ID set to value (undefined = unset), then restores it.
+async function withAccountId(value, fn) {
+  const prev = process.env.NETSUITE_ACCOUNT_ID;
+  if (value === undefined) delete process.env.NETSUITE_ACCOUNT_ID; else process.env.NETSUITE_ACCOUNT_ID = value;
+  try { return await fn(); } finally { if (prev === undefined) delete process.env.NETSUITE_ACCOUNT_ID; else process.env.NETSUITE_ACCOUNT_ID = prev; }
+}
+
+async function breakdownChecks({ computed, cacheFile, entry, sfx, sfReads }) {
   const periods = [mk(Y, 3), mk(Y, 6), mk(Y, 10), mk(Y, 11), mk(Y, 12), mk(T, 1), mk(T, 7), `FY-${Y}`, `FY-${T}`];
   const bad = [];
   let built = 0;
@@ -445,7 +477,48 @@ async function testBreakdowns(computed, cacheFile) {
   let noPipeline = null;
   try { await bd.buildBreakdown({ entry, line: 'pipeline', period: mk(Y, 4), variant: 'plan', ccy: 'eur', sfx }); } catch (e) { noPipeline = e; }
   check(noPipeline instanceof bd.BreakdownError, 'an actual month has no pipeline to break down');
-  check(sfReads > 0, 'the Snowflake check is read on demand');
+  check(sfReads() > 0, 'the Snowflake check is read on demand');
+
+  // Account numbers link to the account's register in NetSuite.
+  const NS_HOST = 'https://1234-sb1.app.netsuite.com/app/reporting/reportrunner.nl?acctid=';
+  const ids = computed.details.accountIds;
+  const linkFor = (acct, from, to) => `${NS_HOST}${ids[acct]}&reporttype=REGISTER&subsidiary=3&combinebalance=T&startdate=${from}&enddate=${to}`;
+  const juneRent = june.sections[0].rows.find((r) => r.ref === '710008');
+  check(!!ids['710008'] && juneRent && juneRent.link === linkFor('710008', '6/1/2026', '6/30/2026'),
+    'actual month: each account links to its NetSuite register for that month', juneRent && juneRent.link);
+  check(june.sections[0].rows.every((r) => r.link && r.link.startsWith(NS_HOST)), 'actual month: every account row has a link');
+  check(sfSection.rows.filter((r) => r.kind === 'item').every((r) => r.link && r.link.endsWith('startdate=6/1/2026&enddate=6/30/2026')), 'the Snowflake check rows link too');
+
+  const novOpex = await bd.buildBreakdown({ entry, line: 'opex', period: mk(Y, 11), variant: 'plan', ccy: 'eur', sfx });
+  const novRows = novOpex.sections[0].rows;
+  const novItems = novRows.filter((r) => r.kind === 'item');
+  check(novItems.length === BUDGET_ACCOUNTS.length && novItems.every((r) => /^\d{6}$/.test(r.ref)) && novItems.filter((r) => r.group === 'Cloud').length === 2,
+    'forecast opex: the vendor budget by account, grouped by category', novItems.map((r) => `${r.group}/${r.ref}`).join(','));
+  const cloud = novItems.find((r) => r.ref === '640002');
+  check(cloud && cloud.link === linkFor('640002', '7/1/2026', '9/30/2026'), 'forecast month: accounts link to the last 3 closed months in NetSuite', cloud && cloud.link);
+  const overrides = novRows.find((r) => r.key === 'overrides');
+  check(overrides && near(overrides.amount, 15_000) && !overrides.link && novRows.some((r) => r.key === 'plan'),
+    'forecast opex: budget overrides and the plan change as adjustments', overrides && overrides.amount);
+  check(near(novRows.reduce((s, r) => s + r.amount, 0), novOpex.cell), 'forecast opex: account rows and adjustments add up to the cell');
+
+  const janOpex = await bd.buildBreakdown({ entry, line: 'opex', period: mk(T, 1), variant: 'base', ccy: 'eur', sfx });
+  const janItems = janOpex.sections[0].rows.filter((r) => r.kind === 'item');
+  const janBooked = computed.details.accounts[mk(Y, 1)].opex;
+  check(janItems.length === janBooked.length && janItems.every((r) => r.group === `Same month of ${Y} (January ${Y})`),
+    `next year: the NetSuite accounts of the same month of ${Y}`, janItems.map((r) => r.ref).join(','));
+  const janCloud = janItems.find((r) => r.ref === '640001');
+  check(janCloud && janCloud.link === linkFor('640001', '1/1/2026', '1/31/2026'), `next year: accounts link to January ${Y}, the month they mirror`, janCloud && janCloud.link);
+  const octOpex = await bd.buildBreakdown({ entry, line: 'opex', period: mk(T, 10), variant: 'base', ccy: 'eur', sfx });
+  check(octOpex.sections[0].rows.some((r) => r.ref === '620001' && r.group === `Same month of ${Y} (October ${Y})`),
+    `next year, mirroring a month of ${Y} not closed yet: its budget by account`);
+
+  const capexLink = capex.sections[0].rows[0].link;
+  check(capexLink === linkFor('950000', '9/1/2026', '9/30/2026'), 'CAPEX: links to 950000 in the month carried flat', capexLink);
+  const fyOpex = await bd.buildBreakdown({ entry, line: 'opex', period: `FY-${Y}`, variant: 'plan', ccy: 'eur', sfx });
+  const fyLinks = fyOpex.sections.flatMap((s) => s.rows).filter((r) => r.link);
+  check(fyLinks.length > 0 && fyLinks.every((r) => r.link.endsWith('startdate=1/1/2026&enddate=9/30/2026')), 'full year: accounts link to the year\'s closed months');
+  const fx = await bd.buildBreakdown({ entry, line: 'fx', period: mk(Y, 11), variant: 'plan', ccy: 'eur', sfx });
+  check(fx.sections[0].rows.every((r) => r.link === null), 'rows that are not accounts have no link');
 
   // Handler contract.
   const h = bd.createPnlProjectionBreakdownHandler({ cacheFile, sfx });

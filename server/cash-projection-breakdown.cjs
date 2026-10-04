@@ -822,6 +822,7 @@ module.exports = {
   captureDetails,
   buildBreakdown,
   sfExpenseByAccount,
+  sfBudgetByAccount,
   BreakdownError,
   LINES,
   DETAILS_VERSION,

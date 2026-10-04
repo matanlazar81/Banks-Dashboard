@@ -264,7 +264,7 @@ async function computePnlProjection(opts) {
   const variants = {};
   const raw = {};
   const details = {
-    version: DETAILS_VERSION, years: [Y, T], basis: actuals.basis,
+    version: DETAILS_VERSION, years: [Y, T], basis: actuals.basis, accountIds: actuals.accountIds || {},
     accounts: Object.fromEntries(Object.entries(accountsByMonth).filter(([k]) => k.startsWith(`${Y}-`) && k < mk(Y, curIdx))),
     rules: { last3: rules.last3, capexFrom: rules.capexFrom, totals: totalsByMonth },
     variants: {},

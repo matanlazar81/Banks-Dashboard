@@ -21,6 +21,8 @@ export interface BreakdownRow {
   label: string;
   /** Account number, or a short detail such as '60% · closes 2026-11'. */
   ref: string | null;
+  /** NetSuite page of the account (its register for the cell's dates), when the server knows it. */
+  link?: string | null;
   /** Rows sharing a group are listed together under it (account category, customers, deals). */
   group: string | null;
   /** 'adjust' rows explain the difference between the listed rows and the cell. */
