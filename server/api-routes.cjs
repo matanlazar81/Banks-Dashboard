@@ -2726,7 +2726,7 @@ If the user asks to modify, adjust, or refine an existing scenario (e.g. "reduce
         use('/api/metrics/settings', m.createMetricsSettingsHandler());
         use('/api/metrics/deposits', m.createMetricsDepositsHandler());
         use('/api/metrics', m.createMetricsHandler({
-          cash: cashProjection || undefined, pnl: pnlProjection || undefined, getNsClient, getSfClient, queueNsCall,
+          cash: cashProjection || undefined, pnl: pnlProjection || undefined, getSfClient,
         }));
       } catch (e     ) {
         console.error('[metrics] route not mounted:', e && e.message);

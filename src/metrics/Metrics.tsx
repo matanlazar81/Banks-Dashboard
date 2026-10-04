@@ -1,12 +1,13 @@
 // Business Tools → Metrics: one short pack, the same shape every month, computed live from the dashboards'
 // data (GET /api/metrics). Every figure says whether it is actual (A), forecast (F) or both (A+F).
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { CheckCircle2, Download, Loader2, Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { Download, Loader2, RefreshCw } from 'lucide-react';
 import { ComputingCard, ErrorCard, Skeleton, Warnings } from '../new-dashboard/PageParts.tsx';
-import { fetchDeposits, fetchMetrics, saveDeposits, saveSettings } from './api.ts';
+import { fetchMetrics, saveSettings } from './api.ts';
 import { formatCell, formatEur, formatEurFull, formatPct, monthName, STATUS_LONG, STATUS_SHORT } from './model.ts';
+import ExplainWindow from './ExplainWindow.tsx';
 import PeopleCharts from './PeopleCharts.tsx';
-import type { Cell, Deposit, Metric, MetricsPayload, MetricsSettings } from './types.ts';
+import type { Cell, Metric, MetricsPayload, MetricsSettings } from './types.ts';
 
 // ── loading ─────────────────────────────────────────────────────────────────
 type Phase = 'loading' | 'computing' | 'ready' | 'error';
@@ -80,22 +81,29 @@ function Card({ title, aside, children }: { title: string; aside?: ReactNode; ch
   );
 }
 
-function PackCell({ cell, unit }: { cell: Cell | null; unit: Metric['unit'] }) {
+type OnExplain = (item: string) => void;
+
+function PackCell({ cell, unit, onExplain, active }: { cell: Cell | null; unit: Metric['unit']; onExplain: OnExplain; active: string | null }) {
   if (!cell || cell.value === null) return <td className="px-3 py-2 text-right text-slate-400">–</td>;
   const negative = unit === 'eur' && cell.value < 0;
+  const value = `whitespace-nowrap font-semibold tabular-nums ${negative ? 'text-rose-700' : 'text-slate-900'}`;
   return (
-    <td className="px-3 py-2 text-right align-top">
-      <span className={`whitespace-nowrap font-semibold tabular-nums ${negative ? 'text-rose-700' : 'text-slate-900'}`}
-        title={unit === 'eur' ? formatEurFull(cell.value) : undefined}>
-        {formatCell(cell, unit)}
-      </span>
+    <td className={`px-3 py-2 text-right align-top ${cell.detail && active === cell.detail ? 'bg-sky-50' : ''}`}>
+      {cell.detail ? (
+        <button type="button" onClick={() => onExplain(cell.detail as string)} title="How it is calculated"
+          className={`${value} underline decoration-slate-300 decoration-dotted underline-offset-4 hover:text-sky-800 hover:decoration-sky-500`}>
+          {formatCell(cell, unit)}
+        </button>
+      ) : (
+        <span className={value} title={unit === 'eur' ? formatEurFull(cell.value) : undefined}>{formatCell(cell, unit)}</span>
+      )}
       <StatusChip status={cell.status} />
       <div className="whitespace-nowrap text-[11px] text-slate-500">{cell.label}</div>
     </td>
   );
 }
 
-function PackTable({ data }: { data: MetricsPayload }) {
+function PackTable({ data, onExplain, active }: { data: MetricsPayload; onExplain: OnExplain; active: string | null }) {
   const [y0, y1] = data.years;
   return (
     <div className="overflow-x-auto">
@@ -116,10 +124,10 @@ function PackTable({ data }: { data: MetricsPayload }) {
                 <div className="font-semibold text-slate-900">{m.label}</div>
                 <div className="text-[11px] text-slate-500">{m.note}</div>
               </td>
-              <PackCell cell={m.lastMonth} unit={m.unit} />
-              <PackCell cell={m.ytd} unit={m.unit} />
-              <PackCell cell={m.fy[0]} unit={m.unit} />
-              <PackCell cell={m.fy[1]} unit={m.unit} />
+              <PackCell cell={m.lastMonth} unit={m.unit} onExplain={onExplain} active={active} />
+              <PackCell cell={m.ytd} unit={m.unit} onExplain={onExplain} active={active} />
+              <PackCell cell={m.fy[0]} unit={m.unit} onExplain={onExplain} active={active} />
+              <PackCell cell={m.fy[1]} unit={m.unit} onExplain={onExplain} active={active} />
             </tr>
           ))}
         </tbody>
@@ -142,6 +150,8 @@ function Meter({ value, cap }: { value: number; cap: number }) {
 export default function Metrics() {
   const { phase, data, error, elapsed, busy, refresh, reload } = useMetrics();
   const [saving, setSaving] = useState<string | null>(null);
+  const [explain, setExplain] = useState<string | null>(null);
+  const closeExplain = useCallback(() => setExplain(null), []);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
 
@@ -223,9 +233,10 @@ export default function Metrics() {
             </div>
             <Warnings warnings={data.warnings} />
 
-            <Card title="The pack">
-              <PackTable data={data} />
+            <Card title="The pack" aside={<span className="text-[11px] text-slate-500">Click an underlined figure to see how it is calculated.</span>}>
+              <PackTable data={data} onExplain={setExplain} active={explain} />
             </Card>
+            {explain && <ExplainWindow item={explain} onClose={closeExplain} />}
 
             {data.people && (
               <Card title="Payroll / revenue and revenue per employee">
@@ -233,14 +244,7 @@ export default function Metrics() {
               </Card>
             )}
 
-            <div className="grid gap-4 lg:grid-cols-2">
-              <CloudCard data={data} saving={saving} onSave={save} />
-              <RatesCard data={data} saving={saving} onSave={save} />
-            </div>
-
-            <FxCard data={data} />
-
-            <DepositsCard data={data} onSaved={reload} />
+            <CloudCard data={data} saving={saving} onSave={save} />
 
             <p className="max-w-5xl text-xs leading-relaxed text-slate-500">
               Revenue and EBITDA come from the P&amp;L Projection (NetSuite for closed months), net cash from the New Bank
@@ -305,170 +309,6 @@ function CloudCard({ data, saving, onSave }: { data: MetricsPayload; saving: str
         </div>
         <p className="text-[11px] text-slate-500">Closed months: NetSuite {data.cloud.accounts}. Forecast months: the budget&apos;s share of this category in operating expenses.</p>
       </div>
-    </Card>
-  );
-}
-
-function RatesCard({ data, saving, onSave }: { data: MetricsPayload; saving: string | null; onSave: SaveFn }) {
-  const [rate, setRate] = useState(data.rates.usdEurPlanning == null ? '' : String(data.rates.usdEurPlanning));
-  const live = data.rates.usdEurLive;
-  const plan = data.rates.usdEurPlanning;
-  const diff = plan && live ? ((live.rate - plan) / plan) * 100 : null;
-  const dirty = (rate === '' ? null : num(rate)) !== plan;
-  return (
-    <Card title="USD/EUR rate">
-      <div className="grid grid-cols-2 gap-3 text-sm">
-        <div>
-          <div className="text-xs uppercase tracking-wide text-slate-500">Planning rate</div>
-          <div className="mt-0.5 text-xl font-semibold tabular-nums text-slate-900">{plan ? plan.toFixed(4) : '–'}</div>
-          <div className="text-[11px] text-slate-500">USD per €</div>
-        </div>
-        <div>
-          <div className="text-xs uppercase tracking-wide text-slate-500">ECB today</div>
-          <div className="mt-0.5 text-xl font-semibold tabular-nums text-slate-900">{live ? live.rate.toFixed(4) : '–'}</div>
-          <div className="text-[11px] text-slate-500">
-            {live ? `${live.date} · ${live.source}` : 'unavailable'}
-            {diff !== null && <span className={diff > 0 ? ' text-emerald-700' : ' text-rose-700'}> · {diff > 0 ? '+' : ''}{diff.toFixed(1)}% vs plan</span>}
-          </div>
-        </div>
-      </div>
-      <div className="mt-3 flex items-center gap-2 border-t border-slate-100 pt-2 text-xs text-slate-600">
-        <label className="inline-flex items-center gap-1">Planning rate
-          <input aria-label="USD/EUR planning rate" type="number" step={0.0001} value={rate} placeholder="e.g. 1.15"
-            onChange={(e: { target: { value: string } }) => setRate(e.target.value)} className={`${INPUT} w-24 text-right`} />
-        </label>
-        <button type="button" disabled={!dirty || saving !== null} className={BUTTON}
-          onClick={() => void onSave('rate', { usdEurPlanningRate: rate === '' ? null : num(rate) })}>
-          {saving === 'rate' && <Loader2 size={12} className="animate-spin" />}Save
-        </button>
-      </div>
-    </Card>
-  );
-}
-
-function FxCard({ data }: { data: MetricsPayload }) {
-  const { fx } = data;
-  return (
-    <Card title={`FX conversions, ${monthName(fx.month)}`}>
-      {!fx.items.length ? <p className="text-sm text-slate-500">No currency conversions between bank accounts in {monthName(fx.month)}.</p> : (
-        <>
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="text-slate-500"><th className="text-left font-medium">Date</th><th className="text-left font-medium">From → to</th><th className="text-right font-medium">Amount</th><th className="text-right font-medium">€</th><th className="text-right font-medium">Rate</th></tr>
-            </thead>
-            <tbody>
-              {fx.items.map((c) => (
-                <tr key={`${c.tranid}-${c.date}`} className="border-t border-slate-100" title={c.from && c.to ? `${c.tranid}: ${c.from} → ${c.to}` : c.tranid}>
-                  <td className="py-1 tabular-nums">{c.date}</td>
-                  <td>{c.fromCurrency} → {c.toCurrency}</td>
-                  <td className="text-right tabular-nums">{c.currency} {Math.round(c.amount).toLocaleString('en-US')}</td>
-                  <td className="text-right tabular-nums">{formatEurFull(c.eur)}</td>
-                  <td className="text-right tabular-nums">{c.rate ? `${c.rate.toFixed(4)} ${c.currency}/€` : '–'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <div className="mt-2 space-y-0.5 border-t border-slate-200 pt-1.5 text-xs font-medium text-slate-700">
-            {fx.totals.map((t) => (
-              <div key={`${t.pair}-${t.currency}`} className="flex justify-between gap-2">
-                <span>{t.pair} ({t.count})</span>
-                <span className="tabular-nums">{t.currency} {Math.round(t.amount).toLocaleString('en-US')} = {formatEurFull(t.eur)}{t.rate ? ` at ${t.rate.toFixed(4)}` : ''}</span>
-              </div>
-            ))}
-          </div>
-        </>
-      )}
-      <p className="mt-2 text-[11px] text-slate-500">NetSuite transfers between bank accounts in different currencies, by transaction date.</p>
-    </Card>
-  );
-}
-
-const today = () => new Date().toISOString().slice(0, 10);
-const newId = () => `d${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-
-function DepositsCard({ data, onSaved }: { data: MetricsPayload; onSaved: () => Promise<void> }) {
-  const [all, setAll] = useState<Deposit[] | null>(null);
-  const [editing, setEditing] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [draft, setDraft] = useState<Deposit>({ id: '', bank: '', amount: 0, currency: 'EUR', placedOn: today(), maturity: null, confirmed: false, confirmedOn: null, note: '' });
-
-  const open = async () => {
-    setErr(null);
-    try { setAll(await fetchDeposits()); setEditing(true); } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
-  };
-  const persist = async (next: Deposit[]) => {
-    setBusy(true);
-    setErr(null);
-    try {
-      const saved = await saveDeposits(next);
-      setAll(saved.value);
-      await onSaved();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const confirm = async (id: string) => {
-    const list = all || (await fetchDeposits().catch(() => null));
-    if (!list) { setErr('The deposit tracker could not be loaded.'); return; }
-    await persist(list.map((d) => (d.id === id ? { ...d, confirmed: true, confirmedOn: today() } : d)));
-  };
-
-  const shown = editing && all ? all : data.deposits.open;
-  return (
-    <Card
-      title={`Deposits awaiting confirmation: ${data.deposits.openCount}`}
-      aside={<button type="button" className={BUTTON} onClick={() => (editing ? setEditing(false) : void open())}>{editing ? 'Done' : `Manage (${data.deposits.total})`}</button>}
-    >
-      {err && <p className="mb-2 text-xs text-rose-700">{err}</p>}
-      {!shown.length && !editing ? <p className="text-sm text-slate-500">Every deposit logged has its confirmation.</p> : (
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="text-slate-500">
-              <th className="text-left font-medium">Bank</th><th className="text-right font-medium">Amount</th><th className="text-left font-medium">Placed</th>
-              <th className="text-left font-medium">Maturity</th><th className="text-left font-medium">Note</th><th className="text-right font-medium" />
-            </tr>
-          </thead>
-          <tbody>
-            {shown.map((d) => (
-              <tr key={d.id} className="border-t border-slate-100">
-                <td className="py-1 font-medium text-slate-800">{d.bank}</td>
-                <td className="text-right tabular-nums">{d.currency} {Math.round(d.amount).toLocaleString('en-US')}</td>
-                <td className="tabular-nums">{d.placedOn}</td>
-                <td className="tabular-nums">{d.maturity || '–'}</td>
-                <td className="text-slate-500">{d.note}</td>
-                <td className="whitespace-nowrap py-1 text-right">
-                  {d.confirmed
-                    ? <span className="inline-flex items-center gap-1 text-emerald-700"><CheckCircle2 size={12} />{d.confirmedOn || 'confirmed'}</span>
-                    : <button type="button" disabled={busy} className={BUTTON} onClick={() => void confirm(d.id)}>Confirmation received</button>}
-                  {editing && all && (
-                    <button type="button" aria-label="Remove" disabled={busy} className="ml-1 p-1 text-slate-400 hover:text-rose-700"
-                      onClick={() => void persist(all.filter((x) => x.id !== d.id))}><Trash2 size={12} /></button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-      {editing && all && (
-        <div className="mt-3 flex flex-wrap items-end gap-2 border-t border-slate-100 pt-2 text-xs text-slate-600">
-          <input aria-label="Bank" placeholder="Bank" value={draft.bank} onChange={(e: { target: { value: string } }) => setDraft({ ...draft, bank: e.target.value })} className={`${INPUT} w-32`} />
-          <input aria-label="Amount" type="number" step={1000} value={draft.amount || ''} placeholder="Amount" onChange={(e: { target: { value: string } }) => setDraft({ ...draft, amount: num(e.target.value) })} className={`${INPUT} w-28 text-right`} />
-          <select aria-label="Currency" value={draft.currency} onChange={(e: { target: { value: string } }) => setDraft({ ...draft, currency: e.target.value })} className={INPUT}>
-            {['EUR', 'USD', 'ILS', 'GBP', 'PLN', 'CHF'].map((c) => <option key={c} value={c}>{c}</option>)}
-          </select>
-          <label className="inline-flex flex-col">Placed<input type="date" value={draft.placedOn} onChange={(e: { target: { value: string } }) => setDraft({ ...draft, placedOn: e.target.value })} className={INPUT} /></label>
-          <label className="inline-flex flex-col">Maturity<input type="date" value={draft.maturity || ''} onChange={(e: { target: { value: string } }) => setDraft({ ...draft, maturity: e.target.value || null })} className={INPUT} /></label>
-          <input aria-label="Note" placeholder="Note" value={draft.note} onChange={(e: { target: { value: string } }) => setDraft({ ...draft, note: e.target.value })} className={`${INPUT} w-40`} />
-          <button type="button" disabled={busy || !draft.bank.trim() || !(draft.amount > 0)} className={BUTTON}
-            onClick={() => { void persist([...all, { ...draft, id: newId(), bank: draft.bank.trim() }]); setDraft({ ...draft, id: '', bank: '', amount: 0, note: '' }); }}>
-            {busy ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />}Add deposit
-          </button>
-        </div>
-      )}
     </Card>
   );
 }

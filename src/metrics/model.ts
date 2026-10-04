@@ -70,20 +70,16 @@ export function packRows(p: MetricsPayload): (string | number)[][] {
       c.within ? 'Within the cap' : 'Over the cap',
       ...(c.targets ? [c.targets.kind === 'server' ? `Server costs ${formatPct(c.targets.pct, 1)} of customer revenue (targets)` : `Category ${c.targets.pct > 0 ? '+' : ''}${formatPct(c.targets.pct, 1)} (targets)`] : []),
     ]),
-    [],
-    ['USD/EUR planning rate', p.rates.usdEurPlanning ?? '–', 'ECB today', p.rates.usdEurLive ? `${p.rates.usdEurLive.rate} (${p.rates.usdEurLive.date})` : '–'],
-    [],
-    [`FX conversions, ${monthName(p.fx.month)}`],
-    ['Date', 'From → to', 'Amount', 'Currency', '€', 'Rate (per €)'],
-    ...(p.fx.items.length
-      ? p.fx.items.map((c) => [c.date, `${c.fromCurrency} → ${c.toCurrency}`, c.amount, c.currency, c.eur, c.rate ?? '–'])
-      : [['None']]),
-    [],
-    [`Deposits awaiting confirmation: ${p.deposits.openCount}`],
-    ['Bank', 'Amount', 'Currency', 'Placed', 'Maturity', 'Note'],
-    ...(p.deposits.open.length
-      ? p.deposits.open.map((d) => [d.bank, d.amount, d.currency, d.placedOn, d.maturity || '–', d.note || ''])
-      : [['None']]),
   ];
   return rows;
+}
+
+/** A breakdown figure as text: € in full, % to one decimal, counts as they are. */
+export function formatExplain(v: number | string | null | undefined, unit: 'eur' | 'pct' | 'int' | 'text', sign = false): string {
+  if (v === null || v === undefined || v === '') return '–';
+  if (unit === 'text' || typeof v === 'string') return String(v);
+  const plus = sign && v > 0 ? '+' : '';
+  if (unit === 'pct') return `${plus}${formatPct(v, 1)}`;
+  if (unit === 'int') return `${plus}${int.format(v)}`;
+  return v === 0 ? '€0' : `${plus}${formatEurFull(v)}`;
 }
