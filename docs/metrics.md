@@ -28,6 +28,15 @@ figures follow the Plan.
 
 There is no debt data, so **net cash is the cash in the bank**.
 
+**FY (next year) follows the 2027 targets** saved on the New Bank Dashboard. These are the same figures as the
+Targets view on both projection pages (`src/forecast/targets.mjs`):
+- revenue, EBITDA and ARR from the P&L with the targets;
+- December cash from the cash projection with the targets;
+- cloud as described below.
+
+The page says so next to the Plan name (hover for the assumptions), and so does the export. A save on the New
+Bank Dashboard shows at the next load. With no targets saved, the column is the Plan.
+
 **NRR**: for the customers who had revenue 12 months earlier, their revenue this month ÷ their revenue
 then. Customers new since then are not counted. **GRR** caps each customer at their old amount, so it
 measures only what was kept. Source: Snowflake revenue by customer and month (actual months, test
@@ -38,14 +47,22 @@ customers excluded). The page shows the last closed month; the API also returns 
 - **Cloud** = NetSuite accounts 640xxx (Cloud Infrastructure & DevOps) in closed months. In forecast
   months it is the budget's share of that category in the month's operating expenses. Next year uses
   the same split as the 2027 targets.
-- **Cap** = cap % (default 8%) × projected FY total revenue (actual + forecast months).
+- **Next year, with the targets:**
+  - When the targets set **server costs as a % of revenue** for this category, cloud = that % × customer
+    revenue after the revenue targets, month by month.
+  - Otherwise, a **% change** the targets give the category scales it.
+- **Cap** = cap % (default 8%) × projected FY total revenue (actual + forecast months, after the targets).
+  Server costs are a % of *customer* revenue, while the cap is on *total* revenue, which includes other
+  revenue. So cloud at 8% in the targets can show a little under 8% here.
 - Shown for both years: cloud, cap, headroom (negative when over) and cloud as a % of revenue.
 - The cap % and the category are settings on the page.
 
 ## Innovation envelope
 
-An amount for a year, spread evenly over the months from a start month to December. It only applies
-to forecast months: a closed month keeps what was booked.
+Extra innovation spending on top of the forecast (from Dotan's pack: "say if the innovation envelope is
+in or out"). It is an amount for a year, spread evenly over the months from a start month to December.
+It only applies to forecast months: a closed month keeps what was booked. The card explains this in one
+line.
 
 - **In**: the pack's EBITDA and December cash include it.
 - **Out**: they don't.
@@ -82,6 +99,7 @@ NetSuite and Snowflake hold no confirmation status, so the page keeps a small tr
 
 - The two projections come from their cached handlers (`handler.current()`), so the page adds no
   NetSuite pull.
+- The saved targets (`data/projection-targets.json`) are read on every request.
 - ARR, churn, NRR, FX conversions and the ECB rate are read once and cached for `METRICS_TTL_MIN`
   (default 30 minutes; the ECB rate for at most an hour).
 - A source that fails shows as an empty cell and a warning. The rest of the pack still shows.

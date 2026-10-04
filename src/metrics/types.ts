@@ -34,6 +34,8 @@ export interface CloudYear {
   headroom: number;
   pctOfRevenue: number | null;
   within: boolean;
+  /** The projection year's targets set the cloud: server costs as a % of revenue, or the category's % change. */
+  targets?: { kind: 'server' | 'category'; pct: number } | null;
 }
 
 export interface FxConversion {
@@ -75,6 +77,8 @@ export interface MetricsPayload {
   generatedAt: string;
   years: [number, number];
   asOf: { lastClosed: string | null; cash: string; pnl: string; plan: string | null };
+  /** The projection-year targets saved on the New Bank Dashboard (applied when active). */
+  targets?: { year: number; active: boolean; updatedAt: string | null; updatedBy: string | null; assumptions: string[] };
   metrics: Metric[];
   nrrTrend: { month: string; nrr: number; grr: number; customers: number }[];
   cloud: { category: string; categories: string[]; capPct: number; accounts: string; years: CloudYear[] };

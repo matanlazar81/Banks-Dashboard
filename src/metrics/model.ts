@@ -48,13 +48,20 @@ export function packRows(p: MetricsPayload): (string | number)[][] {
   const rows: (string | number)[][] = [
     [`LSports metrics pack, as of ${monthName(p.asOf.lastClosed)}`],
     [`Generated ${new Date(p.generatedAt).toLocaleString('en-GB')} · Plan: ${p.asOf.plan || '–'} · A = actual, F = forecast, A+F = actual months + forecast months`],
+    ...(p.targets && p.targets.active
+      ? [[`FY ${p.targets.year} includes the ${p.targets.year} targets set on the New Bank Dashboard: ${p.targets.assumptions.join('; ')}`]]
+      : []),
     [],
     ['Metric', 'Last month', 'Year to date', `FY ${y0}`, `FY ${y1}`, 'Basis'],
     ...p.metrics.map((m) => [m.label, tagged(m.lastMonth, m.unit), tagged(m.ytd, m.unit), tagged(m.fy[0], m.unit), tagged(m.fy[1], m.unit), m.note]),
     [],
     [`Cloud (${p.cloud.category || 'cloud'}, NetSuite ${p.cloud.accounts}) against ${formatPct(p.cloud.capPct, 1)} of projected revenue`],
     ['Year', 'Cloud', 'Cap', 'Headroom', '% of revenue', 'Status'],
-    ...p.cloud.years.map((c) => [`FY ${c.year} (${STATUS_SHORT[c.status]})`, formatEurFull(c.total), formatEurFull(c.cap), formatEurFull(c.headroom), formatPct(c.pctOfRevenue, 2), c.within ? 'Within the cap' : 'Over the cap']),
+    ...p.cloud.years.map((c) => [
+      `FY ${c.year} (${STATUS_SHORT[c.status]})`, formatEurFull(c.total), formatEurFull(c.cap), formatEurFull(c.headroom), formatPct(c.pctOfRevenue, 2),
+      c.within ? 'Within the cap' : 'Over the cap',
+      ...(c.targets ? [c.targets.kind === 'server' ? `Server costs ${formatPct(c.targets.pct, 1)} of customer revenue (targets)` : `Category ${c.targets.pct > 0 ? '+' : ''}${formatPct(c.targets.pct, 1)} (targets)`] : []),
+    ]),
     [],
     [`Innovation envelope: ${formatEurFull(p.innovation.amountEur)} for ${p.innovation.year} from ${MONTHS[p.innovation.startMonth - 1]}: ${p.innovation.included ? 'IN the forecast' : 'OUT of the forecast'}`],
     ...(p.innovation.ebitda ? [[`EBITDA FY ${p.innovation.ebitda.year}`, `without ${formatEurFull(p.innovation.ebitda.without)}`, `with ${formatEurFull(p.innovation.ebitda.with)}`]] : []),

@@ -96,4 +96,4 @@ function createProjectionTargetsHandler(deps = {}) {
   };
 }
 
-module.exports = { createProjectionTargetsHandler, DEFAULT_FILE };
+module.exports = { createProjectionTargetsHandler, DEFAULT_FILE, loadTargetsModule, readStore };
