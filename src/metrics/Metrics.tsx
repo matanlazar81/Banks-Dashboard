@@ -2,9 +2,9 @@
 // data (GET /api/metrics). Every figure says whether it is actual (A), forecast (F) or both (A+F).
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { CheckCircle2, Download, Loader2, Plus, RefreshCw, Trash2 } from 'lucide-react';
-import { ComputingCard, ErrorCard, Segmented, Skeleton, Warnings } from '../new-dashboard/PageParts.tsx';
+import { ComputingCard, ErrorCard, Skeleton, Warnings } from '../new-dashboard/PageParts.tsx';
 import { fetchDeposits, fetchMetrics, saveDeposits, saveSettings } from './api.ts';
-import { formatCell, formatEur, formatEurFull, formatPct, MONTH_NAMES, monthName, STATUS_LONG, STATUS_SHORT } from './model.ts';
+import { formatCell, formatEur, formatEurFull, formatPct, monthName, STATUS_LONG, STATUS_SHORT } from './model.ts';
 import PeopleCharts from './PeopleCharts.tsx';
 import type { Cell, Deposit, Metric, MetricsPayload, MetricsSettings } from './types.ts';
 
@@ -150,7 +150,7 @@ export default function Metrics() {
     setSaving(what);
     setSaveError(null);
     try {
-      await saveSettings({ ...data.settings, ...patch, innovation: { ...data.settings.innovation, ...(patch.innovation || {}) } });
+      await saveSettings({ ...data.settings, ...patch });
       await reload();
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : String(e));
@@ -235,13 +235,10 @@ export default function Metrics() {
 
             <div className="grid gap-4 lg:grid-cols-2">
               <CloudCard data={data} saving={saving} onSave={save} />
-              <InnovationCard data={data} saving={saving} onSave={save} />
+              <RatesCard data={data} saving={saving} onSave={save} />
             </div>
 
-            <div className="grid gap-4 lg:grid-cols-2">
-              <RatesCard data={data} saving={saving} onSave={save} />
-              <FxCard data={data} />
-            </div>
+            <FxCard data={data} />
 
             <DepositsCard data={data} onSaved={reload} />
 
@@ -307,61 +304,6 @@ function CloudCard({ data, saving, onSave }: { data: MetricsPayload; saving: str
           </button>
         </div>
         <p className="text-[11px] text-slate-500">Closed months: NetSuite {data.cloud.accounts}. Forecast months: the budget&apos;s share of this category in operating expenses.</p>
-      </div>
-    </Card>
-  );
-}
-
-function InnovationCard({ data, saving, onSave }: { data: MetricsPayload; saving: string | null; onSave: SaveFn }) {
-  const inv = data.innovation;
-  const [amount, setAmount] = useState(String(data.settings.innovation.amountEur || ''));
-  const [year, setYear] = useState(inv.year);
-  const [start, setStart] = useState(inv.startMonth);
-  const dirty = num(amount) !== inv.amountEur || year !== inv.year || start !== inv.startMonth;
-  return (
-    <Card
-      title="Innovation envelope"
-      aside={(
-        <Segmented
-          label="Innovation envelope in the forecast"
-          value={inv.included ? 'in' : 'out'}
-          onChange={(v: 'in' | 'out') => void onSave('innovation', { innovation: { ...data.settings.innovation, included: v === 'in' } })}
-          options={[{ value: 'in', label: 'In', title: 'Counted in the forecast' }, { value: 'out', label: 'Out', title: 'Left out of the forecast' }]}
-        />
-      )}
-    >
-      <p className="mb-2 text-[11px] text-slate-500">
-        Extra innovation spending on top of the forecast, spread evenly from its start month to December (forecast months only).
-        In: counted in EBITDA and December cash. Out: not counted. Leave it empty if there is none or it is already in the budget.
-      </p>
-      <p className={`text-sm font-semibold ${inv.included ? 'text-sky-800' : 'text-slate-700'}`}>
-        {inv.amountEur ? `${formatEur(inv.amountEur)} for ${inv.year}: ${inv.included ? 'IN the forecast' : 'OUT of the forecast'}` : 'No envelope set.'}
-      </p>
-      {inv.amountEur > 0 && (
-        <table className="mt-2 w-full text-xs">
-          <thead><tr className="text-slate-500"><th className="text-left font-medium" /><th className="text-right font-medium">Without</th><th className="text-right font-medium">With</th></tr></thead>
-          <tbody>
-            {inv.ebitda && <tr className="border-t border-slate-100"><td className="py-1">EBITDA FY {inv.ebitda.year}</td><td className="text-right tabular-nums">{formatEur(inv.ebitda.without)}</td><td className="text-right tabular-nums">{formatEur(inv.ebitda.with)}</td></tr>}
-            {inv.netCash && <tr className="border-t border-slate-100"><td className="py-1">Cash Dec {inv.netCash.year}</td><td className="text-right tabular-nums">{formatEur(inv.netCash.without)}</td><td className="text-right tabular-nums">{formatEur(inv.netCash.with)}</td></tr>}
-          </tbody>
-        </table>
-      )}
-      {inv.amountEur > 0 && <p className="mt-1 text-[11px] text-slate-500">{formatEur(inv.monthly)} a month over {inv.months} forecast month{inv.months === 1 ? '' : 's'} from {MONTH_NAMES[inv.startMonth - 1]} (closed months keep what was booked).</p>}
-      <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-2 text-xs text-slate-600">
-        <label className="inline-flex items-center gap-1">€
-          <input aria-label="Envelope amount €" type="number" step={50000} value={amount} onChange={(e: { target: { value: string } }) => setAmount(e.target.value)} className={`${INPUT} w-28 text-right`} />
-        </label>
-        <select aria-label="Year" value={year} onChange={(e: { target: { value: string } }) => setYear(parseInt(e.target.value, 10))} className={INPUT}>
-          {data.years.map((y) => <option key={y} value={y}>{y}</option>)}
-        </select>
-        <span>from</span>
-        <select aria-label="Start month" value={start} onChange={(e: { target: { value: string } }) => setStart(parseInt(e.target.value, 10))} className={INPUT}>
-          {MONTH_NAMES.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
-        </select>
-        <button type="button" disabled={!dirty || saving !== null} className={BUTTON}
-          onClick={() => void onSave('innovation', { innovation: { ...data.settings.innovation, amountEur: num(amount), year, startMonth: start } })}>
-          {saving === 'innovation' && <Loader2 size={12} className="animate-spin" />}Save
-        </button>
       </div>
     </Card>
   );

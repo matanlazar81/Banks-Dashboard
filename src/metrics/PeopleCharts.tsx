@@ -118,15 +118,16 @@ export default function PeopleCharts({ people }: { people: People }) {
         {people.pending.length ? ` (${people.pending.map(monthName).join(', ')}: payroll JE not posted yet)` : ''}.
         Payroll is NetSuite 76xxxx before capitalised salaries; revenue is the P&amp;L&apos;s total revenue.
       </p>
-      <div className="grid gap-6 lg:grid-cols-2">
-        <div>
+      {/* A line between the two charts: across when they stack, down the middle side by side. */}
+      <div className="grid divide-y divide-slate-200 lg:grid-cols-2 lg:divide-x lg:divide-y-0">
+        <div className="pb-6 lg:pb-0 lg:pr-6">
           <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
             <h3 className="text-sm font-semibold text-slate-800">Payroll / revenue</h3>
             <span className="text-xs text-slate-500">{ytd.label}: <span className="text-base font-semibold text-slate-900">{formatPct(ytd.payrollPct, 1)}</span></span>
           </div>
           <ColumnChart columns={payrollCols} format={pct1} valueFormat={(n) => formatPct(n, 1)} label="Payroll as a percentage of revenue, by month and year to date" />
         </div>
-        <div>
+        <div className="pt-6 lg:pl-6 lg:pt-0">
           <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
             <h3 className="text-sm font-semibold text-slate-800">Revenue per employee, a month</h3>
             <span className="text-xs text-slate-500">

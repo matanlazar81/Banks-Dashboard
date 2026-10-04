@@ -1,7 +1,6 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // What the Metrics page saves for everyone, and what may be saved (server/json-store.cjs stores it):
-//   settings  the USD/EUR planning rate, the cloud cap (% of projected revenue, which category is cloud),
-//             and the innovation envelope (amount, year, start month, in or out of the forecast)
+//   settings  the USD/EUR planning rate and the cloud cap (% of projected revenue, which category is cloud)
 //   deposits  the deposit tracker: each deposit placed and whether the bank's confirmation came back
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -9,8 +8,9 @@ const DEFAULT_SETTINGS = Object.freeze({
   usdEurPlanningRate: null,
   cloudCapPct: 8,
   cloudCategory: '',
-  innovation: Object.freeze({ amountEur: 0, year: null, startMonth: 1, included: false }),
 });
+// The innovation envelope was removed from the page; settings saved with it still validate, without it.
+const LEGACY_KEYS = ['innovation'];
 const emptySettings = () => JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
 
 const CURRENCIES = ['EUR', 'USD', 'ILS', 'GBP', 'PLN', 'CHF'];
@@ -46,29 +46,13 @@ function dateIn(v, where, errors, { optional = false } = {}) {
 function validateSettings(body) {
   const errors = [];
   const out = emptySettings();
-  if (!keysOnly(body, ['value'], 'body', errors) || !keysOnly(body.value, ['usdEurPlanningRate', 'cloudCapPct', 'cloudCategory', 'innovation'], 'settings', errors)) {
+  if (!keysOnly(body, ['value'], 'body', errors) || !keysOnly(body.value, ['usdEurPlanningRate', 'cloudCapPct', 'cloudCategory', ...LEGACY_KEYS], 'settings', errors)) {
     return { ok: false, value: null, errors };
   }
   const v = body.value;
   if (v.usdEurPlanningRate !== undefined && v.usdEurPlanningRate !== null) out.usdEurPlanningRate = numIn(v.usdEurPlanningRate, 0.5, 2, 'usdEurPlanningRate (USD per €)', errors);
   if (v.cloudCapPct !== undefined) out.cloudCapPct = numIn(v.cloudCapPct, 0, 100, 'cloudCapPct', errors);
   if (v.cloudCategory !== undefined) out.cloudCategory = textIn(v.cloudCategory, 120, 'cloudCategory', errors, { optional: true });
-  if (v.innovation !== undefined && keysOnly(v.innovation, ['amountEur', 'year', 'startMonth', 'included'], 'innovation', errors)) {
-    const i = v.innovation;
-    if (i.amountEur !== undefined) out.innovation.amountEur = numIn(i.amountEur, 0, 100_000_000, 'innovation.amountEur', errors);
-    if (i.year !== undefined && i.year !== null) {
-      if (!Number.isInteger(i.year) || i.year < 2020 || i.year > 2100) errors.push('innovation.year: a year');
-      else out.innovation.year = i.year;
-    }
-    if (i.startMonth !== undefined) {
-      if (!Number.isInteger(i.startMonth) || i.startMonth < 1 || i.startMonth > 12) errors.push('innovation.startMonth: a month from 1 to 12');
-      else out.innovation.startMonth = i.startMonth;
-    }
-    if (i.included !== undefined) {
-      if (typeof i.included !== 'boolean') errors.push('innovation.included: true or false');
-      else out.innovation.included = i.included;
-    }
-  }
   return errors.length ? { ok: false, value: null, errors } : { ok: true, value: out, errors: [] };
 }
 

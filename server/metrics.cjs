@@ -18,8 +18,6 @@
 //   Projection year       the 2027 targets saved on the New Bank Dashboard apply, as in both pages'
 //                         Targets view (src/forecast/targets.mjs): revenue, EBITDA, December cash, ARR,
 //                         and cloud (server costs as a % of revenue, or the category's % change)
-//   Innovation envelope   an amount for a year, spread over its forecast months from a start month, in
-//                         or out of the forecast (EBITDA and net cash are shown both ways)
 //   USD/EUR planning rate saved setting, next to today's ECB rate
 //   FX conversions        last month's NetSuite transfers between accounts of different currencies
 //   Deposit confirmations the page's tracker: deposits whose confirmation has not come back
@@ -57,23 +55,6 @@ const lastClosedMonth = (nowMs) => {
 const cell = (value, status, label, extra = {}) => ({ value: value === null ? null : round2(value), status, label, ...extra });
 const isActual = (r) => r.status === 'actual';
 const sumOf = (rows, f) => rows.reduce((s, r) => s + num(f(r)), 0);
-
-// ── innovation envelope ─────────────────────────────────────────────────────
-/** € per month the envelope adds to costs: its amount spread evenly from the start month to December,
- *  applied to the year's forecast months only (a closed month keeps what was booked). */
-function envelopeMonths(innovation, blocks, defaultYear) {
-  const out = new Map();
-  const year = innovation.year || defaultYear;
-  const amount = num(innovation.amountEur);
-  if (!amount) return { byMonth: out, year, monthly: 0 };
-  const start = innovation.startMonth || 1;
-  const monthly = amount / (13 - start);
-  const block = blocks.find((b) => b.year === year);
-  for (const r of block ? block.rows : []) {
-    if (Number(r.mKey.slice(5)) >= start && !isActual(r)) out.set(r.mKey, monthly);
-  }
-  return { byMonth: out, year, monthly };
-}
 
 // ── cloud ───────────────────────────────────────────────────────────────────
 function cloudCategoryOf(settings, categories, targetsBase) {
@@ -300,14 +281,10 @@ function buildMetrics({ nowMs, cash, pnl, pnlDetails, settings, deposits, extras
   const closed = pY.rows.filter(isActual);
   const lastRow = through ? pY.rows.find((r) => r.mKey === through) : null;
   const ytdLabel = through ? (closed.length > 1 ? `Jan–${monthShort(through)}` : monthShort(through)) : null;
-  const inv = settings.innovation;
-  const env = envelopeMonths(inv, pBlocks, T);
-  const envIn = (rows) => rows.reduce((s, r) => s + (env.byMonth.get(r.mKey) || 0), 0);
-  const useEnv = !!inv.included;
 
-  const fyOf = (block, field, withEnvelope) => {
+  const fyOf = (block, field) => {
     const actual = sumOf(block.rows.filter(isActual), (r) => r.eur[field]);
-    const forecast = sumOf(block.rows.filter((r) => !isActual(r)), (r) => r.eur[field]) - (withEnvelope ? envIn(block.rows) : 0);
+    const forecast = sumOf(block.rows.filter((r) => !isActual(r)), (r) => r.eur[field]);
     return cell(actual + forecast, actual && forecast ? 'actual+forecast' : forecast ? 'forecast' : 'actual', `FY ${block.year}`,
       { actual: round2(actual), forecast: round2(forecast) });
   };
@@ -316,12 +293,8 @@ function buildMetrics({ nowMs, cash, pnl, pnlDetails, settings, deposits, extras
     ytd: closed.length ? cell(sumOf(closed, (r) => r.eur[field]), 'actual', ytdLabel) : null,
   });
 
-  // Net cash: the bank at the last month-end; December closings carry the envelope's cash out.
-  const envThrough = (year) => [...env.byMonth.entries()].filter(([k]) => Number(k.slice(0, 4)) <= year).reduce((s, [, v]) => s + v, 0);
-  const decClose = (block) => {
-    const v = num(block.rows[block.rows.length - 1].eur.closing) - (useEnv ? envThrough(block.year) : 0);
-    return cell(v, 'forecast', `Dec ${block.year}`);
-  };
+  // Net cash: the bank at the last month-end; the December closings.
+  const decClose = (block) => cell(num(block.rows[block.rows.length - 1].eur.closing), 'forecast', `Dec ${block.year}`);
   const bank = cash.bankToday;
   const janOpen = cY && cY.rows[0] ? num(cY.rows[0].eur.opening) : null;
 
@@ -337,12 +310,8 @@ function buildMetrics({ nowMs, cash, pnl, pnlDetails, settings, deposits, extras
   const churnYtd = quarters.filter((q) => String(q.qs).startsWith(`${Y}-`));
 
   const metrics = [
-    { key: 'revenue', label: 'Revenue', unit: 'eur', note: withT('Total revenue (P&L, Plan)'), ...lastAndYtd('totalRevenue'), fy: [fyOf(pY, 'totalRevenue', false), fyOf(pT, 'totalRevenue', false)] },
-    {
-      key: 'ebitda', label: 'EBITDA', unit: 'eur',
-      note: withT(useEnv && inv.amountEur ? 'P&L, Plan, with the innovation envelope' : 'P&L, Plan'),
-      ...lastAndYtd('ebitda'), fy: [fyOf(pY, 'ebitda', useEnv), fyOf(pT, 'ebitda', useEnv)],
-    },
+    { key: 'revenue', label: 'Revenue', unit: 'eur', note: withT('Total revenue (P&L, Plan)'), ...lastAndYtd('totalRevenue'), fy: [fyOf(pY, 'totalRevenue'), fyOf(pT, 'totalRevenue')] },
+    { key: 'ebitda', label: 'EBITDA', unit: 'eur', note: withT('P&L, Plan'), ...lastAndYtd('ebitda'), fy: [fyOf(pY, 'ebitda'), fyOf(pT, 'ebitda')] },
     {
       key: 'netCash', label: 'Net cash', unit: 'eur', note: withT('Cash in the bank (no debt); forecast: New Bank Dashboard, Plan', cashTargeted),
       lastMonth: bank ? cell(bank.eur, 'actual', `Bank, ${bank.asOf}`) : null,
@@ -380,23 +349,8 @@ function buildMetrics({ nowMs, cash, pnl, pnlDetails, settings, deposits, extras
     category, categories, capPct, accounts: '640xxx',
     years: [pY, pT].map((b) => cloudYear({
       block: planBlock(b.year), details: pnlDetails || {}, targetsBase: pnl.targetsBase, category, capPct,
-      revenue: fyOf(b, 'totalRevenue', false).value, withTargets: b.year === T ? cloudTargets : null,
+      revenue: fyOf(b, 'totalRevenue').value, withTargets: b.year === T ? cloudTargets : null,
     })),
-  };
-
-  const fyEbitda = (b) => fyOf(b, 'ebitda', false).value;
-  const envBlock = pBlocks.find((b) => b.year === env.year);
-  const cashEnvBlock = cBlocks.find((b) => b.year === env.year);
-  const applied = round2(envIn(envBlock ? envBlock.rows : []));
-  const innovation = {
-    amountEur: num(inv.amountEur), year: env.year, startMonth: inv.startMonth || 1, included: useEnv,
-    monthly: round2(env.monthly), months: env.byMonth.size, applied,
-    ebitda: envBlock ? { year: env.year, without: fyEbitda(envBlock), with: round2(fyEbitda(envBlock) - applied) } : null,
-    netCash: cashEnvBlock ? {
-      year: env.year,
-      without: round2(cashEnvBlock.rows[11].eur.closing),
-      with: round2(num(cashEnvBlock.rows[11].eur.closing) - envThrough(env.year)),
-    } : null,
   };
 
   const fx = (extras.fx || []);
@@ -433,7 +387,6 @@ function buildMetrics({ nowMs, cash, pnl, pnlDetails, settings, deposits, extras
     metrics,
     nrrTrend: extras.nrr || [],
     cloud,
-    innovation,
     people: peopleMetrics(pY.rows, extras.employees || null, extras.company || null),
     rates: { usdEurPlanning: settings.usdEurPlanningRate, usdEurLive: extras.usdLive || null },
     fx: {
@@ -575,6 +528,8 @@ function createMetricsHandler(deps = {}) {
     };
     const extras = { arr: val(0), churnQuarters: val(1), nrr: val(2), fx: val(3), fxMonth: closed, usdLive: val(4), employees: val(5), company };
     const settingsDoc = readDoc(settingsFile);
+    // Settings saved before the innovation envelope was removed still carry it: it no longer counts.
+    const { innovation: _removed, ...savedSettings } = (settingsDoc && settingsDoc.value) || {};
     const depositsDoc = readDoc(depositsFile);
     // The saved targets, read on every request so a save on the New Bank Dashboard shows at once.
     const targets = projectionTargets.readStore(targetsFile);
@@ -588,7 +543,7 @@ function createMetricsHandler(deps = {}) {
     try {
       const out = buildMetrics({
         nowMs, cash: c.entry.payload, pnl: p.entry.payload, pnlDetails: p.entry.details,
-        settings: { ...emptySettings(), ...((settingsDoc && settingsDoc.value) || {}) },
+        settings: { ...emptySettings(), ...savedSettings },
         deposits: (depositsDoc && depositsDoc.value) || [],
         extras, failed, targets, targetsLib,
       });
@@ -610,5 +565,5 @@ function createMetricsDepositsHandler(deps = {}) {
 
 module.exports = {
   createMetricsHandler, createMetricsSettingsHandler, createMetricsDepositsHandler,
-  buildMetrics, nrrSeries, envelopeMonths, shiftMonth, lastClosedMonth, cloudTargetsOf, headcountByMonth, peopleMetrics,
+  buildMetrics, nrrSeries, shiftMonth, lastClosedMonth, cloudTargetsOf, headcountByMonth, peopleMetrics,
 };
