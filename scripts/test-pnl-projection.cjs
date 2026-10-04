@@ -247,6 +247,12 @@ async function testPayload() {
   check(JSON.stringify(payload.years) === JSON.stringify([Y, T]), 'years: current + next');
   check(payload.actuals.source === 'netsuite' && payload.actuals.basis === 'period' && payload.actuals.through === mk(Y, 9), 'actuals: NetSuite, by posting period (as its Profit and Loss report), through September');
   check(payload.plan.loaded && payload.plan.source === 'postgres', 'plan loaded from Postgres');
+  const tBase = payload.targetsBase;
+  check(tBase && tBase.year === T && tBase.months.length === 12 && tBase.serverCategory === 'Cloud' && tBase.departments.includes('R&D') && tBase.categories.length === Object.keys(CATEGORIES).length,
+    `targets baseline: the Plan's ${T} months, departments and budget categories`, tBase && JSON.stringify({ c: tBase.serverCategory, d: tBase.departments }));
+  const planT = payload.variants.plan.years[1].rows;
+  check(tBase.months.every((m, i) => near(m.revenue, planT[i].eur.revenue) && near(m.opex, planT[i].eur.opex) && near(Object.values(m.opexByCategory).reduce((s, v) => s + v, 0), m.opex, 0.1))
+    && tBase.serverRatioYtd > 10 && tBase.serverRatioYtd < 30, 'targets baseline: P&L revenue and opex, opex split by category, cloud share of revenue so far', tBase.serverRatioYtd);
 
   for (const variant of ['plan', 'base']) {
     const [yb, tb] = payload.variants[variant].years;
@@ -616,6 +622,18 @@ async function testModel(payload) {
     'the depreciation add-back reverses the depreciation line');
   const janT = table.columns.findIndex((c) => c.mKey === mk(T, 1));
   check(table.columns[janT].rollForward && near(line('accOpening').values[janT], yRows[11].eur.accClosing), `January ${T} is rolled forward: it opens at December's accumulated profit`);
+  const tm = await import(pathToFileURL(path.join(ROOT, 'src', 'forecast', 'targets.mjs')).href);
+  const tg = tm.emptyTargets();
+  tg.revenue.mode = 'newMrr';
+  tg.revenue.newMrr = Array(12).fill(0).map((_, i) => (i === 0 ? 50_000 : 0));
+  const tv = tm.variantWithTargets(payload.variants.plan, payload.targetsBase, tg, tm.applyPnlTargets);
+  const tTable = model.buildPnlTable(tv, 'eur', 'both');
+  const fyT = tTable.columns.findIndex((c) => c.id === `fy-${T}`);
+  const planFyT = table.lines.find((l) => l.key === 'ebitda').values[fyT];
+  check(near(tTable.lines.find((l) => l.key === 'ebitda').values[fyT], planFyT + 12 * 50_000, 0.05)
+    && near(tTable.lines.find((l) => l.key === 'bridgeEbitda').values[fyT], tTable.lines.find((l) => l.key === 'ebitda').values[fyT], 0.05)
+    && tTable.lines.find((l) => l.key === 'ebitda').values[fyY] === line('ebitda').values[fyY],
+  `targets view: ${T} EBITDA moves by the targets, ${Y} stays, the bridge still ties`);
   const kpis = model.computePnlKpis(payload, 'plan', 'eur');
   const ytd = yRows.filter((r) => r.status === 'actual').reduce((s, r) => s + r.eur.ebitda, 0);
   check(near(kpis.ebitdaYtd.value, ytd, 0.05) && kpis.ebitdaYtd.through === mk(Y, 9), 'KPI: EBITDA year to date from the NetSuite months');

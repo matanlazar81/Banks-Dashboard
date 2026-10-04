@@ -4,6 +4,7 @@
 //   GET /api/cash-projection/breakdown   what makes up one cell (the movable breakdown window)
 //   GET /api/pnl-projection              the P&L projection (same pattern)
 //   GET /api/pnl-projection/breakdown    what makes up one P&L cell
+//   GET/PUT /api/projection-targets      the 2027 targets both pages apply on top of the Plan
 //
 // ONLY NEEDED IF the shared bank-dashboard API mount (docs/backend-bank-dashboard-api.ts →
 // mountBankDashboardApi) is NOT installed. That mount registers every route of
@@ -16,7 +17,8 @@
 // .env (same NetSuite/Snowflake/Postgres settings as the nightly net-cash job), build their own
 // clients, serialize their NetSuite calls (one shared queue, one shared input pull), and cache in
 // <checkout>/data/cash-projection-cache.json and <checkout>/data/pnl-projection-cache.json.
-// GET only — no body parsing, no CSRF.
+// GET routes, plus one PUT (/api/projection-targets) that reads its own JSON body and is checked
+// for same-origin; finance-it's CSRF middleware, if any, applies to it as to any write.
 //
 // AUTH: finance-it-backend has no global /api auth gate (routes guard themselves), and the shared
 // handlers do no identity check of their own, so every route is gated here with the same role as the
@@ -92,6 +94,20 @@ export function mountCashProjection(app: express.Express): void {
   } catch (e) {
     console.error(
       `[pnl-projection] FAILED to mount from ${BANK_DASHBOARD_DIR}: ${e instanceof Error ? e.message : String(e)}.`
+    );
+  }
+  // 2027 targets of both projection pages: GET reads them, PUT saves them (JSON, same origin; the
+  // handler reads the body itself when no body parser ran).
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { createProjectionTargetsHandler } = require(`${BANK_DASHBOARD_DIR}/server/projection-targets.cjs`);
+    const targets = createProjectionTargetsHandler();
+    app.get('/api/projection-targets', bankRole, (req, res) => targets(req, res));
+    app.put('/api/projection-targets', bankRole, (req, res) => targets(req, res));
+    console.log(`[projection-targets] mounted from ${BANK_DASHBOARD_DIR}`);
+  } catch (e) {
+    console.error(
+      `[projection-targets] FAILED to mount from ${BANK_DASHBOARD_DIR}: ${e instanceof Error ? e.message : String(e)}.`
     );
   }
 }

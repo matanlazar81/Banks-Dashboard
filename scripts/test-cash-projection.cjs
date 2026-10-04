@@ -816,6 +816,10 @@ async function testBreakdownDepartments() {
   } finally {
     if (prevNs === undefined) delete process.env.NETSUITE_ACCOUNT_ID; else process.env.NETSUITE_ACCOUNT_ID = prevNs;
   }
+  const tb = payload.targetsBase;
+  check(tb && tb.year === Y + 1 && tb.months.length === 12 && tb.months.every((m, i) => near(m.payroll, payload.variants.plan.years[1].rows[i].eur.salary, 0.01))
+    && tb.months.every((m) => m.revenue > 0 && m.collPct > 0 && m.ilsRate > 0),
+  'targets baseline in the cash payload: the Plan\'s next-year salary, revenue before the collection %, ₪ rate');
   const bareEntry = cp.makeEntry(payload, NOW.getTime(), details);
   const bare = await quiet(() => bd.buildBreakdown({ entry: bareEntry, line: 'vendors', period: '2026-03', variant: 'plan', ccy: 'eur', sfx }));
   check(bare.sections[0].rows.every((r) => !r.link), 'a projection cached before the account ids: no links');

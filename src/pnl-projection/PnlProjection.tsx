@@ -1,16 +1,19 @@
 import { useCallback, useMemo, useState } from 'react';
-import { Download, Loader2, RefreshCw } from 'lucide-react';
+import { Download, Loader2, RefreshCw, SlidersHorizontal } from 'lucide-react';
+import { applyPnlTargets, variantWithTargets } from '../forecast/targets.mjs';
+import { cellDelta, useTargets } from '../new-dashboard/targets.ts';
+import TargetsDrawer, { type ImpactLine } from '../new-dashboard/TargetsDrawer.tsx';
 import { useProjection } from '../new-dashboard/useProjection.ts';
 import ProjectionTable, { type TableMarkers } from '../new-dashboard/ProjectionTable.tsx';
 import BreakdownWindows from '../new-dashboard/BreakdownWindows.tsx';
 import { ComputingCard, ErrorCard, Segmented, Skeleton, Warnings } from '../new-dashboard/PageParts.tsx';
 import { readParam, writeParam } from '../new-dashboard/urlParams.ts';
 import { monthLongLabel, type Column } from '../new-dashboard/model.ts';
-import type { YearView } from '../new-dashboard/types.ts';
+import type { ViewKey, YearView } from '../new-dashboard/types.ts';
 import { fetchPnlProjection, PNL_BREAKDOWN_ENDPOINT } from './api.ts';
 import { buildPnlTable, computePnlKpis, PNL_BREAKDOWN_LINES } from './model.ts';
 import PnlKpiStrip from './PnlKpiStrip.tsx';
-import type { Ccy, VariantKey } from './types.ts';
+import type { Ccy, PnlPayload } from './types.ts';
 
 const MARKERS: TableMarkers = {
   anchorLine: null,
@@ -32,7 +35,12 @@ function Legend() {
 
 export default function PnlProjection() {
   const { phase, data, error, computingElapsedSec, refreshing, refresh } = useProjection(fetchPnlProjection);
-  const [variant, setVariant] = useState<VariantKey>(() => (readParam('plan') === 'base' ? 'base' : 'plan'));
+  const [variant, setVariant] = useState<ViewKey>(() => {
+    const p = readParam('plan');
+    return p === 'base' || p === 'targets' ? p : 'plan';
+  });
+  const [targetsOpen, setTargetsOpen] = useState(false);
+  const targets = useTargets(data ? data.targetsBase : null);
   const [ccy, setCcy] = useState<Ccy>(() => (readParam('ccy') === 'ils' ? 'ils' : 'eur'));
   const [view, setView] = useState<YearView>(() => {
     const v = readParam('years');
@@ -46,10 +54,42 @@ export default function PnlProjection() {
   }, []);
   const closePanel = useCallback(() => setOpenCell(null), []);
 
-  const table = useMemo(() => (data ? buildPnlTable(data.variants[variant], ccy, view) : null), [data, variant, ccy, view]);
-  const kpis = useMemo(() => (data ? computePnlKpis(data, variant, ccy) : null), [data, variant, ccy]);
+  // The Targets view is the Plan with the projection-year targets (saved or being edited) applied.
+  const base = data && data.targetsBase ? data.targetsBase : null;
+  const targetsVariant = useMemo(
+    () => (data && base ? variantWithTargets(data.variants.plan, base, targets.draft, applyPnlTargets) : null),
+    [data, base, targets.draft],
+  );
+  const showTargets = variant === 'targets' && !!targetsVariant;
+  const key = variant === 'base' ? 'base' : 'plan';
+  const shown: PnlPayload | null = useMemo(
+    () => (data && showTargets && targetsVariant ? { ...data, variants: { ...data.variants, plan: targetsVariant } } : data),
+    [data, showTargets, targetsVariant],
+  );
+  const table = useMemo(() => (shown ? buildPnlTable(shown.variants[key], ccy, view) : null), [shown, key, ccy, view]);
+  const kpis = useMemo(() => (shown ? computePnlKpis(shown, key, ccy) : null), [shown, key, ccy]);
+  const extraFor = useCallback((line: string, period: string) => {
+    if (!data || !showTargets || !targetsVariant || !base) return null;
+    return { label: `${base.year} targets`, hint: 'What the targets change in this cell, on top of the Plan.', amount: cellDelta(data.variants.plan, targetsVariant, line, period, ccy) };
+  }, [data, showTargets, targetsVariant, base, ccy]);
+  const impact: ImpactLine[] = useMemo(() => {
+    if (!data || !base || !targetsVariant) return [];
+    const plan = data.variants.plan.years.find((y) => y.year === base.year);
+    const tgt = targetsVariant.years.find((y) => y.year === base.year);
+    if (!plan || !tgt) return [];
+    const sum = (rows: typeof plan.rows, k: 'revenue' | 'payroll' | 'opex' | 'ebitda' | 'net') => rows.reduce((s, r) => s + r[ccy][k], 0);
+    return [
+      { label: 'Customer revenue', plan: sum(plan.rows, 'revenue'), withTargets: sum(tgt.rows, 'revenue') },
+      { label: 'Payroll', plan: sum(plan.rows, 'payroll'), withTargets: sum(tgt.rows, 'payroll') },
+      { label: 'Operating expenses', plan: sum(plan.rows, 'opex'), withTargets: sum(tgt.rows, 'opex') },
+      { label: 'EBITDA', plan: sum(plan.rows, 'ebitda'), withTargets: sum(tgt.rows, 'ebitda') },
+      { label: 'Net profit', plan: sum(plan.rows, 'net'), withTargets: sum(tgt.rows, 'net') },
+      { label: `Accumulated, Dec ${base.year}`, plan: plan.rows[11][ccy].accClosing, withTargets: tgt.rows[11][ccy].accClosing },
+    ];
+  }, [data, base, targetsVariant, ccy]);
 
-  const chooseVariant = (v: VariantKey) => { setVariant(v); writeParam('plan', v === 'base' ? 'base' : null); };
+  const chooseVariant = (v: ViewKey) => { setVariant(v); writeParam('plan', v === 'plan' ? null : v); };
+  const openTargets = () => { setTargetsOpen(true); chooseVariant('targets'); };
   const chooseCcy = (c: Ccy) => { setCcy(c); writeParam('ccy', c === 'ils' ? 'ils' : null); };
   const chooseView = (v: YearView) => { setView(v); writeParam('years', v === 'both' ? null : v); };
 
@@ -59,7 +99,8 @@ export default function PnlProjection() {
     setExportError(null);
     try {
       const { exportTableXlsx } = await import('../new-dashboard/exportXlsx.ts');
-      await exportTableXlsx({ what: 'P&L projection', years: data.years, planName: data.plan.name, generatedAt: data.generatedAt, table, variant, ccy });
+      const planName = showTargets && base ? `${data.plan.name} with the ${base.year} targets` : data.plan.name;
+      await exportTableXlsx({ what: 'P&L projection', years: data.years, planName, generatedAt: data.generatedAt, table, variant: key, ccy });
     } catch (e) {
       setExportError(e instanceof Error ? e.message : 'The export failed.');
     } finally {
@@ -86,8 +127,23 @@ export default function PnlProjection() {
               label="Forecast basis"
               value={variant}
               onChange={chooseVariant}
-              options={[{ value: 'plan', label: 'Plan', title: planTitle }, { value: 'base', label: 'Base', title: 'Forecast without plan adjustments' }]}
+              options={[
+                { value: 'plan', label: 'Plan', title: planTitle },
+                { value: 'base', label: 'Base', title: 'Forecast without plan adjustments' },
+                ...(base ? [{ value: 'targets' as const, label: `Targets ${base.year}`, title: `The Plan with the ${base.year} targets` }] : []),
+              ]}
             />
+            {base && (
+              <button
+                type="button"
+                onClick={openTargets}
+                className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100"
+                title={`Set the ${base.year} targets and see their effect`}
+              >
+                <SlidersHorizontal size={14} />
+                {base.year} targets{targets.dirty ? ' •' : ''}
+              </button>
+            )}
             <Segmented label="Currency" value={ccy} onChange={chooseCcy} options={[{ value: 'eur', label: 'EUR' }, { value: 'ils', label: 'ILS' }]} />
             {data && (
               <Segmented
@@ -131,7 +187,12 @@ export default function PnlProjection() {
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
               <span>Updated {updatedDay} {updated}</span>
               <span aria-hidden="true">·</span>
-              <span>{variant === 'plan' ? `Plan: ${data.plan.name}` : 'Base: no plan adjustments'}</span>
+              <span>
+                {showTargets && base
+                  ? `Targets ${base.year}: plan "${data.plan.name}" with the ${base.year} targets${targets.dirty ? ' (unsaved changes)' : ''}`
+                  : variant === 'base' ? 'Base: no plan adjustments' : `Plan: ${data.plan.name}`}
+              </span>
+              {variant === 'targets' && !base && <span className="text-amber-700">Targets need the projection to be refreshed once.</span>}
               <span aria-hidden="true">·</span>
               <span>
                 {through
@@ -165,7 +226,18 @@ export default function PnlProjection() {
               />
             </section>
 
-            <BreakdownWindows cell={openCell} variant={variant} ccy={ccy} endpoint={PNL_BREAKDOWN_ENDPOINT} onClose={closePanel} />
+            <BreakdownWindows cell={openCell} variant={key} ccy={ccy} endpoint={PNL_BREAKDOWN_ENDPOINT} onClose={closePanel} extraFor={extraFor} />
+
+            {targetsOpen && base && (
+              <TargetsDrawer
+                base={base}
+                state={targets}
+                impact={impact}
+                ccy={ccy}
+                revenueNote="Revenue here is customer revenue (accrual), before any collection rate."
+                onClose={() => setTargetsOpen(false)}
+              />
+            )}
 
             <p className="max-w-5xl text-xs leading-relaxed text-slate-500">
               The New Bank Dashboard's projection on an accrual basis. Actual months are NetSuite's P&amp;L line by line:

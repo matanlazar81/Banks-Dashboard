@@ -117,12 +117,22 @@ interface Props {
   /** Stacking order (default 50); onFocus fires on any pointer down, to bring it to the front. */
   zIndex?: number;
   onFocus?: () => void;
+  /** A change the page makes on top of the server's figures (the targets view): one more row and cell. */
+  extra?: { label: string; hint: string; amount: number } | null;
+}
+
+// The cell's breakdown with the page's own change added as a last row, so it still adds up.
+function withExtra(data: BreakdownReady, extra: { label: string; hint: string; amount: number }): BreakdownReady {
+  const [main, ...rest] = data.sections;
+  const row: BreakdownRow = { key: 'page-extra', label: extra.label, ref: null, group: null, kind: 'adjust', hint: extra.hint, amount: extra.amount };
+  const round = (n: number) => Math.round(n * 100) / 100;
+  return { ...data, cell: round(data.cell + extra.amount), sections: [{ ...main, rows: [...main.rows, row], total: round(main.total + extra.amount) }, ...rest] };
 }
 
 type Load = { phase: 'loading' } | { phase: 'ready'; data: BreakdownReady } | { phase: 'computing' } | { phase: 'error'; error: string };
 
 export default function BreakdownPanel({
-  request, position, onMove, onClose, endpoint = CASH_BREAKDOWN_ENDPOINT, onDrill, activeRow = null, escToClose = true, zIndex = 50, onFocus,
+  request, position, onMove, onClose, endpoint = CASH_BREAKDOWN_ENDPOINT, onDrill, activeRow = null, escToClose = true, zIndex = 50, onFocus, extra = null,
 }: Props) {
   const { line, period, variant, ccy, row } = request;
   const reqKey = `${line}|${period}|${variant}|${ccy}|${row || ''}`;
@@ -165,7 +175,8 @@ export default function BreakdownPanel({
     if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
   };
 
-  const data = load.phase === 'ready' ? load.data : null;
+  const loaded = load.phase === 'ready' ? load.data : null;
+  const data = loaded && extra && !loaded.account && Math.abs(extra.amount) >= 0.5 ? withExtra(loaded, extra) : loaded;
   const main = data ? data.sections[0] : null;
   const ties = data && main ? Math.abs(main.total - data.cell) < 1 : false;
   const account = data ? data.account : undefined;

@@ -1,12 +1,15 @@
 import { useCallback, useMemo, useState } from 'react';
-import { Download, Loader2, RefreshCw } from 'lucide-react';
+import { Download, Loader2, RefreshCw, SlidersHorizontal } from 'lucide-react';
+import { applyCashTargets, variantWithTargets } from '../forecast/targets.mjs';
 import { useProjection } from './useProjection.ts';
 import { fetchProjection } from './api.ts';
 import { buildTable, computeKpis, type Column } from './model.ts';
 import KpiStrip from './KpiStrip.tsx';
 import ProjectionTable from './ProjectionTable.tsx';
 import BreakdownWindows from './BreakdownWindows.tsx';
-import type { Ccy, VariantKey, YearView } from './types.ts';
+import type { Ccy, ProjectionPayload, ViewKey, YearView } from './types.ts';
+import { cellDelta, useTargets } from './targets.ts';
+import TargetsDrawer, { type ImpactLine } from './TargetsDrawer.tsx';
 import { ComputingCard, ErrorCard, Segmented, Skeleton, Warnings } from './PageParts.tsx';
 import { readParam, writeParam } from './urlParams.ts';
 
@@ -24,7 +27,12 @@ function Legend() {
 
 export default function NewBankDashboard() {
   const { phase, data, error, computingElapsedSec, refreshing, refresh } = useProjection(fetchProjection);
-  const [variant, setVariant] = useState<VariantKey>(() => (readParam('plan') === 'base' ? 'base' : 'plan'));
+  const [variant, setVariant] = useState<ViewKey>(() => {
+    const p = readParam('plan');
+    return p === 'base' || p === 'targets' ? p : 'plan';
+  });
+  const [targetsOpen, setTargetsOpen] = useState(false);
+  const targets = useTargets(data ? data.targetsBase : null);
   const [ccy, setCcy] = useState<Ccy>(() => (readParam('ccy') === 'ils' ? 'ils' : 'eur'));
   const [view, setView] = useState<YearView>(() => {
     const v = readParam('years');
@@ -39,10 +47,40 @@ export default function NewBankDashboard() {
   }, []);
   const closePanel = useCallback(() => setOpenCell(null), []);
 
-  const table = useMemo(() => (data ? buildTable(data.variants[variant], ccy, view) : null), [data, variant, ccy, view]);
-  const kpis = useMemo(() => (data ? computeKpis(data, variant, ccy) : null), [data, variant, ccy]);
+  // The Targets view is the Plan with the projection-year targets (saved or being edited) applied.
+  const base = data && data.targetsBase ? data.targetsBase : null;
+  const targetsVariant = useMemo(
+    () => (data && base ? variantWithTargets(data.variants.plan, base, targets.draft, applyCashTargets) : null),
+    [data, base, targets.draft],
+  );
+  const showTargets = variant === 'targets' && !!targetsVariant;
+  const key = variant === 'base' ? 'base' : 'plan';
+  const shown: ProjectionPayload | null = useMemo(
+    () => (data && showTargets && targetsVariant ? { ...data, variants: { ...data.variants, plan: targetsVariant } } : data),
+    [data, showTargets, targetsVariant],
+  );
+  const table = useMemo(() => (shown ? buildTable(shown.variants[key], ccy, view) : null), [shown, key, ccy, view]);
+  const kpis = useMemo(() => (shown ? computeKpis(shown, key, ccy) : null), [shown, key, ccy]);
+  const extraFor = useCallback((line: string, period: string) => {
+    if (!data || !showTargets || !targetsVariant || !base) return null;
+    return { label: `${base.year} targets`, hint: 'What the targets change in this cell, on top of the Plan.', amount: cellDelta(data.variants.plan, targetsVariant, line, period, ccy) };
+  }, [data, showTargets, targetsVariant, base, ccy]);
+  const impact: ImpactLine[] = useMemo(() => {
+    if (!data || !base || !targetsVariant) return [];
+    const plan = data.variants.plan.years.find((y) => y.year === base.year);
+    const tgt = targetsVariant.years.find((y) => y.year === base.year);
+    if (!plan || !tgt) return [];
+    const sum = (rows: typeof plan.rows, k: 'collections' | 'salary' | 'vendors') => rows.reduce((s, r) => s + r[ccy][k], 0);
+    return [
+      { label: `Cash, Dec ${base.year}`, plan: plan.rows[11][ccy].closing, withTargets: tgt.rows[11][ccy].closing },
+      { label: 'Collections', plan: sum(plan.rows, 'collections'), withTargets: sum(tgt.rows, 'collections') },
+      { label: 'Salary', plan: sum(plan.rows, 'salary'), withTargets: sum(tgt.rows, 'salary') },
+      { label: 'Vendors', plan: sum(plan.rows, 'vendors'), withTargets: sum(tgt.rows, 'vendors') },
+    ];
+  }, [data, base, targetsVariant, ccy]);
 
-  const chooseVariant = (v: VariantKey) => { setVariant(v); writeParam('plan', v === 'base' ? 'base' : null); };
+  const chooseVariant = (v: ViewKey) => { setVariant(v); writeParam('plan', v === 'plan' ? null : v); };
+  const openTargets = () => { setTargetsOpen(true); chooseVariant('targets'); };
   const chooseCcy = (c: Ccy) => { setCcy(c); writeParam('ccy', c === 'ils' ? 'ils' : null); };
   const chooseView = (v: YearView) => { setView(v); writeParam('years', v === 'both' ? null : v); };
 
@@ -52,7 +90,8 @@ export default function NewBankDashboard() {
     setExportError(null);
     try {
       const { exportProjectionXlsx } = await import('./exportXlsx.ts');
-      await exportProjectionXlsx(data, table, variant, ccy);
+      const named = showTargets && base ? { ...data, plan: { ...data.plan, name: `${data.plan.name} with the ${base.year} targets` } } : data;
+      await exportProjectionXlsx(named, table, key, ccy);
     } catch (e) {
       setExportError(e instanceof Error ? e.message : 'The export failed.');
     } finally {
@@ -79,8 +118,23 @@ export default function NewBankDashboard() {
               label="Forecast basis"
               value={variant}
               onChange={chooseVariant}
-              options={[{ value: 'plan', label: 'Plan', title: planTitle }, { value: 'base', label: 'Base', title: 'Forecast without plan adjustments' }]}
+              options={[
+                { value: 'plan', label: 'Plan', title: planTitle },
+                { value: 'base', label: 'Base', title: 'Forecast without plan adjustments' },
+                ...(base ? [{ value: 'targets' as const, label: `Targets ${base.year}`, title: `The Plan with the ${base.year} targets` }] : []),
+              ]}
             />
+            {base && (
+              <button
+                type="button"
+                onClick={openTargets}
+                className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100"
+                title={`Set the ${base.year} targets and see their effect`}
+              >
+                <SlidersHorizontal size={14} />
+                {base.year} targets{targets.dirty ? ' •' : ''}
+              </button>
+            )}
             <Segmented label="Currency" value={ccy} onChange={chooseCcy} options={[{ value: 'eur', label: 'EUR' }, { value: 'ils', label: 'ILS' }]} />
             {data && (
               <Segmented
@@ -124,7 +178,12 @@ export default function NewBankDashboard() {
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
               <span>Updated {updatedDay} {updated}</span>
               <span aria-hidden="true">·</span>
-              <span>{variant === 'plan' ? `Plan: ${data.plan.name}` : 'Base: no plan adjustments'}</span>
+              <span>
+                {showTargets && base
+                  ? `Targets ${base.year}: plan "${data.plan.name}" with the ${base.year} targets${targets.dirty ? ' (unsaved changes)' : ''}`
+                  : variant === 'base' ? 'Base: no plan adjustments' : `Plan: ${data.plan.name}`}
+              </span>
+              {variant === 'targets' && !base && <span className="text-amber-700">Targets need the projection to be refreshed once.</span>}
               {error && <span className="text-amber-700">Last update failed: {error} Showing the previous figures.</span>}
               {exportError && <span className="text-rose-700">Export failed: {exportError}</span>}
             </div>
@@ -150,7 +209,18 @@ export default function NewBankDashboard() {
               />
             </section>
 
-            <BreakdownWindows cell={openCell} variant={variant} ccy={ccy} onClose={closePanel} />
+            <BreakdownWindows cell={openCell} variant={key} ccy={ccy} onClose={closePanel} extraFor={extraFor} />
+
+            {targetsOpen && base && (
+              <TargetsDrawer
+                base={base}
+                state={targets}
+                impact={impact}
+                ccy={ccy}
+                revenueNote={`Revenue here is the expected revenue before the plan's collection %; collections follow it at that %.`}
+                onClose={() => setTargetsOpen(false)}
+              />
+            )}
 
             <p className="max-w-5xl text-xs leading-relaxed text-slate-500">
               Same engine and inputs as the Bank Dashboard and the nightly net-cash figure: revenue from the pipeline

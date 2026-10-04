@@ -13,9 +13,11 @@ interface Props {
   ccy: Ccy;
   endpoint?: string;
   onClose: () => void;
+  /** A change the page makes to a cell on top of the server's figures (the targets view), or null. */
+  extraFor?: (line: string, period: string) => { label: string; hint: string; amount: number } | null;
 }
 
-export default function BreakdownWindows({ cell, variant, ccy, endpoint = CASH_BREAKDOWN_ENDPOINT, onClose }: Props) {
+export default function BreakdownWindows({ cell, variant, ccy, endpoint = CASH_BREAKDOWN_ENDPOINT, onClose, extraFor }: Props) {
   const [mainPos, setMainPos] = useState<PanelPosition>(() => clampPosition({ x: window.innerWidth - 580, y: 120 }));
   const [drillPos, setDrillPos] = useState<PanelPosition | null>(null);
   const [drill, setDrill] = useState<{ cellKey: string; row: string } | null>(null);
@@ -53,6 +55,7 @@ export default function BreakdownWindows({ cell, variant, ccy, endpoint = CASH_B
         endpoint={endpoint}
         onDrill={onDrill}
         activeRow={openRow}
+        extra={extraFor ? extraFor(cell.line, cell.period) : null}
         escToClose={false}
         zIndex={front === 'main' ? 51 : 50}
         onFocus={() => setFront('main')}

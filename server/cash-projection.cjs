@@ -31,12 +31,13 @@ const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
 const { captureDetails } = require('./cash-projection-breakdown.cjs');
+const { cashTargetsBase } = require('./targets-base.cjs');
 const { loadProjectionInputs, wrapClient } = require('./projection-inputs.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
 // 2: balances are cash in the bank with a separate `dividend` figure (1 was the operating view).
 // 3: the entry also carries server-only `details` for GET /api/cash-projection/breakdown.
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4; // 4: payload.targetsBase
 const COMPANY = 'lsports';
 const DEFAULT_SCENARIO = 'Exit plan June26';
 const MIN = 60 * 1000;
@@ -58,8 +59,8 @@ let modulesP = null;
 function loadForecastModules() {
   if (!modulesP) {
     const load = (file) => import(pathToFileURL(path.join(ROOT, 'src', 'forecast', file)).href);
-    modulesP = Promise.all([load('forecast-core.mjs'), load('roll-forward.mjs')])
-      .then(([core, rf]) => ({ computeCashflowForecast: core.computeCashflowForecast, rf }))
+    modulesP = Promise.all([load('forecast-core.mjs'), load('roll-forward.mjs'), load('targets.mjs')])
+      .then(([core, rf, targets]) => ({ computeCashflowForecast: core.computeCashflowForecast, rf, targets }))
       .catch((e) => { modulesP = null; throw e; });
   }
   return modulesP;
@@ -102,7 +103,7 @@ function lastDayOfPreviousMonth(now) {
 async function computeCashProjection(opts) {
   const now = opts.now || new Date();
   const cmp = opts.computeModule || require(path.join(ROOT, 'scripts', 'net-cash-forecast-compute.cjs'));
-  const { computeCashflowForecast, rf } = await loadForecastModules();
+  const { computeCashflowForecast, rf, targets } = await loadForecastModules();
 
   // Checked after requiring the compute module, which loads the repo .env.
   if (!process.env.NETSUITE_ACCOUNT_ID) throw new ProjectionError('NetSuite is not configured on this server.');
@@ -141,6 +142,7 @@ async function computeCashProjection(opts) {
   const variants = {};
   const raw = {};
   let details = null; // server-only, for the breakdown endpoint
+  let targetsBase = null; // the Plan's projection year, for the 2027 targets (src/forecast/targets.mjs)
   for (const [variant, sd] of [['plan', planData], ['base', {}]]) {
     // Current year: exactly the nightly compute's engine inputs (net-cash-forecast-compute.cjs main()).
     const inputsY = {
@@ -168,6 +170,9 @@ async function computeCashProjection(opts) {
       knobs: knobsT, now, ilsRevalRate: cmp.ILS_REVAL_RATE,
     });
     const rowsT = computeCashflowForecast(inputsT);
+    if (variant === 'plan') {
+      targetsBase = cashTargetsBase(targets, { Y, T, rowsT, inputsT, sfBudgetByMonth: (inputs.sfBudget || {}).byMonth });
+    }
 
     const dec = rowsY[11];
     // This year's dividends are still inside every next-year balance (it opens at the operating-view
@@ -233,6 +238,7 @@ async function computeCashProjection(opts) {
     failedFeeds,
     warnings,
     variants,
+    targetsBase,
   };
   return opts.includeRaw ? { payload, details, raw } : { payload, details };
 }

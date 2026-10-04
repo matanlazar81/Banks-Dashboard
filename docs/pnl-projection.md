@@ -130,6 +130,14 @@ A full year sums its months, and a month the forecast repeats counts once per mo
 without a department show as "Difference to the account row". Request: the cell's breakdown plus
 `&row=<row key>`; the module is `server/breakdown-departments.cjs`.
 
+## 2027 targets
+
+The same targets panel and **Targets 2027** view as the New Bank Dashboard
+(`docs/new-bank-dashboard.md`, "2027 targets"), with the same saved targets. Here revenue is customer
+revenue (accrual, no collection rate), payroll and operating expenses are the P&L lines, and EBITDA, net
+profit, the bridge and the accumulated profit follow. The panel shows FY revenue, payroll, operating
+expenses, EBITDA, net profit and the accumulated profit at December, Plan vs Targets.
+
 ## Deploying
 
 Together with the New Bank Dashboard, on the server in the bank-dashboard checkout that finance-it

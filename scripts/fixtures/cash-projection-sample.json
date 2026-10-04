@@ -1,7 +1,7 @@
 {
   "_note": "Synthetic numbers for tests and UI screenshots. Not LSports data.",
   "ok": true,
-  "schemaVersion": 2,
+  "schemaVersion": 4,
   "status": "ready",
   "generatedAt": "2026-10-15T07:42:00.000Z",
   "computedMonth": "2026-10",
@@ -1682,6 +1682,279 @@
         }
       }
     }
+  },
+  "targetsBase": {
+    "version": 1,
+    "year": 2027,
+    "months": [
+      {
+        "mKey": "2027-01",
+        "revenue": 3613333,
+        "collPct": 100,
+        "payroll": 2219734,
+        "payrollByDept": {
+          "R&D": 1034621,
+          "Sales": 601962,
+          "G&A": 413849,
+          "Operations": 169302
+        },
+        "opex": 1050000,
+        "opexByCategory": {
+          "Cloud": 370588.24,
+          "Marketing": 229411.76,
+          "Data": 264705.88,
+          "Office": 105882.35,
+          "Professional services": 79411.76
+        },
+        "ilsRate": 3.6987526433347417
+      },
+      {
+        "mKey": "2027-02",
+        "revenue": 3613333,
+        "collPct": 100,
+        "payroll": 2219734,
+        "payrollByDept": {
+          "R&D": 1034621,
+          "Sales": 601962,
+          "G&A": 413849,
+          "Operations": 169302
+        },
+        "opex": 1080000,
+        "opexByCategory": {
+          "Cloud": 381176.47,
+          "Marketing": 235966.39,
+          "Data": 272268.91,
+          "Office": 108907.56,
+          "Professional services": 81680.67
+        },
+        "ilsRate": 3.6987526433347417
+      },
+      {
+        "mKey": "2027-03",
+        "revenue": 3613333,
+        "collPct": 100,
+        "payroll": 2219734,
+        "payrollByDept": {
+          "R&D": 1034621,
+          "Sales": 601962,
+          "G&A": 413849,
+          "Operations": 169302
+        },
+        "opex": 1100000,
+        "opexByCategory": {
+          "Cloud": 388235.29,
+          "Marketing": 240336.13,
+          "Data": 277310.92,
+          "Office": 110924.37,
+          "Professional services": 83193.28
+        },
+        "ilsRate": 3.6987526433347417
+      },
+      {
+        "mKey": "2027-04",
+        "revenue": 3613333,
+        "collPct": 100,
+        "payroll": 2219734,
+        "payrollByDept": {
+          "R&D": 1034621,
+          "Sales": 601962,
+          "G&A": 413849,
+          "Operations": 169302
+        },
+        "opex": 1120000,
+        "opexByCategory": {
+          "Cloud": 395294.12,
+          "Marketing": 244705.88,
+          "Data": 282352.94,
+          "Office": 112941.18,
+          "Professional services": 84705.88
+        },
+        "ilsRate": 3.6987526433347417
+      },
+      {
+        "mKey": "2027-05",
+        "revenue": 3613333,
+        "collPct": 100,
+        "payroll": 2219734,
+        "payrollByDept": {
+          "R&D": 1034621,
+          "Sales": 601962,
+          "G&A": 413849,
+          "Operations": 169302
+        },
+        "opex": 1150000,
+        "opexByCategory": {
+          "Cloud": 405882.35,
+          "Marketing": 251260.5,
+          "Data": 289915.97,
+          "Office": 115966.39,
+          "Professional services": 86974.79
+        },
+        "ilsRate": 3.6987526433347417
+      },
+      {
+        "mKey": "2027-06",
+        "revenue": 3613333,
+        "collPct": 100,
+        "payroll": 2219734,
+        "payrollByDept": {
+          "R&D": 1034621,
+          "Sales": 601962,
+          "G&A": 413849,
+          "Operations": 169302
+        },
+        "opex": 1130000,
+        "opexByCategory": {
+          "Cloud": 398823.53,
+          "Marketing": 246890.76,
+          "Data": 284873.95,
+          "Office": 113949.58,
+          "Professional services": 85462.18
+        },
+        "ilsRate": 3.6987526433347417
+      },
+      {
+        "mKey": "2027-07",
+        "revenue": 3613333,
+        "collPct": 100,
+        "payroll": 2219734,
+        "payrollByDept": {
+          "R&D": 1034621,
+          "Sales": 601962,
+          "G&A": 413849,
+          "Operations": 169302
+        },
+        "opex": 1160000,
+        "opexByCategory": {
+          "Cloud": 409411.76,
+          "Marketing": 253445.38,
+          "Data": 292436.97,
+          "Office": 116974.79,
+          "Professional services": 87731.09
+        },
+        "ilsRate": 3.6987526433347417
+      },
+      {
+        "mKey": "2027-08",
+        "revenue": 3613333,
+        "collPct": 100,
+        "payroll": 2219734,
+        "payrollByDept": {
+          "R&D": 1034621,
+          "Sales": 601962,
+          "G&A": 413849,
+          "Operations": 169302
+        },
+        "opex": 1180000,
+        "opexByCategory": {
+          "Cloud": 416470.59,
+          "Marketing": 257815.13,
+          "Data": 297478.99,
+          "Office": 118991.6,
+          "Professional services": 89243.7
+        },
+        "ilsRate": 3.6987526433347417
+      },
+      {
+        "mKey": "2027-09",
+        "revenue": 3613333,
+        "collPct": 100,
+        "payroll": 2219734,
+        "payrollByDept": {
+          "R&D": 1034621,
+          "Sales": 601962,
+          "G&A": 413849,
+          "Operations": 169302
+        },
+        "opex": 1200000,
+        "opexByCategory": {
+          "Cloud": 423529.41,
+          "Marketing": 262184.87,
+          "Data": 302521.01,
+          "Office": 121008.4,
+          "Professional services": 90756.3
+        },
+        "ilsRate": 3.6987526433347417
+      },
+      {
+        "mKey": "2027-10",
+        "revenue": 3613333,
+        "collPct": 100,
+        "payroll": 2219734,
+        "payrollByDept": {
+          "R&D": 1034621,
+          "Sales": 601962,
+          "G&A": 413849,
+          "Operations": 169302
+        },
+        "opex": 1190000,
+        "opexByCategory": {
+          "Cloud": 420000,
+          "Marketing": 260000,
+          "Data": 300000,
+          "Office": 120000,
+          "Professional services": 90000
+        },
+        "ilsRate": 3.6987526433347417
+      },
+      {
+        "mKey": "2027-11",
+        "revenue": 3613333,
+        "collPct": 100,
+        "payroll": 2130945,
+        "payrollByDept": {
+          "R&D": 993236.33,
+          "Sales": 577883.62,
+          "G&A": 397295.11,
+          "Operations": 162529.95
+        },
+        "opex": 1125000,
+        "opexByCategory": {
+          "Cloud": 397058.82,
+          "Marketing": 245798.32,
+          "Data": 283613.45,
+          "Office": 113445.38,
+          "Professional services": 85084.03
+        },
+        "ilsRate": 3.698752431433003
+      },
+      {
+        "mKey": "2027-12",
+        "revenue": 3613333,
+        "collPct": 100,
+        "payroll": 2130945,
+        "payrollByDept": {
+          "R&D": 993236.33,
+          "Sales": 577883.62,
+          "G&A": 397295.11,
+          "Operations": 162529.95
+        },
+        "opex": 1125000,
+        "opexByCategory": {
+          "Cloud": 397058.82,
+          "Marketing": 245798.32,
+          "Data": 283613.45,
+          "Office": 113445.38,
+          "Professional services": 85084.03
+        },
+        "ilsRate": 3.698752431433003
+      }
+    ],
+    "departments": [
+      "G&A",
+      "Operations",
+      "R&D",
+      "Sales"
+    ],
+    "categories": [
+      "Cloud",
+      "Data",
+      "Marketing",
+      "Office",
+      "Professional services"
+    ],
+    "serverCategory": "Cloud",
+    "serverRatioYtd": null
   },
   "cache": {
     "ageSec": 540,

@@ -2707,6 +2707,14 @@ If the user asks to modify, adjust, or refine an existing scenario (e.g. "reduce
       } catch (e     ) {
         console.error('[pnl-projection] route not mounted:', e && e.message);
       }
+
+      // ── GET/PUT /api/projection-targets — 2027 targets of both projection pages ──
+      try {
+        const { createProjectionTargetsHandler } = require('./projection-targets.cjs');
+        use('/api/projection-targets', createProjectionTargetsHandler());
+      } catch (e     ) {
+        console.error('[projection-targets] route not mounted:', e && e.message);
+      }
 }
 
 module.exports = { registerApiRoutes, apiCache, getCached, setCache, getNsClient, getSfClient, queueNsCall, getUserEmail, canUserSync };
