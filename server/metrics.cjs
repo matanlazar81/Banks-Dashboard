@@ -243,7 +243,7 @@ function buildMetrics({ nowMs, cash, pnl, pnlDetails, settings, deposits, extras
   const category = cloudCategoryOf(settings, categories, pnl.targetsBase);
   const capPct = num(settings.cloudCapPct);
   const cloud = {
-    category, capPct, accounts: '640xxx',
+    category, categories, capPct, accounts: '640xxx',
     years: [pY, pT].map((b) => cloudYear({ block: b, details: pnlDetails || {}, targetsBase: pnl.targetsBase, category, capPct, revenue: fyOf(b, 'totalRevenue', false).value })),
   };
 
