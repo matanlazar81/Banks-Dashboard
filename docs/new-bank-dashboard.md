@@ -96,6 +96,18 @@ movements the cell is built from. Data comes from `GET /api/cash-projection/brea
 the projection itself), plus Snowflake reads cached for `CASH_PROJECTION_TTL_MIN`, each using the same
 table and filters as the feed of its line.
 
+**Accounts by department.** Click an account's name in the breakdown and a second movable window opens
+with that account by department. Its total equals the account row: the departments come from the
+row's own table and months (booked costs from FCT_EXPENSE, budget rows from FCT_BUDGET, a mirrored
+month from the month it mirrors; a full year sums its months). Amounts without a department show as
+"Difference to the account row". Esc closes the department window first; the window clicked last is in
+front. Same request as the cell, plus `&row=<row key>` (for example `row=acct:640001`).
+
+**Account numbers link to NetSuite.** An account number opens the account's register in NetSuite
+(subsidiary LSports Data): the months its amount was booked in, or the last 3 closed months for a budget
+row. The NetSuite account ids are read with the projection (one light query); without them, or without
+`NETSUITE_ACCOUNT_ID`, the numbers show without links.
+
 ## Same logic as the Bank Dashboard
 
 - **Current year:** identical engine inputs to the nightly net-cash job (`net-cash-forecast-compute.cjs`

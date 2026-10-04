@@ -13,13 +13,16 @@
 //                       and labelled adjustment rows for what they do not explain
 // Facts come from the server-only `details` saved with the cached projection; Snowflake (the expense
 // check, the vendor budget by account) is read on demand and cached for PNL_PROJECTION_TTL_MIN.
-// Rows of a NetSuite account carry a link to its register in NetSuite: the month itself for an actual
-// month, the year's closed months for a full year, the last 3 closed months for a forecast month, or
-// the month a figure is taken from (a mirrored month of last year, the CAPEX month carried flat).
+// Rows of a NetSuite account carry a link to its register in NetSuite: the months their amount was
+// booked in (the month itself, a mirrored month of last year, the CAPEX month carried flat, a year's
+// closed months), else the last 3 closed months for a budget row. Account rows can also be opened by
+// department (?row=…, server/breakdown-departments.cjs): from the same source and months as the row.
 // ─────────────────────────────────────────────────────────────────────────────
 const fs = require('fs');
 const path = require('path');
 const { classifyAccount, LINE_LABELS } = require('./pnl-lines.cjs');
+const { drillOf, mergeDrill, actualMonths, departmentsOf, departmentBreakdown, findDrillRow, departmentReads, ROW_KEY, acctOfKey } = require('./breakdown-departments.cjs');
+const { monthSpan, rangeSpan, registerLink } = require('./ns-links.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
 const MIN = 60 * 1000;
@@ -85,7 +88,7 @@ async function buildActual(ctx) {
   const accts = ((details.accounts[mKey] || {})[line]) || [];
   const main = {
     id: 'accounts', title: 'NetSuite P&L by account', note: BASIS_NOTE[details.basis] || BASIS_NOTE.period,
-    rows: accts.map((a) => item(`acct:${a.acct}`, a.name || a.acct, sign * a.eur, sign * a.ils, { ref: a.acct })),
+    rows: accts.map((a) => item(`acct:${a.acct}`, a.name || a.acct, sign * a.eur, sign * a.ils, { ref: a.acct, drill: drillOf('ns', [mKey], sign) })),
     tie: { key: 'rounding', label: 'Rounding' },
   };
   const sections = [main];
@@ -100,7 +103,7 @@ async function buildActual(ctx) {
       sections.push({
         id: 'snowflake', title: 'Snowflake check (FCT_EXPENSE, same accounts)', collapsed: true, informational: true,
         note: 'The same accounts as Snowflake holds them. The table uses NetSuite; the last row is the difference.',
-        rows: sfRows.map((x) => item(`sf:${x.acct}`, x.name || x.acct, sfSign * x.eur, sfSign * x.ils, { ref: x.acct })),
+        rows: sfRows.map((x) => item(`sf:${x.acct}`, x.name || x.acct, sfSign * x.eur, sfSign * x.ils, { ref: x.acct, drill: drillOf('sfExpense', [mKey], sfSign) })),
         tie: { key: 'sf-diff', label: 'Difference to NetSuite', hint: 'NetSuite − Snowflake. Usually postings Snowflake has not loaded yet.' },
       });
     } catch {
@@ -128,28 +131,13 @@ function byGroup(rows) {
 }
 
 // ── NetSuite links ──────────────────────────────────────────────────────────
-const lastDay = (y, m) => new Date(y, m, 0).getDate();
-const usDate = (y, m, d) => `${m}/${d}/${y}`;
-/** [from, to] of a 'YYYY-MM' month as NetSuite report dates (m/d/yyyy). */
-function monthSpan(mKey) {
-  const [y, m] = String(mKey).split('-').map(Number);
-  return [usDate(y, m, 1), usDate(y, m, lastDay(y, m))];
-}
-/** The account register in NetSuite for a date range, or null without an account id or NetSuite host. */
-function registerLink(details, acct, span) {
-  const host = String(process.env.NETSUITE_ACCOUNT_ID || '').replace(/_/g, '-').toLowerCase();
-  const id = details.accountIds && details.accountIds[acct];
-  if (!/^[a-z0-9-]+$/.test(host) || !id || !span) return null;
-  return `https://${host}.app.netsuite.com/app/reporting/reportrunner.nl?acctid=${id}&reporttype=REGISTER&subsidiary=3&combinebalance=T&startdate=${span[0]}&enddate=${span[1]}`;
-}
-/** The dates a cell's account links cover: its month when actual, else the closed months behind it. */
-function linkSpan(details, block, period, status) {
-  const last3 = (details.rules && details.rules.last3) || [];
-  const recent = last3.length ? [monthSpan(last3[0])[0], monthSpan(last3[last3.length - 1])[1]] : null;
+// A row's link opens its own booked months (its drill); a budget row opens the cell's default dates:
+// its month when actual, the year's closed months for a full year, else the last 3 closed months.
+function defaultSpan(details, block, period, status) {
+  const recent = rangeSpan((details.rules && details.rules.last3) || []);
   if (status === 'actual') return monthSpan(period);
   if (status !== 'fy') return recent;
-  const actual = block.rows.filter((r) => r.status === 'actual');
-  return actual.length ? [monthSpan(actual[0].mKey)[0], monthSpan(actual[actual.length - 1].mKey)[1]] : recent;
+  return rangeSpan(block.rows.filter((r) => r.status === 'actual').map((r) => r.mKey)) || recent;
 }
 
 const FORECAST = {
@@ -208,7 +196,9 @@ const FORECAST = {
       if (!sfx || !sfx.budget) return null;
       try {
         const list = (await sfx.budget(y)).filter((a) => a.month === k && Math.abs(a.eur) >= 0.5);
-        return list.length ? byGroup(list.map((a) => item(`acct:${a.acct}`, a.name || a.acct, a.eur, ilsOf(a.eur), { ref: a.acct, group: group || a.category || 'Other' }))) : null;
+        return list.length ? byGroup(list.map((a) => item(`acct:${a.acct}`, a.name || a.acct, a.eur, ilsOf(a.eur), {
+          ref: a.acct, group: group || a.category || 'Other', drill: drillOf('sfBudget', [k], 1),
+        }))) : null;
       } catch {
         return null;
       }
@@ -218,7 +208,7 @@ const FORECAST = {
       const group = `Same month of ${year - 1} (${monthLong(same)})`;
       const booked = (details.accounts[same] || {}).opex;
       const src = booked && booked.length
-        ? byGroup(booked.map((a) => item(`acct:${a.acct}`, a.name || a.acct, -a.eur, ilsOf(-a.eur), { ref: a.acct, group, span: monthSpan(same) })))
+        ? byGroup(booked.map((a) => item(`acct:${a.acct}`, a.name || a.acct, -a.eur, ilsOf(-a.eur), { ref: a.acct, group, drill: drillOf('ns', [same], -1) })))
         : await budgetAccounts(year - 1, same, group);
       if (src) {
         rows.push(...src);
@@ -251,7 +241,7 @@ const FORECAST = {
   capex(ctx) {
     const from = ctx.details.rules.capexFrom;
     const label = from ? `Salaries CAPEX of ${monthLong(from)}, carried flat` : 'No Salaries CAPEX in the last 12 closed months';
-    return { id: 'components', title: 'Last closed month (NetSuite account 950000)', rows: [item('capex', label, ctx.cell.eur, ctx.cell.ils, { ref: '950000', span: from ? monthSpan(from) : null })] };
+    return { id: 'components', title: 'Last closed month (NetSuite account 950000)', rows: [item('acct:950000', label, ctx.cell.eur, ctx.cell.ils, { ref: '950000', drill: from ? drillOf('ns', [from], SIGN.capex) : null })] };
   },
   fx(ctx) {
     const { M, cell } = ctx;
@@ -261,14 +251,15 @@ const FORECAST = {
   depreciation(ctx) {
     const { M, cell } = ctx;
     if (M.depreciation && M.depreciation.method === 'budget') {
-      return { id: 'components', title: 'Depreciation budget by account (Snowflake)', rows: M.depreciation.accounts.map((a) => item(`acct:${a.acct}`, a.name || a.acct, a.eur, a.ils, { ref: a.acct })) };
+      // Budget accounts are held profit-signed (− the budget), so the budget × −1 makes up each row.
+      return { id: 'components', title: 'Depreciation budget by account (Snowflake)', rows: M.depreciation.accounts.map((a) => item(`acct:${a.acct}`, a.name || a.acct, a.eur, a.ils, { ref: a.acct, drill: drillOf('sfBudget', [ctx.mKey], -1) })) };
     }
     return { id: 'components', title: 'No budget: average of the last 3 closed months (NetSuite)', rows: lastMonthsRows(ctx, 'depreciation', ctx.details.rules.last3) };
   },
   taxOther(ctx) {
     const { M } = ctx;
     const accts = (M.taxOther && M.taxOther.accounts) || [];
-    return { id: 'components', title: 'Budget by account (Snowflake)', rows: accts.map((a) => item(`acct:${a.acct}`, a.name || a.acct, a.eur, a.ils, { ref: a.acct })) };
+    return { id: 'components', title: 'Budget by account (Snowflake)', rows: accts.map((a) => item(`acct:${a.acct}`, a.name || a.acct, a.eur, a.ils, { ref: a.acct, drill: drillOf('sfBudget', [ctx.mKey], -1) })) };
   },
 };
 
@@ -294,7 +285,7 @@ async function buildYear(ctx) {
   const merge = (target, rows) => {
     for (const r of rows) {
       const hit = target.rows.find((x) => x.key === r.key);
-      if (hit) { hit.eur += r.eur; hit.ils += r.ils; } else target.rows.push({ ...r });
+      if (hit) { hit.eur += r.eur; hit.ils += r.ils; hit.drill = mergeDrill(hit.drill, r.drill); } else target.rows.push({ ...r });
     }
   };
   for (const row of ctx.block.rows) {
@@ -328,6 +319,37 @@ function monthCtx(yearCtx, row) {
 
 /** One breakdown from a cache entry. sfx: { expense(year), budget(year) } (Snowflake; optional). */
 async function buildBreakdown({ entry, line, period, variant, ccy, sfx }) {
+  const raw = await buildRaw({ entry, line, period, variant, ccy, sfx });
+  if (!raw) return null;
+  const { built, cell, meta } = raw;
+  const sections = built.sections.map((s) => {
+    const rows = s.rows
+      .map((r) => ({
+        key: r.key, label: r.label, ref: r.ref || null, link: raw.linkOf(r), drillable: !!(r.drill && ROW_KEY.test(r.key)),
+        group: r.group || null, kind: r.kind, hint: r.hint || null, amount: cents(r[ccy]),
+      }))
+      .filter((r) => Math.abs(r.amount) >= 0.5);
+    return {
+      id: s.id, title: s.title, note: s.note || null, collapsed: !!s.collapsed, informational: !!s.informational,
+      rows, total: cents(rows.reduce((t, r) => t + r.amount, 0)),
+    };
+  });
+  return { ok: true, status: 'ready', ...meta, cell: cents(cell[ccy]), sections, notes: built.notes };
+}
+
+/** One account row of a cell by department (the second window), or null when the cell has no such row. */
+async function buildAccountBreakdown({ entry, line, period, variant, ccy, sfx, rowKey, dx }) {
+  const raw = await buildRaw({ entry, line, period, variant, ccy, sfx });
+  if (!raw) return null;
+  const row = findDrillRow(raw.built.sections, rowKey);
+  if (!row) return null;
+  const acct = acctOfKey(rowKey);
+  const depts = await departmentsOf(row, acct, dx, entry.details.basis || 'period');
+  return departmentBreakdown({ meta: raw.meta, row, acct, depts, link: raw.linkOf(row) });
+}
+
+// The cell's breakdown with rows in both currencies (drill and all), before projection to one currency.
+async function buildRaw({ entry, line, period, variant, ccy, sfx }) {
   const fy = /^FY-(\d{4})$/.exec(period);
   const year = fy ? Number(fy[1]) : Number(String(period).slice(0, 4));
   const v = entry.payload.variants[variant];
@@ -350,22 +372,15 @@ async function buildBreakdown({ entry, line, period, variant, ccy, sfx }) {
     built = await buildMonth(ctx);
     status = row.status;
   }
-  const span = linkSpan(entry.details, block, period, status);
-  const linkOf = (ref, own) => (ref && /^\d{4,6}$/.test(ref) ? registerLink(entry.details, ref, own || span) : null);
-  const sections = built.sections.map((s) => {
-    const rows = s.rows
-      .map((r) => ({ key: r.key, label: r.label, ref: r.ref || null, link: linkOf(r.ref, r.span), group: r.group || null, kind: r.kind, hint: r.hint || null, amount: cents(r[ccy]) }))
-      .filter((r) => Math.abs(r.amount) >= 0.5);
-    return {
-      id: s.id, title: s.title, note: s.note || null, collapsed: !!s.collapsed, informational: !!s.informational,
-      rows, total: cents(rows.reduce((t, r) => t + r.amount, 0)),
-    };
-  });
-  return {
-    ok: true, status: 'ready', line, lineLabel: LINE_LABELS[line] || line, period,
-    periodLabel: fy ? `FY ${year}` : monthLong(period), periodStatus: status, variant, ccy,
-    cell: cents(cell[ccy]), sections, notes: built.notes,
+  const span = defaultSpan(entry.details, block, period, status);
+  const linkOf = (r) => (r.ref && /^\d{4,6}$/.test(r.ref)
+    ? registerLink(entry.details.accountIds, r.ref, rangeSpan(actualMonths(r.drill)) || span)
+    : null);
+  const meta = {
+    line, lineLabel: LINE_LABELS[line] || line, period, periodLabel: fy ? `FY ${year}` : monthLong(period),
+    periodStatus: status, variant, ccy,
   };
+  return { built, cell, status, meta, linkOf };
 }
 
 // ── handler ─────────────────────────────────────────────────────────────────
@@ -393,8 +408,11 @@ function snowflakeReads(getSf, clock, ttlMs) {
 }
 
 /**
- * Express/connect handler for GET /api/pnl-projection/breakdown. deps (all optional):
- *   getSfClient(), sfx ({ expense(year), budget(year) } — tests), cacheFile, clock(), ttlMs
+ * Express/connect handler for GET /api/pnl-projection/breakdown. With &row=<row key> it answers that
+ * account row of the cell by department instead. deps (all optional):
+ *   getSfClient(), getNsClient(sub), queueNsCall(fn) — share the API module's clients and NetSuite queue
+ *   sfx ({ expense(year), budget(year) } — tests), dx ({ ns, sfExpense, sfBudget } — tests)
+ *   cacheFile, clock(), ttlMs
  */
 function createPnlProjectionBreakdownHandler(deps = {}) {
   const cp = require('./cash-projection.cjs');
@@ -407,6 +425,12 @@ function createPnlProjectionBreakdownHandler(deps = {}) {
     return cp.defaultGetSfClient();
   });
   const sfx = deps.sfx || snowflakeReads(getSf, clock, ttlMs);
+  // Department windows read NetSuite (actual months) through the server's one NetSuite queue.
+  const getNs = () => {
+    const cmp = require(path.join(ROOT, 'scripts', 'net-cash-forecast-compute.cjs')); // loads the checkout's .env
+    return deps.getNsClient ? deps.getNsClient(cmp.SUBSIDIARY) : cp.defaultGetNsClient(cmp.SUBSIDIARY);
+  };
+  const dx = deps.dx || departmentReads({ getNs, queueNsCall: deps.queueNsCall || cp.defaultQueueNsCall, getSf, clock, ttlMs, BreakdownError });
   const state = { entry: null, mtimeMs: 0 };
 
   function currentEntry() {
@@ -439,8 +463,10 @@ function createPnlProjectionBreakdownHandler(deps = {}) {
     const period = q.get('period') || '';
     const variant = q.get('variant') || 'plan';
     const ccy = q.get('ccy') || 'eur';
-    if (!LINES.includes(line) || !/^(\d{4}-(0[1-9]|1[0-2])|FY-\d{4})$/.test(period) || !['plan', 'base'].includes(variant) || !['eur', 'ils'].includes(ccy)) {
-      send(res, 400, { ok: false, status: 'error', error: 'Unknown line, period, variant or currency.' });
+    const rowKey = q.get('row') || '';
+    if (!LINES.includes(line) || !/^(\d{4}-(0[1-9]|1[0-2])|FY-\d{4})$/.test(period) || !['plan', 'base'].includes(variant) || !['eur', 'ils'].includes(ccy)
+      || (rowKey && !ROW_KEY.test(rowKey))) {
+      send(res, 400, { ok: false, status: 'error', error: 'Unknown line, period, variant, currency or row.' });
       return;
     }
     const entry = currentEntry();
@@ -449,8 +475,13 @@ function createPnlProjectionBreakdownHandler(deps = {}) {
       return;
     }
     try {
-      const out = await buildBreakdown({ entry, line, period, variant, ccy, sfx });
-      if (!out) { send(res, 404, { ok: false, status: 'error', error: 'This period is not part of the projection.' }); return; }
+      const out = rowKey
+        ? await buildAccountBreakdown({ entry, line, period, variant, ccy, sfx, rowKey, dx })
+        : await buildBreakdown({ entry, line, period, variant, ccy, sfx });
+      if (!out) {
+        send(res, 404, { ok: false, status: 'error', error: rowKey ? 'This account has no department split in this cell.' : 'This period is not part of the projection.' });
+        return;
+      }
       send(res, 200, { ...out, generatedAt: entry.payload.generatedAt });
     } catch (e) {
       const safe = e instanceof BreakdownError;
@@ -460,4 +491,4 @@ function createPnlProjectionBreakdownHandler(deps = {}) {
   };
 }
 
-module.exports = { createPnlProjectionBreakdownHandler, buildBreakdown, BreakdownError, LINES };
+module.exports = { createPnlProjectionBreakdownHandler, buildBreakdown, buildAccountBreakdown, BreakdownError, LINES };

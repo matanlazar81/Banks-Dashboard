@@ -5,8 +5,7 @@ import { fetchProjection } from './api.ts';
 import { buildTable, computeKpis, type Column } from './model.ts';
 import KpiStrip from './KpiStrip.tsx';
 import ProjectionTable from './ProjectionTable.tsx';
-import BreakdownPanel from './BreakdownPanel.tsx';
-import { clampPosition, type PanelPosition } from './breakdown.ts';
+import BreakdownWindows from './BreakdownWindows.tsx';
 import type { Ccy, VariantKey, YearView } from './types.ts';
 import { ComputingCard, ErrorCard, Segmented, Skeleton, Warnings } from './PageParts.tsx';
 import { readParam, writeParam } from './urlParams.ts';
@@ -33,9 +32,8 @@ export default function NewBankDashboard() {
   });
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
-  // The breakdown window: which cell is open, and where the window was last dragged to.
+  // The breakdown windows: which cell is open (BreakdownWindows keeps where they were dragged to).
   const [openCell, setOpenCell] = useState<{ line: string; period: string; id: string } | null>(null);
-  const [panelPos, setPanelPos] = useState<PanelPosition>(() => clampPosition({ x: window.innerWidth - 580, y: 120 }));
   const onOpenCell = useCallback((line: string, col: Column) => {
     setOpenCell({ line, period: col.kind === 'fy' ? `FY-${col.year}` : (col.mKey as string), id: `${line}|${col.id}` });
   }, []);
@@ -152,14 +150,7 @@ export default function NewBankDashboard() {
               />
             </section>
 
-            {openCell && (
-              <BreakdownPanel
-                request={{ line: openCell.line, period: openCell.period, variant, ccy }}
-                position={panelPos}
-                onMove={setPanelPos}
-                onClose={closePanel}
-              />
-            )}
+            <BreakdownWindows cell={openCell} variant={variant} ccy={ccy} onClose={closePanel} />
 
             <p className="max-w-5xl text-xs leading-relaxed text-slate-500">
               Same engine and inputs as the Bank Dashboard and the nightly net-cash figure: revenue from the pipeline

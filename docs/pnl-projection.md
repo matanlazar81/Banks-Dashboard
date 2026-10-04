@@ -122,6 +122,14 @@ The links need `NETSUITE_ACCOUNT_ID` in the server's `.env`, which is already th
 API. The account's NetSuite internal id is read with the actuals. A projection cached before this
 change shows account numbers without links until the next refresh.
 
+**Accounts by department.** Click an account's name and a second movable window opens with that
+account by department, adding up to the account row. The departments come from the row's own source
+and months: NetSuite GL lines by department for actual months, a mirrored month and the CAPEX month
+(by posting period, like the actuals); FCT_BUDGET for budget rows; FCT_EXPENSE for the Snowflake check.
+A full year sums its months, and a month the forecast repeats counts once per month it is used. Amounts
+without a department show as "Difference to the account row". Request: the cell's breakdown plus
+`&row=<row key>`; the module is `server/breakdown-departments.cjs`.
+
 ## Deploying
 
 Together with the New Bank Dashboard, on the server in the bank-dashboard checkout that finance-it

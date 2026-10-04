@@ -520,6 +520,58 @@ async function breakdownChecks({ computed, cacheFile, entry, sfx, sfReads }) {
   const fx = await bd.buildBreakdown({ entry, line: 'fx', period: mk(Y, 11), variant: 'plan', ccy: 'eur', sfx });
   check(fx.sections[0].rows.every((r) => r.link === null), 'rows that are not accounts have no link');
 
+  // Accounts by department: from the row's own source and months, adding up to the row.
+  const calls = [];
+  const actuals = syntheticActuals();
+  const split = (rows, shares) => rows.flatMap((r) => Object.entries(shares).map(([dept, s]) => ({ month: r.month, dept, eur: r.eur * s, ils: r.ils * s })));
+  const dx = {
+    ns: async (acct, months, basis) => {
+      calls.push(`ns:${acct}:${months.join(',')}:${basis}`);
+      const rows = months.map((m) => ({ month: m, ...((actuals.byMonth[m] || {})[acct] || { eur: 0, ils: 0 }) }));
+      return split(rows, { 'Data Collection': 0.6, Playmakers: 0.4 });
+    },
+    sfExpense: async (acct, months) => split((await sfx.expense(Y)).filter((x) => x.acct === acct && months.includes(x.month)), { 'Data Collection': 0.5, Arena: 0.5 }),
+    sfBudget: async (acct, months) => split([
+      ...syntheticBudgetByAccount(Y), ...syntheticBudgetRows(),
+    ].filter((b) => b.acct === acct && months.includes(b.month)), { Product: 0.5, 'G&A': 0.5 }),
+  };
+  const deptOf = (line, period, rowKey, variant = 'plan') => bd.buildAccountBreakdown({ entry, line, period, variant, ccy: 'eur', sfx, rowKey, dx });
+  const ties = async (line, period, rowKey, variant = 'plan', label = null) => {
+    const cell = await bd.buildBreakdown({ entry, line, period, variant, ccy: 'eur', sfx });
+    const row = cell.sections.flatMap((s) => s.rows).find((r) => r.key === rowKey);
+    const out = await deptOf(line, period, rowKey, variant);
+    const ok = !!(row && row.drillable && out && near(out.cell, row.amount, 0.01) && near(out.sections[0].total, row.amount, 0.02)
+      && !out.sections[0].rows.some((r) => r.kind === 'adjust') && (!label || label.test(out.periodLabel)));
+    return { ok, out, row };
+  };
+  let t = await ties('opex', mk(Y, 6), 'acct:640001', 'plan', /^June 2026 · NetSuite$/);
+  check(t.ok && t.out.sections[0].rows.length === 2 && t.out.account.link === t.row.link && calls.includes('ns:640001:2026-06:period'),
+    'actual month: a NetSuite account by department adds up to its row (same posting period)', t.out && t.out.periodLabel);
+  t = await ties('opex', mk(Y, 6), 'sf:640001', 'plan', /Snowflake booked expenses/);
+  check(t.ok, 'the Snowflake check rows open by department from Snowflake');
+  t = await ties('opex', mk(Y, 11), 'acct:640002', 'plan', /^November 2026 · Snowflake budget$/);
+  check(t.ok, 'forecast month: a budget account by department (FCT_BUDGET, same month)');
+  t = await ties('opex', mk(T, 1), 'acct:640001', 'base', /^January 2026 · NetSuite$/);
+  check(t.ok, `next year: a mirrored account by department, from January ${Y} in NetSuite`);
+  t = await ties('capex', mk(T, 3), 'acct:950000', 'base', /^September 2026 · NetSuite$/);
+  check(t.ok && t.row.link && t.row.link.endsWith('startdate=9/1/2026&enddate=9/30/2026'), 'CAPEX: the month carried flat, by department');
+  t = await ties('depreciation', mk(T, 2), 'acct:780502', 'plan', /Snowflake budget/);
+  check(t.ok, 'depreciation budget (profit-signed) by department');
+  t = await ties('opex', `FY-${Y}`, 'acct:640001', 'plan');
+  check(t.ok && /NetSuite \+ Snowflake budget/.test(t.out.periodLabel), 'full year: NetSuite months and budget months add up to the year\'s row', t.out && t.out.periodLabel);
+  t = await ties('capex', `FY-${Y}`, 'acct:950000', 'plan');
+  check(t.ok && /each month's departments count as often/.test(t.out.sections[0].note || ''),
+    'full-year CAPEX: September counts once booked and again in each month it is carried into');
+  check((await deptOf('opex', mk(Y, 6), 'acct:999999')) === null, 'an account that is not in the cell → null');
+
+  const hd = bd.createPnlProjectionBreakdownHandler({ cacheFile, sfx, dx });
+  cp.writeCacheEntry(cacheFile, entry);
+  const dOk = await call(hd, `/api/pnl-projection/breakdown?line=opex&period=${mk(Y, 6)}&row=acct:640001`);
+  const dBad = await call(hd, `/api/pnl-projection/breakdown?line=opex&period=${mk(Y, 6)}&row=640001;x`);
+  const dNone = await call(hd, `/api/pnl-projection/breakdown?line=opex&period=${mk(Y, 6)}&row=acct:999999`);
+  check(dOk.status === 200 && dOk.body.account && dOk.body.account.acct === '640001' && dBad.status === 400 && dNone.status === 404,
+    'GET …&row=: 200 by department, 400 for a malformed row, 404 for an account not in the cell');
+
   // Handler contract.
   const h = bd.createPnlProjectionBreakdownHandler({ cacheFile, sfx });
   cp.writeCacheEntry(cacheFile, entry);

@@ -2664,7 +2664,14 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
     };
     add(eurRows, 'eur');
     add(ilsRows, 'ils');
-    // Internal ids for links; an inactive duplicate of an account number never wins over the active one.
+    const accountIds = await fetchAccountIds();
+    console.log(`[NS API] P&L actuals ${y0}–${y1} (${byPeriod ? 'posting period' : 'transaction date'}): ${Object.keys(byMonth).length} month(s), ${eurRows.length}+${ilsRows.length} rows`);
+    return { basis: byPeriod ? 'period' : 'trandate', byMonth, accountIds };
+  }
+
+  // { [acct number]: NetSuite internal id } of every P&L account, for links to the account's register.
+  // An inactive duplicate of an account number never wins over the active one. {} when unavailable.
+  async function fetchAccountIds() {
     const accountIds = {};
     try {
       const idRows = await suiteqlAll(`
@@ -2679,8 +2686,58 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
     } catch (e) {
       console.warn(`[NS API] P&L account ids unavailable (no NetSuite links): ${e.message}`);
     }
-    console.log(`[NS API] P&L actuals ${y0}–${y1} (${byPeriod ? 'posting period' : 'transaction date'}): ${Object.keys(byMonth).length} month(s), ${eurRows.length}+${ilsRows.length} rows`);
-    return { basis: byPeriod ? 'period' : 'trandate', byMonth, accountIds };
+    return accountIds;
+  }
+
+  // ── One P&L account by department (breakdown windows) ──
+  // The same GL lines as fetchPnlActuals for one account number and some months, split by the line's
+  // department, so the departments add up to that account's monthly amounts. Profit-signed, both books.
+  // Returns [{ month: 'YYYY-MM', dept, eur, ils }].
+  async function fetchAccountByDepartment({ acct, months, basis = 'period' } = {}) {
+    const a = String(acct || '');
+    if (!/^\d{4,6}$/.test(a)) throw new Error(`fetchAccountByDepartment: bad account ${acct}`);
+    const list = [...new Set(months || [])];
+    if (!list.length || list.length > 36 || !list.every((m) => /^\d{4}-(0[1-9]|1[0-2])$/.test(m))) throw new Error('fetchAccountByDepartment: bad months');
+    const byPeriod = basis === 'period';
+    const monthExpr = byPeriod ? 'BUILTIN.DF(t.postingperiod)' : "TO_CHAR(t.trandate, 'YYYY-MM')";
+    const NAMES = Object.fromEntries(Object.entries(PERIOD_MONTHS).map(([k, v]) => [v, k]));
+    const keyOf = (m) => (byPeriod ? `${NAMES[m.slice(5)]} ${m.slice(0, 4)}` : m);
+    const toMonth = (raw) => {
+      const s = String(raw || '');
+      if (!byPeriod) return /^\d{4}-\d{2}$/.test(s) ? s : null;
+      const m = /^([A-Za-z]{3}) (\d{4})$/.exec(s);
+      return m && PERIOD_MONTHS[m[1]] ? `${m[2]}-${PERIOD_MONTHS[m[1]]}` : null;
+    };
+    const deptExpr = "NVL(BUILTIN.DF(tl.department), 'No department')";
+    const bookQuery = (book) => suiteqlAll(`
+      SELECT ${monthExpr} AS m, ${deptExpr} AS dept, SUM(NVL(tal.amount, 0)) AS amt
+      FROM transactionaccountingline tal
+      JOIN transaction t ON tal.transaction = t.id
+      JOIN transactionline tl ON tl.transaction = tal.transaction AND tl.id = tal.transactionline
+      JOIN account a ON tal.account = a.id
+      WHERE t.subsidiary = ${subsidiaryId}
+        AND tal.posting = 'T' AND tal.accountingbook = ${book}
+        AND a.acctnumber = '${a}'
+        AND ${monthExpr} IN (${list.map((m) => `'${keyOf(m)}'`).join(', ')})
+      GROUP BY ${monthExpr}, ${deptExpr}
+    `);
+    const eurRows = await bookQuery(1);
+    const ilsRows = await bookQuery(2);
+    const out = new Map();
+    const add = (rows, field) => {
+      for (const r of rows) {
+        const month = toMonth(r.m);
+        if (!month) continue;
+        const dept = String(r.dept || 'No department');
+        const k = `${month}|${dept}`;
+        const cell = out.get(k) || { month, dept, eur: 0, ils: 0 };
+        cell[field] = Math.round((cell[field] - (parseFloat(r.amt) || 0)) * 100) / 100; // debit-positive → profit-signed
+        out.set(k, cell);
+      }
+    };
+    add(eurRows, 'eur');
+    add(ilsRows, 'ils');
+    return [...out.values()];
   }
 
   // ── Posted month-end FX revaluation check ──
@@ -2705,7 +2762,7 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
     return Number.isFinite(impact) && impact > 0;
   }
 
-  return { suiteql, suiteqlAll, fetchPnlActuals, fetchAgingData, fetchCollectionData, buildCollectionJson, fetchClientAnomalies, fetchAllSOsByBillingPeriod, fetchRevenueData, fetchMRRData, fetchBankBalance, fetchVendorBills, fetchVendorPaymentHistory, fetchBankAccountList, fetchBankAccountListAsOf, fetchSalaryData, fetchVendorActuals, fetchRevenueActuals, fetchCustomerCashReceipts, fetchCashflowHistory, fetchExpenseCategoryData, fetchPaymentsByCategory, fetchCashflowBreakdown, fetchCashflowTransactions, fetchExpenseTransactions, fetchSalaryBreakdown, fetchInvoiceBasedProjection, fetchMonthlyRevaluation, fetchVendorBillsByAccount, fetchNSBudget, fetchCurrencyDefenseBudget, fetchPaidVendorsYearly, fetchBankClassifiedYearly, fetchDividendDistributions, fetchVendorPaymentsDetail, fetchLatestFxRate, hasPostedMonthEndReval };
+  return { suiteql, suiteqlAll, fetchPnlActuals, fetchAccountIds, fetchAccountByDepartment, fetchAgingData, fetchCollectionData, buildCollectionJson, fetchClientAnomalies, fetchAllSOsByBillingPeriod, fetchRevenueData, fetchMRRData, fetchBankBalance, fetchVendorBills, fetchVendorPaymentHistory, fetchBankAccountList, fetchBankAccountListAsOf, fetchSalaryData, fetchVendorActuals, fetchRevenueActuals, fetchCustomerCashReceipts, fetchCashflowHistory, fetchExpenseCategoryData, fetchPaymentsByCategory, fetchCashflowBreakdown, fetchCashflowTransactions, fetchExpenseTransactions, fetchSalaryBreakdown, fetchInvoiceBasedProjection, fetchMonthlyRevaluation, fetchVendorBillsByAccount, fetchNSBudget, fetchCurrencyDefenseBudget, fetchPaidVendorsYearly, fetchBankClassifiedYearly, fetchDividendDistributions, fetchVendorPaymentsDetail, fetchLatestFxRate, hasPostedMonthEndReval };
 }
 
 

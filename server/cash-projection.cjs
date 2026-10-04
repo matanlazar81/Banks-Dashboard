@@ -194,6 +194,15 @@ async function computeCashProjection(opts) {
     details = captureDetails(details, { variant, Y, T, rowsY, rowsT, inputsY, inputsT });
   }
 
+  // NetSuite internal ids of the accounts, for the breakdown's links (no ids → no links, nothing else).
+  if (details && typeof nsClient.fetchAccountIds === 'function') {
+    try {
+      details.accountIds = await opts.queueNsCall(() => nsClient.fetchAccountIds());
+    } catch (e) {
+      console.warn(`[cash-projection] account ids unavailable (no NetSuite links): ${e && e.message}`);
+    }
+  }
+
   const warnings = [];
   if (!planLoaded) warnings.push(`The plan "${scenarioName}" was not found, so Plan shows the base forecast.`);
   if (!inputs.yearStartBalance) warnings.push(`No NetSuite bank balance for 31 Dec ${Y - 1}; January opens from the bank-balance fallback.`);

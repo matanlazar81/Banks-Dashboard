@@ -2,8 +2,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { Download, Loader2, RefreshCw } from 'lucide-react';
 import { useProjection } from '../new-dashboard/useProjection.ts';
 import ProjectionTable, { type TableMarkers } from '../new-dashboard/ProjectionTable.tsx';
-import BreakdownPanel from '../new-dashboard/BreakdownPanel.tsx';
-import { clampPosition, type PanelPosition } from '../new-dashboard/breakdown.ts';
+import BreakdownWindows from '../new-dashboard/BreakdownWindows.tsx';
 import { ComputingCard, ErrorCard, Segmented, Skeleton, Warnings } from '../new-dashboard/PageParts.tsx';
 import { readParam, writeParam } from '../new-dashboard/urlParams.ts';
 import { monthLongLabel, type Column } from '../new-dashboard/model.ts';
@@ -42,7 +41,6 @@ export default function PnlProjection() {
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [openCell, setOpenCell] = useState<{ line: string; period: string; id: string } | null>(null);
-  const [panelPos, setPanelPos] = useState<PanelPosition>(() => clampPosition({ x: window.innerWidth - 580, y: 120 }));
   const onOpenCell = useCallback((line: string, col: Column) => {
     setOpenCell({ line, period: col.kind === 'fy' ? `FY-${col.year}` : (col.mKey as string), id: `${line}|${col.id}` });
   }, []);
@@ -167,15 +165,7 @@ export default function PnlProjection() {
               />
             </section>
 
-            {openCell && (
-              <BreakdownPanel
-                request={{ line: openCell.line, period: openCell.period, variant, ccy }}
-                position={panelPos}
-                onMove={setPanelPos}
-                onClose={closePanel}
-                endpoint={PNL_BREAKDOWN_ENDPOINT}
-              />
-            )}
+            <BreakdownWindows cell={openCell} variant={variant} ccy={ccy} endpoint={PNL_BREAKDOWN_ENDPOINT} onClose={closePanel} />
 
             <p className="max-w-5xl text-xs leading-relaxed text-slate-500">
               The New Bank Dashboard's projection on an accrual basis. Actual months are NetSuite's P&amp;L line by line:
