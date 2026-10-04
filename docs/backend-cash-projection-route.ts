@@ -22,8 +22,9 @@
 // for same-origin; finance-it's CSRF middleware, if any, applies to it as to any write.
 //
 // AUTH: finance-it-backend has no global /api auth gate (routes guard themselves), and the shared
-// handlers do no identity check of their own, so every route is gated here with the same role as the
-// Bank Dashboard's static assets and API routes.
+// handlers do no identity check of their own, so every route is gated here with its page's own role:
+// new_bank_dashboard, pnl_projection, metrics (finance-it's shared/src/types BUSINESS_TOOLS list, where
+// each Business Tools tab has its own checkbox in Users Management). Admins always pass.
 //
 // HOW TO ADD:
 //   1. Copy this file to src/routes/cash-projection.ts
@@ -48,15 +49,17 @@ const BANK_DASHBOARD_DIR =
   '/home/ubuntu/finance-it/extra-apps/bank-dashboard';
 
 export function mountCashProjection(app: express.Express): void {
-  const bankRole = requireRole(UserRole.BANK_DASHBOARD) as any;
-  // The Metrics page has its own permission once finance-it has the role (else the Bank Dashboard's).
-  const metricsRole = requireRole(((UserRole as any).METRICS ?? UserRole.BANK_DASHBOARD)) as any;
+  // Each page's data needs that page's role (finance-it: shared/src/types BUSINESS_TOOLS); admins pass.
+  const cashRole = requireRole(UserRole.ADMIN, UserRole.NEW_BANK_DASHBOARD) as any;
+  const pnlRole = requireRole(UserRole.ADMIN, UserRole.PNL_PROJECTION) as any;
+  const targetsRole = requireRole(UserRole.ADMIN, UserRole.NEW_BANK_DASHBOARD, UserRole.PNL_PROJECTION) as any;
+  const metricsRole = requireRole(UserRole.ADMIN, UserRole.METRICS) as any;
   try {
     // Runtime require: CommonJS module inside the checkout, resolving its own node_modules.
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { createCashProjectionHandler } = require(`${BANK_DASHBOARD_DIR}/server/cash-projection.cjs`);
     const handler = createCashProjectionHandler();
-    app.get('/api/cash-projection', bankRole, (req, res) => handler(req, res));
+    app.get('/api/cash-projection', cashRole, (req, res) => handler(req, res));
     console.log(`[cash-projection] mounted from ${BANK_DASHBOARD_DIR}`);
   } catch (e) {
     console.error(
@@ -69,7 +72,7 @@ export function mountCashProjection(app: express.Express): void {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { createCashProjectionBreakdownHandler } = require(`${BANK_DASHBOARD_DIR}/server/cash-projection-breakdown.cjs`);
     const breakdown = createCashProjectionBreakdownHandler();
-    app.get('/api/cash-projection/breakdown', bankRole, (req, res) => breakdown(req, res));
+    app.get('/api/cash-projection/breakdown', cashRole, (req, res) => breakdown(req, res));
     console.log(`[cash-projection] breakdown mounted from ${BANK_DASHBOARD_DIR}`);
   } catch (e) {
     console.error(
@@ -81,7 +84,7 @@ export function mountCashProjection(app: express.Express): void {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { createPnlProjectionBreakdownHandler } = require(`${BANK_DASHBOARD_DIR}/server/pnl-projection-breakdown.cjs`);
     const pnlBreakdown = createPnlProjectionBreakdownHandler();
-    app.get('/api/pnl-projection/breakdown', bankRole, (req, res) => pnlBreakdown(req, res));
+    app.get('/api/pnl-projection/breakdown', pnlRole, (req, res) => pnlBreakdown(req, res));
     console.log(`[pnl-projection] breakdown mounted from ${BANK_DASHBOARD_DIR}`);
   } catch (e) {
     console.error(
@@ -92,7 +95,7 @@ export function mountCashProjection(app: express.Express): void {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { createPnlProjectionHandler } = require(`${BANK_DASHBOARD_DIR}/server/pnl-projection.cjs`);
     const pnl = createPnlProjectionHandler();
-    app.get('/api/pnl-projection', bankRole, (req, res) => pnl(req, res));
+    app.get('/api/pnl-projection', pnlRole, (req, res) => pnl(req, res));
     console.log(`[pnl-projection] mounted from ${BANK_DASHBOARD_DIR}`);
   } catch (e) {
     console.error(
@@ -105,8 +108,8 @@ export function mountCashProjection(app: express.Express): void {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { createProjectionTargetsHandler } = require(`${BANK_DASHBOARD_DIR}/server/projection-targets.cjs`);
     const targets = createProjectionTargetsHandler();
-    app.get('/api/projection-targets', bankRole, (req, res) => targets(req, res));
-    app.put('/api/projection-targets', bankRole, (req, res) => targets(req, res));
+    app.get('/api/projection-targets', targetsRole, (req, res) => targets(req, res));
+    app.put('/api/projection-targets', targetsRole, (req, res) => targets(req, res));
     console.log(`[projection-targets] mounted from ${BANK_DASHBOARD_DIR}`);
   } catch (e) {
     console.error(

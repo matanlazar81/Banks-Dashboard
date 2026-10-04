@@ -96,7 +96,9 @@ NetSuite and Snowflake hold no confirmation status, so the page keeps a small tr
 3. finance-it frontend: a Business Tools sidebar item **Metrics** → `/business-tools/metrics`, the same
    iframe component as the other pages with `page="metrics.html"`, `allow-downloads` kept (Export).
 
-Until finance-it has a separate Metrics permission, the page uses the Bank Dashboard permission.
+Access: the **Metrics** checkbox in finance-it's Users Management (role `metrics`). Every Business Tools
+tab has its own checkbox, from one list in finance-it (`shared/src/types` `BUSINESS_TOOLS`): adding a tab
+there adds its sidebar item, checkbox and hub entry.
 
 ## Checking it
 
