@@ -18,8 +18,9 @@
 //
 // Responses, caching and refresh behave exactly like /api/cash-projection (createProjectionHandler):
 // cache file data/pnl-projection-cache.json, PNL_PROJECTION_TTL_MIN / _TIMEOUT_MIN / _PREWARM
-// (default: the CASH_PROJECTION_* values). PNL_NS_DATE_BASIS=period groups NetSuite actuals by
-// posting period instead of transaction date.
+// (default: the CASH_PROJECTION_* values). NetSuite actuals are grouped by accounting (posting)
+// period, as NetSuite's Profit and Loss report does; PNL_NS_DATE_BASIS=trandate groups them by
+// transaction date instead.
 // ─────────────────────────────────────────────────────────────────────────────
 const path = require('path');
 const cp = require('./cash-projection.cjs');
@@ -220,7 +221,7 @@ async function computePnlProjection(opts) {
   const T = Y + 1;
   const curIdx = now.getMonth();
   const scenarioName = process.env.NET_CASH_SCENARIO_NAME || cp.DEFAULT_SCENARIO;
-  const basis = process.env.PNL_NS_DATE_BASIS === 'period' ? 'period' : 'trandate';
+  const basis = process.env.PNL_NS_DATE_BASIS === 'trandate' ? 'trandate' : 'period';
 
   const shared = await loadProjectionInputs({ now, cmp, nsClient, sfClient, queueNsCall: opts.queueNsCall, scenarioName });
   const { inputs, meta, extras, scenario } = shared;

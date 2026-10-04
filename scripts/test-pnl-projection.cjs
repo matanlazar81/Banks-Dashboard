@@ -171,7 +171,7 @@ function fakeSf() {
   };
 }
 function fakeNs({ actuals = syntheticActuals() } = {}) {
-  return { fetchPnlActuals: async () => clone(actuals) };
+  return { fetchPnlActuals: async ({ basis }) => ({ ...clone(actuals), basis }) };
 }
 function computeModuleWith(gather, scenario) {
   return { ...cmp, gatherInputs: async () => clone(gather), loadScenarioDataAsync: async () => scenario };
@@ -230,7 +230,7 @@ async function testPayload() {
   const actuals = syntheticActuals();
   check(payload.ok && payload.status === 'ready' && payload.schemaVersion === pnl.SCHEMA_VERSION, 'ready payload with the P&L schema version');
   check(JSON.stringify(payload.years) === JSON.stringify([Y, T]), 'years: current + next');
-  check(payload.actuals.source === 'netsuite' && payload.actuals.basis === 'trandate' && payload.actuals.through === mk(Y, 9), 'actuals: NetSuite, by transaction date, through September');
+  check(payload.actuals.source === 'netsuite' && payload.actuals.basis === 'period' && payload.actuals.through === mk(Y, 9), 'actuals: NetSuite, by posting period (as its Profit and Loss report), through September');
   check(payload.plan.loaded && payload.plan.source === 'postgres', 'plan loaded from Postgres');
 
   for (const variant of ['plan', 'base']) {

@@ -2615,11 +2615,11 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
   // Every income-statement account (Income, COGS, Expense, OthIncome, OthExpense) of this subsidiary,
   // per month, in both books: book 1 (€, primary) and book 2 (₪). Amounts are profit-signed
   // (credit − debit): revenue positive, costs negative, so the sum of all accounts is net profit.
-  //   basis 'trandate' (default) — months by transaction date, like every other NS feed here
-  //   basis 'period'             — months by accounting (posting) period
+  //   basis 'period' (default) — months by accounting (posting) period, as NetSuite's P&L report
+  //   basis 'trandate'         — months by transaction date, like the cash feeds here
   // Returns { basis, byMonth: { 'YYYY-MM': { [acct]: { acct, name, type, eur, ils } } } }.
   const PERIOD_MONTHS = { Jan: '01', Feb: '02', Mar: '03', Apr: '04', May: '05', Jun: '06', Jul: '07', Aug: '08', Sep: '09', Oct: '10', Nov: '11', Dec: '12' };
-  async function fetchPnlActuals({ fromYear, toYear, basis = 'trandate' } = {}) {
+  async function fetchPnlActuals({ fromYear, toYear, basis = 'period' } = {}) {
     const y0 = parseInt(fromYear, 10);
     const y1 = parseInt(toYear ?? fromYear, 10);
     if (!Number.isInteger(y0) || !Number.isInteger(y1) || y0 > y1 || y0 < 2000 || y1 > 2100) throw new Error(`fetchPnlActuals: bad years ${fromYear}–${toYear}`);
