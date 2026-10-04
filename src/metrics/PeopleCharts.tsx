@@ -1,6 +1,7 @@
 // Payroll / revenue and revenue per employee: one column per month through the last payroll JE, then the
 // year to date. Plain HTML columns (the page stays a small bundle): one hue, the year-to-date column a
-// darker step and set apart; values on hover or focus, and every figure in the table below.
+// darker step and set apart; each column's value on its cap, the details on hover or focus, and every
+// figure in the table below.
 import { useState } from 'react';
 import { formatEur, formatEurFull, formatPct, monthName, MONTH_NAMES } from './model.ts';
 import type { People } from './types.ts';
@@ -14,11 +15,13 @@ function niceTop(max: number): number {
   return ([1, 2, 2.5, 5, 10].find((s) => s * p >= max * 1.05) ?? 10) * p;
 }
 
-function ColumnChart({ columns, format, label }: { columns: Column[]; format: (n: number) => string; label: string }) {
+/** format: the axis; valueFormat: the value on each column and in its tooltip (default: format). */
+function ColumnChart({ columns, format, valueFormat = format, label }: {
+  columns: Column[]; format: (n: number) => string; valueFormat?: (n: number) => string; label: string;
+}) {
   const [hover, setHover] = useState<string | null>(null);
   const top = niceTop(Math.max(0, ...columns.map((c) => c.value ?? 0)));
   const ticks = [top, top / 2, 0];
-  const lastMonth = [...columns].reverse().find((c) => !c.total && c.value !== null);
   return (
     <div className="flex gap-2" role="group" aria-label={label}>
       <div className="relative h-40 w-12 shrink-0 text-right text-[10px] tabular-nums text-slate-400">
@@ -36,15 +39,15 @@ function ColumnChart({ columns, format, label }: { columns: Column[]; format: (n
               const h = c.value !== null && c.value > 0 ? (c.value / top) * 100 : 0;
               const on = hover === c.key;
               const align = i < 2 ? 'left-0' : i >= columns.length - 2 ? 'right-0' : 'left-1/2 -translate-x-1/2';
-              const labelled = c.total || c === lastMonth;
               return (
                 <div key={c.key} className={`relative flex h-full flex-1 items-end justify-center ${c.total ? 'ml-2 border-l border-slate-200 pl-2' : ''}`}>
-                  {labelled && c.value !== null && !on && (
-                    <span className="absolute left-1/2 z-0 -translate-x-1/2 whitespace-nowrap text-[10px] font-medium text-slate-600" style={{ bottom: `calc(${h}% + 2px)` }}>{format(c.value)}</span>
+                  {c.value !== null && !on && (
+                    <span className={`absolute left-1/2 z-0 -translate-x-1/2 whitespace-nowrap text-[10px] ${c.total ? 'font-semibold text-slate-800' : 'font-medium text-slate-600'}`}
+                      style={{ bottom: `calc(${h}% + 2px)` }}>{valueFormat(c.value)}</span>
                   )}
                   <div
                     tabIndex={0}
-                    aria-label={`${c.label}: ${c.value === null ? 'no figure' : format(c.value)}`}
+                    aria-label={`${c.label}: ${c.value === null ? 'no figure' : valueFormat(c.value)}`}
                     onPointerEnter={() => setHover(c.key)}
                     onPointerLeave={() => setHover((k) => (k === c.key ? null : k))}
                     onFocus={() => setHover(c.key)}
@@ -58,7 +61,7 @@ function ColumnChart({ columns, format, label }: { columns: Column[]; format: (n
                   </div>
                   {on && (
                     <div className={`pointer-events-none absolute top-0 z-10 -translate-y-full whitespace-nowrap rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] shadow-lg ${align}`}>
-                      <div className="font-semibold tabular-nums text-slate-900">{c.value === null ? '–' : format(c.value)}</div>
+                      <div className="font-semibold tabular-nums text-slate-900">{c.value === null ? '–' : valueFormat(c.value)}</div>
                       <div className="text-slate-500">{c.tip[0]}</div>
                       {c.tip.slice(1).map((t) => <div key={t} className="tabular-nums text-slate-600">{t}</div>)}
                     </div>
@@ -121,7 +124,7 @@ export default function PeopleCharts({ people }: { people: People }) {
             <h3 className="text-sm font-semibold text-slate-800">Payroll / revenue</h3>
             <span className="text-xs text-slate-500">{ytd.label}: <span className="text-base font-semibold text-slate-900">{formatPct(ytd.payrollPct, 1)}</span></span>
           </div>
-          <ColumnChart columns={payrollCols} format={pct1} label="Payroll as a percentage of revenue, by month and year to date" />
+          <ColumnChart columns={payrollCols} format={pct1} valueFormat={(n) => formatPct(n, 1)} label="Payroll as a percentage of revenue, by month and year to date" />
         </div>
         <div>
           <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
