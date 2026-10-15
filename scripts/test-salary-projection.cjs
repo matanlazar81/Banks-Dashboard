@@ -491,13 +491,14 @@ async function testModel(payload) {
   ] }, Y, rate);
   const gross = { acct: '760001', name: 'Gross Salaries' };
   const changes = sp.changesOf({ error: null, rows: [
-    { ...gross, month: mk(Y, 10), source: 'Terminated', eur: -30_000, ils: -110_000 },
-    { acct: '760002', name: 'National Insurance expenses', month: mk(Y, 10), source: 'Terminated', eur: -2_000, ils: -7_000 },
-    { ...gross, month: mk(Y, 12), source: 'Open position', eur: 23_000, ils: 85_000 },
-    { ...gross, month: mk(Y, 12), source: 'Leave end', eur: 5_000, ils: 19_000 },
-    { ...gross, month: mk(T, 1), source: 'Open position', eur: 23_000, ils: 86_000 },
-    { ...gross, month: mk(T, 1), source: 'Terminated', eur: -87_000, ils: -323_000 },
-    { ...gross, month: mk(Y, 2), source: 'Terminated', eur: -10_000, ils: -37_000 },
+    { ...gross, month: mk(Y, 10), source: 'Terminated', department: 'R&D', eur: -22_000, ils: -80_000 },
+    { ...gross, month: mk(Y, 10), source: 'Terminated', department: 'Sales', eur: -8_000, ils: -30_000 },
+    { acct: '760002', name: 'National Insurance expenses', month: mk(Y, 10), source: 'Terminated', department: 'R&D', eur: -2_000, ils: -7_000 },
+    { ...gross, month: mk(Y, 12), source: 'Open position', department: 'Sales', eur: 23_000, ils: 85_000 },
+    { ...gross, month: mk(Y, 12), source: 'Leave end', department: 'HR', eur: 5_000, ils: 19_000 },
+    { ...gross, month: mk(T, 1), source: 'Open position', department: 'Sales', eur: 23_000, ils: 86_000 },
+    { ...gross, month: mk(T, 1), source: 'Terminated', department: 'Finance', eur: -87_000, ils: -323_000 },
+    { ...gross, month: mk(Y, 2), source: 'Terminated', department: 'R&D', eur: -10_000, ils: -37_000 },
   ] }, Y, rate);
   const withOv = { ...payload, overrides, changes };
 
@@ -506,7 +507,7 @@ async function testModel(payload) {
   check(JSON.stringify(counted.map((r) => r.month)) === JSON.stringify([mk(Y, 10), mk(Y, 11), mk(Y, 11), mk(T, 2)]) && counted[0] === overrides.rows.find((r) => r.month === mk(Y, 10)),
     'countedIncrementRows: increments of the current and forecast months (the same row objects); not closed months, overrides, or months after the page');
   const countedCh = sm.countedChangeRows(payload.blocks, changes.rows);
-  check(countedCh.length === 6 && !countedCh.some((r) => r.month === mk(Y, 2)) && countedCh[0] === changes.rows.find((r) => r.month === mk(Y, 10)),
+  check(countedCh.length === 7 && !countedCh.some((r) => r.month === mk(Y, 2)) && countedCh[0] === changes.rows.find((r) => r.month === mk(Y, 10)),
     'countedChangeRows: hires, leavers and returns of the current and forecast months; not closed months');
 
   const ovTable = model.buildSalaryTable(withOv, 'ils', 'both');
@@ -591,6 +592,50 @@ async function testModel(payload) {
     && plain({ ...payload, overrides: { error: null, rows: overrides.rows.filter((r) => r.month > mk(T, 12)) } })
     && plain({ ...payload, overrides: { error: null, rows: overrides.rows.filter((r) => r.memo === 'Closed month') }, changes: { error: null, rows: changes.rows.filter((r) => r.month === mk(Y, 2)) } }),
     'no rows, rows after the page\'s years only, or closed months only: no planned-change lines');
+
+  console.log('\nBREAKDOWN: clicking a planned change (src/salary-projection/breakdown.ts)');
+  const bd = await import(pathToFileURL(path.join(ROOT, 'src', 'salary-projection', 'breakdown.ts')).href);
+  const ask = (line, period, more = {}) => bd.salaryBreakdown(withOv, { line, period, variant: 'base', ccy: 'ils', ...more });
+  check(['hires', 'leavers', 'returns', 'total-changes', 'increment|760001', 'override|760001', 'total-increments', 'total-overrides'].every(bd.isSalaryBreakdownLine)
+    && !['760001', 'total', 'total-permanent', 'header-changes'].some(bd.isSalaryBreakdownLine),
+    'the planned changes and their totals open a breakdown; accounts, headers and Total payroll do not');
+  const bdOff = [];
+  ovTable.lines.filter((l) => bd.isSalaryBreakdownLine(l.key)).forEach((l) => ovTable.columns.forEach((c, i) => {
+    if (Math.abs(l.values[i]) < 1) return;
+    const r = ask(l.key, c.kind === 'fy' ? `FY-${c.year}` : c.mKey);
+    if (r.status !== 'ready' || !near(r.cell, l.values[i], 0.05) || !near(r.sections[0].total, r.cell, 0.05)) bdOff.push(`${l.key} ${c.id}`);
+  }));
+  check(!bdOff.length, 'every clickable cell: the breakdown\'s cell = the table cell, and its first section adds up to it', bdOff.slice(0, 3).join('; '));
+
+  const lvOct = ask('leavers', mk(Y, 10));
+  const sec = (r, id) => r.sections.find((x) => x.id === id);
+  check(lvOct.lineLabel === 'Leavers' && lvOct.periodStatus === 'current' && lvOct.periodLabel === 'October 2026' && lvOct.cell === -117_000 && lvOct.variant === undefined
+    && JSON.stringify(sec(lvOct, 'accounts').rows.map((r) => [r.ref, r.amount, !!r.drillable])) === JSON.stringify([['760001', -110_000, true], ['760002', -7_000, true]])
+    && JSON.stringify(sec(lvOct, 'departments').rows.map((r) => [r.label, r.amount])) === JSON.stringify([['R&D', -87_000], ['Sales', -30_000]])
+    && sec(lvOct, 'departments').total === -117_000,
+    'leavers, October: by account (each opens by department), and by department; both add up to the cell; no plan label');
+  const lvDrill = ask('leavers', mk(Y, 10), { row: '760001' });
+  check(lvDrill.account && lvDrill.account.acct === '760001' && lvDrill.cell === -110_000 && /Leavers · October 2026/.test(lvDrill.account.of)
+    && JSON.stringify(lvDrill.sections[0].rows.map((r) => [r.label, r.amount])) === JSON.stringify([['R&D', -80_000], ['Sales', -30_000]]),
+    'an account by department: the second window adds up to the account row');
+  const chFy = ask('total-changes', `FY-${Y}`);
+  check(chFy.cell === -13_000 && JSON.stringify([...new Set(chFy.sections[0].rows.map((r) => r.group))]) === JSON.stringify(['Planned hires', 'Leavers', 'Returns from leave'])
+    && chFy.sections[0].rows.some((r) => r.key === 'leavers|760001' && r.amount === -110_000),
+    'Total headcount changes for the year: by type and account (closed months left out, as in the table)');
+  const chDrill = ask('total-changes', `FY-${Y}`, { row: 'leavers|760001' });
+  check(chDrill.cell === -110_000 && chDrill.sections[0].rows.length === 2, 'and each of its accounts opens by department');
+  const incNov = ask('increment|760001', mk(Y, 11));
+  const incRows = incNov.sections[0].rows;
+  check(near(incNov.cell, 20_000 * rate + 37_000, 0.05) && incNov.lineLabel === '760001 - Gross Salaries (increment)'
+    && incRows.find((r) => r.label === 'R&D').hint === 'Two hires' && incRows.find((r) => r.label === 'Sales').hint === 'One hire' && incNov.notes.some((n) => /forecast rate/.test(n)),
+    'an override-file line: by department, with the comments from the file');
+  const incFy = ask('increment|760001', `FY-${Y}`);
+  check(incFy.sections.some((x) => x.id === 'months') && near(sec(incFy, 'months').total, incFy.cell, 0.05), 'a year: also by month');
+  const ovTot = ask('total-overrides', mk(Y, 12));
+  check(ovTot.cell === 185_000 && ovTot.sections[0].rows[0].group === '760001 - Gross Salaries' && /not in Total payroll/.test(ovTot.notes[0]),
+    'Total overrides: by account and department, marked as not in Total payroll');
+  check(ask('leavers', mk(Y, 10), { ccy: 'eur' }).cell === -32_000 && ask('leavers', '2031-01').status === 'error' && ask('760001', mk(Y, 10)).status === 'error',
+    'follows the currency; unknown periods and lines answer with an error');
 }
 
 async function main() {
@@ -609,9 +654,9 @@ async function main() {
       { month: mk(Y, 12), acct: '760001', name: 'Gross Salaries', department: 'Sales', mode: 'Override', eur: 50_000, ils: 185_000, memo: '' },
     ] }, Y, payload.basis.ilsPerEur);
     const changes = sp.changesOf({ error: null, rows: [
-      { month: mk(Y, 10), acct: '760001', name: 'Gross Salaries', source: 'Terminated', eur: -30_000, ils: -110_000 },
-      { month: mk(Y, 12), acct: '760001', name: 'Gross Salaries', source: 'Open position', eur: 23_000, ils: 85_000 },
-      { month: mk(T, 1), acct: '760001', name: 'Gross Salaries', source: 'Terminated', eur: -87_000, ils: -323_000 },
+      { month: mk(Y, 10), acct: '760001', name: 'Gross Salaries', source: 'Terminated', department: 'R&D', eur: -30_000, ils: -110_000 },
+      { month: mk(Y, 12), acct: '760001', name: 'Gross Salaries', source: 'Open position', department: 'Sales', eur: 23_000, ils: 85_000 },
+      { month: mk(T, 1), acct: '760001', name: 'Gross Salaries', source: 'Terminated', department: 'Finance', eur: -87_000, ils: -323_000 },
     ] }, Y, payload.basis.ilsPerEur);
     fs.writeFileSync(file, JSON.stringify({ ...payload, overrides, changes, cache: { ageSec: 0, stale: false, staleReason: null, refreshing: false, lastError: null } }, null, 2) + '\n');
     console.log(`\nwrote ${path.relative(ROOT, file)}`);

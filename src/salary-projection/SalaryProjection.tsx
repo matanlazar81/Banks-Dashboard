@@ -1,12 +1,15 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Download, Loader2, RefreshCw, SlidersHorizontal } from 'lucide-react';
 import { useProjection } from '../new-dashboard/useProjection.ts';
+import BreakdownWindows from '../new-dashboard/BreakdownWindows.tsx';
+import type { BreakdownFetcher, BreakdownResponse } from '../new-dashboard/breakdown.ts';
 import ProjectionTable, { type TableMarkers } from '../new-dashboard/ProjectionTable.tsx';
 import { ComputingCard, ErrorCard, Segmented, Skeleton, Warnings } from '../new-dashboard/PageParts.tsx';
 import { readParam, writeParam } from '../new-dashboard/urlParams.ts';
-import { monthLongLabel } from '../new-dashboard/model.ts';
+import { monthLongLabel, type Column } from '../new-dashboard/model.ts';
 import type { YearView } from '../new-dashboard/types.ts';
 import { fetchSalaryProjection } from './api.ts';
+import { isSalaryBreakdownLine, salaryBreakdown } from './breakdown.ts';
 import { useClassification } from './classification.ts';
 import ClassifyPanel from './ClassifyPanel.tsx';
 import { buildSalaryTable, computeSalaryKpis, withClassification } from './model.ts';
@@ -49,6 +52,17 @@ export default function SalaryProjection() {
   const shown = useMemo(() => (data ? withClassification(data, classification.current) : null), [data, classification.current]);
   const table = useMemo(() => (shown ? buildSalaryTable(shown, ccy, view) : null), [shown, ccy, view]);
   const kpis = useMemo(() => (shown ? computeSalaryKpis(shown, ccy) : null), [shown, ccy]);
+  // Planned-change cells open their breakdown, built here from the payload (no server call).
+  const [openCell, setOpenCell] = useState<{ line: string; period: string; id: string } | null>(null);
+  const onOpenCell = useCallback((line: string, col: Column) => {
+    setOpenCell({ line, period: col.kind === 'fy' ? `FY-${col.year}` : (col.mKey as string), id: `${line}|${col.id}` });
+  }, []);
+  const closeBreakdown = useCallback(() => setOpenCell(null), []);
+  const breakdownLines = useMemo(() => new Set(table ? table.lines.map((l) => l.key).filter(isSalaryBreakdownLine) : []), [table]);
+  const breakdownOf = useCallback<BreakdownFetcher>((req) => Promise.resolve<BreakdownResponse>(
+    shown ? salaryBreakdown(shown, req) : { ok: false, status: 'error', error: 'The projection is not loaded yet.' },
+  ), [shown]);
+
   const hasLine = (key: string) => !!table && table.lines.some((l) => l.key === key);
   const hasChanges = hasLine('total-changes');
   const hasIncrements = hasLine('total-increments');
@@ -188,11 +202,21 @@ export default function SalaryProjection() {
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-2.5">
                 <div className="flex items-baseline gap-2">
                   <h2 className="text-sm font-semibold text-slate-800">Payroll by GL account and month</h2>
-                  <span className="text-xs text-slate-500">Hover an account for how it is projected.</span>
+                  <span className="text-xs text-slate-500">
+                    Hover an account for how it is projected{breakdownLines.size ? '; click a planned change for its breakdown' : ''}.
+                  </span>
                 </div>
                 <Legend overrides={hasOverrides} />
               </div>
-              <ProjectionTable table={table} ccy={ccy} anchorDate={null} markers={MARKERS} />
+              <ProjectionTable
+                table={table}
+                ccy={ccy}
+                anchorDate={null}
+                markers={MARKERS}
+                onOpenCell={onOpenCell}
+                activeCell={openCell ? openCell.id : null}
+                breakdownLines={breakdownLines}
+              />
             </section>
 
             {data.overrides && <OverridesSection payload={data} ccy={ccy} />}
@@ -214,6 +238,10 @@ export default function SalaryProjection() {
 
             {classifyOpen && runRate && (
               <ClassifyPanel accounts={shown.accounts} state={classification} runRate={runRate} onClose={() => setClassifyOpen(false)} />
+            )}
+
+            {openCell && (
+              <BreakdownWindows cell={openCell} variant="base" ccy={ccy} fetcher={breakdownOf} onClose={closeBreakdown} />
             )}
           </>
         )}

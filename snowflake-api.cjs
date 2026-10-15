@@ -643,7 +643,8 @@ function createSnowflakeClient(env) {
   // FCT_EXPENSE rows of the HR-driven payroll forecast: SOURCE 'Open position' (planned hires), 'Terminated'
   // (leavers, negative) and 'Leave end' (returns from leave). Each row is that month's amount on top of the
   // forecast baseline. On every payroll account (IS_PAYROLL, i.e. 76xxxx), LSports only, from January fromYear;
-  // summed by month, account and source, with no employee detail. Returns [{ month, acct, name, source, eur, ils }].
+  // summed by month, account, source and department, with no employee detail.
+  // Returns [{ month, acct, name, source, department, eur, ils }].
   async function fetchPayrollChanges(fromYear) {
     const from = parseInt(fromYear);
     if (!(from >= 2000 && from <= 2100)) throw new Error('fetchPayrollChanges: invalid year');
@@ -653,22 +654,25 @@ function createSnowflakeClient(env) {
              g.GL_ACCOUNT_NUMBER AS ACCT,
              MAX(g.GL_ACCOUNT_NAME) AS NAME,
              e.SOURCE AS SRC,
+             d.DEPARTMENT_NAME AS DEPT,
              SUM(e.AMOUNT_EUR) AS EUR,
              SUM(e.AMOUNT_ILS) AS ILS
       FROM ${T_FCT_EXPENSE} e
       JOIN ${T_DIM_GL_ACCOUNT} g ON e.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
+      LEFT JOIN ${T_DIM_DEPARTMENT} d ON e.DEPARTMENT_ID = d.DEPARTMENT_ID
       WHERE e.SUBSIDIARY_ID = 3
         AND e.SOURCE IN ('Open position', 'Terminated', 'Leave end')
         AND (g.IS_PAYROLL = TRUE OR g.GL_ACCOUNT_NUMBER LIKE '76%')
         AND e.CAL_MONTH_START_DATE >= '${from}-01-01'
-      GROUP BY 1, 2, 4
-      ORDER BY 1, 2, 4
+      GROUP BY 1, 2, 4, 5
+      ORDER BY 1, 2, 4, 5
     `);
     return rows.map(r => ({
       month: String(r.M || ''),
       acct: String(r.ACCT || ''),
       name: String(r.NAME || ''),
       source: String(r.SRC || ''),
+      department: r.DEPT ? String(r.DEPT) : '',
       eur: Number(r.EUR) || 0,
       ils: Number(r.ILS) || 0,
     }));

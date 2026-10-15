@@ -104,6 +104,14 @@ How they count:
 - Both are read with the projection. If Snowflake fails, the page still loads: a warning says Total payroll
   leaves the hires and leavers out, and the override section says the file could not be read.
 - `--dry-run` adds them to Total payroll the same way, and marks the override rows that count with `+`.
+- **Clicking a figure** opens its breakdown, in the same movable window as the cash and P&L projections
+  (`src/salary-projection/breakdown.ts`, built on the page from the payload, no server call):
+  - **Planned hires / Leavers / Returns from leave:** by account (click one for its departments), and by
+    department across the accounts. **Total headcount changes:** the same, by type and account.
+  - **The override file's lines:** by department, hovering one shows the file's comments; a full year also by
+    month. **Total increments / Total overrides:** by account and department.
+  - Each window's first list adds up to the clicked figure. The hires and leavers are read by department for
+    this (monthly totals, no employee detail).
 
 **Payroll in the override file**, under the table: the counts, how many increments fall in closed months, and
 the file's rows (collapsed): month, account, department, type (Override replaces the budget of that account and
@@ -120,7 +128,7 @@ note counts them.
 - Under the table: the override file's rows (above).
 - Controls: Permanent / temporary (the classification panel), ILS (default) or EUR, one year or both,
   Refresh, and Export (Excel, the table as shown).
-- Hovering an account shows how it is projected.
+- Hovering an account shows how it is projected; clicking a planned-change figure opens its breakdown (above).
 
 Responses, caching and refresh work exactly like the P&L Projection (`createProjectionHandler` in
 `server/cash-projection.cjs`). The cache file is `data/salary-projection-cache.json`. The page has no plan,

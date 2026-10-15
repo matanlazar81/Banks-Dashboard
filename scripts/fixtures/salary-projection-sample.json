@@ -1,8 +1,8 @@
 {
   "ok": true,
-  "schemaVersion": 8,
+  "schemaVersion": 9,
   "status": "ready",
-  "generatedAt": "2026-10-15T18:25:50.579Z",
+  "generatedAt": "2026-10-15T18:44:36.105Z",
   "computedMonth": "2026-10",
   "company": "lsports",
   "years": [
@@ -739,6 +739,7 @@
         "acct": "760001",
         "name": "Gross Salaries",
         "source": "Terminated",
+        "department": "R&D",
         "eur": -30000,
         "ils": -110000
       },
@@ -747,6 +748,7 @@
         "acct": "760001",
         "name": "Gross Salaries",
         "source": "Open position",
+        "department": "Sales",
         "eur": 23000,
         "ils": 85000
       },
@@ -755,6 +757,7 @@
         "acct": "760001",
         "name": "Gross Salaries",
         "source": "Terminated",
+        "department": "Finance",
         "eur": -87000,
         "ils": -323000
       }
