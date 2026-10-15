@@ -110,8 +110,10 @@ note counts them.
 **The page**
 - KPIs: payroll year to date, full-year payroll for each year (with the planned changes), and the permanent
   monthly run-rate.
-- The table: permanent accounts and subtotal, the planned changes (hires, leavers, returns from leave and
-  increments counted; overrides for reference), temporary accounts and subtotal, then the total payroll.
+- The table: sections, each with a header row and a subtotal: **Permanent**, **Headcount changes** (hires,
+  leavers, returns from leave; counted), **Override file** (increments counted, overrides for reference),
+  **Temporary** and, when there are any, **Not classified**; then the total payroll. Hovering a header says how
+  its section is projected. The Excel export keeps the headers as label-only rows.
 - Under the table: the override file's rows (above).
 - Controls: Permanent / temporary (the classification panel), ILS (default) or EUR, one year or both,
   Refresh, and Export (Excel, the table as shown).

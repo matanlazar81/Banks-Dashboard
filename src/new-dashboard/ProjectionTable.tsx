@@ -154,6 +154,27 @@ export default function ProjectionTable({ table, ccy, anchorDate, onOpenCell, ac
         </thead>
         <tbody>
           {table.lines.map((line) => {
+            // A section title: the label over the lines below it, and empty cells that keep the column shading.
+            if (line.kind === 'header') {
+              return (
+                <tr key={line.key}>
+                  <th
+                    scope="row"
+                    className={`sticky left-0 z-10 bg-white px-3 pb-1 pt-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500 ${LABEL_W}`}
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      {line.label}
+                      {line.hint && (
+                        <span title={line.hint} className="cursor-help font-normal normal-case text-slate-400" aria-label={line.hint}>
+                          <Info size={12} />
+                        </span>
+                      )}
+                    </span>
+                  </th>
+                  {table.columns.map((col) => <td key={col.id} className={`${columnTone(col)} ${dividerClass(col)}`} />)}
+                </tr>
+              );
+            }
             const rowBorder = line.key === markers.closingLine
               ? '[&>*]:border-t-2 [&>*]:border-t-slate-300'
               : line.kind === 'subtotal'

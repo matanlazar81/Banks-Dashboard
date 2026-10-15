@@ -50,7 +50,8 @@ export async function exportTableXlsx({ what, years, planName, generatedAt, tabl
     [],
     header,
     status,
-    ...table.lines.map((l) => [l.label, ...l.values.map((v) => Math.round(v))]),
+    // Section headers carry their label only.
+    ...table.lines.map((l) => (l.kind === 'header' ? [l.label] : [l.label, ...l.values.map((v) => Math.round(v))])),
   ];
   const ws = XLSX.utils.aoa_to_sheet(rows) as Record<string, XlsxCell | unknown>;
   ws['!cols'] = [{ wch: 30 }, ...table.columns.map(() => ({ wch: 13 }))];
@@ -70,7 +71,7 @@ export async function exportTableXlsx({ what, years, planName, generatedAt, tabl
       if (l.kind === 'balance' || l.kind === 'subtotal') cell.s = bold;
     }
     const label = ws[XLSX.utils.encode_cell({ r, c: 0 })] as XlsxCell | undefined;
-    if (label && (l.kind === 'balance' || l.kind === 'subtotal')) label.s = bold;
+    if (label && (l.kind === 'balance' || l.kind === 'subtotal' || l.kind === 'header')) label.s = bold;
   });
 
   const wb = XLSX.utils.book_new();
