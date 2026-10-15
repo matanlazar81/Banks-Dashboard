@@ -69,9 +69,21 @@ with who saved it). **Defaults** goes back to finance's classification. Saving n
 (`salary_projection`) and goes through `GET/PUT /api/salary-projection/classification`. Changing the default
 itself still means editing `SALARY_GL_GROUPS` / `ACTUALS_ONLY` and deploying.
 
+**The override file.** Under the table, **Payroll in the override file** lists the override sheet's rows
+(`OVERIDE_TEMP`, loaded into Snowflake `FCT_EXPENSE` as `future_cost_override` / `future_cost_increment`) on
+payroll accounts (`IS_PAYROLL` or `76xxxx`), LSports, from January of the current year:
+- Columns: month, account, department, type (Override replaces the budget of that account and month;
+  Increment adds to it), amount and comment, with totals per type.
+- Amounts are in the page's currency. When the file has euros only, shekels are at the forecast rate (marked ≈).
+- It's for reference only: the rows are not part of the projection above (the cash and P&L projections
+  apply them to their payroll budget).
+- Read with the projection (`fetchPayrollOverrides` in `snowflake-api.cjs`). If Snowflake fails, the page
+  still loads and says the file could not be read.
+
 **The page**
 - KPIs: payroll year to date, full-year payroll for each year, and the permanent monthly run-rate.
 - The table: each group's accounts and subtotal, then the total payroll.
+- Under the table: the override file's payroll rows (above).
 - Controls: Permanent / temporary (the classification panel), ILS (default) or EUR, one year or both,
   Refresh, and Export (Excel, the table as shown).
 - Hovering an account shows how it is projected.
@@ -139,7 +151,7 @@ and P&L Projection were added (`docs/metrics.md`, `docs/pnl-projection.md`).
 | `SALARY_PROJECTION_PREWARM` | `CASH_PROJECTION_PREWARM` | `1` = compute 30 s after the server starts if the cache is empty |
 
 NetSuite settings are the server's usual `NETSUITE_*` variables (`NET_CASH_SUBSIDIARY`, default 3). Snowflake
-(`SNOWFLAKE_*`) is only used by `--reconcile`.
+(`SNOWFLAKE_*`) is used for the override file and by `--reconcile`.
 
 ## Checking it
 

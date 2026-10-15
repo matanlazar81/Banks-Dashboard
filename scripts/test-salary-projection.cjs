@@ -263,6 +263,45 @@ async function testClassification(payload) {
   fs.rmSync(tmp, { recursive: true, force: true });
 }
 
+// ── the override file's payroll rows ───────────────────────────────────────
+async function testOverrides(payload) {
+  console.log('\nOVERRIDES: the override file\'s payroll rows under the table (Snowflake)');
+  const prevId = process.env.NETSUITE_ACCOUNT_ID;
+  process.env.NETSUITE_ACCOUNT_ID = 'TEST';
+  try {
+    const ns = { fetchPnlActuals: async () => syntheticPnlActuals() };
+    let asked = null;
+    const sf = {
+      fetchPayrollOverrides: async (from) => {
+        asked = from;
+        return [
+          { month: mk(Y, 11), acct: '760001', name: 'Gross Salaries', department: 'R&D', mode: 'Increment', eur: 20_000, ils: 0, memo: 'Two hires' },
+          { month: mk(Y - 1, 12), acct: '760001', name: 'Gross Salaries', department: 'R&D', mode: 'Increment', eur: 5_000, ils: 18_500, memo: 'last year' },
+          { month: mk(Y, 10), acct: '760017', name: 'Bonus', department: '', mode: 'Override', eur: 100_000, ils: 368_000, memo: '' },
+        ];
+      },
+    };
+    const run = (getSfClient) => quiet(() => sp.computeSalaryProjection({ now: NOW, getNsClient: () => ns, getSfClient }));
+    const { payload: p } = await run(() => sf);
+    const rows = p.overrides.rows;
+    check(asked === Y && p.overrides.error === null && rows.length === 2 && rows[0].month === mk(Y, 10) && rows[1].month === mk(Y, 11),
+      `read from January ${Y}; earlier rows dropped; sorted by month`);
+    check(rows[0].mode === 'Override' && rows[0].ils === 368_000 && !rows[0].ilsEstimated
+      && rows[1].mode === 'Increment' && near(rows[1].ils, 20_000 * p.basis.ilsPerEur) && rows[1].ilsEstimated && rows[1].memo === 'Two hires',
+      'type, amounts and comment kept; ₪ at the forecast rate when the file has € only');
+    check(JSON.stringify(p.blocks) === JSON.stringify(payload.blocks), 'the overrides are listed only: the projection is unchanged');
+
+    const failed = (await run(() => ({ fetchPayrollOverrides: async () => { throw new Error('secret detail'); } }))).payload;
+    check(failed.overrides.rows.length === 0 && /could not be read/.test(failed.overrides.error) && !failed.overrides.error.includes('secret') && failed.status === 'ready',
+      'a Snowflake failure: the page still loads, with a note instead of the rows');
+    const none = (await run(() => null)).payload;
+    check(none.overrides.rows.length === 0 && /not configured/.test(none.overrides.error), 'no Snowflake on the server: a note');
+  } finally {
+    if (prevId === undefined) delete process.env.NETSUITE_ACCOUNT_ID; else process.env.NETSUITE_ACCOUNT_ID = prevId;
+  }
+  check(/not read/.test(payload.overrides.error) && payload.overrides.rows.length === 0, 'built without reading the file: says so');
+}
+
 async function testCompute() {
   console.log('\nCOMPUTE: computeSalaryProjection and its NetSuite client');
   const prevId = process.env.NETSUITE_ACCOUNT_ID;
@@ -407,11 +446,16 @@ async function main() {
   await testEdges();
   await testClassification(payload);
   await testCompute();
+  await testOverrides(payload);
   await testHandler(payload);
   await testModel(payload);
   if (process.argv.includes('--write-fixture')) {
     const file = path.join(__dirname, 'fixtures', 'salary-projection-sample.json');
-    fs.writeFileSync(file, JSON.stringify({ ...payload, cache: { ageSec: 0, stale: false, staleReason: null, refreshing: false, lastError: null } }, null, 2) + '\n');
+    const overrides = sp.overridesOf({ error: null, rows: [
+      { month: mk(Y, 11), acct: '760001', name: 'Gross Salaries', department: 'R&D', mode: 'Increment', eur: 20_000, ils: 0, memo: 'Two hires (synthetic)' },
+      { month: mk(Y, 12), acct: '760017', name: 'One time payments (Bonus, grants)', department: 'Sales', mode: 'Override', eur: 50_000, ils: 185_000, memo: '' },
+    ] }, Y, payload.basis.ilsPerEur);
+    fs.writeFileSync(file, JSON.stringify({ ...payload, overrides, cache: { ageSec: 0, stale: false, staleReason: null, refreshing: false, lastError: null } }, null, 2) + '\n');
     console.log(`\nwrote ${path.relative(ROOT, file)}`);
   }
   console.log(failures ? `\n❌ FAIL — ${failures} check(s) failed.` : '\n✅ PASS — all checks green.');

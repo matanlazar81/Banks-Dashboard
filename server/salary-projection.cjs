@@ -23,6 +23,10 @@
 // Snowflake's FCT_EXPENSE misses some payroll accounts (760017 bonus, 760019 maternity), so actuals come
 // from NetSuite; `node scripts/salary-projection.cjs --reconcile` shows when Snowflake catches up.
 //
+// The override file's payroll rows (Snowflake FCT_EXPENSE, SOURCE future_cost_override / _increment, from
+// January of the current year) are listed under the table for reference. They are not part of the
+// projection; a Snowflake failure only hides them, with a note.
+//
 // The projection is made in ILS, the currency payroll is paid in; forecast € = ₪ ÷ the ILS/EUR ratio of
 // the last closed month's permanent payroll. The current month is projected as a whole month (its
 // partial postings are not a month's payroll), as on the P&L Projection.
@@ -37,7 +41,7 @@ const cp = require('./cash-projection.cjs');
 const { readDoc, createDocHandler } = require('./json-store.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
-const SCHEMA_VERSION = 3; // 3: the actual months and each account's default method (re-projection on the page)
+const SCHEMA_VERSION = 4; // 3: the actual months and each account's default method; 4: the override file's payroll rows
 const DEFAULT_CACHE_FILE = path.join(ROOT, 'data', 'salary-projection-cache.json');
 const CLASSIFICATION_FILE = path.join(ROOT, 'data', 'salary-classification.json');
 const { ProjectionError } = cp;
@@ -181,12 +185,41 @@ function payrollRows(byMonth) {
 }
 
 /**
+ * The override file's payroll rows for the payload: from January of year Y, sorted by month and account, with
+ * ₪ at the forecast rate when the file has € only (ilsEstimated).
+ */
+function overridesOf(overrides, Y, ilsPerEur) {
+  if (!overrides) return { rows: [], error: 'The override file was not read.' };
+  const rows = (overrides.rows || [])
+    .filter((r) => /^\d{4}-\d{2}$/.test(String(r.month || '')) && String(r.month) >= `${Y}-01`)
+    .map((r) => {
+      const eur = cents(r.eur);
+      const estimated = Math.abs(num(r.ils)) < 0.5 && Math.abs(eur) >= 0.5;
+      return {
+        month: String(r.month),
+        acct: String(r.acct || ''),
+        name: String(r.name || ''),
+        department: String(r.department || ''),
+        mode: r.mode === 'Override' ? 'Override' : 'Increment',
+        eur,
+        ils: estimated ? cents(eur * ilsPerEur) : cents(r.ils),
+        ilsEstimated: estimated,
+        memo: String(r.memo || '').slice(0, 300),
+      };
+    })
+    .sort((a, b) => (a.month === b.month ? a.acct.localeCompare(b.acct) : a.month < b.month ? -1 : 1));
+  return { rows, error: overrides.error || null };
+}
+
+/**
  * The payload from payroll rows (the tests call it directly).
  *   rows   [{ month: 'YYYY-MM', acct, name, eur, ils }] costs positive, January of the previous year onwards
  *   now    Date (drives the current year and month)
- *   saved  { [acct]: method } the saved classification (default: none)
+ *   saved      { [acct]: method } the saved classification (default: none)
+ *   overrides  { rows: [{ month, acct, name, department, mode, eur, ils, memo }], error } the override file's payroll
+ *              rows (Snowflake), or null when not read
  */
-async function buildSalaryProjection({ rows, now, saved = {} }) {
+async function buildSalaryProjection({ rows, now, saved = {}, overrides = null }) {
   const { projectSalary, groupOfMethod } = await loadSalaryModule();
   const Y = now.getFullYear();
   const T = Y + 1;
@@ -289,6 +322,7 @@ async function buildSalaryProjection({ rows, now, saved = {} }) {
     actuals: { source: 'netsuite', basis: 'period', through: lastClosed.startsWith(`${Y}-`) ? lastClosed : null },
     basis: { runRateMonth: lastClosed, ilsPerEur },
     actual,
+    overrides: overridesOf(overrides, Y, ilsPerEur),
     degraded: false,
     failedFeeds: [],
     warnings,
@@ -297,7 +331,22 @@ async function buildSalaryProjection({ rows, now, saved = {} }) {
   return { payload };
 }
 
-/** Compute the payload. opts: now, getNsClient(sub), queueNsCall(fn), classificationFile (tests) */
+/** The override file's payroll rows from Snowflake: { rows, error }; never throws (the page works without them). */
+async function readOverrides(getSfClient, Y) {
+  let sf = null;
+  try { sf = getSfClient ? getSfClient() : null; } catch { sf = null; }
+  if (!sf || typeof sf.fetchPayrollOverrides !== 'function') {
+    return { rows: [], error: 'Snowflake is not configured on this server, so the override file is not shown.' };
+  }
+  try {
+    return { rows: await sf.fetchPayrollOverrides(Y), error: null };
+  } catch (e) {
+    console.error(`[salary-projection] override file failed: ${e && e.message}`);
+    return { rows: [], error: 'The override file could not be read from Snowflake. Try Refresh in a minute.' };
+  }
+}
+
+/** Compute the payload. opts: now, getNsClient(sub), getSfClient(), queueNsCall(fn), classificationFile (tests) */
 async function computeSalaryProjection(opts) {
   const now = opts.now || new Date();
   // The repo .env, as the other projections load it (existing variables win).
@@ -308,21 +357,21 @@ async function computeSalaryProjection(opts) {
   if (!ns) throw new ProjectionError('The NetSuite client is unavailable on this server.');
   const queue = opts.queueNsCall || ((fn) => fn());
   const Y = now.getFullYear();
-  let actuals;
-  try {
-    actuals = await queue(() => ns.fetchPnlActuals({ fromYear: Y - 1, toYear: Y, basis: 'period' }));
-  } catch (e) {
-    console.error(`[salary-projection] NetSuite payroll failed: ${e && e.message}`);
-    throw new ProjectionError('NetSuite payroll could not be loaded. Try Refresh in a minute.');
-  }
+  const [actuals, overrides] = await Promise.all([
+    queue(() => ns.fetchPnlActuals({ fromYear: Y - 1, toYear: Y, basis: 'period' })).catch((e) => {
+      console.error(`[salary-projection] NetSuite payroll failed: ${e && e.message}`);
+      return null;
+    }),
+    readOverrides(opts.getSfClient, Y),
+  ]);
   if (!actuals || !actuals.byMonth) throw new ProjectionError('NetSuite payroll could not be loaded. Try Refresh in a minute.');
   const saved = readSavedMethods(opts.classificationFile || CLASSIFICATION_FILE);
-  return buildSalaryProjection({ rows: payrollRows(actuals.byMonth), now, saved });
+  return buildSalaryProjection({ rows: payrollRows(actuals.byMonth), now, saved, overrides });
 }
 
 /**
  * Express/connect handler for GET /api/salary-projection. deps:
- *   getNsClient, queueNsCall, compute(nowDate), clock(), cacheFile (null = memory only), ttlMs, timeoutMs, …
+ *   getNsClient, getSfClient, queueNsCall, compute(nowDate), clock(), cacheFile (null = memory only), ttlMs, timeoutMs, …
  */
 function createSalaryProjectionHandler(deps = {}) {
   return cp.createProjectionHandler({
@@ -335,6 +384,7 @@ function createSalaryProjectionHandler(deps = {}) {
     compute: deps.compute || ((nowDate) => computeSalaryProjection({
       now: nowDate,
       getNsClient: deps.getNsClient || cp.defaultGetNsClient,
+      getSfClient: deps.getSfClient || cp.defaultGetSfClient,
       queueNsCall: deps.queueNsCall || cp.defaultQueueNsCall,
     })),
   });
@@ -349,6 +399,7 @@ module.exports = {
   readSavedMethods,
   defaultMethodOf,
   payrollRows,
+  overridesOf,
   loadSalaryModule,
   SALARY_GL_GROUPS,
   ACTUALS_ONLY,
