@@ -144,10 +144,13 @@ async function testPayload() {
   check(ils(payload, Y, 12, '760017') === 150_000 && ils(payload, Y, 11, '760017') === 0 && ils(payload, Y, 11, '760019') === 40_000,
     'temporary: Oct–Dec 2026 repeat Oct–Dec 2025 (bonus, maternity)');
   check(ils(payload, Y, 10, '760017') === 200_000, 'the current month is projected: its partial posting (2,000) is replaced by October 2025');
-  check(ils(payload, T, 1, '760017') === 1_000_000 && ils(payload, T, 7, '760015') === 320_000 && ils(payload, T, 4, '760020') === 5_000,
-    `${T} repeats ${Y}'s actual months (January bonus, July recuperation, April option exercise)`);
-  check(ils(payload, T, 10, '760017') === 200_000 && ils(payload, T, 11, '760019') === 40_000,
-    `${T} repeats ${Y}'s forecast months, which repeat ${Y - 1} (the chain)`);
+  const temporaryAccts = payload.accounts.filter((a) => a.group !== 'permanent').map((a) => a.acct);
+  const offNext = [];
+  for (const acct of temporaryAccts) for (const m of range(1, 12)) if (ils(payload, T, m, acct) !== 0) offNext.push(`${acct} ${mk(T, m)}`);
+  check(!offNext.length && temporaryAccts.length === 13,
+    `${T}: every temporary (and not classified) account is 0 in every month (no bonus, recuperation or option exercise repeated)`, offNext.slice(0, 3).join('; '));
+  check(rowOf(payload, T, 1).ils['760017'] === 0 && ils(payload, Y, 1, '760017') === 1_000_000 && ils(payload, Y, 12, '760017') === 150_000,
+    `${Y} keeps its actual bonus and the repeated December; ${T} starts at 0`);
 
   const offNone = [];
   for (const acct of ['760023', '760029', '760008', '760014']) {
@@ -156,7 +159,7 @@ async function testPayload() {
   check(ils(payload, Y, 3, '760023') === -30_000 && !offNone.length,
     '760023, 760029, 760008, 760014: actual months shown, every forecast month 0 (the 2025 refunds, notice pay and December accruals not repeated)', offNone.slice(0, 3).join('; '));
   check(!payload.warnings.some((w) => w.includes('760008') || w.includes('760014')), '760008 and 760014 are classified: no warning');
-  check(ils(payload, T, 3, '760040') === 1_000 && ils(payload, Y, 11, '760040') === 0, 'the unclassified account is projected like a temporary one');
+  check(ils(payload, Y, 11, '760040') === 0 && ils(payload, T, 3, '760040') === 0 && ils(payload, Y, 3, '760040') === 1_000, 'the unclassified account follows the temporary rule (0 next year)');
 
   check(near(payload.basis.ilsPerEur, 3.7, 0.0001), 'forecast rate: September\'s permanent payroll ₪/€', String(payload.basis.ilsPerEur));
   check(near(rowOf(payload, Y, 11).eur['760001'], sep('760001') / 3.7) && near(rowOf(payload, Y, 10).eur['760017'], 200_000 / 3.7),
@@ -218,7 +221,7 @@ async function testClassification(payload) {
   check(accountOf(withSaved, '760002').group === 'temporary' && ils(withSaved, Y, 11, '760002') === 501_100,
     'saved "temporary" for 760002 (default permanent): November repeats November of last year');
   check(accountOf(withSaved, '760040').group === 'permanent' && ils(withSaved, T, 3, '760040') === 0,
-    'saved "permanent" for the unclassified 760040: it carries September (0) instead of repeating March');
+    'saved "permanent" for the unclassified 760040: it moves to the permanent group and carries September (0)');
   check(withSaved.basis.runRateMonth === payload.basis.runRateMonth && withSaved.basis.ilsPerEur === payload.basis.ilsPerEur,
     'reclassifying never moves the run-rate month or the rate');
 
@@ -408,7 +411,7 @@ async function testModel(payload) {
   check(table.lines[0].label === '760001 - Gross Salaries' && table.lines[0].kind === 'item' && table.lines.find((l) => l.key === 'total').kind === 'subtotal',
     'labels read "760001 - Gross Salaries"; totals are subtotals');
   const hint = (k) => table.lines.find((l) => l.key === k).hint;
-  check(/NetSuite/.test(hint('760001')) && /September 2026 carried forward/.test(hint('760001')) && /same month of the previous year/.test(hint('760017')) && /not projected/.test(hint('760023')),
+  check(/NetSuite/.test(hint('760001')) && /September 2026 carried forward/.test(hint('760001')) && /same month of the previous year for the rest of 2026; 0 in 2027/.test(hint('760017')) && /not projected/.test(hint('760023')),
     'hints say how each account is projected (run-rate, same month last year, not projected)');
 
   const line = (k) => table.lines.find((l) => l.key === k);

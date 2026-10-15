@@ -9,7 +9,7 @@ import type { SalaryAccount, SalaryMethod } from './types.ts';
 
 const OPTION_TITLE: Record<SalaryMethod, string> = {
   'run-rate': 'Every forecast month carries the last closed month',
-  'last-year': 'Every forecast month repeats the same month of the previous year',
+  'last-year': 'The rest of this year repeats the same month of last year; next year is 0',
   none: 'Actual months only; forecast months are 0',
 };
 const OPTIONS = SALARY_METHODS.map((m) => ({ value: m, label: METHOD_LABEL[m], title: OPTION_TITLE[m] }));
@@ -37,8 +37,8 @@ export default function ClassifyPanel({ accounts, state, runRate, onClose }: Pro
         <div>
           <h2 className="text-sm font-semibold text-slate-900">Permanent or temporary</h2>
           <p className="mt-0.5 text-xs leading-relaxed text-slate-500">
-            Permanent: {runRate} carried into every forecast month. Temporary: the same month of the previous year.
-            Actuals only: not projected. The table changes as you pick; Save applies it for everyone.
+            Permanent: {runRate} carried into every forecast month. Temporary: the rest of this year repeats the same
+            month of last year, and next year is 0. Actuals only: not projected. The table changes as you pick; Save applies it for everyone.
           </p>
         </div>
         <button type="button" onClick={onClose} aria-label="Close" className="rounded p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-800">

@@ -32,7 +32,7 @@ its postings are partial.
 | Accounts | Rule |
 |---|---|
 | Permanent | The last closed month, carried flat into every forecast month of both years. |
-| Temporary | The same month of the previous year. The current year's forecast months repeat last year's actuals. The next year repeats the current year, actual or forecast. |
+| Temporary | The current year's forecast months repeat the same month of the previous year (keeps the seasonality). The next year is 0: temporary payments are not projected beyond December. |
 | 760023 Military reserve refund, 760029 Lieu of prior notice, 760008 Option employees expenses, 760014 Vacation expenses | Actuals only: forecast months are 0 (`ACTUALS_ONLY`). 2026's refunds and notice pay are not expected to recur; options and vacation are year-end accruals that change every year. |
 | Not classified | Any other `76xxxx` account with postings and no choice yet. It is projected like a temporary account, and the page asks someone to pick. |
 
@@ -169,8 +169,9 @@ node scripts/salary-projection.cjs --reconcile   # real data: Snowflake vs NetSu
 - LSports only, like the other projection pages.
 - Permanent accounts stay flat at the last closed month. Planned hires, leavers and raises are not added.
   The P&L Projection's payroll forecast includes them, so the two pages can differ in forecast months.
-- Temporary accounts repeat last year as it was: a bonus month repeats in the same month. Accounts that
-  should not repeat at all are "Actuals only" (by default 760023, 760029, 760008 and 760014).
+- Temporary accounts repeat last year as it was for the rest of the current year (a bonus month repeats in the
+  same month) and are 0 in the next year. Accounts that should not repeat at all are "Actuals only" (by default
+  760023, 760029, 760008 and 760014).
 - Salaries CAPEX (950000) is not a payroll account, so it is not on this page. The P&L Projection shows it
   as a separate line.
 - Actuals are NetSuite's by posting period, so a late posting into a closed period appears on the next

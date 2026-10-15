@@ -4,8 +4,8 @@
 // the Salary Projection page, which re-projects at once when someone reclassifies an account.
 //
 //   run-rate   permanent: every forecast month carries the run-rate month (the last closed month)
-//   last-year  temporary: the same month of the previous year (actual, or for the next year the current
-//              year's actual or forecast), which keeps the seasonality
+//   last-year  temporary: the current year's forecast months repeat the same month of the previous year
+//              (keeps the seasonality); the next year is 0
 //   none       actuals only: forecast months are 0
 //
 // The projection is made in ILS; forecast € = ₪ ÷ ilsPerEur. Actual months keep their own €.
@@ -55,8 +55,9 @@ export function projectSalary({ years, currentMonth, runRateMonth, ilsPerEur, ac
     const id = `${mKey}|${acct}`;
     if (memo.has(id)) return memo.get(id);
     const method = methodOf(acct);
+    // Temporary payments are projected for the rest of the current year only.
     const v = method === 'run-rate' ? num((amount(runRateMonth, acct) || {}).ils)
-      : method === 'none' ? 0
+      : method === 'none' || year > Y ? 0
         : ilsOf(year - 1, mi, acct);
     memo.set(id, v);
     return v;

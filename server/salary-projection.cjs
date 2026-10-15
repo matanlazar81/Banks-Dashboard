@@ -6,7 +6,8 @@
 // forecast) and the next year. Each account is projected one of three ways (src/forecast/salary-projection.mjs):
 //
 //   • run-rate   permanent (recurring pay and its burden): every forecast month carries the last closed month
-//   • last-year  temporary (one-offs and seasonal items): the same month of the previous year
+//   • last-year  temporary (one-offs and seasonal items): the rest of the current year repeats the same month
+//                of the previous year; the next year is 0
 //   • none       actuals only: forecast months are 0
 //
 // Finance's classification (SALARY_GL_GROUPS, ACTUALS_ONLY) is the default; the page lets anyone with access
@@ -41,7 +42,7 @@ const cp = require('./cash-projection.cjs');
 const { readDoc, createDocHandler } = require('./json-store.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
-const SCHEMA_VERSION = 4; // 3: the actual months and each account's default method; 4: the override file's payroll rows
+const SCHEMA_VERSION = 5; // 3: the actual months and each account's default method; 4: the override file's payroll rows; 5: temporary 0 next year
 const DEFAULT_CACHE_FILE = path.join(ROOT, 'data', 'salary-projection-cache.json');
 const CLASSIFICATION_FILE = path.join(ROOT, 'data', 'salary-classification.json');
 const { ProjectionError } = cp;
