@@ -57,7 +57,7 @@ export default function SalaryProjection() {
   const unclassified = shown ? shown.accounts.filter((a) => a.group === 'other') : [];
   const canClassify = !!(data && data.actual);
   const method = runRate
-    ? `Permanent: ${runRate} run-rate · Temporary: same month last year${notProjected.length ? ` · Not projected: ${notProjected.map((a) => a.acct).join(', ')}` : ''}`
+    ? `Permanent: ${runRate} run-rate · Temporary: same month last year for ${data ? data.years[0] : ''}, 0 in ${data ? data.years[1] : ''}${notProjected.length ? ` · Not projected: ${notProjected.map((a) => a.acct).join(', ')}` : ''}`
     : '';
 
   async function onExport() {
@@ -195,7 +195,7 @@ export default function SalaryProjection() {
               Profit and Loss. Permanent accounts (salaries and their burden: national insurance, pension, severance,
               education fund and the like) carry the last closed month, {runRate}, into every forecast month. Temporary
               accounts (bonuses, recuperation, maternity and other one-offs) repeat the same month of the previous
-              year, so seasonal payments stay in their month: {y0} forecast months repeat {y0 ? y0 - 1 : ''}, and {y1} repeats {y0}.
+              year for the rest of {y0}, so seasonal payments stay in their month; in {y1} they are 0.
               {notProjected.length > 0 && ` Actuals only, not projected: ${notProjected.map((a) => `${a.acct} ${a.name}`).join(', ')}.`}
               {' '}The current month is projected as a whole month. Forecasts are made in shekels; euros use the rate above.
               Use Permanent / temporary to change how an account is projected.

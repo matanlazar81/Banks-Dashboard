@@ -47,24 +47,24 @@ const GROUP_HINT: Record<SalaryGroup, string> = {
   other: 'Not classified as permanent or temporary.',
 };
 
-function itemHint(group: SalaryGroup, method: SalaryMethod, runRate: string): string {
+function itemHint(group: SalaryGroup, method: SalaryMethod, runRate: string, years: [number, number]): string {
   const forecast = method === 'run-rate' ? `${runRate} carried forward every month`
     : method === 'none' ? 'not projected (0)'
-      : 'the same month of the previous year';
+      : `the same month of the previous year for the rest of ${years[0]}; 0 in ${years[1]}`;
   return `${GROUP_HINT[group]} Actual months: NetSuite. Forecast: ${forecast}.`;
 }
 
 const sumOf = (accts: string[]) => (f: SalaryFigures) => accts.reduce((s, a) => s + (f[a] ?? 0), 0);
 
 /** The table lines for the payload's accounts: each group's accounts, then its subtotal, then the total. */
-export function salaryLineDefs(accounts: SalaryAccount[], runRateMonth: string): SalaryLineDef[] {
+export function salaryLineDefs(accounts: SalaryAccount[], runRateMonth: string, years: [number, number]): SalaryLineDef[] {
   const runRate = monthLongLabel(runRateMonth);
   const defs: SalaryLineDef[] = [];
   for (const group of GROUPS) {
     const list = accounts.filter((a) => a.group === group);
     if (!list.length) continue;
     for (const a of list) {
-      defs.push({ key: a.acct, label: `${a.acct} - ${a.name}`, kind: 'item', fy: 'sum', value: (f) => f[a.acct] ?? 0, hint: itemHint(group, a.method, runRate) });
+      defs.push({ key: a.acct, label: `${a.acct} - ${a.name}`, kind: 'item', fy: 'sum', value: (f) => f[a.acct] ?? 0, hint: itemHint(group, a.method, runRate, years) });
     }
     defs.push({ key: `total-${group}`, label: SUBTOTAL_LABEL[group], kind: 'subtotal', fy: 'sum', value: sumOf(list.map((a) => a.acct)) });
   }
@@ -77,7 +77,7 @@ export function salaryLineDefs(accounts: SalaryAccount[], runRateMonth: string):
 
 /** Columns + lines for the currency and year view. */
 export function buildSalaryTable(payload: SalaryPayload, ccy: Ccy, view: YearView): ProjectionTable<string> {
-  return buildYearTable(payload.blocks, ccy, view, salaryLineDefs(payload.accounts, payload.basis.runRateMonth));
+  return buildYearTable(payload.blocks, ccy, view, salaryLineDefs(payload.accounts, payload.basis.runRateMonth, payload.years));
 }
 
 export interface SalaryKpis {
