@@ -69,11 +69,16 @@ with who saved it). **Defaults** goes back to finance's classification. Saving n
 (`salary_projection`) and goes through `GET/PUT /api/salary-projection/classification`. Changing the default
 itself still means editing `SALARY_GL_GROUPS` / `ACTUALS_ONLY` and deploying.
 
-**The override file.** Under the table, **Payroll in the override file** lists the override sheet's rows
-(`OVERIDE_TEMP`, loaded into Snowflake `FCT_EXPENSE` as `future_cost_override` / `future_cost_increment`) on
-payroll accounts (`IS_PAYROLL` or `76xxxx`), LSports, from January of the current year:
-- Columns: month, account, department, type (Override replaces the budget of that account and month;
-  Increment adds to it), amount and comment, with totals per type.
+**The override file.** Under the table, **Payroll in the override file, by month** shows the override sheet's
+rows (`OVERIDE_TEMP`, loaded into Snowflake `FCT_EXPENSE` as `future_cost_override` / `future_cost_increment`)
+on payroll accounts (`IS_PAYROLL` or `76xxxx`), LSports, from January of the current year:
+- By month, in the projection's columns (months and FY, following the Years toggle): one line per type and
+  account, summing that account's rows of the month across departments. Increments (added to the budget) and
+  their subtotal, then overrides (replacing the budget of that account and month) and their subtotal, then the
+  total when both types are there. Hovering an account shows its departments and comments
+  (`buildOverrideTable` in `src/salary-projection/model.ts`).
+- **The file's rows** (collapsed under it): month, account, department, type, amount and comment, row by row.
+  Rows after December of the next year are only there, and a note counts them.
 - Amounts are in the page's currency. When the file has euros only, shekels are at the forecast rate (marked ≈).
 - It's for reference only: the rows are not part of the projection above (the cash and P&L projections
   apply them to their payroll budget).
@@ -83,7 +88,7 @@ payroll accounts (`IS_PAYROLL` or `76xxxx`), LSports, from January of the curren
 **The page**
 - KPIs: payroll year to date, full-year payroll for each year, and the permanent monthly run-rate.
 - The table: each group's accounts and subtotal, then the total payroll.
-- Under the table: the override file's payroll rows (above).
+- Under the table: the override file's payroll by month, and its rows (above).
 - Controls: Permanent / temporary (the classification panel), ILS (default) or EUR, one year or both,
   Refresh, and Export (Excel, the table as shown).
 - Hovering an account shows how it is projected.
@@ -156,7 +161,7 @@ NetSuite settings are the server's usual `NETSUITE_*` variables (`NET_CASH_SUBSI
 ## Checking it
 
 ```bash
-node scripts/test-salary-projection.cjs          # synthetic: classification, last closed month, run-rate, same month last year, actuals only, €, cache, UI model
+node scripts/test-salary-projection.cjs          # synthetic: classification, last closed month, run-rate, same month last year, actuals only, €, cache, UI model, override file by month
 node scripts/salary-projection.cjs --dry-run     # real data (NetSuite)
 node scripts/salary-projection.cjs --reconcile   # real data: Snowflake vs NetSuite P&L, payroll accounts, closed months
 ```
