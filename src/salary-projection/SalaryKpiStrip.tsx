@@ -12,7 +12,7 @@ export default function SalaryKpiStrip({ kpis, ccy }: { kpis: SalaryKpis; ccy: C
         label="Payroll year to date"
         value={through ? kpis.ytd.value : null}
         ccy={ccy}
-        note={through ? `Snowflake, January to ${monthLongLabel(through)}` : 'No closed month yet'}
+        note={through ? `NetSuite, January to ${monthLongLabel(through)}` : 'No closed month yet'}
       />
       {current && <KpiCard label={`Payroll FY ${current.year}`} value={current.value} ccy={ccy} note="Actuals + forecast" />}
       {next && <KpiCard label={`Payroll FY ${next.year}`} value={next.value} ccy={ccy} note="Projection" />}

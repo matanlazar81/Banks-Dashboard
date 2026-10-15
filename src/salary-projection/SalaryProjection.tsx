@@ -21,7 +21,7 @@ const MARKERS: TableMarkers = {
 function Legend() {
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-600">
-      <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 rounded-sm border border-slate-300 bg-slate-100" />Actual (Snowflake)</span>
+      <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 rounded-sm border border-slate-300 bg-slate-100" />Actual (NetSuite)</span>
       <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 rounded-sm border border-sky-300 bg-sky-50" />Current month (projected)</span>
       <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 rounded-sm border border-slate-300 bg-white" />Forecast</span>
     </div>
@@ -46,7 +46,10 @@ export default function SalaryProjection() {
   const chooseView = (v: YearView) => { setView(v); writeParam('years', v === 'both' ? null : v); };
 
   const runRate = data ? monthLongLabel(data.basis.runRateMonth) : null;
-  const method = runRate ? `Permanent: ${runRate} run-rate · Temporary: same month last year` : '';
+  const notProjected = data ? data.accounts.filter((a) => a.method === 'none') : [];
+  const method = runRate
+    ? `Permanent: ${runRate} run-rate · Temporary: same month last year${notProjected.length ? ` · Not projected: ${notProjected.map((a) => a.acct).join(', ')}` : ''}`
+    : '';
 
   async function onExport() {
     if (!data || !table) return;
@@ -90,7 +93,7 @@ export default function SalaryProjection() {
               onClick={refresh}
               disabled={refreshing || phase === 'loading'}
               className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-60"
-              title="Recalculate from Snowflake"
+              title="Recalculate from NetSuite"
             >
               <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
               {refreshing ? 'Updating…' : 'Refresh'}
@@ -119,7 +122,7 @@ export default function SalaryProjection() {
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
               <span>Updated {updatedDay} {updated}</span>
               <span aria-hidden="true">·</span>
-              <span>{through ? `Actuals: Snowflake payroll through ${through}` : 'No closed month yet this year'}</span>
+              <span>{through ? `Actuals: NetSuite payroll through ${through}, by posting period` : 'No closed month yet this year'}</span>
               <span aria-hidden="true">·</span>
               <span>{method}</span>
               <span aria-hidden="true">·</span>
@@ -146,12 +149,13 @@ export default function SalaryProjection() {
             </section>
 
             <p className="max-w-5xl text-xs leading-relaxed text-slate-500">
-              Actual months are Snowflake's payroll accounts (76xxxx) for LSports, as booked in NetSuite. Permanent
-              accounts (salaries and their burden: national insurance, pension, severance, education fund and the
-              like) carry the last closed month, {runRate}, into every forecast month. Temporary accounts (bonuses,
-              recuperation, military reserve, notice pay and other one-offs) repeat the same month of the previous
+              Actual months are NetSuite's payroll accounts (76xxxx) for LSports by posting period, as in NetSuite's
+              Profit and Loss. Permanent accounts (salaries and their burden: national insurance, pension, severance,
+              education fund and the like) carry the last closed month, {runRate}, into every forecast month. Temporary
+              accounts (bonuses, recuperation, maternity and other one-offs) repeat the same month of the previous
               year, so seasonal payments stay in their month: {y0} forecast months repeat {y0 ? y0 - 1 : ''}, and {y1} repeats {y0}.
-              The current month is projected as a whole month. Forecasts are made in shekels; euros use the rate above.
+              {notProjected.length > 0 && ` ${notProjected.map((a) => `${a.acct} ${a.name}`).join(' and ')}: actuals only, not projected.`}
+              {' '}The current month is projected as a whole month. Forecasts are made in shekels; euros use the rate above.
             </p>
           </>
         )}

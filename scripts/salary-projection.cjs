@@ -8,11 +8,11 @@
 //   node scripts/salary-projection.cjs --write-cache   compute and write data/salary-projection-cache.json;
 //                                                      a running server serves it on its next request
 //   node scripts/salary-projection.cjs --reconcile [--year=2026]
-//        Snowflake's payroll (the page's actual months) against NetSuite's P&L by account, every closed
-//        month, in ₪: lists each account and month that differ by more than ₪1. Older code notes that
-//        Snowflake once missed some one-off accounts (760017, 760019); this shows whether it still does.
+//        Snowflake's payroll (FCT_EXPENSE) against NetSuite's P&L by account, every closed month, in ₪:
+//        lists each account and month that differ by more than ₪1. The page reads NetSuite because
+//        Snowflake misses some one-off accounts (760017 bonus, 760019 maternity); this shows when it is fixed.
 //
-// Needs the server's .env (Snowflake; NetSuite too for --reconcile).
+// Needs the server's .env (NetSuite; Snowflake too for --reconcile).
 // Output contains internal financial figures: keep it on the server.
 // ─────────────────────────────────────────────────────────────────────────────
 const path = require('path');
@@ -49,10 +49,9 @@ function printYear(payload, block) {
   print('Total payroll', sumRow(payload.accounts.map((a) => a.acct)));
 }
 
-async function reconcile(sf) {
-  const { createNetSuiteClient } = require(path.join(ROOT, 'netsuite-api.cjs'));
-  const sub = parseInt(process.env.NET_CASH_SUBSIDIARY || '3', 10) || 3;
-  const ns = createNetSuiteClient(process.env, sub);
+async function reconcile(ns) {
+  const { createSnowflakeClient } = require(path.join(ROOT, 'snowflake-api.cjs'));
+  const sf = createSnowflakeClient(process.env);
   const now = new Date();
   const year = parseInt(arg('year') || now.getFullYear(), 10);
   const lastMonth = year < now.getFullYear() ? 12 : now.getMonth(); // closed months only
@@ -82,16 +81,17 @@ async function reconcile(sf) {
 }
 
 async function main() {
-  const { createSnowflakeClient } = require(path.join(ROOT, 'snowflake-api.cjs'));
-  const sf = createSnowflakeClient(process.env);
+  const { createNetSuiteClient } = require(path.join(ROOT, 'netsuite-api.cjs'));
+  const sub = parseInt(process.env.NET_CASH_SUBSIDIARY || '3', 10) || 3;
+  const ns = createNetSuiteClient(process.env, sub);
 
   if (arg('reconcile')) {
-    await reconcile(sf);
+    await reconcile(ns);
     if (!arg('json') && !arg('dry-run') && !arg('write-cache')) return;
   }
 
   const t0 = Date.now();
-  const { payload } = await computeSalaryProjection({ now: new Date(), getSfClient: () => sf });
+  const { payload } = await computeSalaryProjection({ now: new Date(), getNsClient: () => ns, queueNsCall: (fn) => fn() });
   console.log(`\n[salary-projection] computed in ${((Date.now() - t0) / 1000).toFixed(1)}s — actuals through ${payload.actuals.through || '–'}; permanent run-rate ${payload.basis.runRateMonth}; ₪${payload.basis.ilsPerEur} per €`);
   for (const w of payload.warnings) console.warn(`[salary-projection] ⚠ ${w}`);
 

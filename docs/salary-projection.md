@@ -1,6 +1,6 @@
 # Salary Projection
 
-Payroll by GL account, month by month: Snowflake actuals for the current year, and a projection for the
+Payroll by GL account, month by month: NetSuite actuals for the current year, and a projection for the
 rest of the year and the next one. Each payroll account is **permanent** (recurring pay and its burden) or
 **temporary** (one-offs and seasonal payments), and the two are projected differently.
 
@@ -13,26 +13,31 @@ Page code: `src/salary-projection/`. Data call: `GET /api/salary-projection` (`s
 
 ## How it works
 
-**Source.** Snowflake `FCT_EXPENSE__FINANCE` joined to `DIM_GL_ACCOUNT__FINANCE`, the same tables and
-filters as the other Snowflake payroll reads. The filters are LSports (`SUBSIDIARY_ID = 3`), booked from
-NetSuite (`SOURCE = 'netsuite'`) and every `76xxxx` account, which is the P&L Projection's Payroll line.
-Amounts are the plain `AMOUNT_ILS` / `AMOUNT_EUR` columns (`fetchPayrollByAccount` in `snowflake-api.cjs`).
-It reads January of the previous year through December of the current year.
+**Source.** NetSuite GL by account and **posting period** (`fetchPnlActuals` in `netsuite-api.cjs`). It
+is the same read as the P&L Projection, and it equals NetSuite's Profit and Loss report. Filters: LSports
+(subsidiary 3), every `76xxxx` account (the P&L Projection's Payroll line). ₪ comes from the ILS book and
+€ from the primary book. It reads January of the previous year through December of the current year, in
+one NetSuite call queued with the other dashboard calls.
+
+Why not Snowflake: `FCT_EXPENSE` has no postings for 760017 (bonus) and 760019 (maternity) in 2026 (checked
+October 2026). Every other account matched NetSuite exactly. `node scripts/salary-projection.cjs --reconcile`
+compares the two by account and month, which shows when Snowflake is fixed.
 
 **Actual months.** They run through the **last closed month**: the latest month before the current one
-whose permanent payroll is at least half the largest of the last 12 months. A month Snowflake has only
-partly loaded is projected instead, and a warning says so. The current month is always projected as a
-whole month, because its postings are partial.
+whose permanent payroll is at least half the largest of the last 12 months. A month not fully posted yet is
+projected instead, and a warning says so. The current month is always projected as a whole month, because
+its postings are partial.
 
 **Forecast months**
-| Group | Rule |
+| Accounts | Rule |
 |---|---|
 | Permanent | The last closed month, carried flat into every forecast month of both years. |
 | Temporary | The same month of the previous year. The current year's forecast months repeat last year's actuals. The next year repeats the current year, actual or forecast. |
+| 760023 Military reserve refund, 760029 Lieu of prior notice | Actuals only: forecast months are 0. 2026's refunds and notice pay are not expected to recur (`ACTUALS_ONLY`). |
 | Not classified | Any other `76xxxx` account with postings. It is projected like a temporary account and listed in a warning. |
 
 The projection is made in **₪**, the currency payroll is paid in. Forecast **€** = ₪ ÷ the ILS/EUR ratio
-of the last closed month's permanent payroll; the page shows the rate. Actual months show Snowflake's own €.
+of the last closed month's permanent payroll; the page shows the rate. Actual months show NetSuite's own €.
 
 **Classification.** From finance's file `ProfitandLoss988.xlsx` (yellow = permanent, green = temporary),
 held in `SALARY_GL_GROUPS` in `server/salary-projection.cjs`:
@@ -47,11 +52,12 @@ held in `SALARY_GL_GROUPS` in `server/salary-projection.cjs`:
 | 760006 Zkufut Credit | 760024 National insurance Damage fees |
 | 760007 Education fund | 760029 Lieu of prior notice |
 | 760009 Disability Insurance | 760030 Gemel Pension expenses |
-| 760018 Gross-up expenses | |
-| 760025 Salaries payments during military reserve | |
+| 760018 Gross-up expenses | 760020 Reducing salary expenses, option exercise |
+| 760025 Salaries payments during military reserve | 76003 Social security, injury payment |
 
-To move an account, edit `SALARY_GL_GROUPS`, run the tests and deploy. Every listed account shows, even
-when it is zero.
+760020 and 76003 are not in the file; finance classified them as temporary. To move an account, edit
+`SALARY_GL_GROUPS` (and `ACTUALS_ONLY` for accounts that are not projected), run the tests and deploy.
+Every listed account shows, even when it is zero.
 
 **The page**
 - KPIs: payroll year to date, full-year payroll for each year, and the permanent monthly run-rate.
@@ -120,13 +126,14 @@ and P&L Projection were added (`docs/metrics.md`, `docs/pnl-projection.md`).
 | `SALARY_PROJECTION_TIMEOUT_MIN` | `CASH_PROJECTION_TIMEOUT_MIN` (10) | A computation running longer is abandoned |
 | `SALARY_PROJECTION_PREWARM` | `CASH_PROJECTION_PREWARM` | `1` = compute 30 s after the server starts if the cache is empty |
 
-Snowflake settings are the server's usual `SNOWFLAKE_*` variables.
+NetSuite settings are the server's usual `NETSUITE_*` variables (`NET_CASH_SUBSIDIARY`, default 3). Snowflake
+(`SNOWFLAKE_*`) is only used by `--reconcile`.
 
 ## Checking it
 
 ```bash
-node scripts/test-salary-projection.cjs          # synthetic: classification, last closed month, run-rate, same month last year, €, cache, UI model
-node scripts/salary-projection.cjs --dry-run     # real data
+node scripts/test-salary-projection.cjs          # synthetic: classification, last closed month, run-rate, same month last year, actuals only, €, cache, UI model
+node scripts/salary-projection.cjs --dry-run     # real data (NetSuite)
 node scripts/salary-projection.cjs --reconcile   # real data: Snowflake vs NetSuite P&L, payroll accounts, closed months
 ```
 
@@ -138,9 +145,9 @@ node scripts/salary-projection.cjs --reconcile   # real data: Snowflake vs NetSu
 - LSports only, like the other projection pages.
 - Permanent accounts stay flat at the last closed month. Planned hires, leavers and raises are not added.
   The P&L Projection's payroll forecast includes them, so the two pages can differ in forecast months.
-- Temporary accounts repeat last year as it was. A one-off that will not recur (for example a year with
-  unusually high military reserve refunds) repeats in the next year too.
+- Temporary accounts repeat last year as it was: a bonus month repeats in the same month. Accounts that
+  should not repeat at all go in `ACTUALS_ONLY` (today 760023 and 760029).
 - Salaries CAPEX (950000) is not a payroll account, so it is not on this page. The P&L Projection shows it
   as a separate line.
-- Actuals are Snowflake's. Older code notes that Snowflake once missed some one-off accounts (760017,
-  760019). `--reconcile` shows any account and month where Snowflake and NetSuite differ.
+- Actuals are NetSuite's by posting period, so a late posting into a closed period appears on the next
+  refresh.

@@ -2,17 +2,21 @@
 // GET /api/salary-projection — the Salary Projection page's one data call.
 //
 // Payroll by GL account (every 76xxxx account, the P&L "Payroll" line) for the current year (actuals +
-// forecast) and the next year, from Snowflake (sf.fetchPayrollByAccount). Each account is either
-// permanent (recurring pay and its burden) or temporary (one-offs and seasonal items), per finance's
-// classification (SALARY_GL_GROUPS):
+// forecast) and the next year. Each account is permanent (recurring pay and its burden) or temporary
+// (one-offs and seasonal items), per finance's classification (SALARY_GL_GROUPS):
 //
-//   • actual months   — Snowflake FCT_EXPENSE, through the last closed month: the latest month before the
-//                       current one whose permanent payroll is at least half the largest of the last 12
-//                       months (a just-closed month can be loaded with a token amount only)
+//   • actual months   — NetSuite GL by account and posting period (ns.fetchPnlActuals, the same read as the
+//                       P&L Projection and NetSuite's Profit and Loss report), through the last closed
+//                       month: the latest month before the current one whose permanent payroll is at least
+//                       half the largest of the last 12 months
 //   • permanent       — forecast months carry the last closed month flat (run-rate)
 //   • temporary       — forecast months repeat the same month of the previous year (actual, or for the
 //                       next year the current year's actual or forecast), which keeps the seasonality
+//   • actuals only    — temporary accounts finance does not project (ACTUALS_ONLY): forecast months are 0
 //   • not classified  — any other 76xxxx account with postings: projected like a temporary one, with a warning
+//
+// Snowflake's FCT_EXPENSE misses some payroll accounts (760017 bonus, 760019 maternity), so actuals come
+// from NetSuite; `node scripts/salary-projection.cjs --reconcile` shows when Snowflake catches up.
 //
 // The projection is made in ILS, the currency payroll is paid in; forecast € = ₪ ÷ the ILS/EUR ratio of
 // the last closed month's permanent payroll. The current month is projected as a whole month (its
@@ -26,12 +30,12 @@ const path = require('path');
 const cp = require('./cash-projection.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2; // 2: NetSuite actuals; accounts carry their forecast method
 const DEFAULT_CACHE_FILE = path.join(ROOT, 'data', 'salary-projection-cache.json');
 const { ProjectionError } = cp;
 
 // Finance's classification (ProfitandLoss988.xlsx: yellow = permanent, green = temporary), in its order.
-// Names are fallbacks: the page shows Snowflake's account names when it has them.
+// Names are fallbacks: the page shows NetSuite's account names when it has them.
 const SALARY_GL_GROUPS = [
   {
     key: 'permanent',
@@ -61,12 +65,17 @@ const SALARY_GL_GROUPS = [
       ['760024', 'National insurance Damage fees'],
       ['760029', 'Lieu of prior notice'],
       ['760030', 'Gemel Pension expenses'],
+      ['760020', 'Reducing salary expenses-option exercise'],
+      ['76003', 'Social security - Injury payment'],
     ],
   },
 ];
 const GROUP_OF = new Map(SALARY_GL_GROUPS.flatMap((g) => g.accounts.map(([acct]) => [acct, g.key])));
+// Temporary accounts shown as actuals only: 2026's military reserve refunds and notice pay are not expected
+// to recur, so forecast months are 0.
+const ACTUALS_ONLY = new Set(['760023', '760029']);
 
-// Below this share of the largest recent month, a closed month counts as not loaded yet.
+// Below this share of the largest recent month, a closed month counts as not posted yet.
 const MATERIAL_SHARE = 0.5;
 // ₪ per € when no payroll month gives a ratio (the engine's live-rate default).
 const FALLBACK_ILS_PER_EUR = 3.68;
@@ -76,6 +85,7 @@ const cents = (n) => Math.round((Number(n) || 0) * 100) / 100;
 const num = (n) => (Number.isFinite(Number(n)) ? Number(n) : 0);
 const mk = (y, mi) => `${y}-${pad2(mi + 1)}`;
 const longLabel = (mKey) => new Date(`${mKey}-15T12:00:00`).toLocaleString('en-GB', { month: 'long', year: 'numeric' });
+const isPayroll = (acct) => /^76/.test(acct);
 
 /** The n month keys before (year, monthIdx), most recent last. */
 function monthsBefore(year, monthIdx, n) {
@@ -87,9 +97,27 @@ function monthsBefore(year, monthIdx, n) {
   return out;
 }
 
+/** How an account's forecast months are made: 'run-rate', 'last-year' (same month) or 'none'. */
+function methodOf(acct) {
+  if (GROUP_OF.get(acct) === 'permanent') return 'run-rate';
+  return ACTUALS_ONLY.has(acct) ? 'none' : 'last-year';
+}
+
+/** Payroll rows (costs positive) from NetSuite's P&L actuals (profit-signed, every P&L account). */
+function payrollRows(byMonth) {
+  const rows = [];
+  for (const [month, accts] of Object.entries(byMonth || {})) {
+    for (const a of Object.values(accts || {})) {
+      const acct = String(a.acct || '');
+      if (isPayroll(acct)) rows.push({ month, acct, name: a.name, eur: -num(a.eur), ils: -num(a.ils) });
+    }
+  }
+  return rows;
+}
+
 /**
- * The payload from Snowflake's payroll rows (pure; the tests call it directly).
- *   rows  [{ month: 'YYYY-MM', acct, name, eur, ils }] for January of the previous year through December
+ * The payload from payroll rows (pure; the tests call it directly).
+ *   rows  [{ month: 'YYYY-MM', acct, name, eur, ils }] costs positive, January of the previous year onwards
  *   now   Date (drives the current year and month)
  */
 function buildSalaryProjection({ rows, now }) {
@@ -98,7 +126,7 @@ function buildSalaryProjection({ rows, now }) {
   const curIdx = now.getMonth();
   const currentKey = mk(Y, curIdx);
 
-  // Snowflake amounts by month and account, and the account names.
+  // Amounts by month and account, and the account names.
   const actual = {};
   const names = {};
   for (const r of rows || []) {
@@ -116,7 +144,7 @@ function buildSalaryProjection({ rows, now }) {
   // Accounts: every classified one (always shown), then any other 76xxxx account with postings.
   const accounts = [];
   for (const g of SALARY_GL_GROUPS) {
-    for (const [acct, name] of g.accounts) accounts.push({ acct, name: names[acct] || name, group: g.key });
+    for (const [acct, name] of g.accounts) accounts.push({ acct, name: names[acct] || name, group: g.key, method: methodOf(acct) });
   }
   const others = new Set();
   for (const m of Object.values(actual)) {
@@ -124,8 +152,8 @@ function buildSalaryProjection({ rows, now }) {
       if (!GROUP_OF.has(acct) && (Math.abs(a.ils) >= 1 || Math.abs(a.eur) >= 1)) others.add(acct);
     }
   }
-  for (const acct of [...others].sort()) accounts.push({ acct, name: names[acct] || acct, group: 'other' });
-  const groupOf = (acct) => GROUP_OF.get(acct) || 'other';
+  for (const acct of [...others].sort()) accounts.push({ acct, name: names[acct] || acct, group: 'other', method: methodOf(acct) });
+  const methodByAcct = new Map(accounts.map((a) => [a.acct, a.method]));
   const permanentAccts = accounts.filter((a) => a.group === 'permanent').map((a) => a.acct);
 
   // The last closed month: the run-rate month of the permanent accounts.
@@ -134,7 +162,7 @@ function buildSalaryProjection({ rows, now }) {
   const largest = Math.max(0, ...recent.map(permTotal));
   let lastClosed = null;
   for (const mKey of recent) if (largest > 0 && permTotal(mKey) >= largest * MATERIAL_SHARE) lastClosed = mKey;
-  if (!lastClosed) throw new ProjectionError('Snowflake has no payroll for the last 12 months, so there is nothing to project from.');
+  if (!lastClosed) throw new ProjectionError('NetSuite has no payroll for the last 12 months, so there is nothing to project from.');
 
   const isActual = (mKey) => mKey <= lastClosed && mKey < currentKey;
   const statusOf = (mKey) => (isActual(mKey) ? 'actual' : mKey === currentKey ? 'current' : 'forecast');
@@ -158,7 +186,10 @@ function buildSalaryProjection({ rows, now }) {
     if (year < Y || isActual(mKey)) return num((amount(mKey, acct) || {}).ils);
     const id = `${mKey}|${acct}`;
     if (ilsMemo.has(id)) return ilsMemo.get(id);
-    const v = groupOf(acct) === 'permanent' ? num((amount(lastClosed, acct) || {}).ils) : ilsOf(year - 1, mi, acct);
+    const method = methodByAcct.get(acct);
+    const v = method === 'run-rate' ? num((amount(lastClosed, acct) || {}).ils)
+      : method === 'none' ? 0
+        : ilsOf(year - 1, mi, acct);
     ilsMemo.set(id, v);
     return v;
   }
@@ -190,10 +221,10 @@ function buildSalaryProjection({ rows, now }) {
   const warnings = [];
   const gap = Array.from({ length: curIdx }, (_, mi) => mk(Y, mi)).filter((k) => k > lastClosed);
   if (gap.length) {
-    warnings.push(`Snowflake has no full payroll for ${gap.map(longLabel).join(', ')} yet, so ${gap.length === 1 ? 'it is' : 'they are'} projected from ${longLabel(lastClosed)}.`);
+    warnings.push(`NetSuite has no full payroll for ${gap.map(longLabel).join(', ')} yet, so ${gap.length === 1 ? 'it is' : 'they are'} projected from ${longLabel(lastClosed)}.`);
   }
   if (!Object.keys(actual).some((k) => k.startsWith(`${Y - 1}-`))) {
-    warnings.push(`Snowflake has no ${Y - 1} payroll, so temporary accounts have nothing to repeat in ${Y}.`);
+    warnings.push(`NetSuite has no ${Y - 1} payroll, so temporary accounts have nothing to repeat in ${Y}.`);
   }
   const unclassified = accounts.filter((a) => a.group === 'other');
   if (unclassified.length) {
@@ -210,7 +241,7 @@ function buildSalaryProjection({ rows, now }) {
     company: cp.COMPANY,
     years: [Y, T],
     accounts,
-    actuals: { source: 'snowflake', through: lastClosed.startsWith(`${Y}-`) ? lastClosed : null },
+    actuals: { source: 'netsuite', basis: 'period', through: lastClosed.startsWith(`${Y}-`) ? lastClosed : null },
     basis: { runRateMonth: lastClosed, ilsPerEur: Math.round(ilsPerEur * 10000) / 10000 },
     degraded: false,
     failedFeeds: [],
@@ -220,26 +251,31 @@ function buildSalaryProjection({ rows, now }) {
   return { payload };
 }
 
-/** Compute the payload. opts: now, getSfClient() */
+/** Compute the payload. opts: now, getNsClient(sub), queueNsCall(fn) */
 async function computeSalaryProjection(opts) {
   const now = opts.now || new Date();
-  const sf = opts.getSfClient();
-  if (!sf) throw new ProjectionError('Snowflake is not configured on this server.');
-  if (typeof sf.fetchPayrollByAccount !== 'function') throw new ProjectionError('The Snowflake client on this server is out of date; restart the server.');
+  // The repo .env, as the other projections load it (existing variables win).
+  try { require('dotenv').config({ path: path.join(ROOT, '.env'), quiet: true }); } catch { /* env may already be exported */ }
+  if (!process.env.NETSUITE_ACCOUNT_ID) throw new ProjectionError('NetSuite is not configured on this server.');
+  const sub = parseInt(process.env.NET_CASH_SUBSIDIARY || '3', 10) || 3;
+  const ns = opts.getNsClient(sub);
+  if (!ns) throw new ProjectionError('The NetSuite client is unavailable on this server.');
+  const queue = opts.queueNsCall || ((fn) => fn());
   const Y = now.getFullYear();
-  let rows;
+  let actuals;
   try {
-    rows = await sf.fetchPayrollByAccount(Y - 1, Y);
+    actuals = await queue(() => ns.fetchPnlActuals({ fromYear: Y - 1, toYear: Y, basis: 'period' }));
   } catch (e) {
-    console.error(`[salary-projection] Snowflake payroll failed: ${e && e.message}`);
-    throw new ProjectionError('Snowflake payroll could not be loaded. Try Refresh in a minute.');
+    console.error(`[salary-projection] NetSuite payroll failed: ${e && e.message}`);
+    throw new ProjectionError('NetSuite payroll could not be loaded. Try Refresh in a minute.');
   }
-  return buildSalaryProjection({ rows, now });
+  if (!actuals || !actuals.byMonth) throw new ProjectionError('NetSuite payroll could not be loaded. Try Refresh in a minute.');
+  return buildSalaryProjection({ rows: payrollRows(actuals.byMonth), now });
 }
 
 /**
  * Express/connect handler for GET /api/salary-projection. deps:
- *   getSfClient, compute(nowDate), clock(), cacheFile (null = memory only), ttlMs, timeoutMs, …
+ *   getNsClient, queueNsCall, compute(nowDate), clock(), cacheFile (null = memory only), ttlMs, timeoutMs, …
  */
 function createSalaryProjectionHandler(deps = {}) {
   return cp.createProjectionHandler({
@@ -251,7 +287,8 @@ function createSalaryProjectionHandler(deps = {}) {
     cacheFile: deps.cacheFile === undefined ? DEFAULT_CACHE_FILE : deps.cacheFile,
     compute: deps.compute || ((nowDate) => computeSalaryProjection({
       now: nowDate,
-      getSfClient: deps.getSfClient || cp.defaultGetSfClient,
+      getNsClient: deps.getNsClient || cp.defaultGetNsClient,
+      queueNsCall: deps.queueNsCall || cp.defaultQueueNsCall,
     })),
   });
 }
@@ -260,7 +297,9 @@ module.exports = {
   createSalaryProjectionHandler,
   computeSalaryProjection,
   buildSalaryProjection,
+  payrollRows,
   SALARY_GL_GROUPS,
+  ACTUALS_ONLY,
   SCHEMA_VERSION,
   DEFAULT_CACHE_FILE,
 };
