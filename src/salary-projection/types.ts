@@ -36,6 +36,17 @@ export interface PayrollOverride {
   memo: string;
 }
 
+/** One month of Snowflake's planned payroll changes on an account (its HR-driven payroll forecast). */
+export interface PayrollChange {
+  month: string;
+  acct: string;
+  name: string;
+  /** Planned hires, leavers (negative) or returns from leave. */
+  source: 'Open position' | 'Terminated' | 'Leave end';
+  eur: number;
+  ils: number;
+}
+
 export interface SalaryMonthRow {
   mKey: string;
   status: MonthStatus;
@@ -70,6 +81,11 @@ export interface SalaryPayload {
    * leaves them out; the page adds the increments to Total payroll from the current month on.
    */
   overrides?: { rows: PayrollOverride[]; error: string | null; accounts?: string[] };
+  /**
+   * Snowflake's planned hires, leavers and returns from leave on the same accounts, by month. The page adds
+   * them to Total payroll from the current month on; a read failure is also in `warnings`.
+   */
+  changes?: { rows: PayrollChange[]; error: string | null; accounts?: string[] };
   degraded: boolean;
   failedFeeds: string[];
   warnings: string[];

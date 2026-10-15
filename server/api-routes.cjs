@@ -33,7 +33,7 @@ function getSfClient() {
   // Same staleness-check pattern as getNsClient: if the in-memory client is missing methods we
   // expect from current snowflake-api.cjs, evict the require cache and rebuild so new functions
   // become visible without a full process restart.
-  const expected           = ['fetchQuarterlyChurnMRR', 'fetchVendorsYearlyGrid', 'fetchPayrollOverrides'];
+  const expected           = ['fetchQuarterlyChurnMRR', 'fetchVendorsYearlyGrid', 'fetchPayrollOverrides', 'fetchPayrollChanges'];
   const isStale = sfClient && expected.some(m => typeof sfClient[m] !== 'function');
   if (!sfClient || isStale) {
     try {

@@ -4,7 +4,8 @@
 // (server/salary-projection.cjs), without a web server.
 //
 //   node scripts/salary-projection.cjs --dry-run       print both years by account, ₪ thousands (Total payroll
-//                                                      adds the override file's increments, as the page does)
+//                                                      adds the planned hires, leavers and returns from leave
+//                                                      and the override file's increments, as the page does)
 //   node scripts/salary-projection.cjs --json          print the API payload
 //   node scripts/salary-projection.cjs --write-cache   compute and write data/salary-projection-cache.json;
 //                                                      a running server serves it on its next request
@@ -37,13 +38,15 @@ const k = (n) => {
 const ils = (n) => (Math.round((Number(n) || 0) * 100) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).padStart(16);
 const eur = (n) => `€${Math.round(Number(n) || 0).toLocaleString('en-US')}`.padStart(14);
 
-// increments: { 'YYYY-MM': { [acct]: ₪ } } the override file's increments that count (countedIncrementRows).
-function printYear(payload, block, increments) {
+// planned: Map(label → Map(mKey → ₪)) the planned changes that count in Total payroll, as on the page:
+// Snowflake's hires, leavers and returns from leave (countedChangeRows) and the override file's increments
+// (countedIncrementRows).
+function printYear(payload, block, planned) {
   console.log(`\n${block.year} (${block.kind}) — ₪ thousands`);
   console.log(`  ${'account'.padEnd(44)}${block.rows.map((r) => `${r.mKey.slice(2)}${r.status === 'actual' ? 'A' : r.status === 'current' ? 'C' : 'F'}`.padStart(8)).join('')}${'FY'.padStart(9)}`);
   const sumRow = (accts) => block.rows.map((r) => accts.reduce((s, a) => s + (r.ils[a] || 0), 0));
-  const incRow = (accts) => block.rows.map((r) => accts.reduce((s, a) => s + ((increments[r.mKey] || {})[a] || 0), 0));
-  const incAccts = [...new Set(block.rows.flatMap((r) => Object.keys(increments[r.mKey] || {})))].sort();
+  const plannedRow = (labels) => block.rows.map((r) => labels.reduce((s, l) => s + (planned.get(l).get(r.mKey) || 0), 0));
+  const labels = [...planned.keys()].filter((l) => block.rows.some((r) => planned.get(l).has(r.mKey)));
   const print = (label, values) => console.log(`  ${label.slice(0, 43).padEnd(44)}${values.map(k).join('')} ${k(values.reduce((s, v) => s + v, 0))}`);
   for (const group of ['permanent', 'temporary', 'other']) {
     const list = payload.accounts.filter((a) => a.group === group);
@@ -51,13 +54,13 @@ function printYear(payload, block, increments) {
       for (const a of list) print(`${a.acct} - ${a.name}`, sumRow([a.acct]));
       print(`Total ${group}`, sumRow(list.map((a) => a.acct)));
     }
-    if (group === 'permanent' && incAccts.length) {
-      for (const a of incAccts) print(`${a} increment (override file)`, incRow([a]));
-      print('Total increments', incRow(incAccts));
+    if (group === 'permanent' && labels.length) {
+      for (const l of labels) print(l, plannedRow([l]));
+      print('Total planned changes', plannedRow(labels));
     }
   }
-  const inc = incRow(incAccts);
-  print('Total payroll', sumRow(payload.accounts.map((a) => a.acct)).map((v, i) => v + inc[i]));
+  const changes = plannedRow(labels);
+  print('Total payroll', sumRow(payload.accounts.map((a) => a.acct)).map((v, i) => v + changes[i]));
 }
 
 async function reconcile(ns) {
@@ -110,18 +113,25 @@ async function main() {
   if (arg('json')) console.log(JSON.stringify(payload, null, 2));
   if (arg('dry-run')) {
     const ov = payload.overrides;
+    const ch = payload.changes || { rows: [], error: null };
     const sm = await loadSalaryModule();
-    const counted = new Set(sm.countedIncrementRows(payload.blocks, ov.rows));
-    const increments = {};
-    for (const r of counted) {
-      const m = increments[r.month] || (increments[r.month] = {});
-      m[r.acct] = (m[r.acct] || 0) + (Number(r.ils) || 0);
-    }
-    for (const block of payload.blocks) printYear(payload, block, increments);
+    const countedIncrements = new Set(sm.countedIncrementRows(payload.blocks, ov.rows));
+    const countedChanges = new Set(sm.countedChangeRows(payload.blocks, ch.rows));
+    const planned = new Map();
+    const add = (label, r) => {
+      const m = planned.get(label) || new Map();
+      m.set(r.month, (m.get(r.month) || 0) + (Number(r.ils) || 0));
+      planned.set(label, m);
+    };
+    const CHANGE_LABEL = { 'Open position': 'planned hires', Terminated: 'leavers', 'Leave end': 'returns from leave' };
+    for (const source of Object.keys(CHANGE_LABEL)) for (const r of countedChanges) if (r.source === source) add(`${r.acct} ${CHANGE_LABEL[source]} (Snowflake)`, r);
+    for (const r of countedIncrements) add(`${r.acct} increment (override file)`, r);
+    for (const block of payload.blocks) printYear(payload, block, planned);
+    console.log(`\nPlanned hires, leavers and returns from leave on ${(ch.accounts || []).join(', ') || '–'} (Snowflake): ${ch.error ? ch.error : `${countedChanges.size} of ${ch.rows.length} month row(s) counted (the projected months)`}`);
     console.log(`\nOverride file, rows on ${(ov.accounts || []).join(', ') || '–'} from January ${payload.years[0]}: ${ov.error ? ov.error : `${ov.rows.length} row(s)`}`);
     console.log('  (+ = an increment counted in Total payroll; increments in closed months are not counted, overrides never are)');
     for (const r of ov.rows) {
-      console.log(`${counted.has(r) ? '+ ' : '  '}${r.month}  ${r.acct.padEnd(8)}${r.mode.padEnd(10)}${eur(r.eur)}  ${(r.department || '–').slice(0, 24).padEnd(25)}${r.memo.slice(0, 50)}`);
+      console.log(`${countedIncrements.has(r) ? '+ ' : '  '}${r.month}  ${r.acct.padEnd(8)}${r.mode.padEnd(10)}${eur(r.eur)}  ${(r.department || '–').slice(0, 24).padEnd(25)}${r.memo.slice(0, 50)}`);
     }
   }
 
