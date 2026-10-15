@@ -59,6 +59,19 @@ function itemHint(group: SalaryGroup, method: SalaryMethod, runRate: string, yea
 
 const sumOf = (accts: string[]) => (f: SalaryFigures) => accts.reduce((s, a) => s + (f[a] ?? 0), 0);
 
+/** A section title row over a group of lines (no amounts). */
+const header = (key: string, label: string, hint: string): SalaryLineDef => ({ key, label, kind: 'header', fy: 'sum', value: () => 0, hint });
+
+const GROUP_HEADER: Record<SalaryGroup, string> = { permanent: 'Permanent', temporary: 'Temporary', other: 'Not classified' };
+
+function groupHeaderHint(group: SalaryGroup, runRate: string, years: [number, number]): string {
+  if (group === 'permanent') return `Recurring pay and its burden. Forecast: ${runRate} carried into every month.`;
+  if (group === 'temporary') {
+    return `One-offs and seasonal payments. Forecast: the same month of the previous year for the rest of ${years[0]}, 0 in ${years[1]}; actuals-only accounts are not projected.`;
+  }
+  return 'Accounts without a classification yet, projected like temporary ones. Use Permanent / temporary to pick.';
+}
+
 /** The planned changes' table lines, and the ones Total payroll adds (hires, leavers, returns, increments). */
 interface PlannedDefs {
   defs: SalaryLineDef[];
@@ -66,8 +79,8 @@ interface PlannedDefs {
 }
 
 /**
- * The table lines: each group's accounts, then its subtotal, then the total. The planned changes' lines (when
- * given) come right after the permanent group; Total payroll adds those in totalKeys.
+ * The table lines: each group's header, accounts and subtotal, then the total. The planned changes' lines (when
+ * given, with their own headers) come right after the permanent group; Total payroll adds those in totalKeys.
  */
 export function salaryLineDefs(
   accounts: SalaryAccount[], runRateMonth: string, years: [number, number], planned: PlannedDefs = { defs: [], totalKeys: [] },
@@ -77,6 +90,7 @@ export function salaryLineDefs(
   for (const group of GROUPS) {
     const list = accounts.filter((a) => a.group === group);
     if (list.length) {
+      defs.push(header(`header-${group}`, GROUP_HEADER[group], groupHeaderHint(group, runRate, years)));
       for (const a of list) {
         defs.push({ key: a.acct, label: `${a.acct} - ${a.name}`, kind: 'item', fy: 'sum', value: (f) => f[a.acct] ?? 0, hint: itemHint(group, a.method, runRate, years) });
       }
@@ -141,8 +155,8 @@ const listOf = (values: string[], max: number) => {
 const accountLabel = (acct: string, name: string) => `${acct}${name ? ` - ${name}` : ''}`;
 
 /**
- * The planned changes as table lines. Each month's amounts are keyed by line ('hires|760001',
- * 'increment|760001'), so they never mix with the accounts' own figures.
+ * The planned changes as table lines, each source under its header. Each month's amounts are keyed by line
+ * ('hires|760001', 'increment|760001'), so they never mix with the accounts' own figures.
  *   - Snowflake's planned hires, leavers and returns from leave: one line per account and source, then "Total
  *     headcount changes". They show only where they count in Total payroll: the projected months
  *     (countedChangeRows).
@@ -171,6 +185,9 @@ function plannedLines(payload: SalaryPayload): PlannedDefs & { sums: Map<string,
     addTo(key, r.month, r.eur, r.ils);
   }
   const changeList = [...changes.entries()].sort(([, a], [, b]) => SOURCES.indexOf(a.source) - SOURCES.indexOf(b.source) || a.acct.localeCompare(b.acct));
+  if (changeList.length) {
+    defs.push(header('header-changes', 'Headcount changes', `Planned hires, leavers and returns from leave, from Snowflake's payroll forecast.${COUNTED}`));
+  }
   for (const [key, l] of changeList) {
     defs.push({
       key, label: `${accountLabel(l.acct, l.name)} (${SOURCE_LABEL[l.source]})`, kind: 'item', fy: 'sum', value: (f) => f[key] ?? 0,
@@ -199,6 +216,9 @@ function plannedLines(payload: SalaryPayload): PlannedDefs & { sums: Map<string,
     addTo(key, r.month, r.eur, r.ils);
   }
   const list = [...lines.entries()].sort(([, a], [, b]) => a.acct.localeCompare(b.acct));
+  if (list.length) {
+    defs.push(header('header-overrides', 'Override file', 'The override sheet\'s rows (Snowflake): increments are added to Total payroll from the current month on; overrides are for reference.'));
+  }
   for (const mode of MODES) {
     const ofMode = list.filter(([, l]) => l.mode === mode);
     if (!ofMode.length) continue;

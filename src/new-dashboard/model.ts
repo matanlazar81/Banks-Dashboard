@@ -7,7 +7,8 @@ export type LineKey =
   | 'salary' | 'vendors' | 'other' | 'outflows'
   | 'reval' | 'net' | 'dividend' | 'closing' | 'reanchor' | 'gap';
 
-export type LineKind = 'balance' | 'item' | 'subtotal' | 'note';
+/** 'header' is a section title row: its label only, no amounts. */
+export type LineKind = 'balance' | 'item' | 'subtotal' | 'note' | 'header';
 
 /** One table line over a month's figures F (shared with the P&L Projection, which has its own F). */
 export interface LineDefOf<F, K extends string = string> {

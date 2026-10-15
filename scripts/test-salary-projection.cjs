@@ -436,13 +436,18 @@ async function testModel(payload) {
     'one year → 13 columns');
   const keys = table.lines.map((l) => l.key);
   const expected = [
-    ...sp.SALARY_GL_GROUPS[0].accounts.map(([a]) => a), 'total-permanent',
-    ...sp.SALARY_GL_GROUPS[1].accounts.map(([a]) => a), 'total-temporary',
-    '760040', 'total-other', 'total',
+    'header-permanent', ...sp.SALARY_GL_GROUPS[0].accounts.map(([a]) => a), 'total-permanent',
+    'header-temporary', ...sp.SALARY_GL_GROUPS[1].accounts.map(([a]) => a), 'total-temporary',
+    'header-other', '760040', 'total-other', 'total',
   ];
-  check(JSON.stringify(keys) === JSON.stringify(expected), 'lines: permanent accounts + subtotal, temporary + subtotal, unclassified + subtotal, total', keys.join(','));
-  check(table.lines[0].label === '760001 - Gross Salaries' && table.lines[0].kind === 'item' && table.lines.find((l) => l.key === 'total').kind === 'subtotal',
+  check(JSON.stringify(keys) === JSON.stringify(expected), 'lines: each group\'s header, accounts and subtotal (permanent, temporary, unclassified), then the total', keys.join(','));
+  const acct1 = table.lines.find((l) => l.key === '760001');
+  check(acct1.label === '760001 - Gross Salaries' && acct1.kind === 'item' && table.lines.find((l) => l.key === 'total').kind === 'subtotal',
     'labels read "760001 - Gross Salaries"; totals are subtotals');
+  const headers = table.lines.filter((l) => l.kind === 'header');
+  check(JSON.stringify(headers.map((l) => l.label)) === JSON.stringify(['Permanent', 'Temporary', 'Not classified']) && headers.every((l) => l.values.every((v) => v === 0))
+    && /September 2026 carried into every month/.test(headers[0].hint) && /rest of 2026, 0 in 2027/.test(headers[1].hint),
+    'section headers: Permanent, Temporary, Not classified; no amounts; hints say how each group is projected');
   const hint = (k) => table.lines.find((l) => l.key === k).hint;
   check(/NetSuite/.test(hint('760001')) && /September 2026 carried forward/.test(hint('760001')) && /same month of the previous year for the rest of 2026; 0 in 2027/.test(hint('760017')) && /not projected/.test(hint('760023')),
     'hints say how each account is projected (run-rate, same month last year, not projected)');
@@ -508,11 +513,11 @@ async function testModel(payload) {
   const ovTable = model.buildSalaryTable(withOv, 'ils', 'both');
   const ovKeys = ovTable.lines.map((l) => l.key);
   const ovExpected = [
-    ...sp.SALARY_GL_GROUPS[0].accounts.map(([a]) => a), 'total-permanent',
-    'hires|760001', 'leavers|760001', 'returns|760001', 'total-changes',
-    'increment|760001', 'increment|760002', 'total-increments', 'override|760001', 'total-overrides',
-    ...sp.SALARY_GL_GROUPS[1].accounts.map(([a]) => a), 'total-temporary',
-    '760040', 'total-other', 'total',
+    'header-permanent', ...sp.SALARY_GL_GROUPS[0].accounts.map(([a]) => a), 'total-permanent',
+    'header-changes', 'hires|760001', 'leavers|760001', 'returns|760001', 'total-changes',
+    'header-overrides', 'increment|760001', 'increment|760002', 'total-increments', 'override|760001', 'total-overrides',
+    'header-temporary', ...sp.SALARY_GL_GROUPS[1].accounts.map(([a]) => a), 'total-temporary',
+    'header-other', '760040', 'total-other', 'total',
   ];
   check(JSON.stringify(ovKeys) === JSON.stringify(ovExpected),
     'between Total permanent and the temporary accounts: hires, leavers, returns + Total headcount changes, then increments + Total increments, then overrides + Total overrides', ovKeys.join(','));
@@ -574,7 +579,11 @@ async function testModel(payload) {
     'KPIs: year to date and the run-rate are the accounts\' own (planned changes never count in closed months)');
 
   const allTemporary = model.withClassification(withOv, Object.fromEntries(payload.accounts.map((a) => [a.acct, 'last-year'])));
-  check(model.buildSalaryTable(allTemporary, 'ils', 'both').lines[0].key === 'hires|760001', 'no permanent account: the planned changes come first');
+  const firstKeys = model.buildSalaryTable(allTemporary, 'ils', 'both').lines.slice(0, 2).map((l) => l.key);
+  check(JSON.stringify(firstKeys) === JSON.stringify(['header-changes', 'hires|760001']), 'no permanent account: the planned changes come first, under their header');
+  check(ovLine('header-changes').label === 'Headcount changes' && ovLine('header-overrides').label === 'Override file' && ovLine('header-changes').kind === 'header'
+    && ovLine('header-overrides').values.every((v) => v === 0) && /Snowflake/.test(ovLine('header-changes').hint),
+    'planned changes: a "Headcount changes" and an "Override file" header, no amounts');
   const onlyChanges = model.buildSalaryTable({ ...payload, changes }, 'ils', 'both').lines.map((l) => l.key);
   check(onlyChanges.includes('total-changes') && !onlyChanges.some((k) => /increment|override/.test(k)), 'planned changes without the override file');
   const plain = (p) => JSON.stringify(model.buildSalaryTable(p, 'ils', 'both').lines.map((l) => l.key)) === JSON.stringify(expected);
