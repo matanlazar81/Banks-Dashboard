@@ -69,36 +69,49 @@ with who saved it). **Defaults** goes back to finance's classification. Saving n
 (`salary_projection`) and goes through `GET/PUT /api/salary-projection/classification`. Changing the default
 itself still means editing `SALARY_GL_GROUPS` / `ACTUALS_ONLY` and deploying.
 
-**The override file.** The override sheet's rows (`OVERIDE_TEMP`, loaded into Snowflake `FCT_EXPENSE` as
-`future_cost_override` / `future_cost_increment`) on account **760001** (the sheet's column A: finance's payroll
-rows, `OVERRIDE_ACCOUNTS` in `server/salary-projection.cjs`), LSports, from January of the current year:
-- **In the table, between permanent and temporary**: one line per account and type, e.g.
-  "760001 - Gross Salaries (increment)", summing the account's rows of a month across departments. Hovering a
-  line shows its type, departments and comments (`overrideLines` in `src/salary-projection/model.ts`). With no
-  permanent account, the lines come first.
-  - **Increments**, then **Total increments**: added to **Total payroll** in the current and forecast months
-    (`countedIncrementRows` in `src/forecast/salary-projection.mjs`). Closed months are NetSuite's actuals, which
-    already include them, so an increment there is neither shown in the line nor added.
-  - **Overrides**, in italics, then **Total overrides (not in total payroll)**: for reference. An override
-    replaces one department's budget for the account and month, and this page projects by account, so adding it
-    would count that department twice.
-  - The accounts' own lines and the Total permanent / Total temporary subtotals leave the file out.
-- **KPIs**: full-year payroll adds the increments (it equals the table's FY Total payroll) and says how much;
-  year to date and the run-rate are NetSuite's.
-- **Payroll in the override file**, under the table: the counts, how many increments fall in closed months,
-  and the file's rows (collapsed): month, account, department, type (Override replaces the budget of that
-  account and month; Increment adds to it), amount and comment. Rows after December of the next year are only
-  there, and a note counts them.
-- Amounts are in the page's currency. When the file has euros only, shekels are at the forecast rate (marked ≈).
-- Read with the projection (`fetchPayrollOverrides` in `snowflake-api.cjs`). If Snowflake fails, the page
-  still loads and says the file could not be read. `--dry-run` adds the increments to Total payroll the same
-  way, and marks the rows that count with `+`.
+**Planned changes.** Between permanent and temporary, the table shows the planned changes on account
+**760001** (Gross Salaries; `OVERRIDE_ACCOUNTS` in `server/salary-projection.cjs`, finance's choice), from
+January of the current year, from two Snowflake sources (`plannedLines` in `src/salary-projection/model.ts`):
+
+1. **Hires, leavers and returns from leave**: Snowflake's HR-driven payroll forecast, `FCT_EXPENSE` sources
+   `Open position` (planned hires), `Terminated` (leavers, negative) and `Leave end` (returns from leave), summed
+   by month (`fetchPayrollChanges` in `snowflake-api.cjs`; no employee detail is read). One line per source, e.g.
+   "760001 - Gross Salaries (leavers)", then **Total headcount changes**. Each month's amount is what that month
+   adds to the forecast. The forecast's own baseline (`payroll future baseline`) is not used: the page's baseline
+   is NetSuite's last closed month.
+2. **The override file**: the override sheet's rows (`OVERIDE_TEMP`, loaded into `FCT_EXPENSE` as
+   `future_cost_override` / `future_cost_increment`) on the same account (the sheet's column A)
+   (`fetchPayrollOverrides`). One line per type, summing the account's rows of a month across departments;
+   hovering a line shows its departments and comments.
+   - **Increments**, then **Total increments**.
+   - **Overrides**, in italics, then **Total overrides (not in total payroll)**: for reference. An override
+     replaces one department's budget for the account and month, and this page projects by account, so adding
+     it would count that department twice.
+
+How they count:
+- **Total payroll adds the hires, leavers, returns from leave and increments** in the current and forecast
+  months (`countedChangeRows` / `countedIncrementRows` in `src/forecast/salary-projection.mjs`). Closed months are
+  NetSuite's actuals, which already include what happened, so a planned change there is neither shown nor added.
+- The accounts' own lines and the Total permanent / Total temporary subtotals leave them out. With no permanent
+  account, the planned changes come first.
+- **KPIs**: full-year payroll adds them (it equals the table's FY Total payroll) and says how much; year to date
+  and the run-rate are NetSuite's.
+- Amounts are in the page's currency. When Snowflake has one currency only, the other is at the forecast rate
+  (override rows with euros only are marked ≈).
+- Both are read with the projection. If Snowflake fails, the page still loads: a warning says Total payroll
+  leaves the hires and leavers out, and the override section says the file could not be read.
+- `--dry-run` adds them to Total payroll the same way, and marks the override rows that count with `+`.
+
+**Payroll in the override file**, under the table: the counts, how many increments fall in closed months, and
+the file's rows (collapsed): month, account, department, type (Override replaces the budget of that account and
+month; Increment adds to it), amount and comment. Rows after December of the next year are only there, and a
+note counts them.
 
 **The page**
-- KPIs: payroll year to date, full-year payroll for each year (with the override file's increments), and the
-  permanent monthly run-rate.
-- The table: permanent accounts and subtotal, the override file's lines (increments counted, overrides for
-  reference), temporary accounts and subtotal, then the total payroll.
+- KPIs: payroll year to date, full-year payroll for each year (with the planned changes), and the permanent
+  monthly run-rate.
+- The table: permanent accounts and subtotal, the planned changes (hires, leavers, returns from leave and
+  increments counted; overrides for reference), temporary accounts and subtotal, then the total payroll.
 - Under the table: the override file's rows (above).
 - Controls: Permanent / temporary (the classification panel), ILS (default) or EUR, one year or both,
   Refresh, and Export (Excel, the table as shown).
@@ -167,12 +180,13 @@ and P&L Projection were added (`docs/metrics.md`, `docs/pnl-projection.md`).
 | `SALARY_PROJECTION_PREWARM` | `CASH_PROJECTION_PREWARM` | `1` = compute 30 s after the server starts if the cache is empty |
 
 NetSuite settings are the server's usual `NETSUITE_*` variables (`NET_CASH_SUBSIDIARY`, default 3). Snowflake
-(`SNOWFLAKE_*`) is used for the override file and by `--reconcile`.
+(`SNOWFLAKE_*`) is used for the planned changes (hires, leavers, returns from leave, the override file) and by
+`--reconcile`.
 
 ## Checking it
 
 ```bash
-node scripts/test-salary-projection.cjs          # synthetic: classification, last closed month, run-rate, same month last year, actuals only, €, cache, UI model, override file and its increments
+node scripts/test-salary-projection.cjs          # synthetic: classification, last closed month, run-rate, same month last year, actuals only, €, cache, UI model, planned changes
 node scripts/salary-projection.cjs --dry-run     # real data (NetSuite)
 node scripts/salary-projection.cjs --reconcile   # real data: Snowflake vs NetSuite P&L, payroll accounts, closed months
 ```
@@ -183,10 +197,11 @@ node scripts/salary-projection.cjs --reconcile   # real data: Snowflake vs NetSu
 ## Limitations
 
 - LSports only, like the other projection pages.
-- Permanent accounts stay flat at the last closed month. Planned hires, leavers and raises count only as far as
-  the override file's increments on 760001 have them (in Total payroll, not in the account lines); its overrides
-  are not applied. The P&L Projection's payroll forecast includes more, so the two pages can differ in forecast
-  months.
+- Permanent accounts stay flat at the last closed month. Planned hires, leavers and returns from leave (and the
+  override file's increments) count on 760001 only, in Total payroll, not in the account lines: the same events
+  on the other payroll accounts (national insurance, pension and the like) are not added. The override file's
+  overrides are not applied. The P&L Projection's payroll forecast works differently, so the two pages can
+  differ in forecast months.
 - Temporary accounts repeat last year as it was for the rest of the current year (a bonus month repeats in the
   same month) and are 0 in the next year. Accounts that should not repeat at all are "Actuals only" (by default
   760023, 760029, 760008 and 760014).

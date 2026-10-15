@@ -10,7 +10,8 @@
 //
 // The projection is made in ILS; forecast € = ₪ ÷ ilsPerEur. Actual months keep their own €.
 //
-// The override file's increments add to Total payroll in the projected months (countedIncrementRows); the
+// Planned changes add to Total payroll in the projected months: the override file's increments
+// (countedIncrementRows) and Snowflake's hires, leavers and returns from leave (countedChangeRows). The
 // accounts' own figures leave them out.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -101,7 +102,23 @@ export function projectSalary({ years, currentMonth, runRateMonth, ilsPerEur, ac
  * Returns the rows that count (the same objects).
  */
 export function countedIncrementRows(blocks, rows) {
-  const projected = new Set();
-  for (const b of blocks || []) for (const r of b.rows || []) if (r.status !== 'actual') projected.add(r.mKey);
+  const projected = projectedMonths(blocks);
   return (rows || []).filter((r) => r && r.mode === 'Increment' && projected.has(r.month));
+}
+
+/**
+ * Snowflake's planned payroll changes that count in Total payroll: hires (Open position), leavers (Terminated)
+ * and returns from leave (Leave end) in the months the projection makes. Closed months are NetSuite's actuals,
+ * which already include what happened. Returns the rows that count (the same objects).
+ */
+export function countedChangeRows(blocks, rows) {
+  const projected = projectedMonths(blocks);
+  return (rows || []).filter((r) => r && projected.has(r.month));
+}
+
+/** The months the projection makes (the current month and forecast months): where planned changes count. */
+export function projectedMonths(blocks) {
+  const months = new Set();
+  for (const b of blocks || []) for (const r of b.rows || []) if (r.status !== 'actual') months.add(r.mKey);
+  return months;
 }

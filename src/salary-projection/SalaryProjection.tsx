@@ -49,8 +49,12 @@ export default function SalaryProjection() {
   const shown = useMemo(() => (data ? withClassification(data, classification.current) : null), [data, classification.current]);
   const table = useMemo(() => (shown ? buildSalaryTable(shown, ccy, view) : null), [shown, ccy, view]);
   const kpis = useMemo(() => (shown ? computeSalaryKpis(shown, ccy) : null), [shown, ccy]);
-  const hasIncrements = !!table && table.lines.some((l) => l.key === 'total-increments');
-  const hasOverrides = !!table && table.lines.some((l) => l.key === 'total-overrides');
+  const hasLine = (key: string) => !!table && table.lines.some((l) => l.key === key);
+  const hasChanges = hasLine('total-changes');
+  const hasIncrements = hasLine('total-increments');
+  const hasOverrides = hasLine('total-overrides');
+  // What Total payroll adds from the current month on.
+  const added = [hasChanges && 'hires and leavers', hasIncrements && 'override increments'].filter(Boolean).join(' and ');
 
   const chooseCcy = (c: Ccy) => { setCcy(c); writeParam('ccy', c === 'eur' ? 'eur' : null); };
   const chooseView = (v: YearView) => { setView(v); writeParam('years', v === 'both' ? null : v); };
@@ -60,7 +64,7 @@ export default function SalaryProjection() {
   const unclassified = shown ? shown.accounts.filter((a) => a.group === 'other') : [];
   const canClassify = !!(data && data.actual);
   const method = runRate
-    ? `Permanent: ${runRate} run-rate · Temporary: same month last year for ${data ? data.years[0] : ''}, 0 in ${data ? data.years[1] : ''}${notProjected.length ? ` · Not projected: ${notProjected.map((a) => a.acct).join(', ')}` : ''}${hasIncrements ? ' · Override file increments added from the current month' : ''}`
+    ? `Permanent: ${runRate} run-rate · Temporary: same month last year for ${data ? data.years[0] : ''}, 0 in ${data ? data.years[1] : ''}${notProjected.length ? ` · Not projected: ${notProjected.map((a) => a.acct).join(', ')}` : ''}${added ? ` · ${added.charAt(0).toUpperCase()}${added.slice(1)} added from the current month` : ''}`
     : '';
 
   async function onExport() {
@@ -199,10 +203,10 @@ export default function SalaryProjection() {
               education fund and the like) carry the last closed month, {runRate}, into every forecast month. Temporary
               accounts (bonuses, recuperation, maternity and other one-offs) repeat the same month of the previous
               year for the rest of {y0}, so seasonal payments stay in their month; in {y1} they are 0.
-              {(hasIncrements || hasOverrides) && ` Between the two groups come the override file's payroll rows: ${[
-                hasIncrements && 'its increments are added to Total payroll from the current month on (closed months are NetSuite\'s actuals, which already include them)',
-                hasOverrides && 'its overrides, in italics, are for reference and not in Total payroll',
-              ].filter(Boolean).join('; ')}.`}
+              {(hasChanges || hasIncrements || hasOverrides) && ` Between the two groups come the planned changes: ${[
+                hasChanges && 'planned hires, leavers and returns from leave (Snowflake\'s payroll forecast)',
+                hasIncrements && 'the override file\'s increments',
+              ].filter(Boolean).join(' and ')}${hasChanges || hasIncrements ? ' are added to Total payroll from the current month on (closed months are NetSuite\'s actuals, which already include what happened)' : ''}${hasOverrides ? `${hasChanges || hasIncrements ? '; ' : ''}the override file's overrides, in italics, are for reference and not in Total payroll` : ''}.`}
               {notProjected.length > 0 && ` Actuals only, not projected: ${notProjected.map((a) => `${a.acct} ${a.name}`).join(', ')}.`}
               {' '}The current month is projected as a whole month. Forecasts are made in shekels; euros use the rate above.
               Use Permanent / temporary to change how an account is projected.

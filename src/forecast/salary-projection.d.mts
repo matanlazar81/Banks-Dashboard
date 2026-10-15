@@ -36,3 +36,10 @@ export declare function countedIncrementRows<R extends { month: string; mode: 'O
   blocks: { rows: { mKey: string; status: SalaryRow['status'] }[] }[],
   rows: R[],
 ): R[];
+
+export declare function countedChangeRows<R extends { month: string }>(
+  blocks: { rows: { mKey: string; status: SalaryRow['status'] }[] }[],
+  rows: R[],
+): R[];
+
+export declare function projectedMonths(blocks: { rows: { mKey: string; status: SalaryRow['status'] }[] }[]): Set<string>;

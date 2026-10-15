@@ -1,8 +1,8 @@
 {
   "ok": true,
-  "schemaVersion": 6,
+  "schemaVersion": 7,
   "status": "ready",
-  "generatedAt": "2026-10-15T14:11:30.058Z",
+  "generatedAt": "2026-10-15T14:34:49.133Z",
   "computedMonth": "2026-10",
   "company": "lsports",
   "years": [
@@ -728,6 +728,38 @@
         "ils": 185000,
         "ilsEstimated": false,
         "memo": ""
+      }
+    ],
+    "error": null,
+    "accounts": [
+      "760001"
+    ]
+  },
+  "changes": {
+    "rows": [
+      {
+        "month": "2026-10",
+        "acct": "760001",
+        "name": "Gross Salaries",
+        "source": "Terminated",
+        "eur": -30000,
+        "ils": -110000
+      },
+      {
+        "month": "2026-12",
+        "acct": "760001",
+        "name": "Gross Salaries",
+        "source": "Open position",
+        "eur": 23000,
+        "ils": 85000
+      },
+      {
+        "month": "2027-01",
+        "acct": "760001",
+        "name": "Gross Salaries",
+        "source": "Terminated",
+        "eur": -87000,
+        "ils": -323000
       }
     ],
     "error": null,

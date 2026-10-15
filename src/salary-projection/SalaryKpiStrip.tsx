@@ -6,7 +6,7 @@ import type { Ccy } from './types.ts';
 export default function SalaryKpiStrip({ kpis, ccy }: { kpis: SalaryKpis; ccy: Ccy }) {
   const [current, next] = kpis.byYear;
   const through = kpis.ytd.through;
-  const withIncrements = (note: string, increments: number) => (Math.abs(increments) >= 0.5 ? `${note}, incl. ${formatFull(increments, ccy)} of increments` : note);
+  const withChanges = (note: string, changes: number) => (Math.abs(changes) >= 0.5 ? `${note}, incl. ${formatFull(changes, ccy)} of planned changes` : note);
   return (
     <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
       <KpiCard
@@ -15,8 +15,8 @@ export default function SalaryKpiStrip({ kpis, ccy }: { kpis: SalaryKpis; ccy: C
         ccy={ccy}
         note={through ? `NetSuite, January to ${monthLongLabel(through)}` : 'No closed month yet'}
       />
-      {current && <KpiCard label={`Payroll FY ${current.year}`} value={current.value} ccy={ccy} note={withIncrements('Actuals + forecast', current.increments)} />}
-      {next && <KpiCard label={`Payroll FY ${next.year}`} value={next.value} ccy={ccy} note={withIncrements('Projection', next.increments)} />}
+      {current && <KpiCard label={`Payroll FY ${current.year}`} value={current.value} ccy={ccy} note={withChanges('Actuals + forecast', current.changes)} />}
+      {next && <KpiCard label={`Payroll FY ${next.year}`} value={next.value} ccy={ccy} note={withChanges('Projection', next.changes)} />}
       <KpiCard
         label="Permanent run-rate"
         value={kpis.runRate.value}
