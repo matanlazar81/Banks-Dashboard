@@ -9,6 +9,9 @@
 //   none       actuals only: forecast months are 0
 //
 // The projection is made in ILS; forecast € = ₪ ÷ ilsPerEur. Actual months keep their own €.
+//
+// The override file's increments add to Total payroll in the projected months (countedIncrementRows); the
+// accounts' own figures leave them out.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const SALARY_METHODS = ['run-rate', 'last-year', 'none'];
@@ -86,4 +89,19 @@ export function projectSalary({ years, currentMonth, runRateMonth, ilsPerEur, ac
     }),
   });
   return [blockOf(Y, 'current'), blockOf(T, 'projection')];
+}
+
+/**
+ * The override file's rows that count in Total payroll: increments in the months the projection makes (the
+ * current month and forecast months). Closed months are NetSuite's actuals, which already include them.
+ * Overrides replace one department's budget for an account and month, which a projection by account cannot
+ * isolate, so they never count. Months outside the blocks do not count either.
+ *   blocks  the projection's year blocks (month keys and statuses)
+ *   rows    the override file's rows ({ month: 'YYYY-MM', mode: 'Override' | 'Increment', ... })
+ * Returns the rows that count (the same objects).
+ */
+export function countedIncrementRows(blocks, rows) {
+  const projected = new Set();
+  for (const b of blocks || []) for (const r of b.rows || []) if (r.status !== 'actual') projected.add(r.mKey);
+  return (rows || []).filter((r) => r && r.mode === 'Increment' && projected.has(r.month));
 }

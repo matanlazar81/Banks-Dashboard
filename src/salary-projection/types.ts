@@ -65,8 +65,11 @@ export interface SalaryPayload {
   basis: { runRateMonth: string; ilsPerEur: number };
   /** The actual months by account (the previous year and this year's closed months), to re-project on the page. */
   actual?: Record<string, AccountAmounts>;
-  /** The override file's payroll rows (Snowflake), for reference; not part of the projection. */
-  overrides?: { rows: PayrollOverride[]; error: string | null };
+  /**
+   * The override file's payroll rows (Snowflake, the rows on `accounts`). The account projection (blocks)
+   * leaves them out; the page adds the increments to Total payroll from the current month on.
+   */
+  overrides?: { rows: PayrollOverride[]; error: string | null; accounts?: string[] };
   degraded: boolean;
   failedFeeds: string[];
   warnings: string[];

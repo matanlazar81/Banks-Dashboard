@@ -1,8 +1,8 @@
 {
   "ok": true,
-  "schemaVersion": 5,
+  "schemaVersion": 6,
   "status": "ready",
-  "generatedAt": "2026-10-15T13:41:07.142Z",
+  "generatedAt": "2026-10-15T14:11:30.058Z",
   "computedMonth": "2026-10",
   "company": "lsports",
   "years": [
@@ -720,8 +720,8 @@
       },
       {
         "month": "2026-12",
-        "acct": "760017",
-        "name": "One time payments (Bonus, grants)",
+        "acct": "760001",
+        "name": "Gross Salaries",
         "department": "Sales",
         "mode": "Override",
         "eur": 50000,
@@ -730,7 +730,10 @@
         "memo": ""
       }
     ],
-    "error": null
+    "error": null,
+    "accounts": [
+      "760001"
+    ]
   },
   "degraded": false,
   "failedFeeds": [],

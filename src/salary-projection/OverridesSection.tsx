@@ -1,6 +1,7 @@
 // The override file's payroll rows (OVERIDE_TEMP, loaded into Snowflake as future-cost overrides and
-// increments). By month they are in the table above, between permanent and temporary; this section lists the
-// rows themselves, with departments and comments. They are not part of the projection.
+// increments, on the payload's override accounts). By month they are in the table above, between permanent
+// and temporary, where the increments count in Total payroll from the current month on; this section lists the
+// rows themselves, with departments and comments.
 import { formatFull, monthLongLabel } from '../new-dashboard/model.ts';
 import type { Ccy, PayrollOverride, SalaryPayload } from './types.ts';
 
@@ -60,30 +61,34 @@ function RowList({ rows, ccy }: { rows: PayrollOverride[]; ccy: Ccy }) {
 
 export default function OverridesSection({ payload, ccy }: Props) {
   const { rows, error } = payload.overrides ?? { rows: [], error: null };
+  const accounts = payload.overrides?.accounts ?? [];
   const [year, lastYear] = payload.years;
   const counts = { Override: rows.filter((r) => r.mode === 'Override').length, Increment: rows.filter((r) => r.mode === 'Increment').length };
+  const closed = new Set(payload.blocks.flatMap((b) => b.rows.filter((r) => r.status === 'actual').map((r) => r.mKey)));
+  const inClosed = rows.filter((r) => r.mode === 'Increment' && closed.has(r.month)).length;
   const outside = rows.filter((r) => r.month > `${lastYear}-12`).length;
   const estimated = ccy === 'ils' && rows.some((r) => r.ilsEstimated);
+  const where = accounts.length ? `on account${accounts.length === 1 ? '' : 's'} ${accounts.join(', ')}` : 'on payroll';
 
   return (
     <section className="rounded-lg border border-slate-200 bg-white">
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 border-b border-slate-200 px-4 py-2.5">
         <h2 className="text-sm font-semibold text-slate-800">Payroll in the override file</h2>
         <span className="text-xs text-slate-500">
-          Override sheet rows on payroll accounts from January {year} (Snowflake). By month they are in the table above,
-          between permanent and temporary. For reference: not in Total payroll.
+          Override sheet rows {where} from January {year} (Snowflake). By month they are in the table above, between
+          permanent and temporary: increments count in Total payroll from the current month on; overrides are for reference.
         </span>
       </div>
 
       {error && <p className="px-4 py-3 text-xs text-amber-700">{error}</p>}
-      {!error && rows.length === 0 && <p className="px-4 py-3 text-xs text-slate-500">No payroll rows in the override file from January {year}.</p>}
+      {!error && rows.length === 0 && <p className="px-4 py-3 text-xs text-slate-500">No rows {where} in the override file from January {year}.</p>}
 
       {rows.length > 0 && (
         <>
           <p className="px-4 py-2 text-[11px] text-slate-500">
-            {counts.Increment} increment{counts.Increment === 1 ? '' : 's'} (added to the budget) and {counts.Override} override
-            {counts.Override === 1 ? '' : 's'} (replacing the budget). In the table, each line sums an account's rows of one type
-            across departments; hover it for the departments and comments.
+            {counts.Increment} increment{counts.Increment === 1 ? '' : 's'} and {counts.Override} override{counts.Override === 1 ? '' : 's'}.
+            In the table, each line sums an account's rows of one type across departments; hover it for the departments and comments.
+            {inClosed > 0 && ` ${inClosed} increment${inClosed === 1 ? ' is' : 's are'} in closed months and not added: NetSuite's actuals already include them.`}
             {outside > 0 && ` ${outside} row${outside === 1 ? ' is' : 's are'} after December ${lastYear}: listed below only.`}
             {estimated && ' ≈ Where the file has euros only, shekels are at the forecast rate.'}
           </p>
