@@ -48,7 +48,7 @@ const cp = require('./cash-projection.cjs');
 const { readDoc, createDocHandler } = require('./json-store.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
-const SCHEMA_VERSION = 8; // 3: the actual months and each account's default method; 4: the override file's payroll rows; 5: temporary 0 next year; 6: override rows on 760001 only; 7: Snowflake's planned hires, leavers and returns from leave; 8: every payroll account, as the old dashboard
+const SCHEMA_VERSION = 9; // 3: the actual months and each account's default method; 4: the override file's payroll rows; 5: temporary 0 next year; 6: override rows on 760001 only; 7: Snowflake's planned hires, leavers and returns from leave; 8: every payroll account, as the old dashboard; 9: planned changes by department (the page's breakdowns)
 const DEFAULT_CACHE_FILE = path.join(ROOT, 'data', 'salary-projection-cache.json');
 const CLASSIFICATION_FILE = path.join(ROOT, 'data', 'salary-classification.json');
 const { ProjectionError } = cp;
@@ -221,8 +221,9 @@ function overridesOf(overrides, Y, ilsPerEur) {
 }
 
 /**
- * Snowflake's planned payroll changes for the payload: from January of year Y, sorted by month, account and
- * source. When Snowflake has one currency only, the other is at the forecast rate.
+ * Snowflake's planned payroll changes for the payload, by month, account, source and department (the page's
+ * breakdowns): from January of year Y, sorted that way. When Snowflake has one currency only, the other is at
+ * the forecast rate.
  */
 function changesOf(changes, Y, ilsPerEur) {
   if (!changes) return { rows: [], error: 'The planned payroll changes were not read.' };
@@ -234,9 +235,10 @@ function changesOf(changes, Y, ilsPerEur) {
       let ils = cents(r.ils);
       if (Math.abs(ils) < 0.5 && Math.abs(eur) >= 0.5) ils = cents(eur * ilsPerEur);
       else if (Math.abs(eur) < 0.5 && Math.abs(ils) >= 0.5) eur = cents(ils / ilsPerEur);
-      return { month: String(r.month), acct: String(r.acct || ''), name: String(r.name || ''), source: r.source, eur, ils };
+      return { month: String(r.month), acct: String(r.acct || ''), name: String(r.name || ''), source: r.source, department: String(r.department || ''), eur, ils };
     })
-    .sort((a, b) => (a.month !== b.month ? (a.month < b.month ? -1 : 1) : a.acct !== b.acct ? a.acct.localeCompare(b.acct) : order(a) - order(b)));
+    .sort((a, b) => (a.month !== b.month ? (a.month < b.month ? -1 : 1) : a.acct !== b.acct ? a.acct.localeCompare(b.acct)
+      : order(a) !== order(b) ? order(a) - order(b) : a.department.localeCompare(b.department)));
   return { rows, error: changes.error || null };
 }
 
@@ -247,8 +249,8 @@ function changesOf(changes, Y, ilsPerEur) {
  *   saved      { [acct]: method } the saved classification (default: none)
  *   overrides  { rows: [{ month, acct, name, department, mode, eur, ils, memo }], error } the override file's payroll
  *              rows (Snowflake), or null when not read
- *   changes    { rows: [{ month, acct, name, source, eur, ils }], error } Snowflake's planned hires, leavers and
- *              returns from leave, or null when not read
+ *   changes    { rows: [{ month, acct, name, source, department, eur, ils }], error } Snowflake's planned hires,
+ *              leavers and returns from leave, or null when not read
  */
 async function buildSalaryProjection({ rows, now, saved = {}, overrides = null, changes = null }) {
   const { projectSalary, groupOfMethod } = await loadSalaryModule();

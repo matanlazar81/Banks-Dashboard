@@ -36,13 +36,15 @@ export interface PayrollOverride {
   memo: string;
 }
 
-/** One month of Snowflake's planned payroll changes on an account (its HR-driven payroll forecast). */
+/** One month of Snowflake's planned payroll changes on an account and department (its HR-driven payroll forecast). */
 export interface PayrollChange {
   month: string;
   acct: string;
   name: string;
   /** Planned hires, leavers (negative) or returns from leave. */
   source: 'Open position' | 'Terminated' | 'Leave end';
+  /** Snowflake's department name ('' when none). */
+  department: string;
   eur: number;
   ils: number;
 }

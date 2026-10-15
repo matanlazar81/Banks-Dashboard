@@ -5,7 +5,7 @@ import { useEffect, useId, useState } from 'react';
 import { CheckCircle2, ChevronDown, ChevronRight, ExternalLink, GripHorizontal, Info, Loader2, Users, X } from 'lucide-react';
 import {
   arrangeRows, CASH_BREAKDOWN_ENDPOINT, fetchBreakdown, PANEL_W,
-  type BreakdownReady, type BreakdownRequest, type BreakdownRow, type BreakdownSection, type PanelPosition,
+  type BreakdownFetcher, type BreakdownReady, type BreakdownRequest, type BreakdownRow, type BreakdownSection, type PanelPosition,
 } from './breakdown.ts';
 import { formatFull } from './model.ts';
 import type { Ccy } from './types.ts';
@@ -109,6 +109,8 @@ interface Props {
   onClose: () => void;
   /** The breakdown API (default: the cash projection's). */
   endpoint?: string;
+  /** Answers the requests instead of the endpoint (a page that builds its breakdowns itself). Keep it stable. */
+  fetcher?: BreakdownFetcher;
   /** Account names become buttons that call this (the department window). */
   onDrill?: (row: BreakdownRow) => void;
   /** Row key highlighted as the one open in the department window. */
@@ -133,7 +135,7 @@ function withExtra(data: BreakdownReady, extra: { label: string; hint: string; a
 type Load = { phase: 'loading' } | { phase: 'ready'; data: BreakdownReady } | { phase: 'computing' } | { phase: 'error'; error: string };
 
 export default function BreakdownPanel({
-  request, position, onMove, onClose, endpoint = CASH_BREAKDOWN_ENDPOINT, onDrill, activeRow = null, escToClose = true, zIndex = 50, onFocus, extra = null,
+  request, position, onMove, onClose, endpoint = CASH_BREAKDOWN_ENDPOINT, fetcher, onDrill, activeRow = null, escToClose = true, zIndex = 50, onFocus, extra = null,
 }: Props) {
   const { line, period, variant, ccy, row } = request;
   const reqKey = `${line}|${period}|${variant}|${ccy}|${row || ''}`;
@@ -146,7 +148,8 @@ export default function BreakdownPanel({
   useEffect(() => {
     const ctrl = new AbortController();
     const done = (l: Load) => { if (!ctrl.signal.aborted) setResult({ key: reqKey, load: l }); };
-    fetchBreakdown({ line, period, variant, ccy, row }, ctrl.signal, endpoint)
+    const answer: BreakdownFetcher = fetcher ?? ((req, signal) => fetchBreakdown(req, signal, endpoint));
+    answer({ line, period, variant, ccy, row }, ctrl.signal)
       .then((r) => {
         if (r.status === 'ready') done({ phase: 'ready', data: r });
         else if (r.status === 'computing') done({ phase: 'computing' });
@@ -154,7 +157,7 @@ export default function BreakdownPanel({
       })
       .catch((e: unknown) => done({ phase: 'error', error: e instanceof Error ? e.message : String(e) }));
     return () => ctrl.abort();
-  }, [reqKey, line, period, variant, ccy, row, endpoint]);
+  }, [reqKey, line, period, variant, ccy, row, endpoint, fetcher]);
 
   useEffect(() => {
     if (!escToClose) return undefined;
@@ -195,7 +198,7 @@ export default function BreakdownPanel({
           </div>
           {data && !account && (
             <div className="mt-0.5 text-xs text-slate-500">
-              {STATUS_LABEL[data.periodStatus]} · {data.variant === 'plan' ? 'Plan' : 'Base'} · table cell <Amount value={data.cell} ccy={data.ccy} />
+              {STATUS_LABEL[data.periodStatus]}{data.variant ? ` · ${data.variant === 'plan' ? 'Plan' : 'Base'}` : ''} · table cell <Amount value={data.cell} ccy={data.ccy} />
             </div>
           )}
           {data && account && (

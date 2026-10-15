@@ -131,9 +131,9 @@ type Source = PayrollChange['source'];
 type Mode = PayrollOverride['mode'];
 type MonthSums = { eur: SalaryFigures; ils: SalaryFigures };
 
-const SOURCES: Source[] = ['Open position', 'Terminated', 'Leave end'];
-const SOURCE_KEY: Record<Source, string> = { 'Open position': 'hires', Terminated: 'leavers', 'Leave end': 'returns' };
-const SOURCE_LINE: Record<Source, string> = { 'Open position': 'Planned hires', Terminated: 'Leavers', 'Leave end': 'Returns from leave' };
+export const SOURCES: Source[] = ['Open position', 'Terminated', 'Leave end'];
+export const SOURCE_KEY: Record<Source, string> = { 'Open position': 'hires', Terminated: 'leavers', 'Leave end': 'returns' };
+export const SOURCE_LINE: Record<Source, string> = { 'Open position': 'Planned hires', Terminated: 'Leavers', 'Leave end': 'Returns from leave' };
 const SOURCE_HINT: Record<Source, string> = {
   'Open position': 'Planned hires: open positions in Snowflake\'s payroll forecast.',
   Terminated: 'Leavers (negative): employees leaving, from Snowflake\'s payroll forecast.',

@@ -55,7 +55,8 @@ export interface BreakdownReady {
   period: string;
   periodLabel: string;
   periodStatus: 'actual' | 'current' | 'forecast' | 'fy';
-  variant: VariantKey;
+  /** Plan or base; absent on a page without a plan (no label shown). */
+  variant?: VariantKey;
   ccy: Ccy;
   /** The table cell; the first section always adds up to it. */
   cell: number;
@@ -113,6 +114,9 @@ export function arrangeRows(rows: BreakdownRow[]): RowBlock[] {
 }
 
 export const CASH_BREAKDOWN_ENDPOINT = '/api/cash-projection/breakdown';
+
+/** Answers a breakdown request: the endpoint by default, or a page that builds its breakdowns itself. */
+export type BreakdownFetcher = (req: BreakdownRequest, signal: AbortSignal) => Promise<BreakdownResponse>;
 
 export async function fetchBreakdown(req: BreakdownRequest, signal?: AbortSignal, endpoint = CASH_BREAKDOWN_ENDPOINT): Promise<BreakdownResponse> {
   const q = new URLSearchParams({ line: req.line, period: req.period, variant: req.variant, ccy: req.ccy });

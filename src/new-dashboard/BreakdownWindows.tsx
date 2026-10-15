@@ -1,9 +1,10 @@
 // The breakdown window of a table cell plus, on demand, a second window with one of its accounts by
-// department. Shared by the New Bank Dashboard and the P&L Projection. Both windows move on their own
-// and keep their place; the one clicked last is in front; Esc closes the department window first.
+// department. Shared by the New Bank Dashboard, the P&L Projection and the Salary Projection. Both windows
+// move on their own and keep their place; the one clicked last is in front; Esc closes the department window
+// first.
 import { useCallback, useEffect, useState } from 'react';
 import BreakdownPanel from './BreakdownPanel.tsx';
-import { besidePosition, CASH_BREAKDOWN_ENDPOINT, clampPosition, type BreakdownRow, type PanelPosition } from './breakdown.ts';
+import { besidePosition, CASH_BREAKDOWN_ENDPOINT, clampPosition, type BreakdownFetcher, type BreakdownRow, type PanelPosition } from './breakdown.ts';
 import type { Ccy, VariantKey } from './types.ts';
 
 interface Props {
@@ -12,12 +13,14 @@ interface Props {
   variant: VariantKey;
   ccy: Ccy;
   endpoint?: string;
+  /** Answers the requests instead of the endpoint (a page that builds its breakdowns itself). Keep it stable. */
+  fetcher?: BreakdownFetcher;
   onClose: () => void;
   /** A change the page makes to a cell on top of the server's figures (the targets view), or null. */
   extraFor?: (line: string, period: string) => { label: string; hint: string; amount: number } | null;
 }
 
-export default function BreakdownWindows({ cell, variant, ccy, endpoint = CASH_BREAKDOWN_ENDPOINT, onClose, extraFor }: Props) {
+export default function BreakdownWindows({ cell, variant, ccy, endpoint = CASH_BREAKDOWN_ENDPOINT, fetcher, onClose, extraFor }: Props) {
   const [mainPos, setMainPos] = useState<PanelPosition>(() => clampPosition({ x: window.innerWidth - 580, y: 120 }));
   const [drillPos, setDrillPos] = useState<PanelPosition | null>(null);
   const [drill, setDrill] = useState<{ cellKey: string; row: string } | null>(null);
@@ -53,6 +56,7 @@ export default function BreakdownWindows({ cell, variant, ccy, endpoint = CASH_B
         onMove={setMainPos}
         onClose={closeAll}
         endpoint={endpoint}
+        fetcher={fetcher}
         onDrill={onDrill}
         activeRow={openRow}
         extra={extraFor ? extraFor(cell.line, cell.period) : null}
@@ -67,6 +71,7 @@ export default function BreakdownWindows({ cell, variant, ccy, endpoint = CASH_B
           onMove={setDrillPos}
           onClose={closeDrill}
           endpoint={endpoint}
+          fetcher={fetcher}
           escToClose={false}
           zIndex={front === 'drill' ? 51 : 50}
           onFocus={() => setFront('drill')}
