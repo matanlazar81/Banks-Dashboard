@@ -25,9 +25,10 @@
 // from NetSuite; `node scripts/salary-projection.cjs --reconcile` shows when Snowflake catches up.
 //
 // The override file's payroll rows (Snowflake FCT_EXPENSE, SOURCE future_cost_override / _increment, from
-// January of the current year, on account 760001: OVERRIDE_ACCOUNTS) travel with the payload, and so do
-// Snowflake's planned hires, leavers and returns from leave on the same account (FCT_EXPENSE sources 'Open
-// position', 'Terminated', 'Leave end' of its payroll forecast, summed by month: no employee detail).
+// January of the current year, on every payroll account as the old Bank Dashboard: IS_PAYROLL, i.e. 76xxxx)
+// travel with the payload, and so do Snowflake's planned hires, leavers and returns from leave on the same
+// accounts (FCT_EXPENSE sources 'Open position', 'Terminated', 'Leave end' of its payroll forecast, summed by
+// month: no employee detail).
 // The page shows them between permanent and temporary: the planned changes and the increments count in Total
 // payroll from the current month on (countedChangeRows / countedIncrementRows in
 // src/forecast/salary-projection.mjs); overrides are for reference. The account projection itself (blocks)
@@ -47,7 +48,7 @@ const cp = require('./cash-projection.cjs');
 const { readDoc, createDocHandler } = require('./json-store.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
-const SCHEMA_VERSION = 7; // 3: the actual months and each account's default method; 4: the override file's payroll rows; 5: temporary 0 next year; 6: override rows on 760001 only; 7: Snowflake's planned hires, leavers and returns from leave
+const SCHEMA_VERSION = 8; // 3: the actual months and each account's default method; 4: the override file's payroll rows; 5: temporary 0 next year; 6: override rows on 760001 only; 7: Snowflake's planned hires, leavers and returns from leave; 8: every payroll account, as the old dashboard
 const DEFAULT_CACHE_FILE = path.join(ROOT, 'data', 'salary-projection-cache.json');
 const CLASSIFICATION_FILE = path.join(ROOT, 'data', 'salary-classification.json');
 const { ProjectionError } = cp;
@@ -94,9 +95,6 @@ const GROUP_OF = new Map(SALARY_GL_GROUPS.flatMap((g) => g.accounts.map(([acct])
 // Temporary accounts shown as actuals only (forecast months 0): 2026's military reserve refunds and notice
 // pay are not expected to recur; options and vacation are year-end accruals that change every year.
 const ACTUALS_ONLY = new Set(['760023', '760029', '760008', '760014']);
-// The accounts whose planned changes the page reads: the override file's rows (the sheet's column A) and
-// Snowflake's hires, leavers and returns from leave. Finance's choice.
-const OVERRIDE_ACCOUNTS = ['760001'];
 // Snowflake's planned payroll changes: FCT_EXPENSE sources of its HR-driven payroll forecast, in table order.
 const CHANGE_SOURCES = ['Open position', 'Terminated', 'Leave end'];
 
@@ -200,8 +198,7 @@ function payrollRows(byMonth) {
  * ₪ at the forecast rate when the file has € only (ilsEstimated).
  */
 function overridesOf(overrides, Y, ilsPerEur) {
-  const accounts = [...OVERRIDE_ACCOUNTS];
-  if (!overrides) return { rows: [], error: 'The override file was not read.', accounts };
+  if (!overrides) return { rows: [], error: 'The override file was not read.' };
   const rows = (overrides.rows || [])
     .filter((r) => /^\d{4}-\d{2}$/.test(String(r.month || '')) && String(r.month) >= `${Y}-01`)
     .map((r) => {
@@ -220,7 +217,7 @@ function overridesOf(overrides, Y, ilsPerEur) {
       };
     })
     .sort((a, b) => (a.month === b.month ? a.acct.localeCompare(b.acct) : a.month < b.month ? -1 : 1));
-  return { rows, error: overrides.error || null, accounts };
+  return { rows, error: overrides.error || null };
 }
 
 /**
@@ -228,8 +225,7 @@ function overridesOf(overrides, Y, ilsPerEur) {
  * source. When Snowflake has one currency only, the other is at the forecast rate.
  */
 function changesOf(changes, Y, ilsPerEur) {
-  const accounts = [...OVERRIDE_ACCOUNTS];
-  if (!changes) return { rows: [], error: 'The planned payroll changes were not read.', accounts };
+  if (!changes) return { rows: [], error: 'The planned payroll changes were not read.' };
   const order = (r) => CHANGE_SOURCES.indexOf(r.source);
   const rows = (changes.rows || [])
     .filter((r) => /^\d{4}-\d{2}$/.test(String(r.month || '')) && String(r.month) >= `${Y}-01` && CHANGE_SOURCES.includes(r.source))
@@ -241,7 +237,7 @@ function changesOf(changes, Y, ilsPerEur) {
       return { month: String(r.month), acct: String(r.acct || ''), name: String(r.name || ''), source: r.source, eur, ils };
     })
     .sort((a, b) => (a.month !== b.month ? (a.month < b.month ? -1 : 1) : a.acct !== b.acct ? a.acct.localeCompare(b.acct) : order(a) - order(b)));
-  return { rows, error: changes.error || null, accounts };
+  return { rows, error: changes.error || null };
 }
 
 /**
@@ -376,7 +372,7 @@ async function readOverrides(getSfClient, Y) {
     return { rows: [], error: 'Snowflake is not configured on this server, so the override file is not shown.' };
   }
   try {
-    return { rows: await sf.fetchPayrollOverrides(Y, OVERRIDE_ACCOUNTS), error: null };
+    return { rows: await sf.fetchPayrollOverrides(Y), error: null };
   } catch (e) {
     console.error(`[salary-projection] override file failed: ${e && e.message}`);
     return { rows: [], error: 'The override file could not be read from Snowflake. Try Refresh in a minute.' };
@@ -391,7 +387,7 @@ async function readChanges(getSfClient, Y) {
     return { rows: [], error: 'Snowflake is not configured on this server, so planned hires and leavers are not in Total payroll.' };
   }
   try {
-    return { rows: await sf.fetchPayrollChanges(Y, OVERRIDE_ACCOUNTS), error: null };
+    return { rows: await sf.fetchPayrollChanges(Y), error: null };
   } catch (e) {
     console.error(`[salary-projection] planned payroll changes failed: ${e && e.message}`);
     return { rows: [], error: 'Planned hires and leavers could not be read from Snowflake, so Total payroll leaves them out. Try Refresh in a minute.' };
@@ -457,7 +453,6 @@ module.exports = {
   loadSalaryModule,
   SALARY_GL_GROUPS,
   ACTUALS_ONLY,
-  OVERRIDE_ACCOUNTS,
   CHANGE_SOURCES,
   SCHEMA_VERSION,
   DEFAULT_CACHE_FILE,

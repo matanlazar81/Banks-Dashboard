@@ -1,8 +1,8 @@
 {
   "ok": true,
-  "schemaVersion": 7,
+  "schemaVersion": 8,
   "status": "ready",
-  "generatedAt": "2026-10-15T14:34:49.133Z",
+  "generatedAt": "2026-10-15T18:25:50.579Z",
   "computedMonth": "2026-10",
   "company": "lsports",
   "years": [
@@ -730,10 +730,7 @@
         "memo": ""
       }
     ],
-    "error": null,
-    "accounts": [
-      "760001"
-    ]
+    "error": null
   },
   "changes": {
     "rows": [
@@ -762,10 +759,7 @@
         "ils": -323000
       }
     ],
-    "error": null,
-    "accounts": [
-      "760001"
-    ]
+    "error": null
   },
   "degraded": false,
   "failedFeeds": [],

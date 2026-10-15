@@ -123,12 +123,12 @@ async function main() {
       m.set(r.month, (m.get(r.month) || 0) + (Number(r.ils) || 0));
       planned.set(label, m);
     };
-    const CHANGE_LABEL = { 'Open position': 'planned hires', Terminated: 'leavers', 'Leave end': 'returns from leave' };
-    for (const source of Object.keys(CHANGE_LABEL)) for (const r of countedChanges) if (r.source === source) add(`${r.acct} ${CHANGE_LABEL[source]} (Snowflake)`, r);
+    const CHANGE_LABEL = { 'Open position': 'Planned hires', Terminated: 'Leavers', 'Leave end': 'Returns from leave' };
+    for (const source of Object.keys(CHANGE_LABEL)) for (const r of countedChanges) if (r.source === source) add(`${CHANGE_LABEL[source]} (Snowflake)`, r);
     for (const r of countedIncrements) add(`${r.acct} increment (override file)`, r);
     for (const block of payload.blocks) printYear(payload, block, planned);
-    console.log(`\nPlanned hires, leavers and returns from leave on ${(ch.accounts || []).join(', ') || '–'} (Snowflake): ${ch.error ? ch.error : `${countedChanges.size} of ${ch.rows.length} month row(s) counted (the projected months)`}`);
-    console.log(`\nOverride file, rows on ${(ov.accounts || []).join(', ') || '–'} from January ${payload.years[0]}: ${ov.error ? ov.error : `${ov.rows.length} row(s)`}`);
+    console.log(`\nPlanned hires, leavers and returns from leave on payroll accounts (Snowflake): ${ch.error ? ch.error : `${countedChanges.size} of ${ch.rows.length} account-month row(s) counted (the projected months)`}`);
+    console.log(`\nOverride file, payroll rows from January ${payload.years[0]}: ${ov.error ? ov.error : `${ov.rows.length} row(s)`}`);
     console.log('  (+ = an increment counted in Total payroll; increments in closed months are not counted, overrides never are)');
     for (const r of ov.rows) {
       console.log(`${countedIncrements.has(r) ? '+ ' : '  '}${r.month}  ${r.acct.padEnd(8)}${r.mode.padEnd(10)}${eur(r.eur)}  ${(r.department || '–').slice(0, 24).padEnd(25)}${r.memo.slice(0, 50)}`);

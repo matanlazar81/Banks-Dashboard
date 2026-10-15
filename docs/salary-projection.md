@@ -69,20 +69,23 @@ with who saved it). **Defaults** goes back to finance's classification. Saving n
 (`salary_projection`) and goes through `GET/PUT /api/salary-projection/classification`. Changing the default
 itself still means editing `SALARY_GL_GROUPS` / `ACTUALS_ONLY` and deploying.
 
-**Planned changes.** Between permanent and temporary, the table shows the planned changes on account
-**760001** (Gross Salaries; `OVERRIDE_ACCOUNTS` in `server/salary-projection.cjs`, finance's choice), from
-January of the current year, from two Snowflake sources (`plannedLines` in `src/salary-projection/model.ts`):
+**Planned changes.** Between permanent and temporary, the table shows the planned changes on **every payroll
+account** (Snowflake's `IS_PAYROLL`, i.e. the 76xxxx accounts, as the old Bank Dashboard's salary overrides),
+from January of the current year, from two Snowflake sources (`plannedLines` in `src/salary-projection/model.ts`):
 
 1. **Hires, leavers and returns from leave**: Snowflake's HR-driven payroll forecast, `FCT_EXPENSE` sources
    `Open position` (planned hires), `Terminated` (leavers, negative) and `Leave end` (returns from leave), summed
-   by month (`fetchPayrollChanges` in `snowflake-api.cjs`; no employee detail is read). One line per source, e.g.
-   "760001 - Gross Salaries (leavers)", then **Total headcount changes**. Each month's amount is what that month
-   adds to the forecast. The forecast's own baseline (`payroll future baseline`) is not used: the page's baseline
-   is NetSuite's last closed month.
+   by month and account (`fetchPayrollChanges` in `snowflake-api.cjs`; no employee detail is read). One line per
+   source summed across the accounts (**Planned hires**, **Leavers**, **Returns from leave**; hovering one names
+   its accounts), then **Total headcount changes**. Each month's amount is what that month adds to the forecast.
+   The forecast's own baseline (`payroll future baseline`) is not used: the page's baseline is NetSuite's last
+   closed month.
 2. **The override file**: the override sheet's rows (`OVERIDE_TEMP`, loaded into `FCT_EXPENSE` as
-   `future_cost_override` / `future_cost_increment`) on the same account (the sheet's column A)
-   (`fetchPayrollOverrides`). One line per type, summing the account's rows of a month across departments;
-   hovering a line shows its departments and comments.
+   `future_cost_override` / `future_cost_increment`) on the same accounts (the sheet's column A)
+   (`fetchPayrollOverrides`). One line per account and type, summing the account's rows of a month across
+   departments; hovering a line shows its departments and comments. The load into `FCT_EXPENSE` currently drops
+   the payroll accounts (checked October 2026: none on 760001 or 760017, while the sheet has rows on both), so
+   these lines appear once the load includes them.
    - **Increments**, then **Total increments**.
    - **Overrides**, in italics, then **Total overrides (not in total payroll)**: for reference. An override
      replaces one department's budget for the account and month, and this page projects by account, so adding
@@ -200,10 +203,10 @@ node scripts/salary-projection.cjs --reconcile   # real data: Snowflake vs NetSu
 
 - LSports only, like the other projection pages.
 - Permanent accounts stay flat at the last closed month. Planned hires, leavers and returns from leave (and the
-  override file's increments) count on 760001 only, in Total payroll, not in the account lines: the same events
-  on the other payroll accounts (national insurance, pension and the like) are not added. The override file's
-  overrides are not applied. The P&L Projection's payroll forecast works differently, so the two pages can
-  differ in forecast months.
+  override file's increments) on every payroll account count in Total payroll, not in the account lines. The
+  override file's overrides are not applied. Some override-file rows describe the same events as the hires and
+  leavers (e.g. a termination already in HiBob), and both count. The P&L Projection's payroll forecast works
+  differently, so the two pages can differ in forecast months.
 - Temporary accounts repeat last year as it was for the rest of the current year (a bonus month repeats in the
   same month) and are 0 in the next year. Accounts that should not repeat at all are "Actuals only" (by default
   760023, 760029, 760008 and 760014).

@@ -77,15 +77,15 @@ export interface SalaryPayload {
   /** The actual months by account (the previous year and this year's closed months), to re-project on the page. */
   actual?: Record<string, AccountAmounts>;
   /**
-   * The override file's payroll rows (Snowflake, the rows on `accounts`). The account projection (blocks)
-   * leaves them out; the page adds the increments to Total payroll from the current month on.
+   * The override file's rows on every payroll account (Snowflake). The account projection (blocks) leaves them
+   * out; the page adds the increments to Total payroll from the current month on.
    */
-  overrides?: { rows: PayrollOverride[]; error: string | null; accounts?: string[] };
+  overrides?: { rows: PayrollOverride[]; error: string | null };
   /**
-   * Snowflake's planned hires, leavers and returns from leave on the same accounts, by month. The page adds
+   * Snowflake's planned hires, leavers and returns from leave on every payroll account, by month. The page adds
    * them to Total payroll from the current month on; a read failure is also in `warnings`.
    */
-  changes?: { rows: PayrollChange[]; error: string | null; accounts?: string[] };
+  changes?: { rows: PayrollChange[]; error: string | null };
   degraded: boolean;
   failedFeeds: string[];
   warnings: string[];
