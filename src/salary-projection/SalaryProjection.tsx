@@ -154,7 +154,7 @@ export default function SalaryProjection() {
               education fund and the like) carry the last closed month, {runRate}, into every forecast month. Temporary
               accounts (bonuses, recuperation, maternity and other one-offs) repeat the same month of the previous
               year, so seasonal payments stay in their month: {y0} forecast months repeat {y0 ? y0 - 1 : ''}, and {y1} repeats {y0}.
-              {notProjected.length > 0 && ` ${notProjected.map((a) => `${a.acct} ${a.name}`).join(' and ')}: actuals only, not projected.`}
+              {notProjected.length > 0 && ` Actuals only, not projected: ${notProjected.map((a) => `${a.acct} ${a.name}`).join(', ')}.`}
               {' '}The current month is projected as a whole month. Forecasts are made in shekels; euros use the rate above.
             </p>
           </>

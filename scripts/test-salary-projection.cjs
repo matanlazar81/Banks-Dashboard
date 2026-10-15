@@ -71,6 +71,8 @@ function syntheticRows({ lagSeptember = false, withPrevYear = true } = {}) {
     add(Y - 1, 10, '760023', -50_000);
     add(Y - 1, 11, '760023', -80_000);
     add(Y - 1, 12, '760029', 70_000);
+    add(Y - 1, 12, '760008', 356_000, 'option employess expemses');
+    add(Y - 1, 12, '760014', -703_000, 'Vacation expenses');
   }
   add(Y, 1, '760017', 1_000_000);
   add(Y, 7, '760015', 320_000);
@@ -106,11 +108,12 @@ function testPayload() {
   const temporary = sp.SALARY_GL_GROUPS[1].accounts.map(([a]) => a);
   check(JSON.stringify(accts) === JSON.stringify([...permanent, ...temporary, '760040']),
     'every classified account in finance\'s order (permanent, then temporary), then the unclassified one', accts.join(','));
-  check(permanent.length === 10 && temporary.length === 10 && permanent.includes('760025') && temporary.includes('760020') && temporary.includes('76003'),
-    'classification: 10 permanent (incl. 760025), 10 temporary (incl. 760020 and 76003)');
+  check(permanent.length === 10 && temporary.length === 12 && permanent.includes('760025')
+    && ['760020', '76003', '760008', '760014'].every((a) => temporary.includes(a)),
+    'classification: 10 permanent (incl. 760025), 12 temporary (incl. 760020, 76003, 760008, 760014)');
   check(accountOf(payload, '760001').method === 'run-rate' && accountOf(payload, '760017').method === 'last-year'
-    && accountOf(payload, '760023').method === 'none' && accountOf(payload, '760029').method === 'none' && accountOf(payload, '760040').method === 'last-year',
-    'methods: permanent run-rate, temporary same month last year, 760023 and 760029 not projected');
+    && ['760023', '760029', '760008', '760014'].every((a) => accountOf(payload, a).method === 'none') && accountOf(payload, '760040').method === 'last-year',
+    'methods: permanent run-rate, temporary same month last year, 760023, 760029, 760008 and 760014 not projected');
   check(accountOf(payload, '760001').name === 'Gross Salaries' && accountOf(payload, '760024').name === 'National insurance Damage fees',
     'names from the source, the classification\'s name for an account without postings');
   check(accountOf(payload, '760040').group === 'other' && payload.warnings.some((w) => w.includes('760040')) && !payload.warnings.some((w) => w.includes('760020')),
@@ -144,11 +147,12 @@ function testPayload() {
     `${T} repeats ${Y}'s forecast months, which repeat ${Y - 1} (the chain)`);
 
   const offNone = [];
-  for (const acct of ['760023', '760029']) {
+  for (const acct of ['760023', '760029', '760008', '760014']) {
     for (const [y, m] of flat) if (ils(payload, y, m, acct) !== 0) offNone.push(`${acct} ${mk(y, m)}`);
   }
   check(ils(payload, Y, 3, '760023') === -30_000 && !offNone.length,
-    '760023 and 760029: actual months shown, every forecast month 0 (Oct–Nov 2025 refunds and Dec 2025 notice pay not repeated)', offNone.slice(0, 3).join('; '));
+    '760023, 760029, 760008, 760014: actual months shown, every forecast month 0 (the 2025 refunds, notice pay and December accruals not repeated)', offNone.slice(0, 3).join('; '));
+  check(!payload.warnings.some((w) => w.includes('760008') || w.includes('760014')), '760008 and 760014 are classified: no warning');
   check(ils(payload, T, 3, '760040') === 1_000 && ils(payload, Y, 11, '760040') === 0, 'the unclassified account is projected like a temporary one');
 
   check(near(payload.basis.ilsPerEur, 3.7, 0.0001), 'forecast rate: September\'s permanent payroll ₪/€', String(payload.basis.ilsPerEur));

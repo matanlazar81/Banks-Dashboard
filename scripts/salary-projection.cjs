@@ -30,7 +30,7 @@ function arg(name) {
 }
 
 const k = (n) => {
-  const v = Math.round((Number(n) || 0) / 1000);
+  const v = Math.round((Number(n) || 0) / 1000) || 0; // no "-0"
   return (v < 0 ? `(${Math.abs(v).toLocaleString('en-US')})` : v.toLocaleString('en-US')).padStart(8);
 };
 const ils = (n) => (Math.round((Number(n) || 0) * 100) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).padStart(16);

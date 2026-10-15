@@ -33,7 +33,7 @@ its postings are partial.
 |---|---|
 | Permanent | The last closed month, carried flat into every forecast month of both years. |
 | Temporary | The same month of the previous year. The current year's forecast months repeat last year's actuals. The next year repeats the current year, actual or forecast. |
-| 760023 Military reserve refund, 760029 Lieu of prior notice | Actuals only: forecast months are 0. 2026's refunds and notice pay are not expected to recur (`ACTUALS_ONLY`). |
+| 760023 Military reserve refund, 760029 Lieu of prior notice, 760008 Option employees expenses, 760014 Vacation expenses | Actuals only: forecast months are 0 (`ACTUALS_ONLY`). 2026's refunds and notice pay are not expected to recur; options and vacation are year-end accruals that change every year. |
 | Not classified | Any other `76xxxx` account with postings. It is projected like a temporary account and listed in a warning. |
 
 The projection is made in **₪**, the currency payroll is paid in. Forecast **€** = ₪ ÷ the ILS/EUR ratio
@@ -54,8 +54,11 @@ held in `SALARY_GL_GROUPS` in `server/salary-projection.cjs`:
 | 760009 Disability Insurance | 760030 Gemel Pension expenses |
 | 760018 Gross-up expenses | 760020 Reducing salary expenses, option exercise |
 | 760025 Salaries payments during military reserve | 76003 Social security, injury payment |
+| | 760008 Option employees expenses |
+| | 760014 Vacation expenses |
 
-760020 and 76003 are not in the file; finance classified them as temporary. To move an account, edit
+760020, 76003, 760008 and 760014 are not in the file; finance classified them as temporary (760008 and
+760014 actuals only). To move an account, edit
 `SALARY_GL_GROUPS` (and `ACTUALS_ONLY` for accounts that are not projected), run the tests and deploy.
 Every listed account shows, even when it is zero.
 
@@ -146,7 +149,7 @@ node scripts/salary-projection.cjs --reconcile   # real data: Snowflake vs NetSu
 - Permanent accounts stay flat at the last closed month. Planned hires, leavers and raises are not added.
   The P&L Projection's payroll forecast includes them, so the two pages can differ in forecast months.
 - Temporary accounts repeat last year as it was: a bonus month repeats in the same month. Accounts that
-  should not repeat at all go in `ACTUALS_ONLY` (today 760023 and 760029).
+  should not repeat at all go in `ACTUALS_ONLY` (today 760023, 760029, 760008 and 760014).
 - Salaries CAPEX (950000) is not a payroll account, so it is not on this page. The P&L Projection shows it
   as a separate line.
 - Actuals are NetSuite's by posting period, so a late posting into a closed period appears on the next
