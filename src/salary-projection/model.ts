@@ -133,7 +133,7 @@ type MonthSums = { eur: SalaryFigures; ils: SalaryFigures };
 
 const SOURCES: Source[] = ['Open position', 'Terminated', 'Leave end'];
 const SOURCE_KEY: Record<Source, string> = { 'Open position': 'hires', Terminated: 'leavers', 'Leave end': 'returns' };
-const SOURCE_LABEL: Record<Source, string> = { 'Open position': 'planned hires', Terminated: 'leavers', 'Leave end': 'returns from leave' };
+const SOURCE_LINE: Record<Source, string> = { 'Open position': 'Planned hires', Terminated: 'Leavers', 'Leave end': 'Returns from leave' };
 const SOURCE_HINT: Record<Source, string> = {
   'Open position': 'Planned hires: open positions in Snowflake\'s payroll forecast.',
   Terminated: 'Leavers (negative): employees leaving, from Snowflake\'s payroll forecast.',
@@ -156,10 +156,10 @@ const accountLabel = (acct: string, name: string) => `${acct}${name ? ` - ${name
 
 /**
  * The planned changes as table lines, each source under its header. Each month's amounts are keyed by line
- * ('hires|760001', 'increment|760001'), so they never mix with the accounts' own figures.
- *   - Snowflake's planned hires, leavers and returns from leave: one line per account and source, then "Total
- *     headcount changes". They show only where they count in Total payroll: the projected months
- *     (countedChangeRows).
+ * ('hires', 'increment|760001'), so they never mix with the accounts' own figures.
+ *   - Snowflake's planned hires, leavers and returns from leave: one line per source summed across the payroll
+ *     accounts, then "Total headcount changes". They show only where they count in Total payroll: the projected
+ *     months (countedChangeRows).
  *   - The override file: one line per account and type, summing an account's rows of a month across
  *     departments. Increments (then "Total increments") count the same way (countedIncrementRows); overrides
  *     (italic notes, then "Total overrides") show in every month of the table, for reference.
@@ -177,25 +177,29 @@ function plannedLines(payload: SalaryPayload): PlannedDefs & { sums: Map<string,
   const defs: SalaryLineDef[] = [];
   const totalKeys: string[] = [];
 
-  // Snowflake's planned hires, leavers and returns from leave.
-  const changes = new Map<string, { source: Source; acct: string; name: string }>();
+  // Snowflake's planned hires, leavers and returns from leave: one line per source, summed across the payroll
+  // accounts (the hint names them).
+  const changes = new Map<Source, Map<string, string>>();
   for (const r of countedChangeRows(payload.blocks, payload.changes ? payload.changes.rows : [])) {
-    const key = `${SOURCE_KEY[r.source]}|${r.acct}`;
-    if (!changes.has(key)) changes.set(key, { source: r.source, acct: r.acct, name: r.name });
-    addTo(key, r.month, r.eur, r.ils);
+    const accts = changes.get(r.source) ?? new Map<string, string>();
+    if (!accts.has(r.acct)) accts.set(r.acct, r.name);
+    changes.set(r.source, accts);
+    addTo(SOURCE_KEY[r.source], r.month, r.eur, r.ils);
   }
-  const changeList = [...changes.entries()].sort(([, a], [, b]) => SOURCES.indexOf(a.source) - SOURCES.indexOf(b.source) || a.acct.localeCompare(b.acct));
-  if (changeList.length) {
-    defs.push(header('header-changes', 'Headcount changes', `Planned hires, leavers and returns from leave, from Snowflake's payroll forecast.${COUNTED}`));
+  const changeSources = SOURCES.filter((source) => changes.has(source));
+  if (changeSources.length) {
+    defs.push(header('header-changes', 'Headcount changes', `Planned hires, leavers and returns from leave on the payroll accounts, from Snowflake's payroll forecast.${COUNTED}`));
   }
-  for (const [key, l] of changeList) {
+  for (const source of changeSources) {
+    const key = SOURCE_KEY[source];
+    const accts = [...(changes.get(source) ?? new Map<string, string>()).entries()].sort(([a], [b]) => a.localeCompare(b)).map(([a, n]) => accountLabel(a, n));
     defs.push({
-      key, label: `${accountLabel(l.acct, l.name)} (${SOURCE_LABEL[l.source]})`, kind: 'item', fy: 'sum', value: (f) => f[key] ?? 0,
-      hint: `${SOURCE_HINT[l.source]}${COUNTED}`,
+      key, label: SOURCE_LINE[source], kind: 'item', fy: 'sum', value: (f) => f[key] ?? 0,
+      hint: `${SOURCE_HINT[source]} Accounts: ${listOf(accts, 8)}.${COUNTED}`,
     });
   }
-  if (changeList.length) {
-    const keys = changeList.map(([k]) => k);
+  if (changeSources.length) {
+    const keys = changeSources.map((source) => SOURCE_KEY[source]);
     totalKeys.push(...keys);
     defs.push({
       key: 'total-changes', label: 'Total headcount changes', kind: 'subtotal', fy: 'sum', value: sumOf(keys),

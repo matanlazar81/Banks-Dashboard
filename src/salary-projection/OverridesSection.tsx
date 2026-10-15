@@ -1,5 +1,5 @@
 // The override file's payroll rows (OVERIDE_TEMP, loaded into Snowflake as future-cost overrides and
-// increments, on the payload's override accounts). By month they are in the table above, between permanent
+// increments, on every payroll account). By month they are in the table above, between permanent
 // and temporary, where the increments count in Total payroll from the current month on; this section lists the
 // rows themselves, with departments and comments.
 import { formatFull, monthLongLabel } from '../new-dashboard/model.ts';
@@ -61,14 +61,13 @@ function RowList({ rows, ccy }: { rows: PayrollOverride[]; ccy: Ccy }) {
 
 export default function OverridesSection({ payload, ccy }: Props) {
   const { rows, error } = payload.overrides ?? { rows: [], error: null };
-  const accounts = payload.overrides?.accounts ?? [];
   const [year, lastYear] = payload.years;
   const counts = { Override: rows.filter((r) => r.mode === 'Override').length, Increment: rows.filter((r) => r.mode === 'Increment').length };
   const closed = new Set(payload.blocks.flatMap((b) => b.rows.filter((r) => r.status === 'actual').map((r) => r.mKey)));
   const inClosed = rows.filter((r) => r.mode === 'Increment' && closed.has(r.month)).length;
   const outside = rows.filter((r) => r.month > `${lastYear}-12`).length;
   const estimated = ccy === 'ils' && rows.some((r) => r.ilsEstimated);
-  const where = accounts.length ? `on account${accounts.length === 1 ? '' : 's'} ${accounts.join(', ')}` : 'on payroll';
+  const where = 'on payroll accounts';
 
   return (
     <section className="rounded-lg border border-slate-200 bg-white">
