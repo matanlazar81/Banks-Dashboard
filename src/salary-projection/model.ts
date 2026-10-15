@@ -3,7 +3,7 @@
 // Dashboard's (src/new-dashboard/model.ts). No React, no DOM — unit-tested by scripts/test-salary-projection.cjs.
 import { buildYearTable, monthLongLabel, type LineDefOf, type ProjectionTable } from '../new-dashboard/model.ts';
 import type { YearView } from '../new-dashboard/types.ts';
-import type { Ccy, SalaryAccount, SalaryFigures, SalaryGroup, SalaryPayload } from './types.ts';
+import type { Ccy, SalaryAccount, SalaryFigures, SalaryGroup, SalaryMethod, SalaryPayload } from './types.ts';
 
 type SalaryLineDef = LineDefOf<SalaryFigures, string>;
 
@@ -15,10 +15,17 @@ const SUBTOTAL_LABEL: Record<SalaryGroup, string> = {
   other: 'Total not classified',
 };
 
-function itemHint(group: SalaryGroup, runRate: string): string {
-  if (group === 'permanent') return `Permanent. Actual months: Snowflake. Forecast: ${runRate} carried forward every month.`;
-  if (group === 'temporary') return 'Temporary. Actual months: Snowflake. Forecast: the same month of the previous year.';
-  return 'Not classified as permanent or temporary. Forecast: the same month of the previous year, like a temporary account.';
+const GROUP_HINT: Record<SalaryGroup, string> = {
+  permanent: 'Permanent.',
+  temporary: 'Temporary.',
+  other: 'Not classified as permanent or temporary.',
+};
+
+function itemHint(group: SalaryGroup, method: SalaryMethod, runRate: string): string {
+  const forecast = method === 'run-rate' ? `${runRate} carried forward every month`
+    : method === 'none' ? 'not projected (0)'
+      : 'the same month of the previous year';
+  return `${GROUP_HINT[group]} Actual months: NetSuite. Forecast: ${forecast}.`;
 }
 
 const sumOf = (accts: string[]) => (f: SalaryFigures) => accts.reduce((s, a) => s + (f[a] ?? 0), 0);
@@ -31,7 +38,7 @@ export function salaryLineDefs(accounts: SalaryAccount[], runRateMonth: string):
     const list = accounts.filter((a) => a.group === group);
     if (!list.length) continue;
     for (const a of list) {
-      defs.push({ key: a.acct, label: `${a.acct} - ${a.name}`, kind: 'item', fy: 'sum', value: (f) => f[a.acct] ?? 0, hint: itemHint(group, runRate) });
+      defs.push({ key: a.acct, label: `${a.acct} - ${a.name}`, kind: 'item', fy: 'sum', value: (f) => f[a.acct] ?? 0, hint: itemHint(group, a.method, runRate) });
     }
     defs.push({ key: `total-${group}`, label: SUBTOTAL_LABEL[group], kind: 'subtotal', fy: 'sum', value: sumOf(list.map((a) => a.acct)) });
   }

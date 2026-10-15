@@ -1777,10 +1777,11 @@ function createSnowflakeClient(env) {
     return { byMonth, lastActualMonth };
   }
 
-  // ── Payroll by GL account and month (the Salary Projection page) ──
+  // ── Payroll by GL account and month (scripts/salary-projection.cjs --reconcile) ──
   // Every 76xxxx account (the P&L "Payroll" line), LSports only, booked from NetSuite, Jan fromYear through
-  // Dec toYear. Plain AMOUNT_EUR / AMOUNT_ILS (the _CC columns undercount actuals). Not rounded: the page
-  // sums accounts. Returns [{ month: 'YYYY-MM', acct, name, eur, ils }].
+  // Dec toYear. Plain AMOUNT_EUR / AMOUNT_ILS (the _CC columns undercount actuals). The Salary Projection
+  // page reads NetSuite instead: FCT_EXPENSE misses 760017 and 760019; the reconcile shows when it catches
+  // up. Returns [{ month: 'YYYY-MM', acct, name, eur, ils }].
   async function fetchPayrollByAccount(fromYear, toYear) {
     const from = parseInt(fromYear);
     const to = parseInt(toYear);

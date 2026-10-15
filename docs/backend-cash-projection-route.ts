@@ -7,7 +7,7 @@
 //   GET/PUT /api/projection-targets      the 2027 targets both pages apply on top of the Plan (set on the
 //                                        New Bank Dashboard only: PUT needs its role)
 //   GET /api/metrics (+ GET/PUT /api/metrics/settings, /api/metrics/deposits)  the Metrics page
-//   GET /api/salary-projection           the Salary Projection (payroll by GL account, Snowflake only)
+//   GET /api/salary-projection           the Salary Projection (payroll by GL account, NetSuite)
 //
 // ONLY NEEDED IF the shared bank-dashboard API mount (docs/backend-bank-dashboard-api.ts →
 // mountBankDashboardApi) is NOT installed. That mount registers every route of
