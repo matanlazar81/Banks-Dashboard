@@ -1,9 +1,35 @@
 // Pure table model for the Salary Projection: one line per payroll account, a subtotal per group (permanent,
-// temporary, not classified) and the total. Columns, full-year values and formatting are the New Bank
-// Dashboard's (src/new-dashboard/model.ts). No React, no DOM — unit-tested by scripts/test-salary-projection.cjs.
+// temporary, not classified) and the total, after applying the page's classification (saved choices plus
+// unsaved edits). Columns, full-year values and formatting are the New Bank Dashboard's
+// (src/new-dashboard/model.ts). No React, no DOM — unit-tested by scripts/test-salary-projection.cjs.
+import { groupOfMethod, projectSalary } from '../forecast/salary-projection.mjs';
 import { buildYearTable, monthLongLabel, type LineDefOf, type ProjectionTable } from '../new-dashboard/model.ts';
 import type { YearView } from '../new-dashboard/types.ts';
 import type { Ccy, SalaryAccount, SalaryFigures, SalaryGroup, SalaryMethod, SalaryPayload } from './types.ts';
+
+/**
+ * The payload with a classification applied: each account's method and group (choice, else finance's
+ * default, else "not classified" and projected like a temporary account), re-projected from the actual
+ * months. A payload without them (an older cache) is returned as it is.
+ */
+export function withClassification(payload: SalaryPayload, methods: Record<string, SalaryMethod>): SalaryPayload {
+  if (!payload.actual) return payload;
+  const accounts: SalaryAccount[] = payload.accounts.map((a) => {
+    const chosen = methods[a.acct] || a.defaultMethod;
+    return { ...a, method: chosen || 'last-year', group: chosen ? groupOfMethod(chosen) : 'other' };
+  });
+  const byAcct = new Map(accounts.map((a) => [a.acct, a.method]));
+  const blocks = projectSalary({
+    years: payload.years,
+    currentMonth: payload.computedMonth,
+    runRateMonth: payload.basis.runRateMonth,
+    ilsPerEur: payload.basis.ilsPerEur,
+    accounts: accounts.map((a) => a.acct),
+    actual: payload.actual,
+    methodOf: (acct) => byAcct.get(acct) || 'last-year',
+  });
+  return { ...payload, accounts, blocks };
+}
 
 type SalaryLineDef = LineDefOf<SalaryFigures, string>;
 

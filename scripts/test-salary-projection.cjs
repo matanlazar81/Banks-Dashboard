@@ -18,6 +18,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { Readable } = require('stream');
 const { pathToFileURL } = require('url');
 
 const ROOT = path.resolve(__dirname, '..');
@@ -100,9 +101,9 @@ const ils = (payload, year, m, acct) => rowOf(payload, year, m).ils[acct];
 const accountOf = (payload, acct) => payload.accounts.find((a) => a.acct === acct);
 
 // ── 1. payload ──────────────────────────────────────────────────────────────
-function testPayload() {
+async function testPayload() {
   console.log('PAYLOAD: buildSalaryProjection (server/salary-projection.cjs)');
-  const { payload } = sp.buildSalaryProjection({ rows: syntheticRows(), now: NOW });
+  const { payload } = await sp.buildSalaryProjection({ rows: syntheticRows(), now: NOW });
   const accts = payload.accounts.map((a) => a.acct);
   const permanent = sp.SALARY_GL_GROUPS[0].accounts.map(([a]) => a);
   const temporary = sp.SALARY_GL_GROUPS[1].accounts.map(([a]) => a);
@@ -116,8 +117,10 @@ function testPayload() {
     'methods: permanent run-rate, temporary same month last year, 760023, 760029, 760008 and 760014 not projected');
   check(accountOf(payload, '760001').name === 'Gross Salaries' && accountOf(payload, '760024').name === 'National insurance Damage fees',
     'names from the source, the classification\'s name for an account without postings');
-  check(accountOf(payload, '760040').group === 'other' && payload.warnings.some((w) => w.includes('760040')) && !payload.warnings.some((w) => w.includes('760020')),
-    'an unclassified payroll account is shown, grouped "other", with a warning (760020 is classified now)');
+  check(accountOf(payload, '760040').group === 'other' && accountOf(payload, '760040').defaultMethod === null && accountOf(payload, '760020').group === 'temporary',
+    'an unclassified payroll account is shown, grouped "other" (no default); 760020 is temporary');
+  check(accountOf(payload, '760001').defaultMethod === 'run-rate' && accountOf(payload, '760017').defaultMethod === 'last-year' && accountOf(payload, '760023').defaultMethod === 'none',
+    'each account carries finance\'s default method');
 
   const statuses = blockOf(payload, Y).rows.map((r) => r.status);
   check(statuses.slice(0, 9).every((s) => s === 'actual') && statuses[9] === 'current' && statuses.slice(10).every((s) => s === 'forecast'),
@@ -163,27 +166,101 @@ function testPayload() {
   return payload;
 }
 
-function testEdges() {
+async function testEdges() {
   console.log('\nEDGES: guard, January, no previous year, no data');
-  const lag = sp.buildSalaryProjection({ rows: syntheticRows({ lagSeptember: true }), now: NOW }).payload;
+  const lag = (await sp.buildSalaryProjection({ rows: syntheticRows({ lagSeptember: true }), now: NOW })).payload;
   check(lag.basis.runRateMonth === mk(Y, 8) && lag.actuals.through === mk(Y, 8), 'a token September (not posted yet) → August is the last closed month');
   check(rowOf(lag, Y, 9).status === 'forecast' && ils(lag, Y, 9, '760001') === ils(lag, Y, 8, '760001'), 'September is then projected from August');
   check(lag.warnings.some((w) => w.includes('September 2026') && w.includes('August 2026')), 'with a warning naming both months');
 
-  const jan = sp.buildSalaryProjection({ rows: syntheticRows(), now: new Date('2026-01-20T12:00:00') }).payload;
+  const jan = (await sp.buildSalaryProjection({ rows: syntheticRows(), now: new Date('2026-01-20T12:00:00') })).payload;
   const janRows = blockOf(jan, Y).rows;
   check(janRows[0].status === 'current' && janRows.slice(1).every((r) => r.status === 'forecast') && jan.actuals.through === null,
     'in January: no actual months, January projected');
   check(jan.basis.runRateMonth === mk(Y - 1, 12) && ils(jan, Y, 1, '760001') === 5_012_000 && ils(jan, Y, 1, '760017') === 900_000,
     'in January: permanent from December of the previous year, temporary from January of the previous year');
 
-  const noPrev = sp.buildSalaryProjection({ rows: syntheticRows({ withPrevYear: false }), now: NOW }).payload;
+  const noPrev = (await sp.buildSalaryProjection({ rows: syntheticRows({ withPrevYear: false }), now: NOW })).payload;
   check(noPrev.warnings.some((w) => w.includes(`no ${Y - 1} payroll`)) && ils(noPrev, Y, 12, '760017') === 0,
     `no ${Y - 1} rows: a warning, and temporary accounts project 0 in ${Y}`);
 
   let threw = null;
-  try { sp.buildSalaryProjection({ rows: [], now: NOW }); } catch (e) { threw = e; }
+  try { await sp.buildSalaryProjection({ rows: [], now: NOW }); } catch (e) { threw = e; }
   check(threw instanceof cp.ProjectionError, 'no payroll at all → a ProjectionError (its message is shown)');
+}
+
+// ── 2. classification ───────────────────────────────────────────────────────
+function callJson(handler, { method = 'GET', url = '/api/salary-projection/classification', body, headers = {} } = {}) {
+  return new Promise((resolve) => {
+    const raw = body === undefined ? '' : JSON.stringify(body);
+    const req = Readable.from(raw ? [Buffer.from(raw)] : []);
+    Object.assign(req, { method, url, headers: { host: 'finance.example', ...headers } });
+    const res = {
+      statusCode: 200, headers: {},
+      setHeader(k, v) { this.headers[k.toLowerCase()] = v; },
+      end(b) { resolve({ status: this.statusCode, body: b ? JSON.parse(b) : null }); },
+    };
+    handler(req, res);
+  });
+}
+
+async function testClassification(payload) {
+  console.log('\nCLASSIFICATION: saved choices, the page re-projecting, GET/PUT /api/salary-projection/classification');
+  const months = Object.keys(payload.actual);
+  check(months.includes(mk(Y - 1, 12)) && months.includes(mk(Y, 9)) && !months.includes(mk(Y, 10)) && payload.actual[mk(Y, 1)]['760017'].ils === 1_000_000,
+    'the payload carries the actual months (the previous year, this year to September; never the current month)');
+
+  // Saved choices change the projection: 760017 actuals only, 760002 temporary, 760040 permanent.
+  const saved = { '760017': 'none', '760002': 'last-year', '760040': 'run-rate' };
+  const withSaved = (await sp.buildSalaryProjection({ rows: syntheticRows(), now: NOW, saved })).payload;
+  check(accountOf(withSaved, '760017').method === 'none' && ils(withSaved, Y, 12, '760017') === 0 && ils(withSaved, T, 1, '760017') === 0 && ils(withSaved, Y, 1, '760017') === 1_000_000,
+    'saved "actuals only" for 760017: the January bonus stays, no bonus in forecast months');
+  check(accountOf(withSaved, '760002').group === 'temporary' && ils(withSaved, Y, 11, '760002') === 501_100,
+    'saved "temporary" for 760002 (default permanent): November repeats November of last year');
+  check(accountOf(withSaved, '760040').group === 'permanent' && ils(withSaved, T, 3, '760040') === 0,
+    'saved "permanent" for the unclassified 760040: it carries September (0) instead of repeating March');
+  check(withSaved.basis.runRateMonth === payload.basis.runRateMonth && withSaved.basis.ilsPerEur === payload.basis.ilsPerEur,
+    'reclassifying never moves the run-rate month or the rate');
+
+  // The page applies the same choices to the payload and must show exactly what the server computes.
+  const model = await import(pathToFileURL(path.join(ROOT, 'src', 'salary-projection', 'model.ts')).href);
+  const onPage = model.withClassification(payload, saved);
+  check(JSON.stringify(onPage.blocks) === JSON.stringify(withSaved.blocks) && JSON.stringify(onPage.accounts) === JSON.stringify(withSaved.accounts),
+    'the page, re-projecting with the same choices, equals the server\'s projection');
+  check(JSON.stringify(model.withClassification(payload, {}).blocks) === JSON.stringify(payload.blocks), 'no choices: the page shows the server\'s projection unchanged');
+  const older = { ...payload, actual: undefined };
+  check(model.withClassification(older, saved) === older, 'an older payload without the actual months is shown as it is');
+
+  const v = sp.validateClassification;
+  check(v({ value: { methods: { '760001': 'last-year', '76003': 'none' } } }).ok, 'a valid classification');
+  const bad = [{ value: { methods: { '640001': 'none' } } }, { value: { methods: { '760001': 'sometimes' } } }, { value: { methods: [] } }, { value: { methods: {}, extra: 1 } }, { methods: {} }];
+  check(bad.every((b) => !v(b).ok), `${bad.length} kinds of bad classification are refused (not payroll, unknown method, not an object, unknown field, no value)`);
+
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'salary-classification-test-'));
+  const file = path.join(tmp, 'salary-classification.json');
+  const h = sp.createSalaryClassificationHandler({ file, clock: () => NOW.getTime() });
+  let r = await callJson(h);
+  check(r.status === 200 && r.body.ok && JSON.stringify(r.body.value) === '{"methods":{}}' && r.body.updatedAt === null, 'GET before any save: no choices');
+  const json = { 'content-type': 'application/json' };
+  r = await callJson(h, { method: 'PUT', body: { value: { methods: saved } }, headers: json });
+  const r2 = await callJson(h, { method: 'PUT', body: { value: { methods: { '760001': 'x' } } }, headers: json });
+  const r3 = await callJson(h, { method: 'PUT', body: { value: { methods: {} } }, headers: { ...json, origin: 'https://evil.example' } });
+  const r4 = await callJson(h, { method: 'PUT', body: { value: { methods: {} } } });
+  check(r.status === 200 && r.body.value.methods['760017'] === 'none' && r2.status === 400 && r3.status === 403 && r4.status === 415,
+    'PUT: saved; a bad method 400; another site 403; not JSON 415');
+  check(JSON.stringify(sp.readSavedMethods(file)) === JSON.stringify(saved) && fs.existsSync(file.replace(/\.json$/, '-history.jsonl')),
+    'the saved choices read back, with a history line');
+
+  const prevId = process.env.NETSUITE_ACCOUNT_ID;
+  process.env.NETSUITE_ACCOUNT_ID = 'TEST';
+  try {
+    const ns = { fetchPnlActuals: async () => syntheticPnlActuals() };
+    const computed = (await sp.computeSalaryProjection({ now: NOW, getNsClient: () => ns, classificationFile: file })).payload;
+    check(accountOf(computed, '760017').method === 'none' && ils(computed, T, 1, '760017') === 0, 'the server\'s projection uses the saved classification');
+  } finally {
+    if (prevId === undefined) delete process.env.NETSUITE_ACCOUNT_ID; else process.env.NETSUITE_ACCOUNT_ID = prevId;
+  }
+  fs.rmSync(tmp, { recursive: true, force: true });
 }
 
 async function testCompute() {
@@ -197,7 +274,7 @@ async function testCompute() {
     const { payload } = await sp.computeSalaryProjection({ now: NOW, getNsClient: () => ns, queueNsCall: (fn) => { queued++; return fn(); } });
     check(asked && asked.fromYear === Y - 1 && asked.toYear === Y && asked.basis === 'period' && queued === 1,
       `one NetSuite read, ${Y - 1}–${Y} by posting period, through the NetSuite queue`);
-    const direct = sp.buildSalaryProjection({ rows: syntheticRows(), now: NOW }).payload;
+    const direct = (await sp.buildSalaryProjection({ rows: syntheticRows(), now: NOW })).payload;
     check(JSON.stringify(payload.blocks) === JSON.stringify(direct.blocks) && JSON.stringify(payload.accounts) === JSON.stringify(direct.accounts),
       'NetSuite\'s profit-signed amounts become costs; only 76xxxx accounts (revenue and other costs left out)');
 
@@ -214,7 +291,7 @@ async function testCompute() {
   }
 }
 
-// ── 2. handler ──────────────────────────────────────────────────────────────
+// ── 3. handler ──────────────────────────────────────────────────────────────
 function call(handler, url = '/api/salary-projection') {
   return new Promise((resolve) => {
     const res = {
@@ -273,7 +350,7 @@ async function testHandler(payload) {
   check(post === 405, 'anything but GET → 405');
 }
 
-// ── 3. UI model ─────────────────────────────────────────────────────────────
+// ── 4. UI model ─────────────────────────────────────────────────────────────
 async function testModel(payload) {
   const file = path.join(ROOT, 'src', 'salary-projection', 'model.ts');
   console.log('\nMODEL: table lines and KPIs (src/salary-projection/model.ts)');
@@ -326,8 +403,9 @@ async function testModel(payload) {
 
 async function main() {
   console.log('=== salary-projection checks (synthetic data) ===');
-  const payload = testPayload();
-  testEdges();
+  const payload = await testPayload();
+  await testEdges();
+  await testClassification(payload);
   await testCompute();
   await testHandler(payload);
   await testModel(payload);

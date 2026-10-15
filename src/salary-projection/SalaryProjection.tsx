@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Download, Loader2, RefreshCw } from 'lucide-react';
+import { Download, Loader2, RefreshCw, SlidersHorizontal } from 'lucide-react';
 import { useProjection } from '../new-dashboard/useProjection.ts';
 import ProjectionTable, { type TableMarkers } from '../new-dashboard/ProjectionTable.tsx';
 import { ComputingCard, ErrorCard, Segmented, Skeleton, Warnings } from '../new-dashboard/PageParts.tsx';
@@ -7,7 +7,9 @@ import { readParam, writeParam } from '../new-dashboard/urlParams.ts';
 import { monthLongLabel } from '../new-dashboard/model.ts';
 import type { YearView } from '../new-dashboard/types.ts';
 import { fetchSalaryProjection } from './api.ts';
-import { buildSalaryTable, computeSalaryKpis } from './model.ts';
+import { useClassification } from './classification.ts';
+import ClassifyPanel from './ClassifyPanel.tsx';
+import { buildSalaryTable, computeSalaryKpis, withClassification } from './model.ts';
 import SalaryKpiStrip from './SalaryKpiStrip.tsx';
 import type { Ccy } from './types.ts';
 
@@ -38,15 +40,21 @@ export default function SalaryProjection() {
   });
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [classifyOpen, setClassifyOpen] = useState(false);
+  const classification = useClassification();
 
-  const table = useMemo(() => (data ? buildSalaryTable(data, ccy, view) : null), [data, ccy, view]);
-  const kpis = useMemo(() => (data ? computeSalaryKpis(data, ccy) : null), [data, ccy]);
+  // The payload re-projected with the classification the page shows (saved choices plus unsaved edits).
+  const shown = useMemo(() => (data ? withClassification(data, classification.current) : null), [data, classification.current]);
+  const table = useMemo(() => (shown ? buildSalaryTable(shown, ccy, view) : null), [shown, ccy, view]);
+  const kpis = useMemo(() => (shown ? computeSalaryKpis(shown, ccy) : null), [shown, ccy]);
 
   const chooseCcy = (c: Ccy) => { setCcy(c); writeParam('ccy', c === 'eur' ? 'eur' : null); };
   const chooseView = (v: YearView) => { setView(v); writeParam('years', v === 'both' ? null : v); };
 
   const runRate = data ? monthLongLabel(data.basis.runRateMonth) : null;
-  const notProjected = data ? data.accounts.filter((a) => a.method === 'none') : [];
+  const notProjected = shown ? shown.accounts.filter((a) => a.method === 'none') : [];
+  const unclassified = shown ? shown.accounts.filter((a) => a.group === 'other') : [];
+  const canClassify = !!(data && data.actual);
   const method = runRate
     ? `Permanent: ${runRate} run-rate · Temporary: same month last year${notProjected.length ? ` · Not projected: ${notProjected.map((a) => a.acct).join(', ')}` : ''}`
     : '';
@@ -79,6 +87,18 @@ export default function SalaryProjection() {
             <p className="text-sm text-slate-500">LSports · payroll by GL account{y0 ? ` ${y0}–${y1}` : ''}, permanent and temporary</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            {canClassify && (
+              <button
+                type="button"
+                onClick={() => setClassifyOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100"
+                title="Choose which accounts are permanent, temporary or actuals only"
+              >
+                <SlidersHorizontal size={14} />
+                Permanent / temporary
+                {classification.dirty && <span className="h-1.5 w-1.5 rounded-full bg-amber-500" aria-label="unsaved changes" />}
+              </button>
+            )}
             <Segmented label="Currency" value={ccy} onChange={chooseCcy} options={[{ value: 'ils', label: 'ILS' }, { value: 'eur', label: 'EUR' }]} />
             {data && (
               <Segmented
@@ -117,7 +137,7 @@ export default function SalaryProjection() {
         {phase === 'computing' && <ComputingCard elapsedSec={computingElapsedSec} />}
         {phase === 'error' && !data && <ErrorCard message={error} onRetry={refresh} />}
 
-        {data && table && kpis && (
+        {data && shown && table && kpis && (
           <>
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
               <span>Updated {updatedDay} {updated}</span>
@@ -125,6 +145,12 @@ export default function SalaryProjection() {
               <span>{through ? `Actuals: NetSuite payroll through ${through}, by posting period` : 'No closed month yet this year'}</span>
               <span aria-hidden="true">·</span>
               <span>{method}</span>
+              <span aria-hidden="true">·</span>
+              <span>
+                {classification.updatedAt
+                  ? `Classification saved ${new Date(classification.updatedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}${classification.updatedBy ? ` by ${classification.updatedBy}` : ''}`
+                  : "Finance's default classification"}
+              </span>
               <span aria-hidden="true">·</span>
               <span title="Forecast euros are the shekel forecast divided by this rate">
                 Forecast €: ₪{data.basis.ilsPerEur.toFixed(2)} per € ({runRate} payroll)
@@ -134,6 +160,19 @@ export default function SalaryProjection() {
             </div>
 
             <Warnings warnings={data.warnings} />
+
+            {(classification.dirty || unclassified.length > 0) && (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-900">
+                <span>
+                  {classification.dirty
+                    ? 'Unsaved classification: the table shows your changes. Save them to apply them for everyone.'
+                    : `Not classified yet, projected like a temporary account: ${unclassified.map((a) => `${a.acct} ${a.name}`).join(', ')}.`}
+                </span>
+                <button type="button" onClick={() => setClassifyOpen(true)} className="font-medium underline underline-offset-2 hover:text-amber-700">
+                  Permanent / temporary
+                </button>
+              </div>
+            )}
 
             <SalaryKpiStrip kpis={kpis} ccy={ccy} />
 
@@ -156,7 +195,12 @@ export default function SalaryProjection() {
               year, so seasonal payments stay in their month: {y0} forecast months repeat {y0 ? y0 - 1 : ''}, and {y1} repeats {y0}.
               {notProjected.length > 0 && ` Actuals only, not projected: ${notProjected.map((a) => `${a.acct} ${a.name}`).join(', ')}.`}
               {' '}The current month is projected as a whole month. Forecasts are made in shekels; euros use the rate above.
+              Use Permanent / temporary to change how an account is projected.
             </p>
+
+            {classifyOpen && runRate && (
+              <ClassifyPanel accounts={shown.accounts} state={classification} runRate={runRate} onClose={() => setClassifyOpen(false)} />
+            )}
           </>
         )}
       </main>

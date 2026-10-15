@@ -1,8 +1,8 @@
 {
   "ok": true,
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "status": "ready",
-  "generatedAt": "2026-10-15T12:28:00.985Z",
+  "generatedAt": "2026-10-15T13:12:01.740Z",
   "computedMonth": "2026-10",
   "company": "lsports",
   "years": [
@@ -13,140 +13,163 @@
     {
       "acct": "760001",
       "name": "Gross Salaries",
-      "group": "permanent",
-      "method": "run-rate"
+      "defaultMethod": "run-rate",
+      "method": "run-rate",
+      "group": "permanent"
     },
     {
       "acct": "760002",
       "name": "Account 760002",
-      "group": "permanent",
-      "method": "run-rate"
+      "defaultMethod": "run-rate",
+      "method": "run-rate",
+      "group": "permanent"
     },
     {
       "acct": "760003",
       "name": "Gemel expenses",
-      "group": "permanent",
-      "method": "run-rate"
+      "defaultMethod": "run-rate",
+      "method": "run-rate",
+      "group": "permanent"
     },
     {
       "acct": "760004",
       "name": "Severance expenses",
-      "group": "permanent",
-      "method": "run-rate"
+      "defaultMethod": "run-rate",
+      "method": "run-rate",
+      "group": "permanent"
     },
     {
       "acct": "760005",
       "name": "Account 760005",
-      "group": "permanent",
-      "method": "run-rate"
+      "defaultMethod": "run-rate",
+      "method": "run-rate",
+      "group": "permanent"
     },
     {
       "acct": "760006",
       "name": "Account 760006",
-      "group": "permanent",
-      "method": "run-rate"
+      "defaultMethod": "run-rate",
+      "method": "run-rate",
+      "group": "permanent"
     },
     {
       "acct": "760007",
       "name": "Education fund",
-      "group": "permanent",
-      "method": "run-rate"
+      "defaultMethod": "run-rate",
+      "method": "run-rate",
+      "group": "permanent"
     },
     {
       "acct": "760009",
       "name": "Disability Insurance",
-      "group": "permanent",
-      "method": "run-rate"
+      "defaultMethod": "run-rate",
+      "method": "run-rate",
+      "group": "permanent"
     },
     {
       "acct": "760018",
       "name": "Account 760018",
-      "group": "permanent",
-      "method": "run-rate"
+      "defaultMethod": "run-rate",
+      "method": "run-rate",
+      "group": "permanent"
     },
     {
       "acct": "760025",
       "name": "Salaries payments during military reserve",
-      "group": "permanent",
-      "method": "run-rate"
+      "defaultMethod": "run-rate",
+      "method": "run-rate",
+      "group": "permanent"
     },
     {
       "acct": "760015",
       "name": "Account 760015",
-      "group": "temporary",
-      "method": "last-year"
+      "defaultMethod": "last-year",
+      "method": "last-year",
+      "group": "temporary"
     },
     {
       "acct": "760016",
       "name": "Employer' tax",
-      "group": "temporary",
-      "method": "last-year"
+      "defaultMethod": "last-year",
+      "method": "last-year",
+      "group": "temporary"
     },
     {
       "acct": "760017",
       "name": "One time payments (Bonus, grants)",
-      "group": "temporary",
-      "method": "last-year"
+      "defaultMethod": "last-year",
+      "method": "last-year",
+      "group": "temporary"
     },
     {
       "acct": "760019",
       "name": "Account 760019",
-      "group": "temporary",
-      "method": "last-year"
+      "defaultMethod": "last-year",
+      "method": "last-year",
+      "group": "temporary"
     },
     {
       "acct": "760023",
       "name": "Account 760023",
-      "group": "temporary",
-      "method": "none"
+      "defaultMethod": "none",
+      "method": "none",
+      "group": "temporary"
     },
     {
       "acct": "760024",
       "name": "National insurance Damage fees",
-      "group": "temporary",
-      "method": "last-year"
+      "defaultMethod": "last-year",
+      "method": "last-year",
+      "group": "temporary"
     },
     {
       "acct": "760029",
       "name": "Account 760029",
-      "group": "temporary",
-      "method": "none"
+      "defaultMethod": "none",
+      "method": "none",
+      "group": "temporary"
     },
     {
       "acct": "760030",
       "name": "Gemel Pension expenses",
-      "group": "temporary",
-      "method": "last-year"
+      "defaultMethod": "last-year",
+      "method": "last-year",
+      "group": "temporary"
     },
     {
       "acct": "760020",
       "name": "Reducing salary expenses-option exercise",
-      "group": "temporary",
-      "method": "last-year"
+      "defaultMethod": "last-year",
+      "method": "last-year",
+      "group": "temporary"
     },
     {
       "acct": "76003",
       "name": "Social security - Injury payment",
-      "group": "temporary",
-      "method": "last-year"
+      "defaultMethod": "last-year",
+      "method": "last-year",
+      "group": "temporary"
     },
     {
       "acct": "760008",
       "name": "option employess expemses",
-      "group": "temporary",
-      "method": "none"
+      "defaultMethod": "none",
+      "method": "none",
+      "group": "temporary"
     },
     {
       "acct": "760014",
       "name": "Vacation expenses",
-      "group": "temporary",
-      "method": "none"
+      "defaultMethod": "none",
+      "method": "none",
+      "group": "temporary"
     },
     {
       "acct": "760040",
       "name": "Unclassified payroll",
-      "group": "other",
-      "method": "last-year"
+      "defaultMethod": null,
+      "method": "last-year",
+      "group": "other"
     }
   ],
   "actuals": {
@@ -158,11 +181,533 @@
     "runRateMonth": "2026-09",
     "ilsPerEur": 3.7
   },
+  "actual": {
+    "2025-01": {
+      "760001": {
+        "eur": 1250250,
+        "ils": 5001000
+      },
+      "760002": {
+        "eur": 125025,
+        "ils": 500100
+      },
+      "760005": {
+        "eur": 25000,
+        "ils": 100000
+      },
+      "760006": {
+        "eur": -25000,
+        "ils": -100000
+      },
+      "760017": {
+        "eur": 225000,
+        "ils": 900000
+      },
+      "760018": {
+        "eur": 5000,
+        "ils": 20000
+      }
+    },
+    "2025-02": {
+      "760001": {
+        "eur": 1250500,
+        "ils": 5002000
+      },
+      "760002": {
+        "eur": 125050,
+        "ils": 500200
+      },
+      "760005": {
+        "eur": 25000,
+        "ils": 100000
+      },
+      "760006": {
+        "eur": -25000,
+        "ils": -100000
+      },
+      "760018": {
+        "eur": 5000,
+        "ils": 20000
+      }
+    },
+    "2025-03": {
+      "760001": {
+        "eur": 1250750,
+        "ils": 5003000
+      },
+      "760002": {
+        "eur": 125075,
+        "ils": 500300
+      },
+      "760005": {
+        "eur": 25000,
+        "ils": 100000
+      },
+      "760006": {
+        "eur": -25000,
+        "ils": -100000
+      },
+      "760018": {
+        "eur": 5000,
+        "ils": 20000
+      }
+    },
+    "2025-04": {
+      "760001": {
+        "eur": 1251000,
+        "ils": 5004000
+      },
+      "760002": {
+        "eur": 125100,
+        "ils": 500400
+      },
+      "760005": {
+        "eur": 25000,
+        "ils": 100000
+      },
+      "760006": {
+        "eur": -25000,
+        "ils": -100000
+      },
+      "760018": {
+        "eur": 5000,
+        "ils": 20000
+      }
+    },
+    "2025-05": {
+      "760001": {
+        "eur": 1251250,
+        "ils": 5005000
+      },
+      "760002": {
+        "eur": 125125,
+        "ils": 500500
+      },
+      "760005": {
+        "eur": 25000,
+        "ils": 100000
+      },
+      "760006": {
+        "eur": -25000,
+        "ils": -100000
+      },
+      "760018": {
+        "eur": 5000,
+        "ils": 20000
+      }
+    },
+    "2025-06": {
+      "760001": {
+        "eur": 1251500,
+        "ils": 5006000
+      },
+      "760002": {
+        "eur": 125150,
+        "ils": 500600
+      },
+      "760005": {
+        "eur": 25000,
+        "ils": 100000
+      },
+      "760006": {
+        "eur": -25000,
+        "ils": -100000
+      },
+      "760018": {
+        "eur": 5000,
+        "ils": 20000
+      }
+    },
+    "2025-07": {
+      "760001": {
+        "eur": 1251750,
+        "ils": 5007000
+      },
+      "760002": {
+        "eur": 125175,
+        "ils": 500700
+      },
+      "760005": {
+        "eur": 25000,
+        "ils": 100000
+      },
+      "760006": {
+        "eur": -25000,
+        "ils": -100000
+      },
+      "760015": {
+        "eur": 75000,
+        "ils": 300000
+      },
+      "760018": {
+        "eur": 5000,
+        "ils": 20000
+      }
+    },
+    "2025-08": {
+      "760001": {
+        "eur": 1252000,
+        "ils": 5008000
+      },
+      "760002": {
+        "eur": 125200,
+        "ils": 500800
+      },
+      "760005": {
+        "eur": 25000,
+        "ils": 100000
+      },
+      "760006": {
+        "eur": -25000,
+        "ils": -100000
+      },
+      "760018": {
+        "eur": 5000,
+        "ils": 20000
+      }
+    },
+    "2025-09": {
+      "760001": {
+        "eur": 1252250,
+        "ils": 5009000
+      },
+      "760002": {
+        "eur": 125225,
+        "ils": 500900
+      },
+      "760005": {
+        "eur": 25000,
+        "ils": 100000
+      },
+      "760006": {
+        "eur": -25000,
+        "ils": -100000
+      },
+      "760018": {
+        "eur": 5000,
+        "ils": 20000
+      }
+    },
+    "2025-10": {
+      "760001": {
+        "eur": 1252500,
+        "ils": 5010000
+      },
+      "760002": {
+        "eur": 125250,
+        "ils": 501000
+      },
+      "760005": {
+        "eur": 25000,
+        "ils": 100000
+      },
+      "760006": {
+        "eur": -25000,
+        "ils": -100000
+      },
+      "760017": {
+        "eur": 50000,
+        "ils": 200000
+      },
+      "760018": {
+        "eur": 5000,
+        "ils": 20000
+      },
+      "760023": {
+        "eur": -12500,
+        "ils": -50000
+      }
+    },
+    "2025-11": {
+      "760001": {
+        "eur": 1252750,
+        "ils": 5011000
+      },
+      "760002": {
+        "eur": 125275,
+        "ils": 501100
+      },
+      "760005": {
+        "eur": 25000,
+        "ils": 100000
+      },
+      "760006": {
+        "eur": -25000,
+        "ils": -100000
+      },
+      "760018": {
+        "eur": 5000,
+        "ils": 20000
+      },
+      "760019": {
+        "eur": 10000,
+        "ils": 40000
+      },
+      "760023": {
+        "eur": -20000,
+        "ils": -80000
+      }
+    },
+    "2025-12": {
+      "760001": {
+        "eur": 1253000,
+        "ils": 5012000
+      },
+      "760002": {
+        "eur": 125300,
+        "ils": 501200
+      },
+      "760005": {
+        "eur": 25000,
+        "ils": 100000
+      },
+      "760006": {
+        "eur": -25000,
+        "ils": -100000
+      },
+      "760008": {
+        "eur": 89000,
+        "ils": 356000
+      },
+      "760014": {
+        "eur": -175750,
+        "ils": -703000
+      },
+      "760017": {
+        "eur": 37500,
+        "ils": 150000
+      },
+      "760018": {
+        "eur": 5000,
+        "ils": 20000
+      },
+      "760029": {
+        "eur": 17500,
+        "ils": 70000
+      }
+    },
+    "2026-01": {
+      "760001": {
+        "eur": 1405675.68,
+        "ils": 5201000
+      },
+      "760002": {
+        "eur": 140567.57,
+        "ils": 520100
+      },
+      "760005": {
+        "eur": 27027.03,
+        "ils": 100000
+      },
+      "760006": {
+        "eur": -27027.03,
+        "ils": -100000
+      },
+      "760017": {
+        "eur": 270270.27,
+        "ils": 1000000
+      },
+      "760018": {
+        "eur": 5405.41,
+        "ils": 20000
+      }
+    },
+    "2026-02": {
+      "760001": {
+        "eur": 1405945.95,
+        "ils": 5202000
+      },
+      "760002": {
+        "eur": 140594.59,
+        "ils": 520200
+      },
+      "760005": {
+        "eur": 27027.03,
+        "ils": 100000
+      },
+      "760006": {
+        "eur": -27027.03,
+        "ils": -100000
+      },
+      "760018": {
+        "eur": 5405.41,
+        "ils": 20000
+      }
+    },
+    "2026-03": {
+      "760001": {
+        "eur": 1406216.22,
+        "ils": 5203000
+      },
+      "760002": {
+        "eur": 140621.62,
+        "ils": 520300
+      },
+      "760005": {
+        "eur": 27027.03,
+        "ils": 100000
+      },
+      "760006": {
+        "eur": -27027.03,
+        "ils": -100000
+      },
+      "760018": {
+        "eur": 5405.41,
+        "ils": 20000
+      },
+      "760023": {
+        "eur": -8108.11,
+        "ils": -30000
+      },
+      "760040": {
+        "eur": 270.27,
+        "ils": 1000
+      }
+    },
+    "2026-04": {
+      "760001": {
+        "eur": 1406486.49,
+        "ils": 5204000
+      },
+      "760002": {
+        "eur": 140648.65,
+        "ils": 520400
+      },
+      "760005": {
+        "eur": 27027.03,
+        "ils": 100000
+      },
+      "760006": {
+        "eur": -27027.03,
+        "ils": -100000
+      },
+      "760018": {
+        "eur": 5405.41,
+        "ils": 20000
+      },
+      "760020": {
+        "eur": 1351.35,
+        "ils": 5000
+      }
+    },
+    "2026-05": {
+      "760001": {
+        "eur": 1406756.76,
+        "ils": 5205000
+      },
+      "760002": {
+        "eur": 140675.68,
+        "ils": 520500
+      },
+      "760005": {
+        "eur": 27027.03,
+        "ils": 100000
+      },
+      "760006": {
+        "eur": -27027.03,
+        "ils": -100000
+      },
+      "760018": {
+        "eur": 5405.41,
+        "ils": 20000
+      }
+    },
+    "2026-06": {
+      "760001": {
+        "eur": 1407027.03,
+        "ils": 5206000
+      },
+      "760002": {
+        "eur": 140702.7,
+        "ils": 520600
+      },
+      "760005": {
+        "eur": 27027.03,
+        "ils": 100000
+      },
+      "760006": {
+        "eur": -27027.03,
+        "ils": -100000
+      },
+      "760018": {
+        "eur": 5405.41,
+        "ils": 20000
+      }
+    },
+    "2026-07": {
+      "760001": {
+        "eur": 1407297.3,
+        "ils": 5207000
+      },
+      "760002": {
+        "eur": 140729.73,
+        "ils": 520700
+      },
+      "760005": {
+        "eur": 27027.03,
+        "ils": 100000
+      },
+      "760006": {
+        "eur": -27027.03,
+        "ils": -100000
+      },
+      "760015": {
+        "eur": 86486.49,
+        "ils": 320000
+      },
+      "760018": {
+        "eur": 5405.41,
+        "ils": 20000
+      }
+    },
+    "2026-08": {
+      "760001": {
+        "eur": 1407567.57,
+        "ils": 5208000
+      },
+      "760002": {
+        "eur": 140756.76,
+        "ils": 520800
+      },
+      "760005": {
+        "eur": 27027.03,
+        "ils": 100000
+      },
+      "760006": {
+        "eur": -27027.03,
+        "ils": -100000
+      },
+      "760018": {
+        "eur": 5405.41,
+        "ils": 20000
+      }
+    },
+    "2026-09": {
+      "760001": {
+        "eur": 1407837.84,
+        "ils": 5209000
+      },
+      "760002": {
+        "eur": 140783.78,
+        "ils": 520900
+      },
+      "760005": {
+        "eur": 27027.03,
+        "ils": 100000
+      },
+      "760006": {
+        "eur": -27027.03,
+        "ils": -100000
+      },
+      "760018": {
+        "eur": 5405.41,
+        "ils": 20000
+      }
+    }
+  },
   "degraded": false,
   "failedFeeds": [],
-  "warnings": [
-    "Not classified as permanent or temporary, so projected like a temporary account (same month last year): 760040 Unclassified payroll."
-  ],
+  "warnings": [],
   "blocks": [
     {
       "year": 2026,

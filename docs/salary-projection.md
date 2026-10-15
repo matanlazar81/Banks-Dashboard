@@ -34,13 +34,13 @@ its postings are partial.
 | Permanent | The last closed month, carried flat into every forecast month of both years. |
 | Temporary | The same month of the previous year. The current year's forecast months repeat last year's actuals. The next year repeats the current year, actual or forecast. |
 | 760023 Military reserve refund, 760029 Lieu of prior notice, 760008 Option employees expenses, 760014 Vacation expenses | Actuals only: forecast months are 0 (`ACTUALS_ONLY`). 2026's refunds and notice pay are not expected to recur; options and vacation are year-end accruals that change every year. |
-| Not classified | Any other `76xxxx` account with postings. It is projected like a temporary account and listed in a warning. |
+| Not classified | Any other `76xxxx` account with postings and no choice yet. It is projected like a temporary account, and the page asks someone to pick. |
 
 The projection is made in **₪**, the currency payroll is paid in. Forecast **€** = ₪ ÷ the ILS/EUR ratio
 of the last closed month's permanent payroll; the page shows the rate. Actual months show NetSuite's own €.
 
-**Classification.** From finance's file `ProfitandLoss988.xlsx` (yellow = permanent, green = temporary),
-held in `SALARY_GL_GROUPS` in `server/salary-projection.cjs`:
+**Classification.** The default is finance's file `ProfitandLoss988.xlsx` (yellow = permanent, green =
+temporary), held in `SALARY_GL_GROUPS` and `ACTUALS_ONLY` in `server/salary-projection.cjs`:
 
 | Permanent | Temporary |
 |---|---|
@@ -58,14 +58,22 @@ held in `SALARY_GL_GROUPS` in `server/salary-projection.cjs`:
 | | 760014 Vacation expenses |
 
 760020, 76003, 760008 and 760014 are not in the file; finance classified them as temporary (760008 and
-760014 actuals only). To move an account, edit
-`SALARY_GL_GROUPS` (and `ACTUALS_ONLY` for accounts that are not projected), run the tests and deploy.
-Every listed account shows, even when it is zero.
+760014 actuals only). Every listed account shows, even when it is zero.
+
+**Changing it on the page.** **Permanent / temporary** in the page header opens a panel with every account
+and three choices: Permanent, Temporary, Actuals only. The table and KPIs change at once (the payload carries
+the actual months, and the page re-projects with `src/forecast/salary-projection.mjs`, the same code as the
+server). **Save for everyone** stores the accounts that differ from the default in
+`data/salary-classification.json` (a history line per save in `data/salary-classification-history.jsonl`,
+with who saved it). **Defaults** goes back to finance's classification. Saving needs the page's role
+(`salary_projection`) and goes through `GET/PUT /api/salary-projection/classification`. Changing the default
+itself still means editing `SALARY_GL_GROUPS` / `ACTUALS_ONLY` and deploying.
 
 **The page**
 - KPIs: payroll year to date, full-year payroll for each year, and the permanent monthly run-rate.
 - The table: each group's accounts and subtotal, then the total payroll.
-- Controls: ILS (default) or EUR, one year or both, Refresh, and Export (Excel, the table as shown).
+- Controls: Permanent / temporary (the classification panel), ILS (default) or EUR, one year or both,
+  Refresh, and Export (Excel, the table as shown).
 - Hovering an account shows how it is projected.
 
 Responses, caching and refresh work exactly like the P&L Projection (`createProjectionHandler` in
@@ -92,7 +100,8 @@ pm2 restart finance-it-backend                    # server code changed: Pull & 
 - If finance-it-backend mounts the shared API (`docs/backend-bank-dashboard-api.ts`), the route is already
   included.
 - Otherwise update `src/routes/cash-projection.ts` from `docs/backend-cash-projection-route.ts`. It now
-  also mounts `/api/salary-projection` behind the new `salary_projection` role (step 1 below).
+  also mounts `/api/salary-projection` and `GET/PUT /api/salary-projection/classification` behind the new
+  `salary_projection` role (step 1 below).
 
 ### finance-it: sidebar, role and route (manual, not in this repository)
 
@@ -149,7 +158,7 @@ node scripts/salary-projection.cjs --reconcile   # real data: Snowflake vs NetSu
 - Permanent accounts stay flat at the last closed month. Planned hires, leavers and raises are not added.
   The P&L Projection's payroll forecast includes them, so the two pages can differ in forecast months.
 - Temporary accounts repeat last year as it was: a bonus month repeats in the same month. Accounts that
-  should not repeat at all go in `ACTUALS_ONLY` (today 760023, 760029, 760008 and 760014).
+  should not repeat at all are "Actuals only" (by default 760023, 760029, 760008 and 760014).
 - Salaries CAPEX (950000) is not a payroll account, so it is not on this page. The P&L Projection shows it
   as a separate line.
 - Actuals are NetSuite's by posting period, so a late posting into a closed period appears on the next

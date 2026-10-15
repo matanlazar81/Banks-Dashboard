@@ -8,6 +8,7 @@
 //                                        New Bank Dashboard only: PUT needs its role)
 //   GET /api/metrics (+ GET/PUT /api/metrics/settings, /api/metrics/deposits)  the Metrics page
 //   GET /api/salary-projection           the Salary Projection (payroll by GL account, NetSuite)
+//   GET/PUT /api/salary-projection/classification  which accounts are permanent or temporary (saved for everyone)
 //
 // ONLY NEEDED IF the shared bank-dashboard API mount (docs/backend-bank-dashboard-api.ts →
 // mountBankDashboardApi) is NOT installed. That mount registers every route of
@@ -142,9 +143,15 @@ export function mountCashProjection(app: express.Express): void {
   // guarded, so a checkout from before it keeps the other routes working.
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { createSalaryProjectionHandler } = require(`${BANK_DASHBOARD_DIR}/server/salary-projection.cjs`);
+    const { createSalaryProjectionHandler, createSalaryClassificationHandler } = require(`${BANK_DASHBOARD_DIR}/server/salary-projection.cjs`);
     const salary = createSalaryProjectionHandler();
     app.get('/api/salary-projection', salaryRole, (req, res) => salary(req, res));
+    // Which accounts are permanent or temporary: read and saved by anyone with the page's role (JSON, same origin).
+    if (createSalaryClassificationHandler) {
+      const classification = createSalaryClassificationHandler();
+      app.get('/api/salary-projection/classification', salaryRole, (req, res) => classification(req, res));
+      app.put('/api/salary-projection/classification', salaryRole, (req, res) => classification(req, res));
+    }
     console.log(`[salary-projection] mounted from ${BANK_DASHBOARD_DIR}`);
   } catch (e) {
     console.error(`[salary-projection] FAILED to mount from ${BANK_DASHBOARD_DIR}: ${e instanceof Error ? e.message : String(e)}.`);

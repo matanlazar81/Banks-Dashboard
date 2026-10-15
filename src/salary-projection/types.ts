@@ -1,20 +1,21 @@
 // Response shapes of GET /api/salary-projection (server/salary-projection.cjs).
 import type { Ccy, ComputingResponse, ErrorResponse, MonthStatus } from '../new-dashboard/types.ts';
+import type { AccountAmounts, SalaryMethod } from '../forecast/salary-projection.mjs';
 
-export type { Ccy, MonthStatus };
+export type { Ccy, MonthStatus, SalaryMethod };
 
-/** Permanent, temporary, or not classified (projected like temporary). */
+/** Permanent, temporary, or not classified (projected like temporary until someone picks). */
 export type SalaryGroup = 'permanent' | 'temporary' | 'other';
-
-/** How forecast months are made: the last closed month carried flat, the same month last year, or not at all (0). */
-export type SalaryMethod = 'run-rate' | 'last-year' | 'none';
 
 export interface SalaryAccount {
   /** NetSuite account number, e.g. '760001'. */
   acct: string;
   name: string;
-  group: SalaryGroup;
+  /** Finance's default; null when the account is not in it. */
+  defaultMethod: SalaryMethod | null;
+  /** How forecast months are made: the last closed month carried flat, the same month last year, or 0. */
   method: SalaryMethod;
+  group: SalaryGroup;
 }
 
 /** One month's payroll in one currency: amount per account number (costs positive). */
@@ -47,6 +48,8 @@ export interface SalaryPayload {
   actuals: { source: 'netsuite'; basis: 'period'; through: string | null };
   /** The month the permanent accounts are carried from, and the ₪ per € of forecast months. */
   basis: { runRateMonth: string; ilsPerEur: number };
+  /** The actual months by account (the previous year and this year's closed months), to re-project on the page. */
+  actual?: Record<string, AccountAmounts>;
   degraded: boolean;
   failedFeeds: string[];
   warnings: string[];
