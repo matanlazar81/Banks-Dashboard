@@ -250,7 +250,7 @@ function makeEntry(payload, nowMs, details = null, schemaVersion = SCHEMA_VERSIO
     schemaVersion,
     company: payload.company,
     year: payload.years[0],
-    scenarioName: payload.plan.name,
+    scenarioName: payload.plan ? payload.plan.name : null,
     computedMonth: payload.computedMonth,
     generatedAtMs: nowMs,
     payload: { ...payload, generatedAt: new Date(nowMs).toISOString() },
@@ -297,6 +297,7 @@ function defaultQueueNsCall(fn) {
  *   schemaVersion, cacheFile (null = memory only), logTag ('cash-projection'), envPrefix ('CASH_PROJECTION':
  *   reads <prefix>_TTL_MIN, _TIMEOUT_MIN, _PREWARM, falling back to the CASH_PROJECTION_* values)
  *   clock() → ms, ttlMs, timeoutMs, refreshCooldownMs, failureBackoffMs
+ *   ignoreScenario — the page has no plan: a cached entry stays usable whatever NET_CASH_SCENARIO_NAME is
  */
 function createProjectionHandler(spec) {
   const { compute, schemaVersion } = spec;
@@ -317,7 +318,7 @@ function createProjectionHandler(spec) {
     && entry.schemaVersion === schemaVersion
     && entry.company === COMPANY
     && entry.year === new Date(nowMs).getFullYear()
-    && entry.scenarioName === scenarioName();
+    && (!!spec.ignoreScenario || entry.scenarioName === scenarioName());
 
   // Pick up a cache file written by another process (the CLI's --write-cache) or a previous run.
   function hydrateFromDisk() {

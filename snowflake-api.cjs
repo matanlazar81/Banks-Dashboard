@@ -1777,6 +1777,40 @@ function createSnowflakeClient(env) {
     return { byMonth, lastActualMonth };
   }
 
+  // ── Payroll by GL account and month (the Salary Projection page) ──
+  // Every 76xxxx account (the P&L "Payroll" line), LSports only, booked from NetSuite, Jan fromYear through
+  // Dec toYear. Plain AMOUNT_EUR / AMOUNT_ILS (the _CC columns undercount actuals). Not rounded: the page
+  // sums accounts. Returns [{ month: 'YYYY-MM', acct, name, eur, ils }].
+  async function fetchPayrollByAccount(fromYear, toYear) {
+    const from = parseInt(fromYear);
+    const to = parseInt(toYear);
+    if (!(from >= 2000 && to >= from && to <= 2100)) throw new Error('fetchPayrollByAccount: invalid years');
+    console.log(`[Snowflake] Fetching payroll by account ${from}–${to}...`);
+    const rows = await query(`
+      SELECT TO_VARCHAR(DATE_TRUNC('month', e.CAL_MONTH_START_DATE), 'YYYY-MM') AS M,
+             g.GL_ACCOUNT_NUMBER AS ACCT,
+             MAX(g.GL_ACCOUNT_NAME) AS NAME,
+             SUM(e.AMOUNT_EUR) AS EUR,
+             SUM(e.AMOUNT_ILS) AS ILS
+      FROM ${T_FCT_EXPENSE} e
+      JOIN ${T_DIM_GL_ACCOUNT} g ON e.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
+      WHERE e.SUBSIDIARY_ID = 3
+        AND e.SOURCE = 'netsuite'
+        AND g.GL_ACCOUNT_NUMBER LIKE '76%'
+        AND e.CAL_MONTH_START_DATE >= '${from}-01-01'
+        AND e.CAL_MONTH_START_DATE < '${to + 1}-01-01'
+      GROUP BY 1, 2
+      ORDER BY 1, 2
+    `);
+    return rows.map(r => ({
+      month: String(r.M || ''),
+      acct: String(r.ACCT || ''),
+      name: String(r.NAME || ''),
+      eur: Number(r.EUR) || 0,
+      ils: Number(r.ILS) || 0,
+    }));
+  }
+
   // ── Vendor expenses yearly grid: months × GL account (accrual lens via FCT_EXPENSE) ──
   // Mirrors fetchVendorBreakdown's account filter so the cross-check is apples-to-apples.
   async function fetchVendorsYearlyGrid(year, subsidiaryId) {
@@ -1891,6 +1925,7 @@ function createSnowflakeClient(env) {
     fetchCurrentARR,
     fetchExpenseExport,
     fetchSalaryActualsByDept,
+    fetchPayrollByAccount,
     fetchMonthlyHCImpact,
     getConnection,
   };
