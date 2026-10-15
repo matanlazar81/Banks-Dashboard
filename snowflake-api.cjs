@@ -601,11 +601,14 @@ function createSnowflakeClient(env) {
 
   // ── The override file's payroll rows (the Salary Projection page) ──
   // FCT_EXPENSE rows loaded from the override file (OVERIDE_TEMP): SOURCE future_cost_override (replaces the
-  // budget of that account and month) or future_cost_increment (adds to it), on payroll accounts (IS_PAYROLL or
-  // 76xxxx), LSports only, from January fromYear. Returns [{ month, acct, name, department, mode, eur, ils, memo }].
-  async function fetchPayrollOverrides(fromYear) {
+  // budget of that account and month) or future_cost_increment (adds to it), on the given accounts (the sheet's
+  // column A; finance's payroll rows are on 760001), LSports only, from January fromYear.
+  // Returns [{ month, acct, name, department, mode, eur, ils, memo }].
+  async function fetchPayrollOverrides(fromYear, accounts) {
     const from = parseInt(fromYear);
     if (!(from >= 2000 && from <= 2100)) throw new Error('fetchPayrollOverrides: invalid year');
+    const accts = [...new Set((accounts || []).map(String))];
+    if (!accts.length || !accts.every((a) => /^\d{4,8}$/.test(a))) throw new Error('fetchPayrollOverrides: invalid accounts');
     console.log(`[Snowflake] Fetching payroll overrides from ${from}...`);
     const rows = await query(`
       SELECT TO_VARCHAR(DATE_TRUNC('month', e.CAL_MONTH_START_DATE), 'YYYY-MM') AS M,
@@ -621,7 +624,7 @@ function createSnowflakeClient(env) {
       LEFT JOIN ${T_DIM_DEPARTMENT} d ON e.DEPARTMENT_ID = d.DEPARTMENT_ID
       WHERE e.SUBSIDIARY_ID = 3
         AND e.SOURCE IN ('future_cost_override', 'future_cost_increment')
-        AND (g.IS_PAYROLL = TRUE OR g.GL_ACCOUNT_NUMBER LIKE '76%')
+        AND g.GL_ACCOUNT_NUMBER IN (${accts.map((a) => `'${a}'`).join(', ')})
         AND e.CAL_MONTH_START_DATE >= '${from}-01-01'
       GROUP BY 1, 2, 4, 5, 6
       ORDER BY 1, 2

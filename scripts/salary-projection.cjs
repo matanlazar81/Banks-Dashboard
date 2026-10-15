@@ -3,7 +3,8 @@
 // Salary Projection from the command line: the same computation as GET /api/salary-projection
 // (server/salary-projection.cjs), without a web server.
 //
-//   node scripts/salary-projection.cjs --dry-run       print both years by account, ₪ thousands
+//   node scripts/salary-projection.cjs --dry-run       print both years by account, ₪ thousands (Total payroll
+//                                                      adds the override file's increments, as the page does)
 //   node scripts/salary-projection.cjs --json          print the API payload
 //   node scripts/salary-projection.cjs --write-cache   compute and write data/salary-projection-cache.json;
 //                                                      a running server serves it on its next request
@@ -20,7 +21,7 @@ const path = require('path');
 const ROOT = path.resolve(__dirname, '..');
 try { require('dotenv').config({ path: path.join(ROOT, '.env') }); } catch { /* env may already be exported */ }
 
-const { computeSalaryProjection, DEFAULT_CACHE_FILE, SCHEMA_VERSION } = require(path.join(ROOT, 'server', 'salary-projection.cjs'));
+const { computeSalaryProjection, loadSalaryModule, DEFAULT_CACHE_FILE, SCHEMA_VERSION } = require(path.join(ROOT, 'server', 'salary-projection.cjs'));
 const { makeEntry, writeCacheEntry } = require(path.join(ROOT, 'server', 'cash-projection.cjs'));
 
 function arg(name) {
@@ -36,18 +37,27 @@ const k = (n) => {
 const ils = (n) => (Math.round((Number(n) || 0) * 100) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).padStart(16);
 const eur = (n) => `€${Math.round(Number(n) || 0).toLocaleString('en-US')}`.padStart(14);
 
-function printYear(payload, block) {
+// increments: { 'YYYY-MM': { [acct]: ₪ } } the override file's increments that count (countedIncrementRows).
+function printYear(payload, block, increments) {
   console.log(`\n${block.year} (${block.kind}) — ₪ thousands`);
   console.log(`  ${'account'.padEnd(44)}${block.rows.map((r) => `${r.mKey.slice(2)}${r.status === 'actual' ? 'A' : r.status === 'current' ? 'C' : 'F'}`.padStart(8)).join('')}${'FY'.padStart(9)}`);
   const sumRow = (accts) => block.rows.map((r) => accts.reduce((s, a) => s + (r.ils[a] || 0), 0));
+  const incRow = (accts) => block.rows.map((r) => accts.reduce((s, a) => s + ((increments[r.mKey] || {})[a] || 0), 0));
+  const incAccts = [...new Set(block.rows.flatMap((r) => Object.keys(increments[r.mKey] || {})))].sort();
   const print = (label, values) => console.log(`  ${label.slice(0, 43).padEnd(44)}${values.map(k).join('')} ${k(values.reduce((s, v) => s + v, 0))}`);
   for (const group of ['permanent', 'temporary', 'other']) {
     const list = payload.accounts.filter((a) => a.group === group);
-    if (!list.length) continue;
-    for (const a of list) print(`${a.acct} - ${a.name}`, sumRow([a.acct]));
-    print(`Total ${group}`, sumRow(list.map((a) => a.acct)));
+    if (list.length) {
+      for (const a of list) print(`${a.acct} - ${a.name}`, sumRow([a.acct]));
+      print(`Total ${group}`, sumRow(list.map((a) => a.acct)));
+    }
+    if (group === 'permanent' && incAccts.length) {
+      for (const a of incAccts) print(`${a} increment (override file)`, incRow([a]));
+      print('Total increments', incRow(incAccts));
+    }
   }
-  print('Total payroll', sumRow(payload.accounts.map((a) => a.acct)));
+  const inc = incRow(incAccts);
+  print('Total payroll', sumRow(payload.accounts.map((a) => a.acct)).map((v, i) => v + inc[i]));
 }
 
 async function reconcile(ns) {
@@ -99,11 +109,19 @@ async function main() {
 
   if (arg('json')) console.log(JSON.stringify(payload, null, 2));
   if (arg('dry-run')) {
-    for (const block of payload.blocks) printYear(payload, block);
     const ov = payload.overrides;
-    console.log(`\nOverride file, payroll rows from January ${payload.years[0]}: ${ov.error ? ov.error : `${ov.rows.length} row(s)`}`);
+    const sm = await loadSalaryModule();
+    const counted = new Set(sm.countedIncrementRows(payload.blocks, ov.rows));
+    const increments = {};
+    for (const r of counted) {
+      const m = increments[r.month] || (increments[r.month] = {});
+      m[r.acct] = (m[r.acct] || 0) + (Number(r.ils) || 0);
+    }
+    for (const block of payload.blocks) printYear(payload, block, increments);
+    console.log(`\nOverride file, rows on ${(ov.accounts || []).join(', ') || '–'} from January ${payload.years[0]}: ${ov.error ? ov.error : `${ov.rows.length} row(s)`}`);
+    console.log('  (+ = an increment counted in Total payroll; increments in closed months are not counted, overrides never are)');
     for (const r of ov.rows) {
-      console.log(`  ${r.month}  ${r.acct.padEnd(8)}${r.mode.padEnd(10)}${eur(r.eur)}  ${(r.department || '–').slice(0, 24).padEnd(25)}${r.memo.slice(0, 50)}`);
+      console.log(`${counted.has(r) ? '+ ' : '  '}${r.month}  ${r.acct.padEnd(8)}${r.mode.padEnd(10)}${eur(r.eur)}  ${(r.department || '–').slice(0, 24).padEnd(25)}${r.memo.slice(0, 50)}`);
     }
   }
 

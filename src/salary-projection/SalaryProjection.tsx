@@ -27,7 +27,7 @@ function Legend({ overrides }: { overrides: boolean }) {
       <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 rounded-sm border border-slate-300 bg-slate-100" />Actual (NetSuite)</span>
       <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 rounded-sm border border-sky-300 bg-sky-50" />Current month (projected)</span>
       <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 rounded-sm border border-slate-300 bg-white" />Forecast</span>
-      {overrides && <span className="italic text-slate-500">Italic: the override file, not in the totals</span>}
+      {overrides && <span className="italic text-slate-500">Italic: the override file's overrides, not in the totals</span>}
     </div>
   );
 }
@@ -49,7 +49,8 @@ export default function SalaryProjection() {
   const shown = useMemo(() => (data ? withClassification(data, classification.current) : null), [data, classification.current]);
   const table = useMemo(() => (shown ? buildSalaryTable(shown, ccy, view) : null), [shown, ccy, view]);
   const kpis = useMemo(() => (shown ? computeSalaryKpis(shown, ccy) : null), [shown, ccy]);
-  const hasOverrides = !!table && table.lines.some((l) => l.key === 'total-override-file');
+  const hasIncrements = !!table && table.lines.some((l) => l.key === 'total-increments');
+  const hasOverrides = !!table && table.lines.some((l) => l.key === 'total-overrides');
 
   const chooseCcy = (c: Ccy) => { setCcy(c); writeParam('ccy', c === 'eur' ? 'eur' : null); };
   const chooseView = (v: YearView) => { setView(v); writeParam('years', v === 'both' ? null : v); };
@@ -59,7 +60,7 @@ export default function SalaryProjection() {
   const unclassified = shown ? shown.accounts.filter((a) => a.group === 'other') : [];
   const canClassify = !!(data && data.actual);
   const method = runRate
-    ? `Permanent: ${runRate} run-rate · Temporary: same month last year for ${data ? data.years[0] : ''}, 0 in ${data ? data.years[1] : ''}${notProjected.length ? ` · Not projected: ${notProjected.map((a) => a.acct).join(', ')}` : ''}`
+    ? `Permanent: ${runRate} run-rate · Temporary: same month last year for ${data ? data.years[0] : ''}, 0 in ${data ? data.years[1] : ''}${notProjected.length ? ` · Not projected: ${notProjected.map((a) => a.acct).join(', ')}` : ''}${hasIncrements ? ' · Override file increments added from the current month' : ''}`
     : '';
 
   async function onExport() {
@@ -198,7 +199,10 @@ export default function SalaryProjection() {
               education fund and the like) carry the last closed month, {runRate}, into every forecast month. Temporary
               accounts (bonuses, recuperation, maternity and other one-offs) repeat the same month of the previous
               year for the rest of {y0}, so seasonal payments stay in their month; in {y1} they are 0.
-              {hasOverrides && ' Between the two groups, in italics, the override file\'s payroll rows by account and month, for reference: they are not in Total payroll.'}
+              {(hasIncrements || hasOverrides) && ` Between the two groups come the override file's payroll rows: ${[
+                hasIncrements && 'its increments are added to Total payroll from the current month on (closed months are NetSuite\'s actuals, which already include them)',
+                hasOverrides && 'its overrides, in italics, are for reference and not in Total payroll',
+              ].filter(Boolean).join('; ')}.`}
               {notProjected.length > 0 && ` Actuals only, not projected: ${notProjected.map((a) => `${a.acct} ${a.name}`).join(', ')}.`}
               {' '}The current month is projected as a whole month. Forecasts are made in shekels; euros use the rate above.
               Use Permanent / temporary to change how an account is projected.

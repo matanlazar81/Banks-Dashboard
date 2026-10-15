@@ -31,3 +31,8 @@ export declare function projectSalary(input: {
   actual: Record<string, AccountAmounts>;
   methodOf: (acct: string) => SalaryMethod;
 }): SalaryBlock[];
+
+export declare function countedIncrementRows<R extends { month: string; mode: 'Override' | 'Increment' }>(
+  blocks: { rows: { mKey: string; status: SalaryRow['status'] }[] }[],
+  rows: R[],
+): R[];
