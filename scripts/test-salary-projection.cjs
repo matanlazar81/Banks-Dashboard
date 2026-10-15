@@ -442,7 +442,7 @@ async function testModel(payload) {
     'KPI: full-year payroll per year');
   check(near(kpis.runRate.value, permSep, 0.05) && kpis.runRate.mKey === mk(Y, 9), 'KPI: permanent run-rate = September\'s permanent payroll');
 
-  console.log('\nMODEL: the override file by month (buildOverrideTable)');
+  console.log('\nMODEL: the override file between permanent and temporary');
   const rate = payload.basis.ilsPerEur;
   const overrides = sp.overridesOf({ error: null, rows: [
     { month: mk(Y, 11), acct: '760001', name: 'Gross Salaries', department: 'R&D', mode: 'Increment', eur: 20_000, ils: 0, memo: 'Two hires' },
@@ -452,40 +452,49 @@ async function testModel(payload) {
     { month: mk(T + 1, 1), acct: '760001', name: 'Gross Salaries', department: 'R&D', mode: 'Override', eur: 9_000, ils: 33_000, memo: '' },
   ] }, Y, rate);
   const withOv = { ...payload, overrides };
-  const ov = model.buildOverrideTable(withOv, 'ils', 'both');
-  const ovKeys = ov.table.lines.map((l) => l.key);
-  check(JSON.stringify(ovKeys) === JSON.stringify(['increment|760001', 'increment|760002', 'total-increment', 'override|760017', 'total-override', 'total']),
-    'lines: increments by account + subtotal, overrides by account + subtotal, total', ovKeys.join(','));
-  check(ov.table.columns.length === 26 && JSON.stringify(ov.table.columns.map((c) => c.id)) === JSON.stringify(table.columns.map((c) => c.id)),
-    'the same columns as the projection table (months and FY of both years)');
-  const ovLine = (k, t = ov.table) => t.lines.find((l) => l.key === k);
-  const col = (id, t = ov.table) => t.columns.findIndex((c) => c.id === id);
+  const ovTable = model.buildSalaryTable(withOv, 'ils', 'both');
+  const ovKeys = ovTable.lines.map((l) => l.key);
+  const ovExpected = [
+    ...sp.SALARY_GL_GROUPS[0].accounts.map(([a]) => a), 'total-permanent',
+    'increment|760001', 'increment|760002', 'override|760017', 'total-override-file',
+    ...sp.SALARY_GL_GROUPS[1].accounts.map(([a]) => a), 'total-temporary',
+    '760040', 'total-other', 'total',
+  ];
+  check(JSON.stringify(ovKeys) === JSON.stringify(ovExpected),
+    'override lines (increments, then overrides, by account) and their total sit between Total permanent and the temporary accounts', ovKeys.join(','));
+  const ovLine = (k, t = ovTable) => t.lines.find((l) => l.key === k);
+  const col = (id, t = ovTable) => t.columns.findIndex((c) => c.id === id);
+  check(ovLine('increment|760001').kind === 'note' && ovLine('override|760017').kind === 'note' && ovLine('total-override-file').kind === 'subtotal'
+    && ovLine('increment|760001').label === '760001 - Gross Salaries (increment)' && ovLine('override|760017').label === '760017 - One time payments (Bonus, grants) (override)'
+    && /not in total payroll/.test(ovLine('total-override-file').label),
+    'override lines show as notes with their type; their total says it is not in total payroll');
   check(near(ovLine('increment|760001').values[col(mk(Y, 11))], 20_000 * rate + 37_000, 0.05) && ovLine('increment|760001').values[col(mk(Y, 10))] === 0,
     'an account\'s rows of the same month and type are summed across departments (€-only rows at the forecast rate)');
-  check(ovLine('increment|760001').label === '760001 - Gross Salaries' && /Departments: R&D; Sales/.test(ovLine('increment|760001').hint)
-    && /Comments: Two hires; One hire/.test(ovLine('increment|760001').hint) && /adds to the budget/.test(ovLine('increment|760001').hint)
-    && /replaces the budget/.test(ovLine('override|760017').hint),
-    'labels read like the projection; hints give the type, departments and comments');
-  const inYears = 20_000 * rate + 37_000 + 185_000 + 5_000;
-  check(near(ovLine('total').values[col(`fy-${Y}`)], inYears - 5_000, 0.05) && near(ovLine('total').values[col(`fy-${T}`)], 5_000, 0.05),
+  const ovHint = ovLine('increment|760001').hint;
+  check(/Departments: R&D; Sales/.test(ovHint) && /Comments: Two hires; One hire/.test(ovHint) && /adds to the budget/.test(ovHint)
+    && /replaces the budget/.test(ovLine('override|760017').hint) && /not in Total payroll/.test(ovHint),
+    'hints give the type, departments and comments');
+  const changed = table.lines.filter((l) => JSON.stringify(ovLine(l.key).values) !== JSON.stringify(l.values)).map((l) => l.key);
+  check(!changed.length, 'every account, group subtotal and Total payroll is unchanged: the override file is not in the totals', changed.join(','));
+  check(near(ovLine('total-override-file').values[col(`fy-${Y}`)], 20_000 * rate + 37_000 + 185_000, 0.05) && near(ovLine('total-override-file').values[col(`fy-${T}`)], 5_000, 0.05),
     'FY columns sum each year\'s months');
   const ovOff = [];
-  ov.table.columns.forEach((c, i) => {
-    const inc = ovLine('increment|760001').values[i] + ovLine('increment|760002').values[i];
-    if (!near(ovLine('total-increment').values[i], inc, 0.05)) ovOff.push(`${c.id} increments`);
-    if (!near(ovLine('total').values[i], inc + ovLine('override|760017').values[i], 0.05)) ovOff.push(`${c.id} total`);
+  ovTable.columns.forEach((c, i) => {
+    const s = ['increment|760001', 'increment|760002', 'override|760017'].reduce((x, k) => x + ovLine(k).values[i], 0);
+    if (!near(ovLine('total-override-file').values[i], s, 0.05)) ovOff.push(c.id);
   });
-  check(!ovOff.length, 'subtotals = their accounts; total = increments + overrides, in every column', ovOff.slice(0, 3).join('; '));
-  check(ov.outside === 1, `a row after December ${T} is counted, not placed in a month`);
-  const ovEur = model.buildOverrideTable(withOv, 'eur', 'current');
-  check(ovEur.table.columns.length === 13 && near(ovLine('increment|760001', ovEur.table).values[col(mk(Y, 11), ovEur.table)], 30_000, 0.05),
+  check(!ovOff.length, 'the override total = its lines, in every column', ovOff.slice(0, 3).join('; '));
+  check(!ovKeys.includes('override|760001'), `a row after December ${T} is left out of the months (the rows list counts it)`);
+  const ovEur = model.buildSalaryTable(withOv, 'eur', 'current');
+  check(ovEur.columns.length === 13 && near(ovLine('increment|760001', ovEur).values[col(mk(Y, 11), ovEur)], 30_000, 0.05),
     'follows the currency (€ from the file) and the year view');
-  const single = model.buildOverrideTable({ ...payload, overrides: { error: null, rows: overrides.rows.filter((r) => r.mode === 'Increment') } }, 'ils', 'both');
-  check(!single.table.lines.some((l) => l.key === 'total') && single.table.lines.at(-1).key === 'total-increment', 'one type only: no separate total line');
-  check(model.buildOverrideTable({ ...payload, overrides: { error: null, rows: [] } }, 'ils', 'both') === null && model.buildOverrideTable(payload, 'ils', 'both') === null,
-    'no rows: no table');
-  const later = model.buildOverrideTable({ ...payload, overrides: { error: null, rows: overrides.rows.filter((r) => r.month > mk(T, 12)) } }, 'ils', 'both');
-  check(later.table === null && later.outside === 1, 'only rows after the page\'s years: no month table, the rows are counted');
+  const allTemporary = model.withClassification(withOv, Object.fromEntries(payload.accounts.map((a) => [a.acct, 'last-year'])));
+  check(model.buildSalaryTable(allTemporary, 'ils', 'both').lines[0].key === 'increment|760001', 'no permanent account: the override lines come first');
+  const plain = (p) => JSON.stringify(model.buildSalaryTable(p, 'ils', 'both').lines.map((l) => l.key)) === JSON.stringify(expected);
+  check(plain({ ...payload, overrides: { error: null, rows: [] } }) && plain({ ...payload, overrides: undefined })
+    && plain({ ...payload, overrides: { error: null, rows: overrides.rows.filter((r) => r.month > mk(T, 12)) } }),
+    'no rows, or only rows after the page\'s years: no override lines');
+  check(near(model.computeSalaryKpis(withOv, 'ils').byYear[0].value, kpis.byYear[0].value, 0.01), 'KPIs leave the override file out');
 }
 
 async function main() {

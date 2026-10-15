@@ -1,19 +1,8 @@
 // The override file's payroll rows (OVERIDE_TEMP, loaded into Snowflake as future-cost overrides and
-// increments), under the projection for reference: by month in the projection's columns, then the rows
-// themselves with departments and comments. They are not part of the projection above.
-import { useMemo } from 'react';
-import ProjectionTable, { type TableMarkers } from '../new-dashboard/ProjectionTable.tsx';
+// increments). By month they are in the table above, between permanent and temporary; this section lists the
+// rows themselves, with departments and comments. They are not part of the projection.
 import { formatFull, monthLongLabel } from '../new-dashboard/model.ts';
-import type { YearView } from '../new-dashboard/types.ts';
-import { buildOverrideTable } from './model.ts';
 import type { Ccy, PayrollOverride, SalaryPayload } from './types.ts';
-
-const MARKERS: TableMarkers = {
-  anchorLine: null,
-  rollForwardLine: '',
-  closingLine: 'total',
-  negativeLines: new Set(),
-};
 
 const MODE_TITLE: Record<PayrollOverride['mode'], string> = {
   Override: 'Replaces the budget of this account and month',
@@ -23,7 +12,6 @@ const MODE_TITLE: Record<PayrollOverride['mode'], string> = {
 interface Props {
   payload: SalaryPayload;
   ccy: Ccy;
-  view: YearView;
 }
 
 function RowList({ rows, ccy }: { rows: PayrollOverride[]; ccy: Ccy }) {
@@ -70,47 +58,42 @@ function RowList({ rows, ccy }: { rows: PayrollOverride[]; ccy: Ccy }) {
   );
 }
 
-export default function OverridesSection({ payload, ccy, view }: Props) {
+export default function OverridesSection({ payload, ccy }: Props) {
   const { rows, error } = payload.overrides ?? { rows: [], error: null };
-  const year = payload.years[0];
-  const lastYear = payload.years[1];
-  const monthly = useMemo(() => buildOverrideTable(payload, ccy, view), [payload, ccy, view]);
+  const [year, lastYear] = payload.years;
   const counts = { Override: rows.filter((r) => r.mode === 'Override').length, Increment: rows.filter((r) => r.mode === 'Increment').length };
+  const outside = rows.filter((r) => r.month > `${lastYear}-12`).length;
   const estimated = ccy === 'ils' && rows.some((r) => r.ilsEstimated);
 
   return (
     <section className="rounded-lg border border-slate-200 bg-white">
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 border-b border-slate-200 px-4 py-2.5">
-        <h2 className="text-sm font-semibold text-slate-800">Payroll in the override file, by month</h2>
+        <h2 className="text-sm font-semibold text-slate-800">Payroll in the override file</h2>
         <span className="text-xs text-slate-500">
-          Override sheet rows on payroll accounts from January {year} (Snowflake). For reference: not part of the projection above.
+          Override sheet rows on payroll accounts from January {year} (Snowflake). By month they are in the table above,
+          between permanent and temporary. For reference: not in Total payroll.
         </span>
       </div>
 
       {error && <p className="px-4 py-3 text-xs text-amber-700">{error}</p>}
       {!error && rows.length === 0 && <p className="px-4 py-3 text-xs text-slate-500">No payroll rows in the override file from January {year}.</p>}
 
-      {monthly && monthly.table && <ProjectionTable table={monthly.table} ccy={ccy} anchorDate={null} markers={MARKERS} />}
-
       {rows.length > 0 && (
-        <div className="space-y-1 border-t border-slate-200 px-4 py-2 text-[11px] text-slate-500">
-          <p>
+        <>
+          <p className="px-4 py-2 text-[11px] text-slate-500">
             {counts.Increment} increment{counts.Increment === 1 ? '' : 's'} (added to the budget) and {counts.Override} override
-            {counts.Override === 1 ? '' : 's'} (replacing the budget). Each line sums an account's rows of one type across departments;
-            hover an account for its departments and comments.
-            {monthly && monthly.outside > 0 && ` ${monthly.outside} row${monthly.outside === 1 ? ' is' : 's are'} after December ${lastYear}: listed below only.`}
+            {counts.Override === 1 ? '' : 's'} (replacing the budget). In the table, each line sums an account's rows of one type
+            across departments; hover it for the departments and comments.
+            {outside > 0 && ` ${outside} row${outside === 1 ? ' is' : 's are'} after December ${lastYear}: listed below only.`}
             {estimated && ' ≈ Where the file has euros only, shekels are at the forecast rate.'}
           </p>
-        </div>
-      )}
-
-      {rows.length > 0 && (
-        <details className="border-t border-slate-200">
-          <summary className="cursor-pointer select-none px-4 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50">
-            The file's rows ({rows.length}), with departments and comments
-          </summary>
-          <RowList rows={rows} ccy={ccy} />
-        </details>
+          <details className="border-t border-slate-200">
+            <summary className="cursor-pointer select-none px-4 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50">
+              The file's rows ({rows.length}), with departments and comments
+            </summary>
+            <RowList rows={rows} ccy={ccy} />
+          </details>
+        </>
       )}
     </section>
   );
