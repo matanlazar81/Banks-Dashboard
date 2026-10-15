@@ -188,7 +188,7 @@ export default function SalaryProjection() {
               <ProjectionTable table={table} ccy={ccy} anchorDate={null} markers={MARKERS} />
             </section>
 
-            {data.overrides && <OverridesSection overrides={data.overrides} ccy={ccy} year={data.years[0]} />}
+            {data.overrides && <OverridesSection payload={data} ccy={ccy} view={view} />}
 
             <p className="max-w-5xl text-xs leading-relaxed text-slate-500">
               Actual months are NetSuite's payroll accounts (76xxxx) for LSports by posting period, as in NetSuite's

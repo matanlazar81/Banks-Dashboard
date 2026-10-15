@@ -5,7 +5,7 @@
 import { groupOfMethod, projectSalary } from '../forecast/salary-projection.mjs';
 import { buildYearTable, monthLongLabel, type LineDefOf, type ProjectionTable } from '../new-dashboard/model.ts';
 import type { YearView } from '../new-dashboard/types.ts';
-import type { Ccy, SalaryAccount, SalaryFigures, SalaryGroup, SalaryMethod, SalaryPayload } from './types.ts';
+import type { Ccy, PayrollOverride, SalaryAccount, SalaryFigures, SalaryGroup, SalaryMethod, SalaryPayload } from './types.ts';
 
 /**
  * The payload with a classification applied: each account's method and group (choice, else finance's
@@ -78,6 +78,82 @@ export function salaryLineDefs(accounts: SalaryAccount[], runRateMonth: string, 
 /** Columns + lines for the currency and year view. */
 export function buildSalaryTable(payload: SalaryPayload, ccy: Ccy, view: YearView): ProjectionTable<string> {
   return buildYearTable(payload.blocks, ccy, view, salaryLineDefs(payload.accounts, payload.basis.runRateMonth, payload.years));
+}
+
+type Mode = PayrollOverride['mode'];
+
+const MODES: Mode[] = ['Increment', 'Override'];
+const MODE_KEY: Record<Mode, string> = { Increment: 'increment', Override: 'override' };
+const MODE_TOTAL: Record<Mode, string> = { Increment: 'Total increments', Override: 'Total overrides' };
+const MODE_HINT: Record<Mode, string> = {
+  Increment: 'Increment: adds to the budget of this account and month.',
+  Override: 'Override: replaces the budget of this account and month.',
+};
+
+const listOf = (values: string[], max: number) => {
+  const unique = [...new Set(values.filter(Boolean))];
+  return unique.length > max ? `${unique.slice(0, max).join('; ')}; and ${unique.length - max} more` : unique.join('; ');
+};
+
+export interface OverrideTable {
+  /** Null when every row is outside the page's years. */
+  table: ProjectionTable<string> | null;
+  /** Rows whose month is after the page's last year: listed with the rows, not in the months. */
+  outside: number;
+}
+
+/**
+ * The override file's payroll rows by month, in the projection's columns: one line per type and account (the
+ * rows of the same month summed across departments), a subtotal per type, and the total when both types are
+ * there. Null when there are no rows.
+ */
+export function buildOverrideTable(payload: SalaryPayload, ccy: Ccy, view: YearView): OverrideTable | null {
+  const rows = payload.overrides ? payload.overrides.rows : [];
+  if (!rows.length) return null;
+  const months = new Set(payload.blocks.flatMap((b) => b.rows.map((r) => r.mKey)));
+  const sums = new Map<string, { eur: SalaryFigures; ils: SalaryFigures }>();
+  const lines = new Map<string, { mode: Mode; acct: string; name: string; rows: PayrollOverride[] }>();
+  let outside = 0;
+  for (const r of rows) {
+    if (!months.has(r.month)) { outside++; continue; }
+    const key = `${MODE_KEY[r.mode]}|${r.acct}`;
+    const line = lines.get(key) ?? { mode: r.mode, acct: r.acct, name: r.name, rows: [] };
+    line.rows.push(r);
+    lines.set(key, line);
+    const month = sums.get(r.month) ?? { eur: {}, ils: {} };
+    month.eur[key] = (month.eur[key] ?? 0) + r.eur;
+    month.ils[key] = (month.ils[key] ?? 0) + r.ils;
+    sums.set(r.month, month);
+  }
+  if (!lines.size) return { table: null, outside };
+
+  const blocks = payload.blocks.map((b) => ({
+    year: b.year,
+    kind: b.kind,
+    rows: b.rows.map((r) => ({ mKey: r.mKey, status: r.status, eur: sums.get(r.mKey)?.eur ?? {}, ils: sums.get(r.mKey)?.ils ?? {} })),
+  }));
+  const defs: SalaryLineDef[] = [];
+  const present = MODES.filter((m) => [...lines.values()].some((l) => l.mode === m));
+  for (const mode of present) {
+    const list = [...lines.entries()].filter(([, l]) => l.mode === mode).sort(([, a], [, b]) => a.acct.localeCompare(b.acct));
+    for (const [key, l] of list) {
+      const departments = listOf(l.rows.map((r) => r.department), 6);
+      const comments = listOf(l.rows.map((r) => r.memo), 4);
+      const estimated = l.rows.some((r) => r.ilsEstimated) ? ' ≈ The file has euros only for some months: shekels at the forecast rate.' : '';
+      defs.push({
+        key, label: `${l.acct}${l.name ? ` - ${l.name}` : ''}`, kind: 'item', fy: 'sum', value: (f) => f[key] ?? 0,
+        hint: `${MODE_HINT[mode]}${departments ? ` Departments: ${departments}.` : ''}${comments ? ` Comments: ${comments}.` : ''}${estimated}`,
+      });
+    }
+    defs.push({ key: `total-${MODE_KEY[mode]}`, label: MODE_TOTAL[mode], kind: 'subtotal', fy: 'sum', value: sumOf(list.map(([k]) => k)) });
+  }
+  if (present.length > 1) {
+    defs.push({
+      key: 'total', label: 'Total in the file', kind: 'subtotal', fy: 'sum', value: sumOf([...lines.keys()]),
+      hint: 'Increments + overrides: every payroll amount in the override file.',
+    });
+  }
+  return { table: buildYearTable(blocks, ccy, view, defs), outside };
 }
 
 export interface SalaryKpis {

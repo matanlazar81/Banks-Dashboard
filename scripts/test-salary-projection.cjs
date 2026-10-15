@@ -441,6 +441,51 @@ async function testModel(payload) {
   check(kpis.byYear.length === 2 && near(kpis.byYear[1].value, blockOf(payload, T).rows.reduce((s, r) => s + monthTotal(r, 'ils'), 0), 0.05),
     'KPI: full-year payroll per year');
   check(near(kpis.runRate.value, permSep, 0.05) && kpis.runRate.mKey === mk(Y, 9), 'KPI: permanent run-rate = September\'s permanent payroll');
+
+  console.log('\nMODEL: the override file by month (buildOverrideTable)');
+  const rate = payload.basis.ilsPerEur;
+  const overrides = sp.overridesOf({ error: null, rows: [
+    { month: mk(Y, 11), acct: '760001', name: 'Gross Salaries', department: 'R&D', mode: 'Increment', eur: 20_000, ils: 0, memo: 'Two hires' },
+    { month: mk(Y, 11), acct: '760001', name: 'Gross Salaries', department: 'Sales', mode: 'Increment', eur: 10_000, ils: 37_000, memo: 'One hire' },
+    { month: mk(Y, 12), acct: '760017', name: 'One time payments (Bonus, grants)', department: 'Sales', mode: 'Override', eur: 50_000, ils: 185_000, memo: '' },
+    { month: mk(T, 2), acct: '760002', name: 'National Insurance expenses', department: 'R&D', mode: 'Increment', eur: 1_300, ils: 5_000, memo: '' },
+    { month: mk(T + 1, 1), acct: '760001', name: 'Gross Salaries', department: 'R&D', mode: 'Override', eur: 9_000, ils: 33_000, memo: '' },
+  ] }, Y, rate);
+  const withOv = { ...payload, overrides };
+  const ov = model.buildOverrideTable(withOv, 'ils', 'both');
+  const ovKeys = ov.table.lines.map((l) => l.key);
+  check(JSON.stringify(ovKeys) === JSON.stringify(['increment|760001', 'increment|760002', 'total-increment', 'override|760017', 'total-override', 'total']),
+    'lines: increments by account + subtotal, overrides by account + subtotal, total', ovKeys.join(','));
+  check(ov.table.columns.length === 26 && JSON.stringify(ov.table.columns.map((c) => c.id)) === JSON.stringify(table.columns.map((c) => c.id)),
+    'the same columns as the projection table (months and FY of both years)');
+  const ovLine = (k, t = ov.table) => t.lines.find((l) => l.key === k);
+  const col = (id, t = ov.table) => t.columns.findIndex((c) => c.id === id);
+  check(near(ovLine('increment|760001').values[col(mk(Y, 11))], 20_000 * rate + 37_000, 0.05) && ovLine('increment|760001').values[col(mk(Y, 10))] === 0,
+    'an account\'s rows of the same month and type are summed across departments (€-only rows at the forecast rate)');
+  check(ovLine('increment|760001').label === '760001 - Gross Salaries' && /Departments: R&D; Sales/.test(ovLine('increment|760001').hint)
+    && /Comments: Two hires; One hire/.test(ovLine('increment|760001').hint) && /adds to the budget/.test(ovLine('increment|760001').hint)
+    && /replaces the budget/.test(ovLine('override|760017').hint),
+    'labels read like the projection; hints give the type, departments and comments');
+  const inYears = 20_000 * rate + 37_000 + 185_000 + 5_000;
+  check(near(ovLine('total').values[col(`fy-${Y}`)], inYears - 5_000, 0.05) && near(ovLine('total').values[col(`fy-${T}`)], 5_000, 0.05),
+    'FY columns sum each year\'s months');
+  const ovOff = [];
+  ov.table.columns.forEach((c, i) => {
+    const inc = ovLine('increment|760001').values[i] + ovLine('increment|760002').values[i];
+    if (!near(ovLine('total-increment').values[i], inc, 0.05)) ovOff.push(`${c.id} increments`);
+    if (!near(ovLine('total').values[i], inc + ovLine('override|760017').values[i], 0.05)) ovOff.push(`${c.id} total`);
+  });
+  check(!ovOff.length, 'subtotals = their accounts; total = increments + overrides, in every column', ovOff.slice(0, 3).join('; '));
+  check(ov.outside === 1, `a row after December ${T} is counted, not placed in a month`);
+  const ovEur = model.buildOverrideTable(withOv, 'eur', 'current');
+  check(ovEur.table.columns.length === 13 && near(ovLine('increment|760001', ovEur.table).values[col(mk(Y, 11), ovEur.table)], 30_000, 0.05),
+    'follows the currency (€ from the file) and the year view');
+  const single = model.buildOverrideTable({ ...payload, overrides: { error: null, rows: overrides.rows.filter((r) => r.mode === 'Increment') } }, 'ils', 'both');
+  check(!single.table.lines.some((l) => l.key === 'total') && single.table.lines.at(-1).key === 'total-increment', 'one type only: no separate total line');
+  check(model.buildOverrideTable({ ...payload, overrides: { error: null, rows: [] } }, 'ils', 'both') === null && model.buildOverrideTable(payload, 'ils', 'both') === null,
+    'no rows: no table');
+  const later = model.buildOverrideTable({ ...payload, overrides: { error: null, rows: overrides.rows.filter((r) => r.month > mk(T, 12)) } }, 'ils', 'both');
+  check(later.table === null && later.outside === 1, 'only rows after the page\'s years: no month table, the rows are counted');
 }
 
 async function main() {
