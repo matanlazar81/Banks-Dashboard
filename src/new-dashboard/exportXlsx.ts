@@ -21,10 +21,13 @@ export interface TableExport {
   /** 'cash projection' / 'P&L projection' (title and file name). */
   what: string;
   years: [number, number];
-  planName: string;
+  planName?: string;
   generatedAt: string;
   table: ProjectionTable<string>;
-  variant: VariantKey;
+  /** Plan or base (second title line and file name); pages without a plan pass a subtitle instead. */
+  variant?: VariantKey;
+  /** Replaces the plan label in the second title line. */
+  subtitle?: string;
   ccy: Ccy;
 }
 
@@ -32,12 +35,12 @@ export async function exportProjectionXlsx(payload: ProjectionPayload, table: Pr
   await exportTableXlsx({ what: 'cash projection', years: payload.years, planName: payload.plan.name, generatedAt: payload.generatedAt, table, variant, ccy });
 }
 
-export async function exportTableXlsx({ what, years, planName, generatedAt, table, variant, ccy }: TableExport): Promise<void> {
+export async function exportTableXlsx({ what, years, planName, generatedAt, table, variant, subtitle, ccy }: TableExport): Promise<void> {
   const mod = (await import('xlsx-js-style')) as unknown as { default?: XlsxApi } & XlsxApi;
   const XLSX: XlsxApi = mod.default ?? mod;
 
   const unit = ccy === 'eur' ? 'EUR' : 'ILS';
-  const planLabel = variant === 'plan' ? `Plan: ${planName}` : 'Base forecast (no plan adjustments)';
+  const planLabel = subtitle ?? (variant === 'plan' ? `Plan: ${planName}` : 'Base forecast (no plan adjustments)');
   const generated = new Date(generatedAt).toLocaleString('en-GB');
   const header = ['Line item', ...table.columns.map((c) => c.label)];
   const status = ['', ...table.columns.map((c) => c.statusLabel || 'Full year')];
@@ -72,5 +75,5 @@ export async function exportTableXlsx({ what, years, planName, generatedAt, tabl
 
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Projection');
-  XLSX.writeFile(wb, `${what.replace(/[^A-Za-z0-9]+/g, '-').toLowerCase()}-${years[0]}-${years[1]}-${variant}-${unit}.xlsx`);
+  XLSX.writeFile(wb, `${what.replace(/[^A-Za-z0-9]+/g, '-').toLowerCase()}-${years[0]}-${years[1]}${variant ? `-${variant}` : ''}-${unit}.xlsx`);
 }

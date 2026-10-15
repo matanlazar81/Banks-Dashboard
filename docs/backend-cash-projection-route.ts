@@ -7,6 +7,7 @@
 //   GET/PUT /api/projection-targets      the 2027 targets both pages apply on top of the Plan (set on the
 //                                        New Bank Dashboard only: PUT needs its role)
 //   GET /api/metrics (+ GET/PUT /api/metrics/settings, /api/metrics/deposits)  the Metrics page
+//   GET /api/salary-projection           the Salary Projection (payroll by GL account, Snowflake only)
 //
 // ONLY NEEDED IF the shared bank-dashboard API mount (docs/backend-bank-dashboard-api.ts →
 // mountBankDashboardApi) is NOT installed. That mount registers every route of
@@ -24,7 +25,7 @@
 //
 // AUTH: finance-it-backend has no global /api auth gate (routes guard themselves), and the shared
 // handlers do no identity check of their own, so every route is gated here with its page's own role:
-// new_bank_dashboard, pnl_projection, metrics (finance-it's shared/src/types BUSINESS_TOOLS list, where
+// new_bank_dashboard, pnl_projection, metrics, salary_projection (finance-it's shared/src/types BUSINESS_TOOLS list, where
 // each Business Tools tab has its own checkbox in Users Management). Admins always pass.
 //
 // HOW TO ADD:
@@ -38,7 +39,8 @@
 // "[pnl-projection] mounted" and "[pnl-projection] breakdown mounted"; in the browser (logged in) open
 // /api/cash-projection → {"status":"computing",…} on the first call, then {"status":"ready",…};
 // /api/cash-projection/breakdown?line=salary&period=2026-06 → {"status":"ready",…}; the same for
-// /api/pnl-projection and /api/pnl-projection/breakdown?line=payroll&period=2026-06.
+// /api/pnl-projection and /api/pnl-projection/breakdown?line=payroll&period=2026-06; "[salary-projection]
+// mounted" and /api/salary-projection the same way.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type express from 'express';
@@ -55,6 +57,7 @@ export function mountCashProjection(app: express.Express): void {
   const pnlRole = requireRole(UserRole.ADMIN, UserRole.PNL_PROJECTION) as any;
   const targetsRole = requireRole(UserRole.ADMIN, UserRole.NEW_BANK_DASHBOARD, UserRole.PNL_PROJECTION) as any;
   const metricsRole = requireRole(UserRole.ADMIN, UserRole.METRICS) as any;
+  const salaryRole = requireRole(UserRole.ADMIN, UserRole.SALARY_PROJECTION) as any;
   try {
     // Runtime require: CommonJS module inside the checkout, resolving its own node_modules.
     // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -134,5 +137,16 @@ export function mountCashProjection(app: express.Express): void {
     console.log(`[metrics] mounted from ${BANK_DASHBOARD_DIR}`);
   } catch (e) {
     console.error(`[metrics] FAILED to mount from ${BANK_DASHBOARD_DIR}: ${e instanceof Error ? e.message : String(e)}.`);
+  }
+  // Salary Projection: payroll by GL account from Snowflake, permanent and temporary accounts. Separately
+  // guarded, so a checkout from before it keeps the other routes working.
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { createSalaryProjectionHandler } = require(`${BANK_DASHBOARD_DIR}/server/salary-projection.cjs`);
+    const salary = createSalaryProjectionHandler();
+    app.get('/api/salary-projection', salaryRole, (req, res) => salary(req, res));
+    console.log(`[salary-projection] mounted from ${BANK_DASHBOARD_DIR}`);
+  } catch (e) {
+    console.error(`[salary-projection] FAILED to mount from ${BANK_DASHBOARD_DIR}: ${e instanceof Error ? e.message : String(e)}.`);
   }
 }

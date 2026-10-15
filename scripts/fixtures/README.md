@@ -15,3 +15,7 @@ screenshots. Regenerate it with `node scripts/test-cash-projection.cjs --write-f
 `pnl-projection-sample.json` is a **synthetic** `/api/pnl-projection` payload (made-up
 numbers, not LSports data) used for P&L Projection UI checks and screenshots.
 Regenerate it with `node scripts/test-pnl-projection.cjs --write-fixture`.
+
+`salary-projection-sample.json` is a **synthetic** `/api/salary-projection` payload (made-up
+numbers, not LSports data) used for Salary Projection UI checks and screenshots.
+Regenerate it with `node scripts/test-salary-projection.cjs --write-fixture`.
