@@ -21,6 +21,21 @@ export interface SalaryAccount {
 /** One month's payroll in one currency: amount per account number (costs positive). */
 export type SalaryFigures = Record<string, number>;
 
+/** One payroll row of the override file (OVERIDE_TEMP, loaded into Snowflake). */
+export interface PayrollOverride {
+  month: string;
+  acct: string;
+  name: string;
+  department: string;
+  /** Override replaces the budget of that account and month; Increment adds to it. */
+  mode: 'Override' | 'Increment';
+  eur: number;
+  ils: number;
+  /** The file has € only: ₪ is at the forecast rate. */
+  ilsEstimated: boolean;
+  memo: string;
+}
+
 export interface SalaryMonthRow {
   mKey: string;
   status: MonthStatus;
@@ -50,6 +65,8 @@ export interface SalaryPayload {
   basis: { runRateMonth: string; ilsPerEur: number };
   /** The actual months by account (the previous year and this year's closed months), to re-project on the page. */
   actual?: Record<string, AccountAmounts>;
+  /** The override file's payroll rows (Snowflake), for reference; not part of the projection. */
+  overrides?: { rows: PayrollOverride[]; error: string | null };
   degraded: boolean;
   failedFeeds: string[];
   warnings: string[];

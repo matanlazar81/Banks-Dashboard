@@ -12,7 +12,7 @@
 //        lists each account and month that differ by more than ₪1. The page reads NetSuite because
 //        Snowflake misses some one-off accounts (760017 bonus, 760019 maternity); this shows when it is fixed.
 //
-// Needs the server's .env (NetSuite; Snowflake too for --reconcile).
+// Needs the server's .env (NetSuite; Snowflake for the override file and --reconcile).
 // Output contains internal financial figures: keep it on the server.
 // ─────────────────────────────────────────────────────────────────────────────
 const path = require('path');
@@ -34,6 +34,7 @@ const k = (n) => {
   return (v < 0 ? `(${Math.abs(v).toLocaleString('en-US')})` : v.toLocaleString('en-US')).padStart(8);
 };
 const ils = (n) => (Math.round((Number(n) || 0) * 100) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).padStart(16);
+const eur = (n) => `€${Math.round(Number(n) || 0).toLocaleString('en-US')}`.padStart(14);
 
 function printYear(payload, block) {
   console.log(`\n${block.year} (${block.kind}) — ₪ thousands`);
@@ -91,12 +92,20 @@ async function main() {
   }
 
   const t0 = Date.now();
-  const { payload } = await computeSalaryProjection({ now: new Date(), getNsClient: () => ns, queueNsCall: (fn) => fn() });
+  const getSfClient = () => require(path.join(ROOT, 'snowflake-api.cjs')).createSnowflakeClient(process.env);
+  const { payload } = await computeSalaryProjection({ now: new Date(), getNsClient: () => ns, getSfClient, queueNsCall: (fn) => fn() });
   console.log(`\n[salary-projection] computed in ${((Date.now() - t0) / 1000).toFixed(1)}s — actuals through ${payload.actuals.through || '–'}; permanent run-rate ${payload.basis.runRateMonth}; ₪${payload.basis.ilsPerEur} per €`);
   for (const w of payload.warnings) console.warn(`[salary-projection] ⚠ ${w}`);
 
   if (arg('json')) console.log(JSON.stringify(payload, null, 2));
-  if (arg('dry-run')) for (const block of payload.blocks) printYear(payload, block);
+  if (arg('dry-run')) {
+    for (const block of payload.blocks) printYear(payload, block);
+    const ov = payload.overrides;
+    console.log(`\nOverride file, payroll rows from January ${payload.years[0]}: ${ov.error ? ov.error : `${ov.rows.length} row(s)`}`);
+    for (const r of ov.rows) {
+      console.log(`  ${r.month}  ${r.acct.padEnd(8)}${r.mode.padEnd(10)}${eur(r.eur)}  ${(r.department || '–').slice(0, 24).padEnd(25)}${r.memo.slice(0, 50)}`);
+    }
+  }
 
   if (arg('write-cache')) {
     writeCacheEntry(DEFAULT_CACHE_FILE, makeEntry(payload, Date.now(), null, SCHEMA_VERSION));

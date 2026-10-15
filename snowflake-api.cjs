@@ -599,6 +599,45 @@ function createSnowflakeClient(env) {
     }));
   }
 
+  // ── The override file's payroll rows (the Salary Projection page) ──
+  // FCT_EXPENSE rows loaded from the override file (OVERIDE_TEMP): SOURCE future_cost_override (replaces the
+  // budget of that account and month) or future_cost_increment (adds to it), on payroll accounts (IS_PAYROLL or
+  // 76xxxx), LSports only, from January fromYear. Returns [{ month, acct, name, department, mode, eur, ils, memo }].
+  async function fetchPayrollOverrides(fromYear) {
+    const from = parseInt(fromYear);
+    if (!(from >= 2000 && from <= 2100)) throw new Error('fetchPayrollOverrides: invalid year');
+    console.log(`[Snowflake] Fetching payroll overrides from ${from}...`);
+    const rows = await query(`
+      SELECT TO_VARCHAR(DATE_TRUNC('month', e.CAL_MONTH_START_DATE), 'YYYY-MM') AS M,
+             g.GL_ACCOUNT_NUMBER AS ACCT,
+             MAX(g.GL_ACCOUNT_NAME) AS NAME,
+             d.DEPARTMENT_NAME AS DEPT,
+             e.SOURCE AS SRC,
+             e.MEMO AS MEMO,
+             SUM(e.AMOUNT_EUR) AS EUR,
+             SUM(e.AMOUNT_ILS) AS ILS
+      FROM ${T_FCT_EXPENSE} e
+      JOIN ${T_DIM_GL_ACCOUNT} g ON e.GL_ACCOUNT_ID = g.GL_ACCOUNT_ID
+      LEFT JOIN ${T_DIM_DEPARTMENT} d ON e.DEPARTMENT_ID = d.DEPARTMENT_ID
+      WHERE e.SUBSIDIARY_ID = 3
+        AND e.SOURCE IN ('future_cost_override', 'future_cost_increment')
+        AND (g.IS_PAYROLL = TRUE OR g.GL_ACCOUNT_NUMBER LIKE '76%')
+        AND e.CAL_MONTH_START_DATE >= '${from}-01-01'
+      GROUP BY 1, 2, 4, 5, 6
+      ORDER BY 1, 2
+    `);
+    return rows.map(r => ({
+      month: String(r.M || ''),
+      acct: String(r.ACCT || ''),
+      name: String(r.NAME || ''),
+      department: r.DEPT ? String(r.DEPT) : '',
+      mode: r.SRC === 'future_cost_override' ? 'Override' : 'Increment',
+      eur: Number(r.EUR) || 0,
+      ils: Number(r.ILS) || 0,
+      memo: r.MEMO ? String(r.MEMO) : '',
+    }));
+  }
+
   // ── Finance budget per month (800% GL accounts = currency defense / hedging from FCT_BUDGET) ──
   async function fetchFinanceBudget(year) {
     const yr = year || 2026;
@@ -1927,6 +1966,7 @@ function createSnowflakeClient(env) {
     fetchExpenseExport,
     fetchSalaryActualsByDept,
     fetchPayrollByAccount,
+    fetchPayrollOverrides,
     fetchMonthlyHCImpact,
     getConnection,
   };

@@ -33,7 +33,7 @@ function getSfClient() {
   // Same staleness-check pattern as getNsClient: if the in-memory client is missing methods we
   // expect from current snowflake-api.cjs, evict the require cache and rebuild so new functions
   // become visible without a full process restart.
-  const expected           = ['fetchQuarterlyChurnMRR', 'fetchVendorsYearlyGrid'];
+  const expected           = ['fetchQuarterlyChurnMRR', 'fetchVendorsYearlyGrid', 'fetchPayrollOverrides'];
   const isStale = sfClient && expected.some(m => typeof sfClient[m] !== 'function');
   if (!sfClient || isStale) {
     try {
@@ -2718,7 +2718,7 @@ If the user asks to modify, adjust, or refine an existing scenario (e.g. "reduce
       try {
         const { createSalaryProjectionHandler, createSalaryClassificationHandler } = require('./salary-projection.cjs');
         use('/api/salary-projection/classification', createSalaryClassificationHandler());
-        use('/api/salary-projection', createSalaryProjectionHandler({ getNsClient, queueNsCall }));
+        use('/api/salary-projection', createSalaryProjectionHandler({ getNsClient, getSfClient, queueNsCall }));
       } catch (e     ) {
         console.error('[salary-projection] route not mounted:', e && e.message);
       }

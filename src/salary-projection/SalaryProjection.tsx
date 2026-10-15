@@ -10,6 +10,7 @@ import { fetchSalaryProjection } from './api.ts';
 import { useClassification } from './classification.ts';
 import ClassifyPanel from './ClassifyPanel.tsx';
 import { buildSalaryTable, computeSalaryKpis, withClassification } from './model.ts';
+import OverridesSection from './OverridesSection.tsx';
 import SalaryKpiStrip from './SalaryKpiStrip.tsx';
 import type { Ccy } from './types.ts';
 
@@ -186,6 +187,8 @@ export default function SalaryProjection() {
               </div>
               <ProjectionTable table={table} ccy={ccy} anchorDate={null} markers={MARKERS} />
             </section>
+
+            {data.overrides && <OverridesSection overrides={data.overrides} ccy={ccy} year={data.years[0]} />}
 
             <p className="max-w-5xl text-xs leading-relaxed text-slate-500">
               Actual months are NetSuite's payroll accounts (76xxxx) for LSports by posting period, as in NetSuite's
