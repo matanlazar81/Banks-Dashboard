@@ -2713,8 +2713,11 @@ If the user asks to modify, adjust, or refine an existing scenario (e.g. "reduce
       }
 
       // ── GET /api/salary-projection — Salary Projection (server/salary-projection.cjs) ──
+      // The classification goes first: `use` matches by prefix, so /api/salary-projection would also
+      // catch /api/salary-projection/classification.
       try {
-        const { createSalaryProjectionHandler } = require('./salary-projection.cjs');
+        const { createSalaryProjectionHandler, createSalaryClassificationHandler } = require('./salary-projection.cjs');
+        use('/api/salary-projection/classification', createSalaryClassificationHandler());
         use('/api/salary-projection', createSalaryProjectionHandler({ getNsClient, queueNsCall }));
       } catch (e     ) {
         console.error('[salary-projection] route not mounted:', e && e.message);

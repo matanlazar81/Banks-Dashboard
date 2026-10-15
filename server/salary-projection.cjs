@@ -1,19 +1,24 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// GET /api/salary-projection — the Salary Projection page's one data call.
+// GET /api/salary-projection — the Salary Projection page's one data call — and
+// GET / PUT /api/salary-projection/classification — which accounts are permanent or temporary.
 //
 // Payroll by GL account (every 76xxxx account, the P&L "Payroll" line) for the current year (actuals +
-// forecast) and the next year. Each account is permanent (recurring pay and its burden) or temporary
-// (one-offs and seasonal items), per finance's classification (SALARY_GL_GROUPS):
+// forecast) and the next year. Each account is projected one of three ways (src/forecast/salary-projection.mjs):
 //
-//   • actual months   — NetSuite GL by account and posting period (ns.fetchPnlActuals, the same read as the
-//                       P&L Projection and NetSuite's Profit and Loss report), through the last closed
-//                       month: the latest month before the current one whose permanent payroll is at least
-//                       half the largest of the last 12 months
-//   • permanent       — forecast months carry the last closed month flat (run-rate)
-//   • temporary       — forecast months repeat the same month of the previous year (actual, or for the
-//                       next year the current year's actual or forecast), which keeps the seasonality
-//   • actuals only    — temporary accounts finance does not project (ACTUALS_ONLY): forecast months are 0
-//   • not classified  — any other 76xxxx account with postings: projected like a temporary one, with a warning
+//   • run-rate   permanent (recurring pay and its burden): every forecast month carries the last closed month
+//   • last-year  temporary (one-offs and seasonal items): the same month of the previous year
+//   • none       actuals only: forecast months are 0
+//
+// Finance's classification (SALARY_GL_GROUPS, ACTUALS_ONLY) is the default; the page lets anyone with access
+// change an account, saved for everyone in data/salary-classification.json (only the accounts that differ
+// from the default). The payload carries the actual months, so the page re-projects at once while someone
+// edits; an account with neither a default nor a saved choice is "not classified" (projected like a
+// temporary one until someone picks).
+//
+//   • actual months — NetSuite GL by account and posting period (ns.fetchPnlActuals, the same read as the
+//                     P&L Projection and NetSuite's Profit and Loss report), through the last closed month:
+//                     the latest month before the current one whose permanent payroll (finance's default
+//                     permanent accounts) is at least half the largest of the last 12 months
 //
 // Snowflake's FCT_EXPENSE misses some payroll accounts (760017 bonus, 760019 maternity), so actuals come
 // from NetSuite; `node scripts/salary-projection.cjs --reconcile` shows when Snowflake catches up.
@@ -27,11 +32,14 @@
 // (default: the CASH_PROJECTION_* values). The page has no plan, so the cache ignores the scenario.
 // ─────────────────────────────────────────────────────────────────────────────
 const path = require('path');
+const { pathToFileURL } = require('url');
 const cp = require('./cash-projection.cjs');
+const { readDoc, createDocHandler } = require('./json-store.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
-const SCHEMA_VERSION = 2; // 2: NetSuite actuals; accounts carry their forecast method
+const SCHEMA_VERSION = 3; // 3: the actual months and each account's default method (re-projection on the page)
 const DEFAULT_CACHE_FILE = path.join(ROOT, 'data', 'salary-projection-cache.json');
+const CLASSIFICATION_FILE = path.join(ROOT, 'data', 'salary-classification.json');
 const { ProjectionError } = cp;
 
 // Finance's classification (ProfitandLoss988.xlsx: yellow = permanent, green = temporary), in its order.
@@ -81,6 +89,7 @@ const ACTUALS_ONLY = new Set(['760023', '760029', '760008', '760014']);
 const MATERIAL_SHARE = 0.5;
 // ₪ per € when no payroll month gives a ratio (the engine's live-rate default).
 const FALLBACK_ILS_PER_EUR = 3.68;
+const MAX_SAVED_ACCOUNTS = 300;
 
 const pad2 = (n) => String(n).padStart(2, '0');
 const cents = (n) => Math.round((Number(n) || 0) * 100) / 100;
@@ -88,6 +97,16 @@ const num = (n) => (Number.isFinite(Number(n)) ? Number(n) : 0);
 const mk = (y, mi) => `${y}-${pad2(mi + 1)}`;
 const longLabel = (mKey) => new Date(`${mKey}-15T12:00:00`).toLocaleString('en-GB', { month: 'long', year: 'numeric' });
 const isPayroll = (acct) => /^76/.test(acct);
+const ACCOUNT_RE = /^76\d{3,6}$/;
+
+let moduleP = null;
+function loadSalaryModule() {
+  if (!moduleP) {
+    moduleP = import(pathToFileURL(path.join(ROOT, 'src', 'forecast', 'salary-projection.mjs')).href)
+      .catch((e) => { moduleP = null; throw e; });
+  }
+  return moduleP;
+}
 
 /** The n month keys before (year, monthIdx), most recent last. */
 function monthsBefore(year, monthIdx, n) {
@@ -99,12 +118,56 @@ function monthsBefore(year, monthIdx, n) {
   return out;
 }
 
-/** How an account's forecast months are made: 'run-rate', 'last-year' (same month) or 'none'. */
-function methodOf(acct) {
-  if (GROUP_OF.get(acct) === 'permanent') return 'run-rate';
+/** Finance's default for an account: 'run-rate', 'last-year', 'none', or null (not classified). */
+function defaultMethodOf(acct) {
+  const group = GROUP_OF.get(acct);
+  if (!group) return null;
+  if (group === 'permanent') return 'run-rate';
   return ACTUALS_ONLY.has(acct) ? 'none' : 'last-year';
 }
 
+// ── the saved classification ─────────────────────────────────────────────────
+/** PUT body { value: { methods: { [acct]: method } } } → { ok, value, errors }. */
+function validateClassification(body) {
+  const errors = [];
+  const value = body && typeof body === 'object' && !Array.isArray(body) ? body.value : null;
+  if (!body || typeof body !== 'object' || Object.keys(body).some((k) => k !== 'value')) errors.push('body: expected { value }');
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some((k) => k !== 'methods')) errors.push('value: expected { methods }');
+  const methods = value && value.methods;
+  if (!methods || typeof methods !== 'object' || Array.isArray(methods)) {
+    errors.push('methods: expected an object of account → method');
+    return { ok: false, value: null, errors };
+  }
+  const entries = Object.entries(methods);
+  if (entries.length > MAX_SAVED_ACCOUNTS) errors.push(`methods: at most ${MAX_SAVED_ACCOUNTS} accounts`);
+  const out = {};
+  for (const [acct, method] of entries) {
+    if (!ACCOUNT_RE.test(acct)) { errors.push(`${acct}: not a payroll account number (76xxxx)`); continue; }
+    if (!['run-rate', 'last-year', 'none'].includes(method)) { errors.push(`${acct}: method must be run-rate, last-year or none`); continue; }
+    out[acct] = method;
+  }
+  return errors.length ? { ok: false, value: null, errors } : { ok: true, value: { methods: out }, errors: [] };
+}
+
+/** The saved choices ({ [acct]: method }), or {} when none were saved. */
+function readSavedMethods(file = CLASSIFICATION_FILE) {
+  const doc = readDoc(file);
+  const v = doc && doc.value ? validateClassification({ value: doc.value }) : null;
+  return v && v.ok ? v.value.methods : {};
+}
+
+/** GET / PUT /api/salary-projection/classification. deps: file, clock (tests). */
+function createSalaryClassificationHandler(deps = {}) {
+  return createDocHandler({
+    file: deps.file || CLASSIFICATION_FILE,
+    label: 'salary-classification',
+    validate: validateClassification,
+    empty: () => ({ methods: {} }),
+    clock: deps.clock,
+  });
+}
+
+// ── the projection ───────────────────────────────────────────────────────────
 /** Payroll rows (costs positive) from NetSuite's P&L actuals (profit-signed, every P&L account). */
 function payrollRows(byMonth) {
   const rows = [];
@@ -118,119 +181,99 @@ function payrollRows(byMonth) {
 }
 
 /**
- * The payload from payroll rows (pure; the tests call it directly).
- *   rows  [{ month: 'YYYY-MM', acct, name, eur, ils }] costs positive, January of the previous year onwards
- *   now   Date (drives the current year and month)
+ * The payload from payroll rows (the tests call it directly).
+ *   rows   [{ month: 'YYYY-MM', acct, name, eur, ils }] costs positive, January of the previous year onwards
+ *   now    Date (drives the current year and month)
+ *   saved  { [acct]: method } the saved classification (default: none)
  */
-function buildSalaryProjection({ rows, now }) {
+async function buildSalaryProjection({ rows, now, saved = {} }) {
+  const { projectSalary, groupOfMethod } = await loadSalaryModule();
   const Y = now.getFullYear();
   const T = Y + 1;
   const curIdx = now.getMonth();
   const currentKey = mk(Y, curIdx);
 
   // Amounts by month and account, and the account names.
-  const actual = {};
+  const amounts = {};
   const names = {};
   for (const r of rows || []) {
     const mKey = String(r.month || '').slice(0, 7);
     const acct = String(r.acct || '').trim();
     if (!/^\d{4}-\d{2}$/.test(mKey) || !acct) continue;
-    const m = actual[mKey] || (actual[mKey] = {});
+    const m = amounts[mKey] || (amounts[mKey] = {});
     const a = m[acct] || (m[acct] = { eur: 0, ils: 0 });
     a.eur += num(r.eur);
     a.ils += num(r.ils);
     if (r.name && !names[acct]) names[acct] = String(r.name);
   }
-  const amount = (mKey, acct) => (actual[mKey] && actual[mKey][acct]) || null;
+  const amount = (mKey, acct) => (amounts[mKey] && amounts[mKey][acct]) || null;
 
   // Accounts: every classified one (always shown), then any other 76xxxx account with postings.
-  const accounts = [];
-  for (const g of SALARY_GL_GROUPS) {
-    for (const [acct, name] of g.accounts) accounts.push({ acct, name: names[acct] || name, group: g.key, method: methodOf(acct) });
-  }
+  const list = [];
+  for (const g of SALARY_GL_GROUPS) for (const [acct, name] of g.accounts) list.push({ acct, name: names[acct] || name });
   const others = new Set();
-  for (const m of Object.values(actual)) {
+  for (const m of Object.values(amounts)) {
     for (const [acct, a] of Object.entries(m)) {
       if (!GROUP_OF.has(acct) && (Math.abs(a.ils) >= 1 || Math.abs(a.eur) >= 1)) others.add(acct);
     }
   }
-  for (const acct of [...others].sort()) accounts.push({ acct, name: names[acct] || acct, group: 'other', method: methodOf(acct) });
-  const methodByAcct = new Map(accounts.map((a) => [a.acct, a.method]));
-  const permanentAccts = accounts.filter((a) => a.group === 'permanent').map((a) => a.acct);
+  for (const acct of [...others].sort()) list.push({ acct, name: names[acct] || acct });
+  const accounts = list.map(({ acct, name }) => {
+    const defaultMethod = defaultMethodOf(acct);
+    const chosen = saved[acct] || defaultMethod;
+    return { acct, name, defaultMethod, method: chosen || 'last-year', group: chosen ? groupOfMethod(chosen) : 'other' };
+  });
+  const methodOf = new Map(accounts.map((a) => [a.acct, a.method]));
 
-  // The last closed month: the run-rate month of the permanent accounts.
-  const permTotal = (mKey) => permanentAccts.reduce((s, acct) => s + num((amount(mKey, acct) || {}).ils), 0);
+  // The last closed month (the run-rate month), from finance's default permanent accounts so that
+  // reclassifying an account never moves it.
+  const basisAccts = SALARY_GL_GROUPS[0].accounts.map(([acct]) => acct);
+  const permTotal = (mKey) => basisAccts.reduce((s, acct) => s + num((amount(mKey, acct) || {}).ils), 0);
   const recent = monthsBefore(Y, curIdx, 12);
   const largest = Math.max(0, ...recent.map(permTotal));
   let lastClosed = null;
   for (const mKey of recent) if (largest > 0 && permTotal(mKey) >= largest * MATERIAL_SHARE) lastClosed = mKey;
   if (!lastClosed) throw new ProjectionError('NetSuite has no payroll for the last 12 months, so there is nothing to project from.');
-
-  const isActual = (mKey) => mKey <= lastClosed && mKey < currentKey;
-  const statusOf = (mKey) => (isActual(mKey) ? 'actual' : mKey === currentKey ? 'current' : 'forecast');
+  const isActual = (mKey) => mKey.startsWith(`${Y - 1}-`) || (mKey.startsWith(`${Y}-`) && mKey <= lastClosed && mKey < currentKey);
 
   // ₪ per € of forecast months: the last closed month's permanent payroll, else this year's actual payroll.
   const ratioOver = (keys) => {
     let ils = 0;
     let eur = 0;
-    for (const mKey of keys) for (const acct of permanentAccts) { const a = amount(mKey, acct); if (a) { ils += a.ils; eur += a.eur; } }
+    for (const mKey of keys) for (const acct of basisAccts) { const a = amount(mKey, acct); if (a) { ils += a.ils; eur += a.eur; } }
     return eur > 0 && ils > 0 ? ils / eur : null;
   };
   const yearActuals = Array.from({ length: 12 }, (_, mi) => mk(Y, mi)).filter(isActual);
   let ilsPerEur = ratioOver([lastClosed]) || ratioOver(yearActuals);
   const fxFallback = !ilsPerEur;
   if (!ilsPerEur) ilsPerEur = FALLBACK_ILS_PER_EUR;
+  ilsPerEur = Math.round(ilsPerEur * 10000) / 10000;
 
-  // ₪ of one account and month: actual (closed months and the previous year), or projected.
-  const ilsMemo = new Map();
-  function ilsOf(year, mi, acct) {
-    const mKey = mk(year, mi);
-    if (year < Y || isActual(mKey)) return num((amount(mKey, acct) || {}).ils);
-    const id = `${mKey}|${acct}`;
-    if (ilsMemo.has(id)) return ilsMemo.get(id);
-    const method = methodByAcct.get(acct);
-    const v = method === 'run-rate' ? num((amount(lastClosed, acct) || {}).ils)
-      : method === 'none' ? 0
-        : ilsOf(year - 1, mi, acct);
-    ilsMemo.set(id, v);
-    return v;
+  // The actual months the page re-projects from: the previous year and this year's closed months (never the
+  // current month's partial postings), every listed account, rounded to cents.
+  const actual = {};
+  for (const mKey of Object.keys(amounts).sort()) {
+    if (!isActual(mKey)) continue;
+    const m = {};
+    for (const { acct } of accounts) {
+      const a = amount(mKey, acct);
+      if (a && (a.eur || a.ils)) m[acct] = { eur: cents(a.eur), ils: cents(a.ils) };
+    }
+    actual[mKey] = m;
   }
 
-  const blockOf = (year, kind) => ({
-    year,
-    kind,
-    rows: Array.from({ length: 12 }, (_, mi) => {
-      const mKey = mk(year, mi);
-      const status = year === Y ? statusOf(mKey) : 'forecast';
-      const eur = {};
-      const ils = {};
-      for (const { acct } of accounts) {
-        if (status === 'actual') {
-          const a = amount(mKey, acct) || { eur: 0, ils: 0 };
-          eur[acct] = cents(a.eur);
-          ils[acct] = cents(a.ils);
-        } else {
-          const v = ilsOf(year, mi, acct);
-          ils[acct] = cents(v);
-          eur[acct] = cents(v / ilsPerEur);
-        }
-      }
-      return { mKey, status, eur, ils };
-    }),
+  const blocks = projectSalary({
+    years: [Y, T], currentMonth: currentKey, runRateMonth: lastClosed, ilsPerEur,
+    accounts: accounts.map((a) => a.acct), actual, methodOf: (acct) => methodOf.get(acct) || 'last-year',
   });
-  const blocks = [blockOf(Y, 'current'), blockOf(T, 'projection')];
 
   const warnings = [];
   const gap = Array.from({ length: curIdx }, (_, mi) => mk(Y, mi)).filter((k) => k > lastClosed);
   if (gap.length) {
     warnings.push(`NetSuite has no full payroll for ${gap.map(longLabel).join(', ')} yet, so ${gap.length === 1 ? 'it is' : 'they are'} projected from ${longLabel(lastClosed)}.`);
   }
-  if (!Object.keys(actual).some((k) => k.startsWith(`${Y - 1}-`))) {
+  if (!Object.keys(amounts).some((k) => k.startsWith(`${Y - 1}-`))) {
     warnings.push(`NetSuite has no ${Y - 1} payroll, so temporary accounts have nothing to repeat in ${Y}.`);
-  }
-  const unclassified = accounts.filter((a) => a.group === 'other');
-  if (unclassified.length) {
-    warnings.push(`Not classified as permanent or temporary, so projected like a temporary account (same month last year): ${unclassified.map((a) => `${a.acct} ${a.name}`).join(', ')}.`);
   }
   if (fxFallback) warnings.push(`No payroll month gives an ILS/EUR ratio; forecast € use ₪${FALLBACK_ILS_PER_EUR} per €.`);
 
@@ -244,7 +287,8 @@ function buildSalaryProjection({ rows, now }) {
     years: [Y, T],
     accounts,
     actuals: { source: 'netsuite', basis: 'period', through: lastClosed.startsWith(`${Y}-`) ? lastClosed : null },
-    basis: { runRateMonth: lastClosed, ilsPerEur: Math.round(ilsPerEur * 10000) / 10000 },
+    basis: { runRateMonth: lastClosed, ilsPerEur },
+    actual,
     degraded: false,
     failedFeeds: [],
     warnings,
@@ -253,7 +297,7 @@ function buildSalaryProjection({ rows, now }) {
   return { payload };
 }
 
-/** Compute the payload. opts: now, getNsClient(sub), queueNsCall(fn) */
+/** Compute the payload. opts: now, getNsClient(sub), queueNsCall(fn), classificationFile (tests) */
 async function computeSalaryProjection(opts) {
   const now = opts.now || new Date();
   // The repo .env, as the other projections load it (existing variables win).
@@ -272,7 +316,8 @@ async function computeSalaryProjection(opts) {
     throw new ProjectionError('NetSuite payroll could not be loaded. Try Refresh in a minute.');
   }
   if (!actuals || !actuals.byMonth) throw new ProjectionError('NetSuite payroll could not be loaded. Try Refresh in a minute.');
-  return buildSalaryProjection({ rows: payrollRows(actuals.byMonth), now });
+  const saved = readSavedMethods(opts.classificationFile || CLASSIFICATION_FILE);
+  return buildSalaryProjection({ rows: payrollRows(actuals.byMonth), now, saved });
 }
 
 /**
@@ -297,11 +342,17 @@ function createSalaryProjectionHandler(deps = {}) {
 
 module.exports = {
   createSalaryProjectionHandler,
+  createSalaryClassificationHandler,
   computeSalaryProjection,
   buildSalaryProjection,
+  validateClassification,
+  readSavedMethods,
+  defaultMethodOf,
   payrollRows,
+  loadSalaryModule,
   SALARY_GL_GROUPS,
   ACTUALS_ONLY,
   SCHEMA_VERSION,
   DEFAULT_CACHE_FILE,
+  CLASSIFICATION_FILE,
 };
