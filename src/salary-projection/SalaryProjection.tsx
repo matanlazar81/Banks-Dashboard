@@ -21,12 +21,13 @@ const MARKERS: TableMarkers = {
   negativeLines: new Set(),
 };
 
-function Legend() {
+function Legend({ overrides }: { overrides: boolean }) {
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-600">
       <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 rounded-sm border border-slate-300 bg-slate-100" />Actual (NetSuite)</span>
       <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 rounded-sm border border-sky-300 bg-sky-50" />Current month (projected)</span>
       <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 rounded-sm border border-slate-300 bg-white" />Forecast</span>
+      {overrides && <span className="italic text-slate-500">Italic: the override file, not in the totals</span>}
     </div>
   );
 }
@@ -48,6 +49,7 @@ export default function SalaryProjection() {
   const shown = useMemo(() => (data ? withClassification(data, classification.current) : null), [data, classification.current]);
   const table = useMemo(() => (shown ? buildSalaryTable(shown, ccy, view) : null), [shown, ccy, view]);
   const kpis = useMemo(() => (shown ? computeSalaryKpis(shown, ccy) : null), [shown, ccy]);
+  const hasOverrides = !!table && table.lines.some((l) => l.key === 'total-override-file');
 
   const chooseCcy = (c: Ccy) => { setCcy(c); writeParam('ccy', c === 'eur' ? 'eur' : null); };
   const chooseView = (v: YearView) => { setView(v); writeParam('years', v === 'both' ? null : v); };
@@ -183,12 +185,12 @@ export default function SalaryProjection() {
                   <h2 className="text-sm font-semibold text-slate-800">Payroll by GL account and month</h2>
                   <span className="text-xs text-slate-500">Hover an account for how it is projected.</span>
                 </div>
-                <Legend />
+                <Legend overrides={hasOverrides} />
               </div>
               <ProjectionTable table={table} ccy={ccy} anchorDate={null} markers={MARKERS} />
             </section>
 
-            {data.overrides && <OverridesSection payload={data} ccy={ccy} view={view} />}
+            {data.overrides && <OverridesSection payload={data} ccy={ccy} />}
 
             <p className="max-w-5xl text-xs leading-relaxed text-slate-500">
               Actual months are NetSuite's payroll accounts (76xxxx) for LSports by posting period, as in NetSuite's
@@ -196,6 +198,7 @@ export default function SalaryProjection() {
               education fund and the like) carry the last closed month, {runRate}, into every forecast month. Temporary
               accounts (bonuses, recuperation, maternity and other one-offs) repeat the same month of the previous
               year for the rest of {y0}, so seasonal payments stay in their month; in {y1} they are 0.
+              {hasOverrides && ' Between the two groups, in italics, the override file\'s payroll rows by account and month, for reference: they are not in Total payroll.'}
               {notProjected.length > 0 && ` Actuals only, not projected: ${notProjected.map((a) => `${a.acct} ${a.name}`).join(', ')}.`}
               {' '}The current month is projected as a whole month. Forecasts are made in shekels; euros use the rate above.
               Use Permanent / temporary to change how an account is projected.
