@@ -67,13 +67,15 @@ const SALARY_GL_GROUPS = [
       ['760030', 'Gemel Pension expenses'],
       ['760020', 'Reducing salary expenses-option exercise'],
       ['76003', 'Social security - Injury payment'],
+      ['760008', 'Option employees expenses'],
+      ['760014', 'Vacation expenses'],
     ],
   },
 ];
 const GROUP_OF = new Map(SALARY_GL_GROUPS.flatMap((g) => g.accounts.map(([acct]) => [acct, g.key])));
-// Temporary accounts shown as actuals only: 2026's military reserve refunds and notice pay are not expected
-// to recur, so forecast months are 0.
-const ACTUALS_ONLY = new Set(['760023', '760029']);
+// Temporary accounts shown as actuals only (forecast months 0): 2026's military reserve refunds and notice
+// pay are not expected to recur; options and vacation are year-end accruals that change every year.
+const ACTUALS_ONLY = new Set(['760023', '760029', '760008', '760014']);
 
 // Below this share of the largest recent month, a closed month counts as not posted yet.
 const MATERIAL_SHARE = 0.5;
