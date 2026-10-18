@@ -41,7 +41,8 @@
 //   • headcount  — HiBob (Snowflake): its employees at each month-end and today from their start and leave dates
 //                  (DIM_EMPLOYEE, as the Metrics page; future dates too: signed hires, people leaving), and beside
 //                  them, not counted, HiBob's open positions and leave events (FCT_HEADCOUNT_EVENT), as counts by
-//                  month (headcountSeries). No names or ids leave the server.
+//                  month (headcountSeries). Records are counted as people, so a move to another department is a
+//                  transfer, not a leaver and a hire (peopleOf in metrics.cjs). No names or ids leave the server.
 //
 // The projection is made in ILS, the currency payroll is paid in; forecast € = ₪ ÷ the ILS/EUR ratio of
 // the last closed month's permanent payroll. The current month is projected as a whole month (its
@@ -57,11 +58,11 @@ const cp = require('./cash-projection.cjs');
 const { readDoc, createDocHandler } = require('./json-store.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
-const SCHEMA_VERSION = 13; // 3: the actual months and each account's default method; 4: the override file's payroll rows; 5: temporary 0 next year; 6: override rows on 760001 only; 7: Snowflake's planned hires, leavers and returns from leave; 8: every payroll account, as the old dashboard; 9: planned changes by department (the page's breakdowns); 10: Deel and the headcount (HiBob); 11: the headcount from HiBob's dates plus its open positions, and planned changes count only when marked TRUE (IS_SOURCE_ACTUAL); 12: the headcount is HiBob's employees only (open positions shown, not counted); 13: the headcount by HiBob group and employment type, and open positions' department and role (the headcount breakdowns)
+const SCHEMA_VERSION = 15; // 3: the actual months and each account's default method; 4: the override file's payroll rows; 5: temporary 0 next year; 6: override rows on 760001 only; 7: Snowflake's planned hires, leavers and returns from leave; 8: every payroll account, as the old dashboard; 9: planned changes by department (the page's breakdowns); 10: Deel and the headcount (HiBob); 11: the headcount from HiBob's dates plus its open positions, and planned changes count only when marked TRUE (IS_SOURCE_ACTUAL); 12: the headcount is HiBob's employees only (open positions shown, not counted); 13: the headcount by HiBob group and employment type, and open positions' department and role (the headcount breakdowns); 14: (Bringits left out, undone); 15: HiBob's records counted as people, department moves as transfers
 const DEFAULT_CACHE_FILE = path.join(ROOT, 'data', 'salary-projection-cache.json');
 const CLASSIFICATION_FILE = path.join(ROOT, 'data', 'salary-classification.json');
 const { ProjectionError } = cp;
-const { employedOn, lastDayOf, sfEmployeeSpans, shiftMonth } = require('./metrics.cjs');
+const { lastDayOf, peopleOf, periodOn, sfEmployeeSpans, shiftMonth } = require('./metrics.cjs');
 
 // Finance's classification (ProfitandLoss988.xlsx: yellow = permanent, green = temporary), in its order.
 // Names are fallbacks: the page shows NetSuite's account names when it has them.
@@ -285,34 +286,39 @@ function deelOf(deel, Y) {
 
 /**
  * HiBob's headcount for the payload, as counts: employees today, and over the projection's months the employees
- * at month-end with who joined and left, from their start and leave dates (future ones too: signed hires, people
- * leaving), with HiBob's open positions and leave events beside them (headcountSeries). Employee spans never leave
- * the server.
- *   headcount  { company, spans: [{ start, end, type }] | null, events: [{ month, type, subType, employee, status, count }], error }
+ * at month-end with who joined, left and moved department, from their start and leave dates (future ones too:
+ * signed hires, people leaving), with HiBob's open positions and leave events beside them (headcountSeries).
+ * HiBob's records are counted as people (peopleOf in server/metrics.cjs): a move to another department is a
+ * transfer, not a leaver and a hire. Employee spans and ids never leave the server.
+ *   headcount  { company, spans: [{ start, end, type, group, id }] | null, events: [{ month, type, subType, employee,
+ *              status, department, position, count }], error }
  */
 function headcountOf(headcount, blocks, currentKey, now, headcountSeries) {
   const asOf = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
-  if (!headcount) return { company: '', asOf, today: null, months: [], events: [], error: 'The headcount (HiBob) was not read.' };
+  if (!headcount) return { company: '', asOf, today: null, months: [], events: [], records: null, error: 'The headcount (HiBob) was not read.' };
   const spans = headcount.spans || null;
+  const people = spans ? peopleOf(spans) : null;
   const months = blocks.flatMap((b) => b.rows.map((r) => r.mKey));
   // Every month shown, and the one before the first (where the first one starts); each also by HiBob group
-  // (department) and employment type, for the page's breakdowns.
+  // (department) and employment type, for the page's breakdowns. A transfer counts in the department moved to.
   let known = null;
-  if (spans && months.length) {
+  if (people && months.length) {
     known = {};
     const bump = (map, key, field) => {
-      const c = map[key] || (map[key] = { employees: 0, hires: 0, leavers: 0 });
+      const c = map[key] || (map[key] = { employees: 0, hires: 0, leavers: 0, transfers: 0 });
       c[field]++;
     };
     for (let m = shiftMonth(months[0], -1); m <= months[months.length - 1]; m = shiftMonth(m, 1)) {
       const day = lastDayOf(m);
       const before = lastDayOf(shiftMonth(m, -1));
-      const c = { employees: 0, hires: 0, leavers: 0, byDept: {}, byType: {} };
-      for (const s of spans) {
-        const isIn = employedOn(s, day);
-        const wasIn = employedOn(s, before);
-        const field = isIn && !wasIn ? 'hires' : wasIn && !isIn ? 'leavers' : null;
+      const c = { employees: 0, hires: 0, leavers: 0, transfers: 0, byDept: {}, byType: {} };
+      for (const p of people) {
+        const isIn = periodOn(p, day);
+        const wasIn = periodOn(p, before);
+        const moved = isIn && wasIn && (isIn.group || '') !== (wasIn.group || '');
+        const field = isIn && !wasIn ? 'hires' : wasIn && !isIn ? 'leavers' : moved ? 'transfers' : null;
         for (const f of [isIn && 'employees', field].filter(Boolean)) {
+          const s = f === 'leavers' ? wasIn : isIn;
           c[f]++;
           bump(c.byDept, s.group || 'No department', f);
           bump(c.byType, s.type || 'Unspecified', f);
@@ -331,9 +337,16 @@ function headcountOf(headcount, blocks, currentKey, now, headcountSeries) {
   return {
     company: String(headcount.company || ''),
     asOf,
-    today: spans ? spans.filter((s) => employedOn(s, asOf)).length : null,
+    today: people ? people.filter((p) => periodOn(p, asOf)).length : null,
     months: headcountSeries({ months, currentMonth: currentKey, known, events }),
     events,
+    // How HiBob's records became people, for --dry-run: records, people, people with more than one record, and
+    // people counted from before a move (HEADCOUNT_MOVES).
+    records: people ? {
+      rows: spans.length, people: people.length,
+      merged: people.filter((p) => p.periods.filter((s) => !s.moved).length > 1).length,
+      moved: people.filter((p) => p.periods.some((s) => s.moved)).length,
+    } : null,
     error: headcount.error || null,
   };
 }

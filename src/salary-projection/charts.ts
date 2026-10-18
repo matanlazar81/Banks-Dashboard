@@ -128,6 +128,8 @@ export interface HeadcountPoint {
   hires: number;
   /** Negative, as in the table: drawn below zero. */
   leavers: number;
+  /** People who moved to another department: already employees, not drawn (the count does not move). */
+  transfers: number;
   /** HiBob's open positions: shown, not counted. */
   openings: number;
 }
@@ -153,6 +155,7 @@ export function headcountChart(
       employeesProjected: projected || (i === lastActual && i < months.length - 1) ? employees : null,
       hires: m?.hires ?? 0,
       leavers: -(m?.leavers ?? 0),
+      transfers: m?.transfers ?? 0,
       openings: m?.openings ?? 0,
     };
   });

@@ -154,6 +154,19 @@ view). It holds counts only: no names or IDs leave the server.
   - **Employees at month-end**: people employed on the last day, people on leave included.
   - **Hires**: people counted at this month-end but not the one before.
   - **Leavers**: the reverse.
+  - **Transfers between departments** (shown, not counted): people counted at both month-ends whose department
+    changed. They were already employees, so the count does not move. Clicking a figure shows the department they
+    moved to.
+- **People, not records.** HiBob can hold more than one record for a person, for example after a move to another
+  department. Records are merged by employee id (`DIM_EMPLOYEE.EMPLOYEE_ID`, read on the server only; `peopleOf` in
+  `server/metrics.cjs`), so a move is a transfer, not a leaver and a hire. A person's department in a month is that
+  of their latest record.
+- **October 2026: 12 people moved from LSports' departments to Bringits** (HiBob's Technology group), as transfers.
+  - HiBob may record such a move as a new start date on a single record. So people whose first record starts in
+    Technology in October 2026 were already employees: they count before the move too, in a department named
+    "Before moving to Technology", and October shows them as transfers.
+  - The rule is `HEADCOUNT_MOVES` in `server/metrics.cjs`, shared with the Metrics page.
+  - `--dry-run` prints how many records were merged and how many people were counted from before a move.
 - **HiBob's Bringits department counts**, like every other (finance's choice in October 2026): the headcount
   matches the payroll. Its people were paid by LSports Data LTD (NetSuite subsidiary 3) until they left in May
   2026. Bringits Data LTD (subsidiary 7) has had its own small payroll only since August 2026.
@@ -174,7 +187,7 @@ view). It holds counts only: no names or IDs leave the server.
 - **Clicking a figure** opens its breakdown in people, in the same movable window as the payroll figures
   (`headcountBreakdown` in `src/salary-projection/breakdown.ts`):
   - **Employees, hires and leavers:** by HiBob group (department) and by employment type. A full year shows hires
-    and leavers by month first, and employees as at December.
+    and leavers by month first, and employees as at December. **Transfers:** by the department moved to.
   - **Open positions:** by department (hovering one lists its roles) and by role. The other HiBob events are shown
     by department.
   - The server sends counts by group and employment type only (`DIM_EMPLOYEE.EMPLOYEE_GROUP`), plus each open

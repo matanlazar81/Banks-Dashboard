@@ -80,11 +80,13 @@ export interface HeadcountEventCount {
   count: number;
 }
 
-/** Employees at month-end, hires and leavers of one department or employment type. */
+/** Employees at month-end, hires, leavers and transfers in, of one department or employment type. */
 export interface HeadcountCounts {
   employees: number;
   hires: number;
   leavers: number;
+  /** People who moved here from another department (absent in an older payload). */
+  transfers?: number;
 }
 
 export interface HeadcountMonth {
@@ -96,6 +98,8 @@ export interface HeadcountMonth {
   hires: number | null;
   /** Who left, or is leaving (HiBob's leave dates). */
   leavers: number | null;
+  /** Who moved to another department: already employees, so the count does not move (absent in an older payload). */
+  transfers?: number | null;
   /** HiBob's open positions planned for the month (shown, not counted; 0 before the current month). */
   openings: number;
   /** HiBob's planned leavers with no employee (shown, not counted; 0 before the current month). */

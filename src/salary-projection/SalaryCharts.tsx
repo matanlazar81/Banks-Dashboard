@@ -198,6 +198,7 @@ function HeadcountTip({ point }: { point: HeadcountPoint }) {
     { key: 'hires', color: HIRES, value: formatCount(point.hires, true), label: 'Hires' },
     { key: 'leavers', color: LEAVERS, value: formatCount(point.leavers, true), label: 'Leavers' },
   ];
+  if (point.transfers) rows.push({ key: 'transfers', value: formatCount(point.transfers), label: 'Transfers between departments (not hires)' });
   if (point.openings) rows.push({ key: 'openings', value: formatCount(point.openings), label: 'Open positions (not counted)' });
   return <Tip mKey={point.mKey} status={point.status} rows={rows} />;
 }
@@ -270,7 +271,7 @@ function HeadcountCharts({ table, headcount }: { table: Table<string>; headcount
 
       <ChartCard
         title="Hires and leavers"
-        note="By HiBob's start and leave dates. Open positions are not counted: hover a month for them."
+        note="By HiBob's start and leave dates. Transfers between departments and open positions are not drawn: hover a month for them."
         keyItems={(
           <>
             <KeyItem color={HIRES} label="Hires" />

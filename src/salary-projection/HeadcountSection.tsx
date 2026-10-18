@@ -28,7 +28,7 @@ export default function HeadcountSection({ table, headcount, computedMonth, ccy,
         <h2 className="text-sm font-semibold text-slate-800">Headcount by month</h2>
         <span className="text-xs text-slate-500">
           HiBob ({headcount.company}){headcount.today !== null ? `: ${headcount.today.toLocaleString('en-US')} employees on ${asOf}` : ''}.
-          {' '}HiBob's employees by their start and leave dates, signed hires and people leaving included. From {current}, HiBob's open positions are shown below the count, not in it. Hover a line for how it is counted; click a figure for it by department.
+          {' '}HiBob's employees by their start and leave dates, signed hires and people leaving included; a move to another department is a transfer, not a hire. From {current}, HiBob's open positions are shown below the count, not in it. Hover a line for how it is counted; click a figure for it by department.
         </span>
       </div>
       <ProjectionTable
