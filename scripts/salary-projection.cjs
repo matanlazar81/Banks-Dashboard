@@ -64,10 +64,12 @@ function printYear(payload, block, planned, deel) {
   const changes = plannedRow(labels);
   const total = sumRow(payload.accounts.map((a) => a.acct)).map((v, i) => v + changes[i]);
   print('Total payroll', total);
-  const deelAccts = [...new Set(payload.deel.rows.map((r) => r.acct))].sort();
+  // As the page: the Deel accounts with an amount in the projection's months.
+  const deelRow = (accts) => block.rows.map((r) => accts.reduce((s, a) => s + ((deel.get(r.mKey) || { ils: {} }).ils[a] || 0), 0));
+  const shown = (a) => [...deel.values()].some((m) => Math.abs(m.ils[a] || 0) >= 0.5);
+  const deelAccts = [...new Set(payload.deel.rows.map((r) => r.acct))].filter(shown).sort();
   if (deelAccts.length) {
     const names = new Map(payload.deel.rows.map((r) => [r.acct, r.name]));
-    const deelRow = (accts) => block.rows.map((r) => accts.reduce((s, a) => s + ((deel.get(r.mKey) || { ils: {} }).ils[a] || 0), 0));
     for (const a of deelAccts) print(`Deel ${a} - ${names.get(a) || ''}`, deelRow([a]));
     const deelTotal = deelRow(deelAccts);
     print('Total Deel', deelTotal);
@@ -81,7 +83,7 @@ function printHeadcount(payload, block) {
   const cell = (v) => String(v === null || v === undefined ? '–' : v).padStart(8);
   console.log(`\n${block.year} headcount (HiBob ${payload.headcount.company}) — people`);
   console.log(`  ${''.padEnd(44)}${block.rows.map((r) => `${r.mKey.slice(2)}${r.mKey < payload.computedMonth ? 'A' : r.mKey === payload.computedMonth ? 'C' : 'F'}`.padStart(8)).join('')}`);
-  for (const [label, k] of [['Employees at month-end', 'employees'], ['Hires', 'hires'], ['Leavers', 'leavers'], ['Returns from leave', 'returns'], ['Leave starts', 'leaveStarts']]) {
+  for (const [label, k] of [['Employees at month-end', 'employees'], ['Hires', 'hires'], ['  of which open positions', 'openings'], ['Leavers', 'leavers'], ['Returns from leave', 'returns'], ['Leave starts', 'leaveStarts']]) {
     console.log(`  ${label.padEnd(44)}${block.rows.map((r) => cell((byKey.get(r.mKey) || {})[k])).join('')}`);
   }
 }
@@ -165,24 +167,43 @@ async function main() {
     const hc = payload.headcount;
     console.log(`\nHeadcount (HiBob ${hc.company}): ${hc.error ? hc.error : `${hc.today === null ? '–' : hc.today} employees on ${hc.asOf}`}`);
     if (hc.months.some((m) => m.employees !== null)) for (const block of payload.blocks) printHeadcount(payload, block);
-    console.log(`\nHiBob's planned events from January ${payload.years[0]} (FCT_HEADCOUNT_EVENT), by type and sub-type, and the line each counts in:`);
+    console.log(`\nHiBob's planned events from January ${payload.years[0]} (FCT_HEADCOUNT_EVENT), by type, sub-type, employee and opening status, and how each counts:`);
     const kinds = new Map();
     for (const e of hc.events) {
-      const k = `${e.type}|${e.subType}`;
-      const g = kinds.get(k) || { type: e.type, subType: e.subType, count: 0, open: 0, first: e.month, last: e.month };
+      const past = e.month < payload.computedMonth;
+      const k = `${e.type}|${e.subType}|${e.employee}|${e.status}|${past}`;
+      const g = kinds.get(k) || { ...e, past, count: 0, first: e.month, last: e.month };
       g.count += e.count;
-      if (e.open) g.open += e.count;
       if (e.month < g.first) g.first = e.month;
       if (e.month > g.last) g.last = e.month;
       kinds.set(k, g);
     }
     if (!kinds.size) console.log('  (none)');
-    const LINE = { hires: 'Hires', leavers: 'Leavers', returns: 'Returns from leave (count unchanged)', leaveStarts: 'Leave starts (count unchanged)' };
+    const LINE = {
+      openings: 'Hires (an open position)', cuts: 'Leavers (planned, no employee)', employee: 'not again: already in HiBob\'s employees (their dates)',
+      returns: 'Returns from leave (count unchanged)', leaveStarts: 'Leave starts (count unchanged)',
+    };
     for (const g of kinds.values()) {
-      const line = LINE[sm.headcountKind(g.type, g.subType)] || 'not counted (unknown type)';
-      console.log(`  ${g.type.padEnd(10)}${(g.subType || '–').slice(0, 30).padEnd(31)}${String(g.count).padStart(6)} event(s)${g.open ? `, ${g.open} still-open opening(s)` : ''}  ${g.first} to ${g.last}  → ${line}`);
+      const kind = sm.headcountKind(g.type, g.subType, g.employee);
+      // As headcountSeries: before the current month, only openings still open count (in the current month).
+      const line = g.past && kind === 'openings' ? (/^open/i.test(g.status) ? `Hires in ${payload.computedMonth} (an opening still open)` : 'not counted (an earlier month, not open)')
+        : g.past && kind === 'cuts' ? 'not counted (an earlier month)'
+          : LINE[kind] || 'not counted (unknown type)';
+      console.log(`  ${g.type.padEnd(10)}${(g.subType || '–').slice(0, 24).padEnd(25)}${(g.employee ? 'employee' : 'no employee').padEnd(12)}${(g.status || '–').slice(0, 14).padEnd(15)}${String(g.count).padStart(5)}  ${g.first} to ${g.last}  → ${line}`);
     }
-    console.log(`\nPlanned hires, leavers and returns from leave on payroll accounts (Snowflake): ${ch.error ? ch.error : `${countedChanges.size} of ${ch.rows.length} account-month row(s) counted (the projected months)`}`);
+    const cur = hc.months.find((m) => m.mKey === payload.computedMonth);
+    if (cur && hc.today !== null) console.log(`  Today ${hc.today} employees; ${payload.computedMonth} month-end forecast ${cur.employees} (${cur.hires} hire(s), ${cur.openings} of them open positions; ${cur.leavers} leaver(s))`);
+    console.log(`\nPlanned hires, leavers and returns from leave on payroll accounts (Snowflake): ${ch.error ? ch.error : `${countedChanges.size} of ${ch.rows.length} account-month row(s) counted (marked TRUE, in the projected months)`}`);
+    if (!ch.error) {
+      // How each source splits: TRUE / FALSE (IS_SOURCE_ACTUAL), in the projected months and in closed ones.
+      const projected = sm.projectedMonths(payload.blocks);
+      for (const source of Object.keys(CHANGE_LABEL)) {
+        const of = ch.rows.filter((r) => r.source === source);
+        if (!of.length) continue;
+        const part = (keep) => { const rows = of.filter(keep); return `${rows.length} row(s) ₪${Math.round(rows.reduce((s, r) => s + r.ils, 0)).toLocaleString('en-US')}`; };
+        console.log(`  ${source.padEnd(15)} TRUE: ${part((r) => r.actual && projected.has(r.month))} counted, ${part((r) => r.actual && !projected.has(r.month))} in closed months · FALSE: ${part((r) => !r.actual)} (not counted)`);
+      }
+    }
     console.log(`\nOverride file, payroll rows from January ${payload.years[0]}: ${ov.error ? ov.error : `${ov.rows.length} row(s)`}`);
     console.log('  (+ = an increment counted in Total payroll; increments in closed months are not counted, overrides never are)');
     for (const r of ov.rows) {

@@ -289,10 +289,10 @@ async function testOverrides(payload) {
       fetchPayrollChanges: async (from, accounts) => {
         askedChanges = { from, accounts };
         return [
-          { month: mk(Y, 11), acct: '760001', name: 'Gross Salaries', source: 'Terminated', eur: 0, ils: -150_000 },
-          { month: mk(Y, 11), acct: '760001', name: 'Gross Salaries', source: 'Open position', eur: 20_000, ils: 74_000 },
-          { month: mk(Y, 10), acct: '760001', name: 'Gross Salaries', source: 'Terminated', eur: -30_000, ils: -110_000 },
-          { month: mk(Y - 1, 12), acct: '760001', name: 'Gross Salaries', source: 'Leave end', eur: 5_000, ils: 18_500 },
+          { month: mk(Y, 11), acct: '760001', name: 'Gross Salaries', source: 'Terminated', actual: true, eur: 0, ils: -150_000 },
+          { month: mk(Y, 11), acct: '760001', name: 'Gross Salaries', source: 'Open position', actual: true, eur: 20_000, ils: 74_000 },
+          { month: mk(Y, 10), acct: '760001', name: 'Gross Salaries', source: 'Terminated', actual: false, eur: -30_000, ils: -110_000 },
+          { month: mk(Y - 1, 12), acct: '760001', name: 'Gross Salaries', source: 'Leave end', actual: true, eur: 5_000, ils: 18_500 },
           { month: mk(Y, 12), acct: '760001', name: 'Gross Salaries', source: 'payroll future baseline', eur: 1_000_000, ils: 3_700_000 },
         ];
       },
@@ -316,6 +316,7 @@ async function testOverrides(payload) {
       'earlier months and other sources (the baseline) dropped; sorted by month, then hires, leavers, returns');
     check(near(ch[2].eur, -150_000 / p.basis.ilsPerEur) && ch[2].ils === -150_000 && ch[1].eur === 20_000 && ch[1].ils === 74_000,
       'amounts kept; the missing currency at the forecast rate');
+    check(ch[0].actual === false && ch[1].actual === true && ch[2].actual === true, 'each row keeps its TRUE / FALSE mark (IS_SOURCE_ACTUAL)');
     check(!p.warnings.some((w) => /hires and leavers/.test(w)), 'read fine: no warning');
 
     const failed = (await run(() => ({
@@ -491,14 +492,15 @@ async function testModel(payload) {
   ] }, Y, rate);
   const gross = { acct: '760001', name: 'Gross Salaries' };
   const changes = sp.changesOf({ error: null, rows: [
-    { ...gross, month: mk(Y, 10), source: 'Terminated', department: 'R&D', eur: -22_000, ils: -80_000 },
-    { ...gross, month: mk(Y, 10), source: 'Terminated', department: 'Sales', eur: -8_000, ils: -30_000 },
-    { acct: '760002', name: 'National Insurance expenses', month: mk(Y, 10), source: 'Terminated', department: 'R&D', eur: -2_000, ils: -7_000 },
-    { ...gross, month: mk(Y, 12), source: 'Open position', department: 'Sales', eur: 23_000, ils: 85_000 },
-    { ...gross, month: mk(Y, 12), source: 'Leave end', department: 'HR', eur: 5_000, ils: 19_000 },
-    { ...gross, month: mk(T, 1), source: 'Open position', department: 'Sales', eur: 23_000, ils: 86_000 },
-    { ...gross, month: mk(T, 1), source: 'Terminated', department: 'Finance', eur: -87_000, ils: -323_000 },
-    { ...gross, month: mk(Y, 2), source: 'Terminated', department: 'R&D', eur: -10_000, ils: -37_000 },
+    { ...gross, month: mk(Y, 10), source: 'Terminated', department: 'R&D', actual: true, eur: -22_000, ils: -80_000 },
+    { ...gross, month: mk(Y, 10), source: 'Terminated', department: 'Sales', actual: true, eur: -8_000, ils: -30_000 },
+    { acct: '760002', name: 'National Insurance expenses', month: mk(Y, 10), source: 'Terminated', department: 'R&D', actual: true, eur: -2_000, ils: -7_000 },
+    { ...gross, month: mk(Y, 12), source: 'Open position', department: 'Sales', actual: true, eur: 23_000, ils: 85_000 },
+    { ...gross, month: mk(Y, 12), source: 'Leave end', department: 'HR', actual: true, eur: 5_000, ils: 19_000 },
+    { ...gross, month: mk(T, 1), source: 'Open position', department: 'Sales', actual: true, eur: 23_000, ils: 86_000 },
+    { ...gross, month: mk(T, 1), source: 'Terminated', department: 'Finance', actual: true, eur: -87_000, ils: -323_000 },
+    { ...gross, month: mk(Y, 2), source: 'Terminated', department: 'R&D', actual: true, eur: -10_000, ils: -37_000 },
+    { ...gross, month: mk(Y, 11), source: 'Terminated', department: 'R&D', actual: false, eur: -50_000, ils: -185_000 },
   ] }, Y, rate);
   const withOv = { ...payload, overrides, changes };
 
@@ -509,6 +511,9 @@ async function testModel(payload) {
   const countedCh = sm.countedChangeRows(payload.blocks, changes.rows);
   check(countedCh.length === 7 && !countedCh.some((r) => r.month === mk(Y, 2)) && countedCh[0] === changes.rows.find((r) => r.month === mk(Y, 10)),
     'countedChangeRows: hires, leavers and returns of the current and forecast months; not closed months');
+  check(changes.rows.some((r) => r.month === mk(Y, 11) && r.actual === false) && countedCh.every((r) => r.actual === true)
+    && sm.countedChangeRows(payload.blocks, [{ month: mk(Y, 11), actual: false }, { month: mk(Y, 11) }]).length === 0,
+    'a change marked FALSE (or without a mark) never counts, even in a forecast month');
 
   const ovTable = model.buildSalaryTable(withOv, 'ils', 'both');
   const ovKeys = ovTable.lines.map((l) => l.key);
@@ -531,6 +536,7 @@ async function testModel(payload) {
   const lv = ovLine('leavers').values;
   check(near(lv[col(mk(Y, 10))], -117_000, 0.05) && lv[col(mk(Y, 2))] === 0 && near(lv[col(mk(T, 1))], -323_000, 0.05) && near(ovLine('total-changes').values[col(mk(Y, 12))], 104_000, 0.05),
     'planned changes summed across the payroll accounts in their months (leavers negative); 0 in closed months');
+  check(lv[col(mk(Y, 11))] === 0, 'November: its only leaver row is marked FALSE, so 0');
   check(ovLine('increment|760001').kind === 'item' && ovLine('total-increments').kind === 'subtotal' && ovLine('override|760001').kind === 'note'
     && ovLine('total-overrides').kind === 'subtotal' && /not in total payroll/.test(ovLine('total-overrides').label)
     && ovLine('increment|760001').label === '760001 - Gross Salaries (increment)' && ovLine('override|760001').label === '760001 - Gross Salaries (override)',
@@ -650,26 +656,29 @@ const DEEL = {
     { month: mk(Y, 8), acct: '760001', name: 'Gross Salaries', vendor: 11, eur: 2_000, ils: 7_400 },
   ],
 };
-// HiBob: employees with their dates (no names), and planned events by month, type and sub-type.
+// HiBob: employees with their dates (no names), and planned events by month, type, sub-type, employee and status.
 const SPANS = [
   { start: '2019-01-01', end: null, type: 'Full-time' },
   { start: '2025-11-15', end: null, type: 'Full-time' },
   { start: '2024-02-01', end: mk(Y, 3) + '-31', type: 'Full-time' }, // employed at the end of March, gone in April
   { start: mk(Y, 5) + '-10', end: null, type: 'Student' },
-  { start: '2023-01-01', end: mk(Y, 10) + '-05', type: 'Full-time' }, // leaves in the current month
+  { start: '2023-01-01', end: mk(Y, 10) + '-05', type: 'Full-time' }, // left in the current month
   { start: mk(Y, 10) + '-01', end: null, type: 'Full-time' }, // joined in the current month
   { start: mk(Y, 12) + '-01', end: null, type: 'Full-time' }, // signed, starts in December
+  { start: '2022-01-01', end: mk(T, 1) + '-31', type: 'Full-time' }, // leaving at the end of January next year
 ];
 const EVENTS = [
-  { month: mk(Y, 4), type: 'decrease', subType: 'Terminated', open: false, count: 1 },
-  { month: mk(Y, 6), type: 'increase', subType: 'Open position', open: true, count: 1 },
-  { month: mk(Y, 6), type: 'increase', subType: 'Open position', open: false, count: 2 },
-  { month: mk(Y, 8), type: 'increase', subType: 'Leave end', open: false, count: 1 },
-  { month: mk(Y, 10), type: 'decrease', subType: 'Terminated', open: false, count: 1 },
-  { month: mk(Y, 11), type: 'increase', subType: 'Open position', open: true, count: 2 },
-  { month: mk(Y, 12), type: 'increase', subType: 'Leave end', open: false, count: 1 },
-  { month: mk(T, 2), type: 'decrease', subType: 'Leave start', open: false, count: 1 },
-  { month: mk(T, 3), type: 'transfer', subType: 'Moved', open: false, count: 4 },
+  { month: mk(Y, 4), type: 'decrease', subType: 'Terminated', employee: true, status: '', count: 1 },
+  { month: mk(Y, 6), type: 'increase', subType: 'Open position', employee: false, status: 'Open', count: 1 },
+  { month: mk(Y, 6), type: 'increase', subType: 'Open position', employee: false, status: 'Closed', count: 2 },
+  { month: mk(Y, 8), type: 'increase', subType: 'Leave end', employee: true, status: '', count: 1 },
+  { month: mk(Y, 10), type: 'decrease', subType: 'Terminated', employee: true, status: '', count: 1 },
+  { month: mk(Y, 11), type: 'increase', subType: 'Open position', employee: false, status: 'Approved', count: 2 },
+  { month: mk(Y, 12), type: 'increase', subType: 'Hired', employee: true, status: 'Filled', count: 1 },
+  { month: mk(Y, 12), type: 'increase', subType: 'Leave end', employee: true, status: '', count: 1 },
+  { month: mk(T, 2), type: 'decrease', subType: 'Leave start', employee: true, status: '', count: 1 },
+  { month: mk(T, 3), type: 'decrease', subType: 'Position cut', employee: false, status: '', count: 1 },
+  { month: mk(T, 4), type: 'transfer', subType: 'Moved', employee: false, status: '', count: 4 },
 ];
 const HEADCOUNT = { company: 'LSports', spans: SPANS, events: EVENTS, error: null };
 
@@ -692,9 +701,10 @@ async function testDeelAndHeadcount(payload) {
     'deelByMonth: actual months as booked, the current month (its partial postings ignored) and forecast months at the run-rate');
 
   console.log('\nHEADCOUNT: HiBob\'s events and the series (src/forecast/salary-projection.mjs)');
-  check(sm.headcountKind('increase', 'Open position') === 'hires' && sm.headcountKind('decrease', 'Terminated') === 'leavers'
-    && sm.headcountKind('increase', 'Leave end') === 'returns' && sm.headcountKind('Decrease', 'Maternity leave') === 'leaveStarts' && sm.headcountKind('transfer', 'x') === null,
-    'events: increase = hire, decrease = leaver; a sub-type about leave = a return or a leave start; an unknown type counts nowhere');
+  check(sm.headcountKind('increase', 'Open position', false) === 'openings' && sm.headcountKind('decrease', 'Position cut', false) === 'cuts'
+    && sm.headcountKind('decrease', 'Terminated', true) === 'employee' && sm.headcountKind('increase', 'Hired', true) === 'employee'
+    && sm.headcountKind('increase', 'Leave end', true) === 'returns' && sm.headcountKind('Decrease', 'Maternity leave', true) === 'leaveStarts' && sm.headcountKind('transfer', 'x', false) === null,
+    'events: with no employee, an increase is an open position and a decrease a planned leaver; a known employee\'s event is already in HiBob\'s dates; a sub-type about leave is a return or a leave start; an unknown type counts nowhere');
 
   console.log('\nDEEL AND HEADCOUNT: the payload (server/salary-projection.cjs)');
   const { payload: p } = await sp.buildSalaryProjection({ rows: syntheticRows(), now: NOW, deel: DEEL, headcount: HEADCOUNT });
@@ -706,17 +716,20 @@ async function testDeelAndHeadcount(payload) {
   check(JSON.stringify(p.blocks) === JSON.stringify(payload.blocks), 'the account projection (blocks) is unchanged by Deel and the headcount');
   const h = p.headcount;
   const m = (mKey) => h.months.find((x) => x.mKey === mKey);
-  check(h.company === 'LSports' && h.asOf === '2026-10-15' && h.today === 4 && h.error === null && h.months.length === 24 && h.events.length === EVENTS.length,
+  check(h.company === 'LSports' && h.asOf === '2026-10-15' && h.today === 5 && h.error === null && h.months.length === 24 && h.events.length === EVENTS.length
+    && h.events.every((e) => 'employee' in e && 'status' in e),
     'headcount: the company, today (who joined and left this month counted as of today) and every month of both years');
-  check(m(mk(Y, 1)).employees === 4 && m(mk(Y, 3)).employees === 4 && m(mk(Y, 4)).employees === 3 && m(mk(Y, 4)).leavers === 1 && m(mk(Y, 5)).hires === 1 && m(mk(Y, 9)).employees === 4
-    && m(mk(Y, 9)).status === 'actual',
+  check(m(mk(Y, 1)).employees === 5 && m(mk(Y, 3)).employees === 5 && m(mk(Y, 4)).employees === 4 && m(mk(Y, 4)).leavers === 1 && m(mk(Y, 5)).hires === 1 && m(mk(Y, 9)).employees === 5
+    && m(mk(Y, 9)).status === 'actual' && m(mk(Y, 9)).openings === 0,
     'months before the current one: HiBob\'s employees at month-end, who joined and who left (leaving on the 31st counts in March)');
   const idOff = h.months.filter((x, i) => i > 0 && x.employees !== h.months[i - 1].employees + x.hires - x.leavers).map((x) => x.mKey);
   check(!idOff.length, 'every month: employees = the month before + hires − leavers', idOff.join(','));
-  check(m(mk(Y, 10)).status === 'current' && m(mk(Y, 10)).hires === 1 && m(mk(Y, 10)).leavers === 1 && m(mk(Y, 10)).employees === 4
-    && m(mk(Y, 11)).employees === 6 && m(mk(Y, 12)).employees === 6 && m(mk(T, 12)).employees === 6,
-    'from the current month: HiBob\'s planned hires and leavers; an opening from June still open counts in October, a filled one does not');
-  check(m(mk(Y, 8)).returns === 1 && m(mk(Y, 12)).returns === 1 && m(mk(T, 2)).leaveStarts === 1 && m(mk(T, 3)).hires === 0,
+  check(m(mk(Y, 10)).status === 'current' && m(mk(Y, 10)).employees === 6 && m(mk(Y, 10)).hires === 2 && m(mk(Y, 10)).openings === 1 && m(mk(Y, 10)).leavers === 1,
+    'the current month: who joined and left this month by their dates (HiBob\'s terminations of known employees not counted again), plus June\'s opening still open; a closed one is left out');
+  check(m(mk(Y, 11)).employees === 8 && m(mk(Y, 11)).openings === 2 && m(mk(Y, 12)).employees === 9 && m(mk(Y, 12)).hires === 1 && m(mk(Y, 12)).openings === 0
+    && m(mk(T, 2)).employees === 8 && m(mk(T, 2)).leavers === 1 && m(mk(T, 3)).employees === 7 && m(mk(T, 3)).leavers === 1 && m(mk(T, 12)).employees === 7,
+    'forecast months: signed hires and people leaving by their dates (the "Hired" event not counted again), open positions in their month, a planned cut with no employee as a leaver');
+  check(m(mk(Y, 8)).returns === 1 && m(mk(Y, 12)).returns === 1 && m(mk(T, 2)).leaveStarts === 1 && m(mk(T, 4)).hires === 0 && m(mk(T, 4)).employees === 7,
     'returns from leave and leave starts are shown in their month but do not move the count; an unknown event type is left out');
   const json = JSON.stringify(p.headcount);
   check(!('spans' in p.headcount) && !/2019-01-01|2025-11-15|Full-time|Student/.test(json), 'no employee detail in the payload: counts only');
@@ -759,13 +772,13 @@ async function testDeelAndHeadcount(payload) {
       `Deel: one NetSuite read of the vendors named "deel", ${Y - 1}–${Y}, through the NetSuite queue`);
     check(askedPlan && askedPlan.from === Y && askedPlan.company === 'LSports' && /DIM_EMPLOYEE/.test(spansSql.sql) && JSON.stringify(spansSql.binds) === '["LSports"]',
       'HiBob: employees and planned events of LSports (a bound parameter)');
-    check(c.headcount.today === 4 && c.deel.rows.length === 10 && !c.warnings.some((w) => /Deel|HiBob|headcount/.test(w)), 'read fine: Deel and the headcount, no warning');
+    check(c.headcount.today === 5 && c.deel.rows.length === 10 && !c.warnings.some((w) => /Deel|HiBob|headcount/.test(w)), 'read fine: Deel and the headcount, no warning');
     const broken = (await run(
       { fetchPnlActuals: async () => syntheticPnlActuals(), fetchVendorSpend: async () => { throw new Error('secret detail'); } },
       { ...sf, fetchHeadcountPlan: async () => { throw new Error('secret detail'); } },
     )).payload;
     check(broken.status === 'ready' && broken.deel.rows.length === 0 && broken.warnings.some((w) => /Deel could not be read/.test(w))
-      && broken.headcount.today === 4 && broken.headcount.events.length === 0 && broken.warnings.some((w) => /HiBob's planned events could not be read/.test(w))
+      && broken.headcount.today === 5 && broken.headcount.events.length === 0 && broken.warnings.some((w) => /HiBob's planned events could not be read/.test(w))
       && !broken.warnings.join(' ').includes('secret'),
       'a Deel or HiBob failure: the page still loads, with a note (the detail stays in the server log)');
     const old = (await run({ fetchPnlActuals: async () => syntheticPnlActuals() }, null)).payload;
@@ -825,21 +838,22 @@ async function testDeelAndHeadcount(payload) {
 
   const hcTable = model.buildHeadcountTable(p, 'both');
   const hl = (k) => hcTable.lines.find((l) => l.key === k);
-  check(JSON.stringify(hcTable.lines.map((l) => l.key)) === JSON.stringify(['hc-employees', 'hc-hires', 'hc-leavers', 'hc-returns', 'hc-leave-starts'])
-    && hcTable.lines.every((l) => l.unit === 'count') && hl('hc-hires').signed && hl('hc-leavers').signed,
-    'headcount table: employees, hires, leavers, returns from leave, leave starts; counts, hires and leavers signed');
-  check(hcTable.columns.length === 26 && hl('hc-employees').values[col(`fy-${Y}`, hcTable)] === 6 && hl('hc-employees').values[col(mk(Y, 4), hcTable)] === 3
-    && hl('hc-leavers').values[col(mk(Y, 4), hcTable)] === -1 && hl('hc-hires').values[col(`fy-${Y}`, hcTable)] === 1 + 1 + 2,
-    'the payroll table\'s columns; full year: employees at December, hires and leavers summed (leavers negative)');
+  check(JSON.stringify(hcTable.lines.map((l) => l.key)) === JSON.stringify(['hc-employees', 'hc-hires', 'hc-openings', 'hc-leavers', 'hc-returns', 'hc-leave-starts'])
+    && hcTable.lines.every((l) => l.unit === 'count') && hl('hc-hires').signed && hl('hc-leavers').signed && hl('hc-openings').kind === 'note',
+    'headcount table: employees, hires (then the open positions among them), leavers, returns from leave, leave starts; counts, hires and leavers signed');
+  check(hcTable.columns.length === 26 && hl('hc-employees').values[col(`fy-${Y}`, hcTable)] === 9 && hl('hc-employees').values[col(mk(Y, 4), hcTable)] === 4
+    && hl('hc-leavers').values[col(mk(Y, 4), hcTable)] === -1 && hl('hc-leavers').values[col(`fy-${Y}`, hcTable)] === -2
+    && hl('hc-hires').values[col(`fy-${Y}`, hcTable)] === 1 + 2 + 2 + 1 && hl('hc-openings').values[col(`fy-${Y}`, hcTable)] === 3,
+    'the payroll table\'s columns; full year: employees at December, hires, open positions and leavers summed (leavers negative)');
   check(hcTable.columns.find((c) => c.mKey === mk(Y, 9)).status === 'actual' && hcTable.columns.find((c) => c.mKey === mk(Y, 10)).status === 'current',
     'its own statuses: HiBob\'s months before the current one are actual');
-  const noLeave = model.buildHeadcountTable({ ...p, headcount: { ...p.headcount, months: p.headcount.months.map((x) => ({ ...x, returns: 0, leaveStarts: 0 })) } }, 'next');
+  const noLeave = model.buildHeadcountTable({ ...p, headcount: { ...p.headcount, months: p.headcount.months.map((x) => ({ ...x, openings: 0, returns: 0, leaveStarts: 0 })) } }, 'next');
   check(noLeave.lines.map((l) => l.key).join(',') === 'hc-employees,hc-hires,hc-leavers' && noLeave.columns.length === 13 && model.buildHeadcountTable(wErr, 'both') === null
     && model.buildHeadcountTable(payload, 'both') === null,
-    'no leave events: no leave lines; follows the year view; no employees (or not read): no table');
+    'no open positions or leave events: no such lines; follows the year view; no employees (or not read): no table');
   const kpis = model.computeSalaryKpis(p, 'ils');
-  check(kpis.headcount && kpis.headcount.today === 4 && kpis.headcount.asOf === '2026-10-15'
-    && JSON.stringify(kpis.headcount.yearEnd) === JSON.stringify([{ year: Y, value: 6 }, { year: T, value: 6 }]) && model.computeSalaryKpis(payload, 'ils').headcount === null,
+  check(kpis.headcount && kpis.headcount.today === 5 && kpis.headcount.asOf === '2026-10-15'
+    && JSON.stringify(kpis.headcount.yearEnd) === JSON.stringify([{ year: Y, value: 9 }, { year: T, value: 7 }]) && model.computeSalaryKpis(payload, 'ils').headcount === null,
     'KPI: headcount today and at the end of each year; none without HiBob');
 }
 
@@ -860,9 +874,10 @@ async function main() {
       { month: mk(Y, 12), acct: '760001', name: 'Gross Salaries', department: 'Sales', mode: 'Override', eur: 50_000, ils: 185_000, memo: '' },
     ] }, Y, payload.basis.ilsPerEur);
     const changes = sp.changesOf({ error: null, rows: [
-      { month: mk(Y, 10), acct: '760001', name: 'Gross Salaries', source: 'Terminated', department: 'R&D', eur: -30_000, ils: -110_000 },
-      { month: mk(Y, 12), acct: '760001', name: 'Gross Salaries', source: 'Open position', department: 'Sales', eur: 23_000, ils: 85_000 },
-      { month: mk(T, 1), acct: '760001', name: 'Gross Salaries', source: 'Terminated', department: 'Finance', eur: -87_000, ils: -323_000 },
+      { month: mk(Y, 10), acct: '760001', name: 'Gross Salaries', source: 'Terminated', department: 'R&D', actual: true, eur: -30_000, ils: -110_000 },
+      { month: mk(Y, 12), acct: '760001', name: 'Gross Salaries', source: 'Open position', department: 'Sales', actual: true, eur: 23_000, ils: 85_000 },
+      { month: mk(T, 1), acct: '760001', name: 'Gross Salaries', source: 'Terminated', department: 'Finance', actual: true, eur: -87_000, ils: -323_000 },
+      { month: mk(T, 2), acct: '760001', name: 'Gross Salaries', source: 'Terminated', department: 'Sales', actual: false, eur: -20_000, ils: -74_000 },
     ] }, Y, payload.basis.ilsPerEur);
     const { deel, headcount } = (await sp.buildSalaryProjection({ rows: syntheticRows(), now: NOW, deel: DEEL, headcount: HEADCOUNT })).payload;
     fs.writeFileSync(file, JSON.stringify({ ...payload, overrides, changes, deel, headcount, cache: { ageSec: 0, stale: false, staleReason: null, refreshing: false, lastError: null } }, null, 2) + '\n');

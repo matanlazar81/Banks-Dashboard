@@ -96,7 +96,7 @@ export function salaryBreakdown(payload: SalaryPayload, req: BreakdownRequest): 
     const lineLabel = source ? SOURCE_LINE[source] : 'Total headcount changes';
     const notes = [
       `HiBob's forecast in Snowflake's payroll forecast (${source ? `source "${source}"` : 'sources "Open position", "Terminated" and "Leave end"'}), LSports, every payroll account: monthly totals by account and department, no employee detail.`,
-      'Counted in Total payroll from the current month on. Closed months are NetSuite\'s actuals, which already include what happened.',
+      'Counted in Total payroll from the current month on, when marked TRUE (IS_SOURCE_ACTUAL); FALSE ones are left out. Closed months are NetSuite\'s actuals, which already include what happened.',
     ];
 
     // One account row by department (the second window).

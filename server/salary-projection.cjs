@@ -28,7 +28,7 @@
 // January of the current year, on every payroll account as the old Bank Dashboard: IS_PAYROLL, i.e. 76xxxx)
 // travel with the payload, and so do Snowflake's planned hires, leavers and returns from leave on the same
 // accounts (FCT_EXPENSE sources 'Open position', 'Terminated', 'Leave end' of its payroll forecast, summed by
-// month: no employee detail).
+// month: no employee detail). Only the ones marked TRUE (IS_SOURCE_ACTUAL) count; FALSE ones are listed, not added.
 // The page shows them between permanent and temporary: the planned changes and the increments count in Total
 // payroll from the current month on (countedChangeRows / countedIncrementRows in
 // src/forecast/salary-projection.mjs); overrides are for reference. The account projection itself (blocks)
@@ -38,8 +38,9 @@
 //   • Deel       — NetSuite costs of the vendors named "deel" (ns.fetchVendorSpend), by account and posting
 //                  period from January of the previous year, every account but payroll ones (those are already
 //                  in Total payroll). Forecast months carry its run-rate (deelByMonth).
-//   • headcount  — HiBob (Snowflake): employees at each month-end and today (DIM_EMPLOYEE, as the Metrics
-//                  page) and HiBob's planned hires, leavers and leaves (FCT_HEADCOUNT_EVENT), as counts by month
+//   • headcount  — HiBob (Snowflake): employees at each month-end and today from their start and leave dates
+//                  (DIM_EMPLOYEE, as the Metrics page; future dates too: signed hires, people leaving), plus
+//                  HiBob's open positions and leave events (FCT_HEADCOUNT_EVENT), as counts by month
 //                  (headcountSeries). No names or ids leave the server.
 //
 // The projection is made in ILS, the currency payroll is paid in; forecast € = ₪ ÷ the ILS/EUR ratio of
@@ -56,7 +57,7 @@ const cp = require('./cash-projection.cjs');
 const { readDoc, createDocHandler } = require('./json-store.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
-const SCHEMA_VERSION = 10; // 3: the actual months and each account's default method; 4: the override file's payroll rows; 5: temporary 0 next year; 6: override rows on 760001 only; 7: Snowflake's planned hires, leavers and returns from leave; 8: every payroll account, as the old dashboard; 9: planned changes by department (the page's breakdowns); 10: Deel and the headcount (HiBob)
+const SCHEMA_VERSION = 11; // 3: the actual months and each account's default method; 4: the override file's payroll rows; 5: temporary 0 next year; 6: override rows on 760001 only; 7: Snowflake's planned hires, leavers and returns from leave; 8: every payroll account, as the old dashboard; 9: planned changes by department (the page's breakdowns); 10: Deel and the headcount (HiBob); 11: the headcount from HiBob's dates plus its open positions, and planned changes count only when marked TRUE (IS_SOURCE_ACTUAL)
 const DEFAULT_CACHE_FILE = path.join(ROOT, 'data', 'salary-projection-cache.json');
 const CLASSIFICATION_FILE = path.join(ROOT, 'data', 'salary-classification.json');
 const { ProjectionError } = cp;
@@ -233,8 +234,8 @@ function overridesOf(overrides, Y, ilsPerEur) {
 
 /**
  * Snowflake's planned payroll changes for the payload, by month, account, source and department (the page's
- * breakdowns): from January of year Y, sorted that way. When Snowflake has one currency only, the other is at
- * the forecast rate.
+ * breakdowns), with their TRUE / FALSE mark (actual: only TRUE ones count): from January of year Y, sorted that
+ * way. When Snowflake has one currency only, the other is at the forecast rate.
  */
 function changesOf(changes, Y, ilsPerEur) {
   if (!changes) return { rows: [], error: 'The planned payroll changes were not read.' };
@@ -246,7 +247,7 @@ function changesOf(changes, Y, ilsPerEur) {
       let ils = cents(r.ils);
       if (Math.abs(ils) < 0.5 && Math.abs(eur) >= 0.5) ils = cents(eur * ilsPerEur);
       else if (Math.abs(eur) < 0.5 && Math.abs(ils) >= 0.5) eur = cents(ils / ilsPerEur);
-      return { month: String(r.month), acct: String(r.acct || ''), name: String(r.name || ''), source: r.source, department: String(r.department || ''), eur, ils };
+      return { month: String(r.month), acct: String(r.acct || ''), name: String(r.name || ''), source: r.source, department: String(r.department || ''), actual: r.actual === true, eur, ils };
     })
     .sort((a, b) => (a.month !== b.month ? (a.month < b.month ? -1 : 1) : a.acct !== b.acct ? a.acct.localeCompare(b.acct)
       : order(a) !== order(b) ? order(a) - order(b) : a.department.localeCompare(b.department)));
@@ -284,19 +285,20 @@ function deelOf(deel, Y) {
 
 /**
  * HiBob's headcount for the payload, as counts: employees today, and over the projection's months the employees
- * at month-end with who joined and left (headcountSeries). Employee spans never leave the server.
- *   headcount  { company, spans: [{ start, end, type }] | null, events: [{ month, type, subType, open, count }], error }
+ * at month-end with who joined and left, from their start and leave dates (future ones too: signed hires, people
+ * leaving), plus HiBob's open positions (headcountSeries). Employee spans never leave the server.
+ *   headcount  { company, spans: [{ start, end, type }] | null, events: [{ month, type, subType, employee, status, count }], error }
  */
 function headcountOf(headcount, blocks, currentKey, now, headcountSeries) {
   const asOf = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
   if (!headcount) return { company: '', asOf, today: null, months: [], events: [], error: 'The headcount (HiBob) was not read.' };
   const spans = headcount.spans || null;
   const months = blocks.flatMap((b) => b.rows.map((r) => r.mKey));
-  // Every month before the current one, from the month before the first shown (where the first one starts).
-  let actual = null;
+  // Every month shown, and the one before the first (where the first one starts).
+  let known = null;
   if (spans && months.length) {
-    actual = {};
-    for (let m = shiftMonth(months[0], -1); m < currentKey; m = shiftMonth(m, 1)) {
+    known = {};
+    for (let m = shiftMonth(months[0], -1); m <= months[months.length - 1]; m = shiftMonth(m, 1)) {
       const day = lastDayOf(m);
       const before = lastDayOf(shiftMonth(m, -1));
       const c = { employees: 0, hires: 0, leavers: 0 };
@@ -307,17 +309,20 @@ function headcountOf(headcount, blocks, currentKey, now, headcountSeries) {
         if (isIn && !wasIn) c.hires++;
         if (wasIn && !isIn) c.leavers++;
       }
-      actual[m] = c;
+      known[m] = c;
     }
   }
   const events = (headcount.events || [])
     .filter((e) => e && /^\d{4}-\d{2}$/.test(String(e.month || '')) && num(e.count) > 0)
-    .map((e) => ({ month: String(e.month), type: String(e.type || ''), subType: String(e.subType || ''), open: !!e.open, count: num(e.count) }));
+    .map((e) => ({
+      month: String(e.month), type: String(e.type || ''), subType: String(e.subType || ''),
+      employee: !!e.employee, status: String(e.status || ''), count: num(e.count),
+    }));
   return {
     company: String(headcount.company || ''),
     asOf,
     today: spans ? spans.filter((s) => employedOn(s, asOf)).length : null,
-    months: headcountSeries({ months, currentMonth: currentKey, actual, events }),
+    months: headcountSeries({ months, currentMonth: currentKey, known, events }),
     events,
     error: headcount.error || null,
   };
@@ -330,12 +335,12 @@ function headcountOf(headcount, blocks, currentKey, now, headcountSeries) {
  *   saved      { [acct]: method } the saved classification (default: none)
  *   overrides  { rows: [{ month, acct, name, department, mode, eur, ils, memo }], error } the override file's payroll
  *              rows (Snowflake), or null when not read
- *   changes    { rows: [{ month, acct, name, source, department, eur, ils }], error } Snowflake's planned hires,
- *              leavers and returns from leave, or null when not read
+ *   changes    { rows: [{ month, acct, name, source, department, actual, eur, ils }], error } Snowflake's planned
+ *              hires, leavers and returns from leave (actual: IS_SOURCE_ACTUAL), or null when not read
  *   deel       { vendors: [{ id, name }], rows: [{ month, acct, name, vendor, eur, ils }], error } Deel's NetSuite
  *              costs (costs positive), or null when not read
- *   headcount  { company, spans: [{ start, end, type }] | null, events: [{ month, type, subType, open, count }],
- *              error } HiBob's employees and planned events, or null when not read
+ *   headcount  { company, spans: [{ start, end, type }] | null, events: [{ month, type, subType, employee, status,
+ *              count }], error } HiBob's employees and planned events, or null when not read
  */
 async function buildSalaryProjection({ rows, now, saved = {}, overrides = null, changes = null, deel = null, headcount = null }) {
   const { projectSalary, groupOfMethod, headcountSeries } = await loadSalaryModule();

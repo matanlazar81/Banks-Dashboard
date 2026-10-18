@@ -643,8 +643,9 @@ function createSnowflakeClient(env) {
   // FCT_EXPENSE rows of the HR-driven payroll forecast: SOURCE 'Open position' (planned hires), 'Terminated'
   // (leavers, negative) and 'Leave end' (returns from leave). Each row is that month's amount on top of the
   // forecast baseline. On every payroll account (IS_PAYROLL, i.e. 76xxxx), LSports only, from January fromYear;
-  // summed by month, account, source and department, with no employee detail.
-  // Returns [{ month, acct, name, source, department, eur, ils }].
+  // summed by month, account, source, department and IS_SOURCE_ACTUAL (TRUE = a change that counts; FALSE ones
+  // do not), with no employee detail.
+  // Returns [{ month, acct, name, source, department, actual, eur, ils }].
   async function fetchPayrollChanges(fromYear) {
     const from = parseInt(fromYear);
     if (!(from >= 2000 && from <= 2100)) throw new Error('fetchPayrollChanges: invalid year');
@@ -655,6 +656,7 @@ function createSnowflakeClient(env) {
              MAX(g.GL_ACCOUNT_NAME) AS NAME,
              e.SOURCE AS SRC,
              d.DEPARTMENT_NAME AS DEPT,
+             IFF(e.IS_SOURCE_ACTUAL = TRUE, 1, 0) AS ACT,
              SUM(e.AMOUNT_EUR) AS EUR,
              SUM(e.AMOUNT_ILS) AS ILS
       FROM ${T_FCT_EXPENSE} e
@@ -664,8 +666,8 @@ function createSnowflakeClient(env) {
         AND e.SOURCE IN ('Open position', 'Terminated', 'Leave end')
         AND (g.IS_PAYROLL = TRUE OR g.GL_ACCOUNT_NUMBER LIKE '76%')
         AND e.CAL_MONTH_START_DATE >= '${from}-01-01'
-      GROUP BY 1, 2, 4, 5
-      ORDER BY 1, 2, 4, 5
+      GROUP BY 1, 2, 4, 5, 6
+      ORDER BY 1, 2, 4, 5, 6
     `);
     return rows.map(r => ({
       month: String(r.M || ''),
@@ -673,16 +675,17 @@ function createSnowflakeClient(env) {
       name: String(r.NAME || ''),
       source: String(r.SRC || ''),
       department: r.DEPT ? String(r.DEPT) : '',
+      actual: Number(r.ACT) === 1,
       eur: Number(r.EUR) || 0,
       ils: Number(r.ILS) || 0,
     }));
   }
 
   // ── HiBob's planned headcount events (the Salary Projection's headcount forecast) ──
-  // FCT_HEADCOUNT_EVENT rows from January fromYear, counted by month, EVENT_TYPE ('increase' / 'decrease') and
-  // EVENT_SUB_TYPE, with a flag for openings still open (no employee yet, OPENING_STATUS 'Open'). Events of a
-  // known employee count only when DIM_EMPLOYEE puts them in `company`; openings carry no company and all count.
-  // Counts only: no names, ids or costs. Returns [{ month, type, subType, open, count }].
+  // FCT_HEADCOUNT_EVENT rows from January fromYear, counted by month, EVENT_TYPE ('increase' / 'decrease'),
+  // EVENT_SUB_TYPE, whether the event is a known employee's (else an opening) and the opening's status. Events of
+  // a known employee count only when DIM_EMPLOYEE puts them in `company`; openings carry no company and all count.
+  // Counts only: no names, ids or costs. Returns [{ month, type, subType, employee, status, count }].
   async function fetchHeadcountPlan(fromYear, company) {
     const from = parseInt(fromYear);
     if (!(from >= 2000 && from <= 2100)) throw new Error('fetchHeadcountPlan: invalid year');
@@ -691,20 +694,22 @@ function createSnowflakeClient(env) {
       SELECT TO_VARCHAR(DATE_TRUNC('month', h.EVENT_MONTH_DATE), 'YYYY-MM') AS M,
              h.EVENT_TYPE AS T,
              h.EVENT_SUB_TYPE AS S,
-             IFF(h.EMPLOYEE_ID IS NULL AND h.OPENING_STATUS = 'Open', 1, 0) AS STILL_OPEN,
+             IFF(h.EMPLOYEE_ID IS NULL, 0, 1) AS HAS_EMPLOYEE,
+             h.OPENING_STATUS AS STATUS,
              COUNT(*) AS N
       FROM ${T_FCT_HEADCOUNT_EVENT} h
       WHERE h.EVENT_MONTH_DATE >= '${from}-01-01'
         AND (h.EMPLOYEE_ID IS NULL
              OR h.EMPLOYEE_ID IN (SELECT e.EMPLOYEE_ID FROM ${T_DIM_EMPLOYEE} e WHERE e.COMPANY_NAME = ?))
-      GROUP BY 1, 2, 3, 4
-      ORDER BY 1, 2, 3, 4
+      GROUP BY 1, 2, 3, 4, 5
+      ORDER BY 1, 2, 3, 4, 5
     `, [String(company || '')]);
     return rows.map(r => ({
       month: String(r.M || ''),
       type: String(r.T || ''),
       subType: String(r.S || ''),
-      open: Number(r.STILL_OPEN) === 1,
+      employee: Number(r.HAS_EMPLOYEE) === 1,
+      status: r.STATUS ? String(r.STATUS) : '',
       count: Number(r.N) || 0,
     }));
   }

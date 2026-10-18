@@ -37,7 +37,7 @@ export declare function countedIncrementRows<R extends { month: string; mode: 'O
   rows: R[],
 ): R[];
 
-export declare function countedChangeRows<R extends { month: string }>(
+export declare function countedChangeRows<R extends { month: string; actual: boolean }>(
   blocks: { rows: { mKey: string; status: SalaryRow['status'] }[] }[],
   rows: R[],
 ): R[];
@@ -60,15 +60,17 @@ export declare function deelByMonth(
   runRateMonth: string,
 ): Map<string, { eur: Record<string, number>; ils: Record<string, number> }>;
 
-export type HeadcountKind = 'hires' | 'leavers' | 'returns' | 'leaveStarts';
+export type HeadcountKind = 'returns' | 'leaveStarts' | 'employee' | 'openings' | 'cuts';
 
-/** HiBob's planned events (FCT_HEADCOUNT_EVENT), counted by month, type and sub-type. */
+/** HiBob's planned events (FCT_HEADCOUNT_EVENT), counted by month, type, sub-type, employee and opening status. */
 export interface HeadcountEventCount {
   month: string;
   type: string;
   subType: string;
-  /** An opening with no employee yet, still open. */
-  open: boolean;
+  /** The event is a known employee's (HiBob's employees hold it), not an opening. */
+  employee: boolean;
+  /** The opening's status ('' when none). */
+  status: string;
   count: number;
 }
 
@@ -77,17 +79,21 @@ export interface HeadcountMonth {
   status: SalaryRow['status'];
   /** Employees at month-end (null when HiBob's employees could not be read). */
   employees: number | null;
+  /** Who joined (and, from the current month, who is signed to start, plus open positions). */
   hires: number | null;
+  /** Who left (and, from the current month, who is leaving). */
   leavers: number | null;
+  /** The open positions among the hires (0 before the current month). */
+  openings: number;
   returns: number;
   leaveStarts: number;
 }
 
-export declare function headcountKind(type: string, subType: string): HeadcountKind | null;
+export declare function headcountKind(type: string, subType: string, employee: boolean): HeadcountKind | null;
 
 export declare function headcountSeries(input: {
   months: string[];
   currentMonth: string;
-  actual: Record<string, { employees: number; hires: number; leavers: number }> | null;
+  known: Record<string, { employees: number; hires: number; leavers: number }> | null;
   events: HeadcountEventCount[];
 }): HeadcountMonth[];

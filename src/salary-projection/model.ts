@@ -164,7 +164,7 @@ const SOURCE_HINT: Record<Source, string> = {
   Terminated: 'Leavers (negative): employees leaving, from HiBob\'s forecast (Snowflake\'s payroll forecast).',
   'Leave end': 'Returns from leave (maternity and others), from HiBob\'s forecast (Snowflake\'s payroll forecast).',
 };
-const COUNTED = ' Added to Total payroll from the current month on (closed months are NetSuite\'s actuals, which already include what happened).';
+const COUNTED = ' Added to Total payroll from the current month on, when Snowflake marks the change TRUE; FALSE ones are left out (closed months are NetSuite\'s actuals, which already include what happened).';
 
 const MODES: Mode[] = ['Increment', 'Override'];
 const MODE_KEY: Record<Mode, string> = { Increment: 'increment', Override: 'override' };
@@ -322,12 +322,13 @@ function deelLines(payload: SalaryPayload): DeelDefs & { sums: Map<string, Month
 }
 
 // ── Headcount (HiBob), a table of its own under the payroll: people, not money ──
-type HeadcountFigures = { employees: number; hires: number; leavers: number; returns: number; leaveStarts: number };
+type HeadcountFigures = { employees: number; hires: number; leavers: number; openings: number; returns: number; leaveStarts: number };
 type HeadcountLineDef = LineDefOf<HeadcountFigures, string>;
 
 /**
- * Employees at month-end, hires, leavers and, when HiBob has them, returns from leave and leave starts, over the
- * year view (the same columns as the payroll table). null when HiBob's employees could not be read.
+ * Employees at month-end, hires, leavers and, when HiBob has them, its open positions among the hires, returns
+ * from leave and leave starts, over the year view (the same columns as the payroll table). null when HiBob's
+ * employees could not be read.
  */
 export function buildHeadcountTable(payload: SalaryPayload, view: YearView): ProjectionTable<string> | null {
   const hc = payload.headcount;
@@ -338,26 +339,34 @@ export function buildHeadcountTable(payload: SalaryPayload, view: YearView): Pro
     kind: b.kind,
     rows: b.rows.map((r) => {
       const m = byKey.get(r.mKey);
-      const f: HeadcountFigures = { employees: m?.employees ?? 0, hires: m?.hires ?? 0, leavers: m?.leavers ?? 0, returns: m?.returns ?? 0, leaveStarts: m?.leaveStarts ?? 0 };
+      const f: HeadcountFigures = {
+        employees: m?.employees ?? 0, hires: m?.hires ?? 0, leavers: m?.leavers ?? 0, openings: m?.openings ?? 0, returns: m?.returns ?? 0, leaveStarts: m?.leaveStarts ?? 0,
+      };
       return { mKey: r.mKey, status: m ? m.status : r.status, eur: f, ils: f };
     }),
   }));
   const current = monthLongLabel(payload.computedMonth);
-  const has = (k: 'returns' | 'leaveStarts') => hc.months.some((m) => m[k] > 0);
+  const has = (k: 'openings' | 'returns' | 'leaveStarts') => hc.months.some((m) => (m[k] ?? 0) > 0);
   const defs: HeadcountLineDef[] = [
     {
       key: 'hc-employees', label: 'Employees at month-end', kind: 'balance', fy: 'last', unit: 'count', value: (f) => f.employees,
-      hint: `HiBob (${hc.company}): people employed on the last day of the month, people on leave included. Before ${current}: HiBob's employees. From ${current}: the month before, plus HiBob's planned hires, minus its leavers. Full year: December.`,
+      hint: `HiBob (${hc.company}): people employed on the last day of the month, people on leave included, from their start and leave dates in HiBob, future ones too (signed hires, people leaving). From ${current}, plus HiBob's open positions. Full year: December.`,
     },
     {
       key: 'hc-hires', label: 'Hires', kind: 'item', fy: 'sum', signed: true, unit: 'count', value: (f) => f.hires,
-      hint: `Before ${current}: people who joined. From ${current}: HiBob's planned hires; openings from earlier months still open count in ${current}.`,
-    },
-    {
-      key: 'hc-leavers', label: 'Leavers', kind: 'item', fy: 'sum', signed: true, unit: 'count', value: (f) => -f.leavers,
-      hint: `Before ${current}: people who left. From ${current}: HiBob's planned leavers.`,
+      hint: `People who joined, or are signed to join (their start dates in HiBob). From ${current}, plus HiBob's open positions in the month they are planned for; openings from earlier months still open count in ${current}.`,
     },
   ];
+  if (has('openings')) {
+    defs.push({
+      key: 'hc-openings', label: 'of which open positions', kind: 'note', fy: 'sum', unit: 'count', value: (f) => f.openings,
+      hint: 'HiBob\'s open positions among the hires: planned roles with no employee yet (FCT_HEADCOUNT_EVENT).',
+    });
+  }
+  defs.push({
+    key: 'hc-leavers', label: 'Leavers', kind: 'item', fy: 'sum', signed: true, unit: 'count', value: (f) => -f.leavers,
+    hint: 'People who left, or are leaving (their leave dates in HiBob).',
+  });
   if (has('returns')) {
     defs.push({
       key: 'hc-returns', label: 'Returns from leave', kind: 'note', fy: 'sum', unit: 'count', value: (f) => f.returns,
