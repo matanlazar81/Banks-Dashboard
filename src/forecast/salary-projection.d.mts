@@ -64,7 +64,7 @@ export declare function deelByMonth(
 
 export type HeadcountKind = 'returns' | 'leaveStarts' | 'employee' | 'openings' | 'cuts';
 
-/** HiBob's planned events (FCT_HEADCOUNT_EVENT), counted by month, type, sub-type, employee and opening status. */
+/** HiBob's planned events (FCT_HEADCOUNT_EVENT), counted by month, type, sub-type, employee, opening status and group. */
 export interface HeadcountEventCount {
   month: string;
   type: string;
@@ -73,7 +73,18 @@ export interface HeadcountEventCount {
   employee: boolean;
   /** The opening's status ('' when none). */
   status: string;
+  /** HiBob's group (department) ('' when none). */
+  department?: string;
+  /** An opening's position (a role; '' for a known employee's event). */
+  position?: string;
   count: number;
+}
+
+/** Employees at month-end, hires and leavers of one department or employment type. */
+export interface HeadcountCounts {
+  employees: number;
+  hires: number;
+  leavers: number;
 }
 
 export interface HeadcountMonth {
@@ -91,6 +102,9 @@ export interface HeadcountMonth {
   cuts: number;
   returns: number;
   leaveStarts: number;
+  /** The same counts by HiBob group (department) and by employment type (absent in an older payload). */
+  byDept?: Record<string, HeadcountCounts>;
+  byType?: Record<string, HeadcountCounts>;
 }
 
 export declare function headcountKind(type: string, subType: string, employee: boolean): HeadcountKind | null;
@@ -98,6 +112,15 @@ export declare function headcountKind(type: string, subType: string, employee: b
 export declare function headcountSeries(input: {
   months: string[];
   currentMonth: string;
-  known: Record<string, { employees: number; hires: number; leavers: number }> | null;
+  known: Record<string, HeadcountCounts & { byDept?: Record<string, HeadcountCounts>; byType?: Record<string, HeadcountCounts> }> | null;
   events: HeadcountEventCount[];
 }): HeadcountMonth[];
+
+export declare function placedHeadcountEvents(events: HeadcountEventCount[], currentMonth: string): {
+  month: string;
+  kind: Exclude<HeadcountKind, 'employee'>;
+  department: string;
+  position: string;
+  count: number;
+  carried: boolean;
+}[];

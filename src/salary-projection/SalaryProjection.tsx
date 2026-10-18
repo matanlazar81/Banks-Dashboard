@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useMemo, useState } from 'react';
 import { Download, Loader2, RefreshCw, SlidersHorizontal } from 'lucide-react';
 import { useProjection } from '../new-dashboard/useProjection.ts';
 import BreakdownWindows from '../new-dashboard/BreakdownWindows.tsx';
@@ -10,7 +10,7 @@ import { projectedMonths } from '../forecast/salary-projection.mjs';
 import { monthLongLabel, type Accent, type Column } from '../new-dashboard/model.ts';
 import type { YearView } from '../new-dashboard/types.ts';
 import { fetchSalaryProjection } from './api.ts';
-import { isSalaryBreakdownLine, salaryBreakdown } from './breakdown.ts';
+import { headcountBreakdown, isHeadcountBreakdownLine, isSalaryBreakdownLine, salaryBreakdown } from './breakdown.ts';
 import { useClassification } from './classification.ts';
 import ClassifyPanel from './ClassifyPanel.tsx';
 import HeadcountSection from './HeadcountSection.tsx';
@@ -18,6 +18,11 @@ import { buildHeadcountTable, buildSalaryTable, computeSalaryKpis, SECTION_NAMES
 import OverridesSection from './OverridesSection.tsx';
 import SalaryKpiStrip from './SalaryKpiStrip.tsx';
 import type { Ccy } from './types.ts';
+
+// The Charts view loads recharts, so it is fetched when first opened.
+const SalaryCharts = lazy(() => import('./SalaryCharts.tsx'));
+
+type Tab = 'table' | 'charts';
 
 const MARKERS: TableMarkers = {
   anchorLine: null,
@@ -62,6 +67,8 @@ export default function SalaryProjection() {
     const v = readParam('years');
     return v === 'current' || v === 'next' ? v : 'both';
   });
+  // The tables (default) or the charts of the same figures: ?tab=charts.
+  const [tab, setTab] = useState<Tab>(() => (readParam('tab') === 'charts' ? 'charts' : 'table'));
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [classifyOpen, setClassifyOpen] = useState(false);
@@ -80,8 +87,10 @@ export default function SalaryProjection() {
   const closeBreakdown = useCallback(() => setOpenCell(null), []);
   const breakdownLines = useMemo(() => new Set(table ? table.lines.map((l) => l.key).filter(isSalaryBreakdownLine) : []), [table]);
   const sectionAccents = useMemo(() => new Set(table ? table.lines.flatMap((l) => (l.accent ? [l.accent] : [])) : []), [table]);
+  // One window for both tables: a headcount line answers in people, the others in the currency.
   const breakdownOf = useCallback<BreakdownFetcher>((req) => Promise.resolve<BreakdownResponse>(
-    shown ? salaryBreakdown(shown, req) : { ok: false, status: 'error', error: 'The projection is not loaded yet.' },
+    !shown ? { ok: false, status: 'error', error: 'The projection is not loaded yet.' }
+      : isHeadcountBreakdownLine(req.line) ? headcountBreakdown(shown, req) : salaryBreakdown(shown, req),
   ), [shown]);
 
   const hasLine = (key: string) => !!table && table.lines.some((l) => l.key === key);
@@ -100,6 +109,7 @@ export default function SalaryProjection() {
 
   const chooseCcy = (c: Ccy) => { setCcy(c); writeParam('ccy', c === 'eur' ? 'eur' : null); };
   const chooseView = (v: YearView) => { setView(v); writeParam('years', v === 'both' ? null : v); };
+  const chooseTab = (t: Tab) => { setTab(t); writeParam('tab', t === 'charts' ? t : null); };
 
   const runRate = data ? monthLongLabel(data.basis.runRateMonth) : null;
   const notProjected = shown ? shown.accounts.filter((a) => a.method === 'none') : [];
@@ -141,6 +151,12 @@ export default function SalaryProjection() {
             <p className="text-sm text-slate-500">LSports · payroll by GL account{y0 ? ` ${y0}–${y1}` : ''}, permanent and temporary, with Deel and the headcount</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <Segmented
+              label="View"
+              value={tab}
+              onChange={chooseTab}
+              options={[{ value: 'table', label: 'Table', title: 'The figures by account' }, { value: 'charts', label: 'Charts', title: 'The payroll and the headcount by month' }]}
+            />
             {canClassify && (
               <button
                 type="button"
@@ -230,33 +246,48 @@ export default function SalaryProjection() {
 
             <SalaryKpiStrip kpis={kpis} ccy={ccy} />
 
-            <section className="rounded-lg border border-slate-200 bg-white">
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-2.5">
-                <div className="flex items-baseline gap-2">
-                  <h2 className="text-sm font-semibold text-slate-800">Payroll by GL account and month</h2>
-                  <span className="text-xs text-slate-500">
-                    Hover an account for how it is projected{breakdownLines.size ? `; click a planned change${hasDeel ? ' or Deel' : ''} for its breakdown` : ''}.
-                  </span>
-                </div>
-                <Legend overrides={hasOverrides} />
-              </div>
-              <SectionLegend accents={sectionAccents} />
-              <ProjectionTable
-                table={table}
-                ccy={ccy}
-                anchorDate={null}
-                markers={MARKERS}
-                onOpenCell={onOpenCell}
-                activeCell={openCell ? openCell.id : null}
-                breakdownLines={breakdownLines}
-              />
-            </section>
+            {tab === 'charts' ? (
+              <Suspense fallback={<div className="h-80 animate-pulse rounded-lg bg-slate-200/70" aria-busy="true" aria-label="Loading the charts" />}>
+                <SalaryCharts table={table} headcountTable={headcountTable} headcount={data.headcount} ccy={ccy} />
+              </Suspense>
+            ) : (
+              <>
+                <section className="rounded-lg border border-slate-200 bg-white">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-2.5">
+                    <div className="flex items-baseline gap-2">
+                      <h2 className="text-sm font-semibold text-slate-800">Payroll by GL account and month</h2>
+                      <span className="text-xs text-slate-500">
+                        Hover an account for how it is projected{breakdownLines.size ? `; click a planned change${hasDeel ? ' or Deel' : ''} for its breakdown` : ''}.
+                      </span>
+                    </div>
+                    <Legend overrides={hasOverrides} />
+                  </div>
+                  <SectionLegend accents={sectionAccents} />
+                  <ProjectionTable
+                    table={table}
+                    ccy={ccy}
+                    anchorDate={null}
+                    markers={MARKERS}
+                    onOpenCell={onOpenCell}
+                    activeCell={openCell ? openCell.id : null}
+                    breakdownLines={breakdownLines}
+                  />
+                </section>
 
-            {headcountTable && data.headcount && (
-              <HeadcountSection table={headcountTable} headcount={data.headcount} computedMonth={data.computedMonth} ccy={ccy} />
+                {headcountTable && data.headcount && (
+                  <HeadcountSection
+                    table={headcountTable}
+                    headcount={data.headcount}
+                    computedMonth={data.computedMonth}
+                    ccy={ccy}
+                    onOpenCell={onOpenCell}
+                    activeCell={openCell ? openCell.id : null}
+                  />
+                )}
+
+                {data.overrides && <OverridesSection payload={data} ccy={ccy} />}
+              </>
             )}
-
-            {data.overrides && <OverridesSection payload={data} ccy={ccy} />}
 
             <p className="max-w-5xl text-xs leading-relaxed text-slate-500">
               Actual months are NetSuite's payroll accounts (76xxxx) for LSports by posting period, as in NetSuite's

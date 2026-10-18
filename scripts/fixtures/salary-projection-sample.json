@@ -1,8 +1,8 @@
 {
   "ok": true,
-  "schemaVersion": 12,
+  "schemaVersion": 13,
   "status": "ready",
-  "generatedAt": "2026-10-18T07:24:24.459Z",
+  "generatedAt": "2026-10-18T08:32:17.380Z",
   "computedMonth": "2026-10",
   "company": "lsports",
   "years": [
@@ -886,7 +886,31 @@
         "openings": 0,
         "cuts": 0,
         "returns": 0,
-        "leaveStarts": 0
+        "leaveStarts": 0,
+        "byDept": {
+          "R&D": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Sales": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Finance": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          }
+        },
+        "byType": {
+          "Full-time": {
+            "employees": 5,
+            "hires": 0,
+            "leavers": 0
+          }
+        }
       },
       {
         "mKey": "2026-02",
@@ -897,7 +921,31 @@
         "openings": 0,
         "cuts": 0,
         "returns": 0,
-        "leaveStarts": 0
+        "leaveStarts": 0,
+        "byDept": {
+          "R&D": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Sales": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Finance": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          }
+        },
+        "byType": {
+          "Full-time": {
+            "employees": 5,
+            "hires": 0,
+            "leavers": 0
+          }
+        }
       },
       {
         "mKey": "2026-03",
@@ -908,7 +956,31 @@
         "openings": 0,
         "cuts": 0,
         "returns": 0,
-        "leaveStarts": 0
+        "leaveStarts": 0,
+        "byDept": {
+          "R&D": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Sales": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Finance": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          }
+        },
+        "byType": {
+          "Full-time": {
+            "employees": 5,
+            "hires": 0,
+            "leavers": 0
+          }
+        }
       },
       {
         "mKey": "2026-04",
@@ -919,7 +991,31 @@
         "openings": 0,
         "cuts": 0,
         "returns": 0,
-        "leaveStarts": 0
+        "leaveStarts": 0,
+        "byDept": {
+          "R&D": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 1
+          },
+          "Sales": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Finance": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          }
+        },
+        "byType": {
+          "Full-time": {
+            "employees": 4,
+            "hires": 0,
+            "leavers": 1
+          }
+        }
       },
       {
         "mKey": "2026-05",
@@ -930,7 +1026,36 @@
         "openings": 0,
         "cuts": 0,
         "returns": 0,
-        "leaveStarts": 0
+        "leaveStarts": 0,
+        "byDept": {
+          "R&D": {
+            "employees": 2,
+            "hires": 1,
+            "leavers": 0
+          },
+          "Sales": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Finance": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          }
+        },
+        "byType": {
+          "Full-time": {
+            "employees": 4,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Student": {
+            "employees": 1,
+            "hires": 1,
+            "leavers": 0
+          }
+        }
       },
       {
         "mKey": "2026-06",
@@ -941,7 +1066,36 @@
         "openings": 0,
         "cuts": 0,
         "returns": 0,
-        "leaveStarts": 0
+        "leaveStarts": 0,
+        "byDept": {
+          "R&D": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Sales": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Finance": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          }
+        },
+        "byType": {
+          "Full-time": {
+            "employees": 4,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Student": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 0
+          }
+        }
       },
       {
         "mKey": "2026-07",
@@ -952,7 +1106,36 @@
         "openings": 0,
         "cuts": 0,
         "returns": 0,
-        "leaveStarts": 0
+        "leaveStarts": 0,
+        "byDept": {
+          "R&D": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Sales": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Finance": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          }
+        },
+        "byType": {
+          "Full-time": {
+            "employees": 4,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Student": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 0
+          }
+        }
       },
       {
         "mKey": "2026-08",
@@ -963,7 +1146,36 @@
         "openings": 0,
         "cuts": 0,
         "returns": 1,
-        "leaveStarts": 0
+        "leaveStarts": 0,
+        "byDept": {
+          "R&D": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Sales": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Finance": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          }
+        },
+        "byType": {
+          "Full-time": {
+            "employees": 4,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Student": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 0
+          }
+        }
       },
       {
         "mKey": "2026-09",
@@ -974,7 +1186,36 @@
         "openings": 0,
         "cuts": 0,
         "returns": 0,
-        "leaveStarts": 0
+        "leaveStarts": 0,
+        "byDept": {
+          "R&D": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Sales": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Finance": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          }
+        },
+        "byType": {
+          "Full-time": {
+            "employees": 4,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Student": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 0
+          }
+        }
       },
       {
         "mKey": "2026-10",
@@ -985,7 +1226,36 @@
         "openings": 1,
         "cuts": 0,
         "returns": 0,
-        "leaveStarts": 0
+        "leaveStarts": 0,
+        "byDept": {
+          "R&D": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Sales": {
+            "employees": 2,
+            "hires": 1,
+            "leavers": 0
+          },
+          "Finance": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 1
+          }
+        },
+        "byType": {
+          "Full-time": {
+            "employees": 4,
+            "hires": 1,
+            "leavers": 1
+          },
+          "Student": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 0
+          }
+        }
       },
       {
         "mKey": "2026-11",
@@ -996,7 +1266,36 @@
         "openings": 2,
         "cuts": 0,
         "returns": 0,
-        "leaveStarts": 0
+        "leaveStarts": 0,
+        "byDept": {
+          "R&D": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Sales": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Finance": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 0
+          }
+        },
+        "byType": {
+          "Full-time": {
+            "employees": 4,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Student": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 0
+          }
+        }
       },
       {
         "mKey": "2026-12",
@@ -1007,7 +1306,41 @@
         "openings": 0,
         "cuts": 0,
         "returns": 1,
-        "leaveStarts": 0
+        "leaveStarts": 0,
+        "byDept": {
+          "R&D": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Sales": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          },
+          "No department": {
+            "employees": 1,
+            "hires": 1,
+            "leavers": 0
+          },
+          "Finance": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 0
+          }
+        },
+        "byType": {
+          "Full-time": {
+            "employees": 5,
+            "hires": 1,
+            "leavers": 0
+          },
+          "Student": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 0
+          }
+        }
       },
       {
         "mKey": "2027-01",
@@ -1018,7 +1351,41 @@
         "openings": 0,
         "cuts": 0,
         "returns": 0,
-        "leaveStarts": 0
+        "leaveStarts": 0,
+        "byDept": {
+          "R&D": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Sales": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          },
+          "No department": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Finance": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 0
+          }
+        },
+        "byType": {
+          "Full-time": {
+            "employees": 5,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Student": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 0
+          }
+        }
       },
       {
         "mKey": "2027-02",
@@ -1029,7 +1396,41 @@
         "openings": 0,
         "cuts": 0,
         "returns": 0,
-        "leaveStarts": 1
+        "leaveStarts": 1,
+        "byDept": {
+          "R&D": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Sales": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          },
+          "No department": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Finance": {
+            "employees": 0,
+            "hires": 0,
+            "leavers": 1
+          }
+        },
+        "byType": {
+          "Full-time": {
+            "employees": 4,
+            "hires": 0,
+            "leavers": 1
+          },
+          "Student": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 0
+          }
+        }
       },
       {
         "mKey": "2027-03",
@@ -1040,7 +1441,36 @@
         "openings": 0,
         "cuts": 1,
         "returns": 0,
-        "leaveStarts": 0
+        "leaveStarts": 0,
+        "byDept": {
+          "R&D": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Sales": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          },
+          "No department": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 0
+          }
+        },
+        "byType": {
+          "Full-time": {
+            "employees": 4,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Student": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 0
+          }
+        }
       },
       {
         "mKey": "2027-04",
@@ -1051,7 +1481,36 @@
         "openings": 0,
         "cuts": 0,
         "returns": 0,
-        "leaveStarts": 0
+        "leaveStarts": 0,
+        "byDept": {
+          "R&D": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Sales": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          },
+          "No department": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 0
+          }
+        },
+        "byType": {
+          "Full-time": {
+            "employees": 4,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Student": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 0
+          }
+        }
       },
       {
         "mKey": "2027-05",
@@ -1062,7 +1521,36 @@
         "openings": 0,
         "cuts": 0,
         "returns": 0,
-        "leaveStarts": 0
+        "leaveStarts": 0,
+        "byDept": {
+          "R&D": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Sales": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          },
+          "No department": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 0
+          }
+        },
+        "byType": {
+          "Full-time": {
+            "employees": 4,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Student": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 0
+          }
+        }
       },
       {
         "mKey": "2027-06",
@@ -1073,7 +1561,36 @@
         "openings": 0,
         "cuts": 0,
         "returns": 0,
-        "leaveStarts": 0
+        "leaveStarts": 0,
+        "byDept": {
+          "R&D": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Sales": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          },
+          "No department": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 0
+          }
+        },
+        "byType": {
+          "Full-time": {
+            "employees": 4,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Student": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 0
+          }
+        }
       },
       {
         "mKey": "2027-07",
@@ -1084,7 +1601,36 @@
         "openings": 0,
         "cuts": 0,
         "returns": 0,
-        "leaveStarts": 0
+        "leaveStarts": 0,
+        "byDept": {
+          "R&D": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Sales": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          },
+          "No department": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 0
+          }
+        },
+        "byType": {
+          "Full-time": {
+            "employees": 4,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Student": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 0
+          }
+        }
       },
       {
         "mKey": "2027-08",
@@ -1095,7 +1641,36 @@
         "openings": 0,
         "cuts": 0,
         "returns": 0,
-        "leaveStarts": 0
+        "leaveStarts": 0,
+        "byDept": {
+          "R&D": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Sales": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          },
+          "No department": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 0
+          }
+        },
+        "byType": {
+          "Full-time": {
+            "employees": 4,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Student": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 0
+          }
+        }
       },
       {
         "mKey": "2027-09",
@@ -1106,7 +1681,36 @@
         "openings": 0,
         "cuts": 0,
         "returns": 0,
-        "leaveStarts": 0
+        "leaveStarts": 0,
+        "byDept": {
+          "R&D": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Sales": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          },
+          "No department": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 0
+          }
+        },
+        "byType": {
+          "Full-time": {
+            "employees": 4,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Student": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 0
+          }
+        }
       },
       {
         "mKey": "2027-10",
@@ -1117,7 +1721,36 @@
         "openings": 0,
         "cuts": 0,
         "returns": 0,
-        "leaveStarts": 0
+        "leaveStarts": 0,
+        "byDept": {
+          "R&D": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Sales": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          },
+          "No department": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 0
+          }
+        },
+        "byType": {
+          "Full-time": {
+            "employees": 4,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Student": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 0
+          }
+        }
       },
       {
         "mKey": "2027-11",
@@ -1128,7 +1761,36 @@
         "openings": 0,
         "cuts": 0,
         "returns": 0,
-        "leaveStarts": 0
+        "leaveStarts": 0,
+        "byDept": {
+          "R&D": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Sales": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          },
+          "No department": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 0
+          }
+        },
+        "byType": {
+          "Full-time": {
+            "employees": 4,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Student": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 0
+          }
+        }
       },
       {
         "mKey": "2027-12",
@@ -1139,7 +1801,36 @@
         "openings": 0,
         "cuts": 0,
         "returns": 0,
-        "leaveStarts": 0
+        "leaveStarts": 0,
+        "byDept": {
+          "R&D": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Sales": {
+            "employees": 2,
+            "hires": 0,
+            "leavers": 0
+          },
+          "No department": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 0
+          }
+        },
+        "byType": {
+          "Full-time": {
+            "employees": 4,
+            "hires": 0,
+            "leavers": 0
+          },
+          "Student": {
+            "employees": 1,
+            "hires": 0,
+            "leavers": 0
+          }
+        }
       }
     ],
     "events": [
@@ -1149,6 +1840,8 @@
         "subType": "Terminated",
         "employee": true,
         "status": "",
+        "department": "R&D",
+        "position": "",
         "count": 1
       },
       {
@@ -1157,6 +1850,8 @@
         "subType": "Open position",
         "employee": false,
         "status": "Open",
+        "department": "Sales",
+        "position": "Account Manager",
         "count": 1
       },
       {
@@ -1165,6 +1860,8 @@
         "subType": "Open position",
         "employee": false,
         "status": "Closed",
+        "department": "R&D",
+        "position": "QA Engineer",
         "count": 2
       },
       {
@@ -1173,6 +1870,8 @@
         "subType": "Leave end",
         "employee": true,
         "status": "",
+        "department": "HR",
+        "position": "",
         "count": 1
       },
       {
@@ -1181,6 +1880,8 @@
         "subType": "Terminated",
         "employee": true,
         "status": "",
+        "department": "Finance",
+        "position": "",
         "count": 1
       },
       {
@@ -1189,6 +1890,8 @@
         "subType": "Open position",
         "employee": false,
         "status": "Approved",
+        "department": "R&D",
+        "position": "Backend Developer",
         "count": 2
       },
       {
@@ -1197,6 +1900,8 @@
         "subType": "Hired",
         "employee": true,
         "status": "Filled",
+        "department": "R&D",
+        "position": "",
         "count": 1
       },
       {
@@ -1205,6 +1910,8 @@
         "subType": "Leave end",
         "employee": true,
         "status": "",
+        "department": "R&D",
+        "position": "",
         "count": 1
       },
       {
@@ -1213,6 +1920,8 @@
         "subType": "Leave start",
         "employee": true,
         "status": "",
+        "department": "Sales",
+        "position": "",
         "count": 1
       },
       {
@@ -1221,6 +1930,8 @@
         "subType": "Position cut",
         "employee": false,
         "status": "",
+        "department": "Finance",
+        "position": "Controller",
         "count": 1
       },
       {
@@ -1229,6 +1940,8 @@
         "subType": "Moved",
         "employee": false,
         "status": "",
+        "department": "",
+        "position": "",
         "count": 4
       }
     ],

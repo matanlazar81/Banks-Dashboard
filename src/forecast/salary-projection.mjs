@@ -233,17 +233,10 @@ export function headcountKind(type, subType, employee) {
  */
 export function headcountSeries({ months, currentMonth, known, events }) {
   const byMonth = new Map();
-  const add = (mKey, kind, n) => {
-    const m = byMonth.get(mKey) || { openings: 0, cuts: 0, returns: 0, leaveStarts: 0 };
-    m[kind] += n;
-    byMonth.set(mKey, m);
-  };
-  for (const e of events || []) {
-    const kind = headcountKind(e.type, e.subType, e.employee);
-    const n = num(e.count);
-    if (!kind || kind === 'employee' || !n || !/^\d{4}-\d{2}$/.test(String(e.month))) continue;
-    if (kind === 'returns' || kind === 'leaveStarts' || e.month >= currentMonth) add(e.month, kind, n);
-    else if (kind === 'openings' && /^open/i.test(String(e.status || ''))) add(currentMonth, 'openings', n);
+  for (const e of placedHeadcountEvents(events, currentMonth)) {
+    const m = byMonth.get(e.month) || { openings: 0, cuts: 0, returns: 0, leaveStarts: 0 };
+    m[e.kind] += e.count;
+    byMonth.set(e.month, m);
   }
   const dates = known || null;
   return (months || []).map((mKey) => {
@@ -253,6 +246,29 @@ export function headcountSeries({ months, currentMonth, known, events }) {
       mKey, status: mKey < currentMonth ? 'actual' : mKey === currentMonth ? 'current' : 'forecast',
       employees: k ? num(k.employees) : null, hires: k ? num(k.hires) : null, leavers: k ? num(k.leavers) : null,
       ...p,
+      ...(k && k.byDept ? { byDept: k.byDept } : {}),
+      ...(k && k.byType ? { byType: k.byType } : {}),
     };
   });
+}
+
+/**
+ * HiBob's events placed in the month they show in, as headcountSeries shows them: leave events in their month;
+ * open positions and planned leavers with no employee from the current month on, and openings planned for earlier
+ * months and still open in the current month; known employees' events and unknown types not at all.
+ * Returns [{ month, kind, department, position, count, carried }] in the events' order (carried: an earlier
+ * month's opening shown in the current month).
+ */
+export function placedHeadcountEvents(events, currentMonth) {
+  const out = [];
+  for (const e of events || []) {
+    const kind = headcountKind(e.type, e.subType, e.employee);
+    const n = num(e.count);
+    if (!kind || kind === 'employee' || !n || !/^\d{4}-\d{2}$/.test(String(e.month))) continue;
+    let month = null;
+    if (kind === 'returns' || kind === 'leaveStarts' || e.month >= currentMonth) month = e.month;
+    else if (kind === 'openings' && /^open/i.test(String(e.status || ''))) month = currentMonth;
+    if (month) out.push({ month, kind, department: String(e.department || ''), position: String(e.position || ''), count: n, carried: month !== e.month });
+  }
+  return out;
 }

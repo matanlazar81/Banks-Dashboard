@@ -57,7 +57,7 @@ const cp = require('./cash-projection.cjs');
 const { readDoc, createDocHandler } = require('./json-store.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
-const SCHEMA_VERSION = 12; // 3: the actual months and each account's default method; 4: the override file's payroll rows; 5: temporary 0 next year; 6: override rows on 760001 only; 7: Snowflake's planned hires, leavers and returns from leave; 8: every payroll account, as the old dashboard; 9: planned changes by department (the page's breakdowns); 10: Deel and the headcount (HiBob); 11: the headcount from HiBob's dates plus its open positions, and planned changes count only when marked TRUE (IS_SOURCE_ACTUAL); 12: the headcount is HiBob's employees only (open positions shown, not counted)
+const SCHEMA_VERSION = 13; // 3: the actual months and each account's default method; 4: the override file's payroll rows; 5: temporary 0 next year; 6: override rows on 760001 only; 7: Snowflake's planned hires, leavers and returns from leave; 8: every payroll account, as the old dashboard; 9: planned changes by department (the page's breakdowns); 10: Deel and the headcount (HiBob); 11: the headcount from HiBob's dates plus its open positions, and planned changes count only when marked TRUE (IS_SOURCE_ACTUAL); 12: the headcount is HiBob's employees only (open positions shown, not counted); 13: the headcount by HiBob group and employment type, and open positions' department and role (the headcount breakdowns)
 const DEFAULT_CACHE_FILE = path.join(ROOT, 'data', 'salary-projection-cache.json');
 const CLASSIFICATION_FILE = path.join(ROOT, 'data', 'salary-classification.json');
 const { ProjectionError } = cp;
@@ -295,20 +295,28 @@ function headcountOf(headcount, blocks, currentKey, now, headcountSeries) {
   if (!headcount) return { company: '', asOf, today: null, months: [], events: [], error: 'The headcount (HiBob) was not read.' };
   const spans = headcount.spans || null;
   const months = blocks.flatMap((b) => b.rows.map((r) => r.mKey));
-  // Every month shown, and the one before the first (where the first one starts).
+  // Every month shown, and the one before the first (where the first one starts); each also by HiBob group
+  // (department) and employment type, for the page's breakdowns.
   let known = null;
   if (spans && months.length) {
     known = {};
+    const bump = (map, key, field) => {
+      const c = map[key] || (map[key] = { employees: 0, hires: 0, leavers: 0 });
+      c[field]++;
+    };
     for (let m = shiftMonth(months[0], -1); m <= months[months.length - 1]; m = shiftMonth(m, 1)) {
       const day = lastDayOf(m);
       const before = lastDayOf(shiftMonth(m, -1));
-      const c = { employees: 0, hires: 0, leavers: 0 };
+      const c = { employees: 0, hires: 0, leavers: 0, byDept: {}, byType: {} };
       for (const s of spans) {
         const isIn = employedOn(s, day);
         const wasIn = employedOn(s, before);
-        if (isIn) c.employees++;
-        if (isIn && !wasIn) c.hires++;
-        if (wasIn && !isIn) c.leavers++;
+        const field = isIn && !wasIn ? 'hires' : wasIn && !isIn ? 'leavers' : null;
+        for (const f of [isIn && 'employees', field].filter(Boolean)) {
+          c[f]++;
+          bump(c.byDept, s.group || 'No department', f);
+          bump(c.byType, s.type || 'Unspecified', f);
+        }
       }
       known[m] = c;
     }
@@ -317,7 +325,8 @@ function headcountOf(headcount, blocks, currentKey, now, headcountSeries) {
     .filter((e) => e && /^\d{4}-\d{2}$/.test(String(e.month || '')) && num(e.count) > 0)
     .map((e) => ({
       month: String(e.month), type: String(e.type || ''), subType: String(e.subType || ''),
-      employee: !!e.employee, status: String(e.status || ''), count: num(e.count),
+      employee: !!e.employee, status: String(e.status || ''), department: String(e.department || ''),
+      position: String(e.position || '').slice(0, 120), count: num(e.count),
     }));
   return {
     company: String(headcount.company || ''),

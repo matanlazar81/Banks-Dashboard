@@ -168,6 +168,14 @@ view). It holds counts only: no names or IDs leave the server.
 - What the data held in October 2026: `FCT_HEADCOUNT_EVENT` had only future hires (8 open positions, October 2026
   to January 2027, and 1 signed hire), with no leavers and no leave events.
 - **The FY column** shows employees in December, and the other lines summed.
+- **Clicking a figure** opens its breakdown in people, in the same movable window as the payroll figures
+  (`headcountBreakdown` in `src/salary-projection/breakdown.ts`):
+  - **Employees, hires and leavers:** by HiBob group (department) and by employment type. A full year shows hires
+    and leavers by month first, and employees as at December.
+  - **Open positions:** by department (hovering one lists its roles) and by role. The other HiBob events are shown
+    by department.
+  - The server sends counts by group and employment type only (`DIM_EMPLOYEE.EMPLOYEE_GROUP`), plus each open
+    position's department and role (`FCT_HEADCOUNT_EVENT`). It sends no names or IDs.
 - **The KPI** "Headcount today" shows HiBob's employees today and in December by their dates.
 - **Money:** the planned hires, leavers and returns from leave in Total payroll come from Snowflake's payroll
   forecast (above), and only those marked TRUE count. Leave starts have no money in that forecast.
@@ -186,8 +194,20 @@ view). It holds counts only: no names or IDs leave the server.
   above the table names the sections shown. The Excel export colours the header rows and the line labels the same
   way. The colours are an optional `accent` on the shared table's lines, so the other pages are unchanged.
 - Under the table: the headcount by month (above), then the override file's rows (above).
-- Controls: Permanent / temporary (the classification panel), ILS (default) or EUR, one year or both,
-  Refresh, and Export (Excel, the table as shown).
+- **Charts** (the Table / Charts switch, left of Permanent / temporary; `?tab=charts` opens it) show the same
+  figures in place of the tables:
+  - **Payroll by month:** stacked columns by section in the sections' colours, Deel on top, so a column is
+    Payroll + Deel. Projected months (the current one and the forecast) are faded. Only Total payroll's parts
+    are drawn: the override file's overrides are not.
+  - **Employees at month-end:** HiBob's count as a line, dashed in projected months.
+  - **Hires and leavers:** hires above zero, leavers below.
+  - Hovering a month lists its figures; open positions show there, not counted.
+  - The charts are read off the tables (`src/salary-projection/charts.ts`), so they follow the currency and
+    years chosen. `SalaryCharts.tsx` draws them with recharts, loaded only when the Charts view opens.
+  - The chart colours are the sections' at the step that keeps neighbouring sections apart for colour-blind
+    readers. Not classified is a deliberate grey.
+- Controls: Table / Charts, Permanent / temporary (the classification panel), ILS (default) or EUR, one year or
+  both, Refresh, and Export (Excel, the table as shown).
 - Hovering an account shows how it is projected; clicking a planned-change or Deel figure opens its breakdown
   (above).
 

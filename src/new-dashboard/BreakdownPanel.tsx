@@ -15,13 +15,17 @@ const GROUP_PREVIEW = 12;
 
 const STATUS_LABEL: Record<BreakdownReady['periodStatus'], string> = { actual: 'Actual', current: 'Current month', forecast: 'Forecast', fy: 'Full year' };
 
-function Amount({ value, ccy, strong }: { value: number; ccy: Ccy; strong?: boolean }) {
-  return <span className={`tabular-nums ${strong ? 'font-semibold' : ''} ${value < 0 ? 'text-slate-700' : ''}`}>{formatFull(value, ccy)}</span>;
+/** What the figures are: an amount in a currency, or a count of people. */
+type Unit = Ccy | 'count';
+
+function Amount({ value, unit, strong }: { value: number; unit: Unit; strong?: boolean }) {
+  const text = unit === 'count' ? Math.round(value).toLocaleString('en-US') : formatFull(value, unit);
+  return <span className={`tabular-nums ${strong ? 'font-semibold' : ''} ${value < 0 ? 'text-slate-700' : ''}`}>{text}</span>;
 }
 
 type Drill = { onDrill?: (row: BreakdownRow) => void; activeRow?: string | null };
 
-function RowLine({ row, ccy, indent, onDrill, activeRow }: { row: BreakdownRow; ccy: Ccy; indent: boolean } & Drill) {
+function RowLine({ row, unit, indent, onDrill, activeRow }: { row: BreakdownRow; unit: Unit; indent: boolean } & Drill) {
   const adjust = row.kind === 'adjust';
   const canDrill = !!(onDrill && row.drillable);
   return (
@@ -46,27 +50,27 @@ function RowLine({ row, ccy, indent, onDrill, activeRow }: { row: BreakdownRow; 
         )}
         {row.ref && !row.link && <span className="ml-1.5 font-mono text-[11px] text-slate-400">{row.ref}</span>}
       </td>
-      <td className="whitespace-nowrap py-1 text-right align-top"><Amount value={row.amount} ccy={ccy} /></td>
+      <td className="whitespace-nowrap py-1 text-right align-top"><Amount value={row.amount} unit={unit} /></td>
     </tr>
   );
 }
 
-function SectionTable({ section, ccy, onDrill, activeRow }: { section: BreakdownSection; ccy: Ccy } & Drill) {
+function SectionTable({ section, unit, onDrill, activeRow }: { section: BreakdownSection; unit: Unit } & Drill) {
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const blocks = arrangeRows(section.rows);
   return (
     <table className="w-full text-[13px]">
       <tbody>
         {blocks.map((b, i) => {
-          if (!b.group) return <RowLine key={b.rows[0].key} row={b.rows[0]} ccy={ccy} indent={false} onDrill={onDrill} activeRow={activeRow} />;
+          if (!b.group) return <RowLine key={b.rows[0].key} row={b.rows[0]} unit={unit} indent={false} onDrill={onDrill} activeRow={activeRow} />;
           const expanded = open[b.group] || b.rows.length <= GROUP_PREVIEW;
           const shown = expanded ? b.rows : b.rows.slice(0, GROUP_PREVIEW);
           return [
             <tr key={`g-${b.group}-${i}`} className="border-t border-slate-100">
               <td className="pt-2 pb-1 pr-2 font-medium text-slate-800">{b.group}</td>
-              <td className="whitespace-nowrap pt-2 pb-1 text-right font-medium"><Amount value={b.total} ccy={ccy} /></td>
+              <td className="whitespace-nowrap pt-2 pb-1 text-right font-medium"><Amount value={b.total} unit={unit} /></td>
             </tr>,
-            ...shown.map((r) => <RowLine key={r.key} row={r} ccy={ccy} indent onDrill={onDrill} activeRow={activeRow} />),
+            ...shown.map((r) => <RowLine key={r.key} row={r} unit={unit} indent onDrill={onDrill} activeRow={activeRow} />),
             !expanded && (
               <tr key={`more-${b.group}-${i}`}>
                 <td colSpan={2} className="pb-1 pl-4">
@@ -83,19 +87,19 @@ function SectionTable({ section, ccy, onDrill, activeRow }: { section: Breakdown
   );
 }
 
-function SecondarySection({ section, ccy, onDrill, activeRow }: { section: BreakdownSection; ccy: Ccy } & Drill) {
+function SecondarySection({ section, unit, onDrill, activeRow }: { section: BreakdownSection; unit: Unit } & Drill) {
   const [open, setOpen] = useState(!section.collapsed);
   return (
     <div className="mt-3 rounded-md border border-slate-200">
       <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open}
         className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50">
         <span className="inline-flex items-center gap-1">{open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}{section.title}</span>
-        <Amount value={section.total} ccy={ccy} />
+        <Amount value={section.total} unit={unit} />
       </button>
       {open && (
         <div className="border-t border-slate-200 px-3 py-2">
           {section.note && <p className="mb-1 text-xs text-slate-500">{section.note}</p>}
-          <SectionTable section={section} ccy={ccy} onDrill={onDrill} activeRow={activeRow} />
+          <SectionTable section={section} unit={unit} onDrill={onDrill} activeRow={activeRow} />
         </div>
       )}
     </div>
@@ -171,6 +175,7 @@ export default function BreakdownPanel({
   const main = data ? data.sections[0] : null;
   const ties = data && main ? Math.abs(main.total - data.cell) < 1 : false;
   const account = data ? data.account : undefined;
+  const unit: Unit = data && data.unit === 'count' ? 'count' : ccy;
 
   return (
     <div
@@ -198,12 +203,12 @@ export default function BreakdownPanel({
           </div>
           {data && !account && (
             <div className="mt-0.5 text-xs text-slate-500">
-              {STATUS_LABEL[data.periodStatus]}{data.variant ? ` · ${data.variant === 'plan' ? 'Plan' : 'Base'}` : ''} · table cell <Amount value={data.cell} ccy={data.ccy} />
+              {STATUS_LABEL[data.periodStatus]}{data.variant ? ` · ${data.variant === 'plan' ? 'Plan' : 'Base'}` : ''} · table cell <Amount value={data.cell} unit={unit} />
             </div>
           )}
           {data && account && (
             <div className="mt-0.5 truncate text-xs text-slate-500">
-              By department · {account.of} · account row <Amount value={data.cell} ccy={data.ccy} />
+              By department · {account.of} · account row <Amount value={data.cell} unit={unit} />
             </div>
           )}
         </div>
@@ -224,7 +229,7 @@ export default function BreakdownPanel({
           <>
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{main.title}</div>
             {main.note && <p className="mt-0.5 text-xs text-slate-500">{main.note}</p>}
-            <div className="mt-2"><SectionTable section={main} ccy={data.ccy} onDrill={onDrill} activeRow={activeRow} /></div>
+            <div className="mt-2"><SectionTable section={main} unit={unit} onDrill={onDrill} activeRow={activeRow} /></div>
             <div className="mt-2 flex items-center justify-between border-t-2 border-slate-300 pt-2 text-sm">
               <span className="inline-flex items-center gap-1.5 font-semibold text-slate-900">
                 Total
@@ -234,9 +239,9 @@ export default function BreakdownPanel({
                   </span>
                 )}
               </span>
-              <Amount value={main.total} ccy={data.ccy} strong />
+              <Amount value={main.total} unit={unit} strong />
             </div>
-            {data.sections.slice(1).map((s) => <SecondarySection key={s.id} section={s} ccy={data.ccy} onDrill={onDrill} activeRow={activeRow} />)}
+            {data.sections.slice(1).map((s) => <SecondarySection key={s.id} section={s} unit={unit} onDrill={onDrill} activeRow={activeRow} />)}
             {data.notes.map((n) => <p key={n} className="mt-2 text-xs text-slate-500">{n}</p>)}
           </>
         )}
