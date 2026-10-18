@@ -1,8 +1,8 @@
 {
   "ok": true,
-  "schemaVersion": 10,
+  "schemaVersion": 11,
   "status": "ready",
-  "generatedAt": "2026-10-18T06:00:34.307Z",
+  "generatedAt": "2026-10-18T06:57:53.827Z",
   "computedMonth": "2026-10",
   "company": "lsports",
   "years": [
@@ -740,6 +740,7 @@
         "name": "Gross Salaries",
         "source": "Terminated",
         "department": "R&D",
+        "actual": true,
         "eur": -30000,
         "ils": -110000
       },
@@ -749,6 +750,7 @@
         "name": "Gross Salaries",
         "source": "Open position",
         "department": "Sales",
+        "actual": true,
         "eur": 23000,
         "ils": 85000
       },
@@ -758,8 +760,19 @@
         "name": "Gross Salaries",
         "source": "Terminated",
         "department": "Finance",
+        "actual": true,
         "eur": -87000,
         "ils": -323000
+      },
+      {
+        "month": "2027-02",
+        "acct": "760001",
+        "name": "Gross Salaries",
+        "source": "Terminated",
+        "department": "Sales",
+        "actual": false,
+        "eur": -20000,
+        "ils": -74000
       }
     ],
     "error": null
@@ -862,221 +875,245 @@
   "headcount": {
     "company": "LSports",
     "asOf": "2026-10-15",
-    "today": 4,
+    "today": 5,
     "months": [
       {
         "mKey": "2026-01",
         "status": "actual",
-        "employees": 4,
+        "employees": 5,
         "hires": 0,
         "leavers": 0,
+        "openings": 0,
         "returns": 0,
         "leaveStarts": 0
       },
       {
         "mKey": "2026-02",
         "status": "actual",
-        "employees": 4,
+        "employees": 5,
         "hires": 0,
         "leavers": 0,
+        "openings": 0,
         "returns": 0,
         "leaveStarts": 0
       },
       {
         "mKey": "2026-03",
         "status": "actual",
-        "employees": 4,
+        "employees": 5,
         "hires": 0,
         "leavers": 0,
+        "openings": 0,
         "returns": 0,
         "leaveStarts": 0
       },
       {
         "mKey": "2026-04",
         "status": "actual",
-        "employees": 3,
+        "employees": 4,
         "hires": 0,
         "leavers": 1,
+        "openings": 0,
         "returns": 0,
         "leaveStarts": 0
       },
       {
         "mKey": "2026-05",
         "status": "actual",
-        "employees": 4,
+        "employees": 5,
         "hires": 1,
         "leavers": 0,
+        "openings": 0,
         "returns": 0,
         "leaveStarts": 0
       },
       {
         "mKey": "2026-06",
         "status": "actual",
-        "employees": 4,
+        "employees": 5,
         "hires": 0,
         "leavers": 0,
+        "openings": 0,
         "returns": 0,
         "leaveStarts": 0
       },
       {
         "mKey": "2026-07",
         "status": "actual",
-        "employees": 4,
+        "employees": 5,
         "hires": 0,
         "leavers": 0,
+        "openings": 0,
         "returns": 0,
         "leaveStarts": 0
       },
       {
         "mKey": "2026-08",
         "status": "actual",
-        "employees": 4,
+        "employees": 5,
         "hires": 0,
         "leavers": 0,
+        "openings": 0,
         "returns": 1,
         "leaveStarts": 0
       },
       {
         "mKey": "2026-09",
         "status": "actual",
-        "employees": 4,
+        "employees": 5,
         "hires": 0,
         "leavers": 0,
+        "openings": 0,
         "returns": 0,
         "leaveStarts": 0
       },
       {
         "mKey": "2026-10",
         "status": "current",
-        "employees": 4,
-        "hires": 1,
+        "employees": 6,
+        "hires": 2,
         "leavers": 1,
+        "openings": 1,
         "returns": 0,
         "leaveStarts": 0
       },
       {
         "mKey": "2026-11",
         "status": "forecast",
-        "employees": 6,
+        "employees": 8,
         "hires": 2,
         "leavers": 0,
+        "openings": 2,
         "returns": 0,
         "leaveStarts": 0
       },
       {
         "mKey": "2026-12",
         "status": "forecast",
-        "employees": 6,
-        "hires": 0,
+        "employees": 9,
+        "hires": 1,
         "leavers": 0,
+        "openings": 0,
         "returns": 1,
         "leaveStarts": 0
       },
       {
         "mKey": "2027-01",
         "status": "forecast",
-        "employees": 6,
+        "employees": 9,
         "hires": 0,
         "leavers": 0,
+        "openings": 0,
         "returns": 0,
         "leaveStarts": 0
       },
       {
         "mKey": "2027-02",
         "status": "forecast",
-        "employees": 6,
+        "employees": 8,
         "hires": 0,
-        "leavers": 0,
+        "leavers": 1,
+        "openings": 0,
         "returns": 0,
         "leaveStarts": 1
       },
       {
         "mKey": "2027-03",
         "status": "forecast",
-        "employees": 6,
+        "employees": 7,
         "hires": 0,
-        "leavers": 0,
+        "leavers": 1,
+        "openings": 0,
         "returns": 0,
         "leaveStarts": 0
       },
       {
         "mKey": "2027-04",
         "status": "forecast",
-        "employees": 6,
+        "employees": 7,
         "hires": 0,
         "leavers": 0,
+        "openings": 0,
         "returns": 0,
         "leaveStarts": 0
       },
       {
         "mKey": "2027-05",
         "status": "forecast",
-        "employees": 6,
+        "employees": 7,
         "hires": 0,
         "leavers": 0,
+        "openings": 0,
         "returns": 0,
         "leaveStarts": 0
       },
       {
         "mKey": "2027-06",
         "status": "forecast",
-        "employees": 6,
+        "employees": 7,
         "hires": 0,
         "leavers": 0,
+        "openings": 0,
         "returns": 0,
         "leaveStarts": 0
       },
       {
         "mKey": "2027-07",
         "status": "forecast",
-        "employees": 6,
+        "employees": 7,
         "hires": 0,
         "leavers": 0,
+        "openings": 0,
         "returns": 0,
         "leaveStarts": 0
       },
       {
         "mKey": "2027-08",
         "status": "forecast",
-        "employees": 6,
+        "employees": 7,
         "hires": 0,
         "leavers": 0,
+        "openings": 0,
         "returns": 0,
         "leaveStarts": 0
       },
       {
         "mKey": "2027-09",
         "status": "forecast",
-        "employees": 6,
+        "employees": 7,
         "hires": 0,
         "leavers": 0,
+        "openings": 0,
         "returns": 0,
         "leaveStarts": 0
       },
       {
         "mKey": "2027-10",
         "status": "forecast",
-        "employees": 6,
+        "employees": 7,
         "hires": 0,
         "leavers": 0,
+        "openings": 0,
         "returns": 0,
         "leaveStarts": 0
       },
       {
         "mKey": "2027-11",
         "status": "forecast",
-        "employees": 6,
+        "employees": 7,
         "hires": 0,
         "leavers": 0,
+        "openings": 0,
         "returns": 0,
         "leaveStarts": 0
       },
       {
         "mKey": "2027-12",
         "status": "forecast",
-        "employees": 6,
+        "employees": 7,
         "hires": 0,
         "leavers": 0,
+        "openings": 0,
         "returns": 0,
         "leaveStarts": 0
       }
@@ -1086,63 +1123,88 @@
         "month": "2026-04",
         "type": "decrease",
         "subType": "Terminated",
-        "open": false,
+        "employee": true,
+        "status": "",
         "count": 1
       },
       {
         "month": "2026-06",
         "type": "increase",
         "subType": "Open position",
-        "open": true,
+        "employee": false,
+        "status": "Open",
         "count": 1
       },
       {
         "month": "2026-06",
         "type": "increase",
         "subType": "Open position",
-        "open": false,
+        "employee": false,
+        "status": "Closed",
         "count": 2
       },
       {
         "month": "2026-08",
         "type": "increase",
         "subType": "Leave end",
-        "open": false,
+        "employee": true,
+        "status": "",
         "count": 1
       },
       {
         "month": "2026-10",
         "type": "decrease",
         "subType": "Terminated",
-        "open": false,
+        "employee": true,
+        "status": "",
         "count": 1
       },
       {
         "month": "2026-11",
         "type": "increase",
         "subType": "Open position",
-        "open": true,
+        "employee": false,
+        "status": "Approved",
         "count": 2
       },
       {
         "month": "2026-12",
         "type": "increase",
+        "subType": "Hired",
+        "employee": true,
+        "status": "Filled",
+        "count": 1
+      },
+      {
+        "month": "2026-12",
+        "type": "increase",
         "subType": "Leave end",
-        "open": false,
+        "employee": true,
+        "status": "",
         "count": 1
       },
       {
         "month": "2027-02",
         "type": "decrease",
         "subType": "Leave start",
-        "open": false,
+        "employee": true,
+        "status": "",
         "count": 1
       },
       {
         "month": "2027-03",
+        "type": "decrease",
+        "subType": "Position cut",
+        "employee": false,
+        "status": "",
+        "count": 1
+      },
+      {
+        "month": "2027-04",
         "type": "transfer",
         "subType": "Moved",
-        "open": false,
+        "employee": false,
+        "status": "",
         "count": 4
       }
     ],

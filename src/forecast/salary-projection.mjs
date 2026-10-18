@@ -115,12 +115,13 @@ export function countedIncrementRows(blocks, rows) {
 
 /**
  * Snowflake's planned payroll changes that count in Total payroll: hires (Open position), leavers (Terminated)
- * and returns from leave (Leave end) in the months the projection makes. Closed months are NetSuite's actuals,
- * which already include what happened. Returns the rows that count (the same objects).
+ * and returns from leave (Leave end) marked TRUE (IS_SOURCE_ACTUAL), in the months the projection makes. Closed
+ * months are NetSuite's actuals, which already include what happened; a change marked FALSE does not count at all.
+ * Returns the rows that count (the same objects).
  */
 export function countedChangeRows(blocks, rows) {
   const projected = projectedMonths(blocks);
-  return (rows || []).filter((r) => r && projected.has(r.month));
+  return (rows || []).filter((r) => r && r.actual === true && projected.has(r.month));
 }
 
 /** The months the projection makes (the current month and forecast months): where planned changes count. */
@@ -193,58 +194,71 @@ export function deelByMonth(blocks, rows, runRateMonth) {
 
 // ── Headcount (HiBob) ────────────────────────────────────────────────────────
 /**
- * The headcount line a HiBob event (FCT_HEADCOUNT_EVENT) counts in, or null for an unknown event type. A sub-type
- * about leave (e.g. 'Leave end') is a return or a leave start: people on leave are still employees, so these do
- * not move the count. Any other increase is a hire, any other decrease a leaver.
+ * How a HiBob event (FCT_HEADCOUNT_EVENT) counts, or null for an unknown event type:
+ *   'returns' / 'leaveStarts'  a sub-type about leave (e.g. 'Leave end'): shown, but people on leave are still
+ *                              employees, so the count does not move
+ *   'employee'                 an event of a known employee: HiBob's employees already hold it (their start and
+ *                              leave dates), so it is not counted again
+ *   'openings' / 'cuts'        an increase or decrease with no employee yet: a planned hire (an open position) or a
+ *                              planned leaver HiBob's employees do not hold
  */
-export function headcountKind(type, subType) {
+export function headcountKind(type, subType, employee) {
   const t = String(type || '').toLowerCase();
   if (t !== 'increase' && t !== 'decrease') return null;
   if (/leave/i.test(String(subType || ''))) return t === 'increase' ? 'returns' : 'leaveStarts';
-  return t === 'increase' ? 'hires' : 'leavers';
+  if (employee) return 'employee';
+  return t === 'increase' ? 'openings' : 'cuts';
 }
 
 /**
  * Employees at each month-end, and who joined and left, over the projection's months.
  *   months        'YYYY-MM' in order (the projection's)
  *   currentMonth  'YYYY-MM'
- *   actual        { 'YYYY-MM': { employees, hires, leavers } } HiBob's employees: every month before the current
- *                 one, from the month before the first month shown (or null when they could not be read)
- *   events        [{ month, type, subType, open, count }] HiBob's planned events (FCT_HEADCOUNT_EVENT)
- * Months before the current month are HiBob's: employees at month-end, hires and leavers (who joined and left
- * since the previous month-end), and the leave events HiBob has for them. From the current month on: the
- * previous month-end plus HiBob's planned hires minus its leavers; openings planned for earlier months and still
- * open count as hires in the current month. Returns [{ mKey, status, employees, hires, leavers, returns,
- * leaveStarts }] (employees, hires and leavers null where HiBob's employees are missing).
+ *   known         { 'YYYY-MM': { employees, hires, leavers } } HiBob's employees from their start and leave dates,
+ *                 future ones included (signed hires, people leaving): every month shown and the one before the
+ *                 first (null when they could not be read)
+ *   events        [{ month, type, subType, employee, status, count }] HiBob's planned events (FCT_HEADCOUNT_EVENT)
+ * Months before the current one are HiBob's employees as they were. From the current month on, the same dates
+ * (who is signed to start, who is leaving) plus what HiBob's employees do not hold yet: open positions (planned
+ * hires with no employee) and planned leavers with no employee, from their month on. Openings planned for earlier
+ * months and still open count in the current month. Leave events show in their month and do not move the count.
+ * Returns [{ mKey, status, employees, hires, leavers, openings, returns, leaveStarts }]: hires and leavers include
+ * the planned ones, openings is the open positions among the hires (employees, hires and leavers null where
+ * HiBob's employees are missing).
  */
-export function headcountSeries({ months, currentMonth, actual, events }) {
+export function headcountSeries({ months, currentMonth, known, events }) {
   const byMonth = new Map();
   const add = (mKey, kind, n) => {
-    const m = byMonth.get(mKey) || { hires: 0, leavers: 0, returns: 0, leaveStarts: 0 };
+    const m = byMonth.get(mKey) || { openings: 0, cuts: 0, returns: 0, leaveStarts: 0 };
     m[kind] += n;
     byMonth.set(mKey, m);
   };
   for (const e of events || []) {
-    const kind = headcountKind(e.type, e.subType);
+    const kind = headcountKind(e.type, e.subType, e.employee);
     const n = num(e.count);
-    if (!kind || !n || !/^\d{4}-\d{2}$/.test(String(e.month))) continue;
-    if (e.month >= currentMonth || kind === 'returns' || kind === 'leaveStarts') add(e.month, kind, n);
-    else if (kind === 'hires' && e.open) add(currentMonth, 'hires', n);
+    if (!kind || kind === 'employee' || !n || !/^\d{4}-\d{2}$/.test(String(e.month))) continue;
+    if (kind === 'returns' || kind === 'leaveStarts' || e.month >= currentMonth) add(e.month, kind, n);
+    else if (kind === 'openings' && /^open/i.test(String(e.status || ''))) add(currentMonth, 'openings', n);
   }
-  const known = actual || {};
-  const prev = known[shiftMonth(currentMonth, -1)];
-  let employees = prev ? num(prev.employees) : null;
+  const dates = known || null;
+  let planned = 0;
   return (months || []).map((mKey) => {
-    const p = byMonth.get(mKey) || { hires: 0, leavers: 0, returns: 0, leaveStarts: 0 };
+    const p = byMonth.get(mKey) || { openings: 0, cuts: 0, returns: 0, leaveStarts: 0 };
+    const k = dates ? dates[mKey] : null;
     if (mKey < currentMonth) {
-      const a = known[mKey];
       return {
         mKey, status: 'actual',
-        employees: a ? num(a.employees) : null, hires: a ? num(a.hires) : null, leavers: a ? num(a.leavers) : null,
-        returns: p.returns, leaveStarts: p.leaveStarts,
+        employees: k ? num(k.employees) : null, hires: k ? num(k.hires) : null, leavers: k ? num(k.leavers) : null,
+        openings: 0, returns: p.returns, leaveStarts: p.leaveStarts,
       };
     }
-    if (employees !== null) employees += p.hires - p.leavers;
-    return { mKey, status: mKey === currentMonth ? 'current' : 'forecast', employees, ...p };
+    planned += p.openings - p.cuts;
+    return {
+      mKey, status: mKey === currentMonth ? 'current' : 'forecast',
+      employees: k ? num(k.employees) + planned : null,
+      hires: k ? num(k.hires) + p.openings : null,
+      leavers: k ? num(k.leavers) + p.cuts : null,
+      openings: p.openings, returns: p.returns, leaveStarts: p.leaveStarts,
+    };
   });
 }

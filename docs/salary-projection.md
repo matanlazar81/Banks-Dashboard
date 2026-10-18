@@ -80,6 +80,10 @@ from January of the current year, from two Snowflake sources (`plannedLines` in 
    its accounts), then **Total headcount changes**. Each month's amount is what that month adds to the forecast.
    The forecast's own baseline (`payroll future baseline`) is not used: the page's baseline is NetSuite's last
    closed month.
+   **Only changes marked TRUE count** (`IS_SOURCE_ACTUAL`, read with the rows). A change marked FALSE is not
+   applied, in any month. A TRUE change in a closed month is history, so NetSuite's actuals already hold it. In
+   October 2026 the data team said every row was FALSE, so no planned change counted; the page's note and
+   `--dry-run` say how many rows are FALSE.
 2. **The override file**: the override sheet's rows (`OVERIDE_TEMP`, loaded into `FCT_EXPENSE` as
    `future_cost_override` / `future_cost_increment`) on the same accounts (the sheet's column A)
    (`fetchPayrollOverrides`). One line per account and type, summing the account's rows of a month across
@@ -92,9 +96,10 @@ from January of the current year, from two Snowflake sources (`plannedLines` in 
      it would count that department twice.
 
 How they count:
-- **Total payroll adds the hires, leavers, returns from leave and increments** in the current and forecast
-  months (`countedChangeRows` / `countedIncrementRows` in `src/forecast/salary-projection.mjs`). Closed months are
-  NetSuite's actuals, which already include what happened, so a planned change there is neither shown nor added.
+- **Total payroll adds the hires, leavers, returns from leave (marked TRUE) and increments** in the current and
+  forecast months (`countedChangeRows` / `countedIncrementRows` in `src/forecast/salary-projection.mjs`). Closed
+  months are NetSuite's actuals, which already include what happened, so a planned change there is neither shown
+  nor added.
 - The accounts' own lines and the Total permanent / Total temporary subtotals leave them out. With no permanent
   account, the planned changes come first.
 - **KPIs**: full-year payroll adds them (it equals the table's FY Total payroll) and says how much; year to date
@@ -139,20 +144,27 @@ accounts, so it is read by vendor (`fetchVendorSpend` in `netsuite-api.cjs`):
 
 **Headcount (HiBob)**, a table of its own under the payroll table (people, not money; the same columns and year
 view). It holds counts only: no names or IDs leave the server.
-- **The months before the current one** come from HiBob's employees in Snowflake (`DIM_EMPLOYEE`, read as the
-  Metrics page reads them: `sfEmployeeSpans` and `employedOn` in `server/metrics.cjs`, company
-  `METRICS_HEADCOUNT_COMPANY`, default LSports). Each month shows:
+- **Every month** comes from HiBob's employees in Snowflake and their start and leave dates (`DIM_EMPLOYEE`, read
+  as the Metrics page reads them: `sfEmployeeSpans` and `employedOn` in `server/metrics.cjs`, company
+  `METRICS_HEADCOUNT_COMPANY`, default LSports). Future dates count too, so forecast months already hold who is
+  signed to start and who is leaving. Each month shows:
   - **Employees at month-end**: people employed on the last day, people on leave included.
   - **Hires**: people counted at this month-end but not the one before.
   - **Leavers**: the reverse.
-- **From the current month on**, the previous month-end plus HiBob's planned events (`FCT_HEADCOUNT_EVENT`, counted
-  by month, type and sub-type in `fetchHeadcountPlan`; `headcountSeries` in `src/forecast/salary-projection.mjs`):
-  - **Hires**: an increase event. Openings planned for earlier months that are still open (no employee,
-    `OPENING_STATUS` Open) count in the current month, as the old dashboard carries them.
-  - **Leavers**: a decrease event.
+- **From the current month on**, HiBob's planned events add what its employees do not hold yet
+  (`FCT_HEADCOUNT_EVENT`, counted by month, type, sub-type, employee and opening status in `fetchHeadcountPlan`;
+  `headcountSeries` in `src/forecast/salary-projection.mjs`):
+  - **Open positions** (an increase with no employee) count as hires in their month, shown as **of which open
+    positions**. Openings planned for earlier months whose status starts with "Open" count in the current month,
+    as the old dashboard carries them.
+  - **A planned leaver with no employee** (a decrease with no employee) counts as a leaver.
+  - **Events of a known employee** (e.g. `Hired`, `Terminated`) are not counted again: their dates are already in
+    HiBob's employees.
   - **Returns from leave and leave starts**: a sub-type about leave (e.g. `Leave end`, maternity). They are shown,
     but they do not change the count: people on leave are employees.
-- **The FY column** shows employees in December, and hires and leavers summed.
+- What the data held in October 2026: `FCT_HEADCOUNT_EVENT` had only future hires (8 open positions, October 2026
+  to January 2027, and 1 signed hire), with no leavers and no leave events.
+- **The FY column** shows employees in December, and hires, open positions and leavers summed.
 - **The KPI** "Headcount today" shows employees today and the December forecast.
 - **Money is unchanged.** Planned hires, leavers and returns from leave stay in Total payroll from Snowflake's
   payroll forecast (above). Leave starts have no money in that forecast, so Total payroll does not change for them.
@@ -266,7 +278,7 @@ node scripts/salary-projection.cjs --reconcile   # real data: Snowflake vs NetSu
   refresh.
 - Deel is found by vendor name ("deel"); a Deel vendor named otherwise is missed. The vendors found are named
   in the Deel header and by `--dry-run`. Only LSports (subsidiary 3) is read.
-- The headcount forecast counts HiBob's planned events from the previous month-end, so it assumes the events
-  table also holds this month's changes that already happened. Openings carry no company, so all count;
-  events of known employees count only when HiBob puts them in the company. `--dry-run` shows today's headcount
-  next to the current month's forecast, and the event types found.
+- The headcount forecast is HiBob's dates plus its open positions: a signed hire who is not in HiBob's employees
+  yet counts only if HiBob lists them as an opening. Openings carry no company, so all count. `--dry-run` shows
+  today's headcount next to the current month's forecast, and each event type with how it counts.
+- Leaves (maternity) are counted only when HiBob's events have them; in October 2026 they had none.

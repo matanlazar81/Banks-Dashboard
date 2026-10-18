@@ -45,6 +45,8 @@ export interface PayrollChange {
   source: 'Open position' | 'Terminated' | 'Leave end';
   /** Snowflake's department name ('' when none). */
   department: string;
+  /** IS_SOURCE_ACTUAL: TRUE = the change counts (from the current month on); FALSE = it does not. */
+  actual: boolean;
   eur: number;
   ils: number;
 }

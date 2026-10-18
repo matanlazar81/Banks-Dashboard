@@ -6,6 +6,7 @@ import type { BreakdownFetcher, BreakdownResponse } from '../new-dashboard/break
 import ProjectionTable, { type TableMarkers } from '../new-dashboard/ProjectionTable.tsx';
 import { ComputingCard, ErrorCard, Segmented, Skeleton, Warnings } from '../new-dashboard/PageParts.tsx';
 import { readParam, writeParam } from '../new-dashboard/urlParams.ts';
+import { projectedMonths } from '../forecast/salary-projection.mjs';
 import { monthLongLabel, type Column } from '../new-dashboard/model.ts';
 import type { YearView } from '../new-dashboard/types.ts';
 import { fetchSalaryProjection } from './api.ts';
@@ -70,6 +71,12 @@ export default function SalaryProjection() {
   const hasIncrements = hasLine('total-increments');
   const hasOverrides = hasLine('total-overrides');
   const hasDeel = hasLine('total-deel');
+  // Snowflake's planned changes in the projected months that are marked FALSE: listed in the note, never added.
+  const changesFalse = useMemo(() => {
+    if (!shown || !shown.changes) return 0;
+    const projected = projectedMonths(shown.blocks);
+    return shown.changes.rows.filter((r) => !r.actual && projected.has(r.month)).length;
+  }, [shown]);
   // What Total payroll adds from the current month on.
   const added = [hasChanges && 'hires and leavers', hasIncrements && 'override increments'].filter(Boolean).join(' and ');
 
@@ -242,9 +249,10 @@ export default function SalaryProjection() {
                 hasChanges && 'planned hires, leavers and returns from leave (HiBob\'s forecast, through Snowflake\'s payroll forecast)',
                 hasIncrements && 'the override file\'s increments',
               ].filter(Boolean).join(' and ')}${hasChanges || hasIncrements ? ' are added to Total payroll from the current month on (closed months are NetSuite\'s actuals, which already include what happened)' : ''}${hasOverrides ? `${hasChanges || hasIncrements ? '; ' : ''}the override file's overrides, in italics, are for reference and not in Total payroll` : ''}.`}
+              {changesFalse > 0 && ` Snowflake's payroll forecast also has ${changesFalse} planned hire, leaver or return row${changesFalse === 1 ? '' : 's'} from the current month on marked FALSE: ${changesFalse === 1 ? 'it is' : 'they are'} not counted. Only changes marked TRUE are added.`}
               {notProjected.length > 0 && ` Actuals only, not projected: ${notProjected.map((a) => `${a.acct} ${a.name}`).join(', ')}.`}
               {hasDeel && ' Below Total payroll, Deel (people abroad) is its NetSuite costs on every account but payroll ones; forecast months carry the average of its last three months with postings. Payroll + Deel adds the two.'}
-              {headcountTable && ' The headcount is HiBob\'s: employees at each month-end, people on leave included. From the current month on it moves with HiBob\'s planned hires and leavers; returns from leave and leave starts (maternity and others) are shown but do not change it.'}
+              {headcountTable && ' The headcount is HiBob\'s: employees at each month-end, people on leave included, from their start and leave dates (signed hires and people leaving included). From the current month on it adds HiBob\'s open positions; returns from leave and leave starts (maternity and others), when HiBob has them, are shown but do not change it.'}
               {' '}The current month is projected as a whole month. Forecasts are made in shekels; euros use the rate above.
               Use Permanent / temporary to change how an account is projected.
             </p>
