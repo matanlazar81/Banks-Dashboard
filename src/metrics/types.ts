@@ -55,6 +55,8 @@ export interface PeopleMonth {
 
 export interface People {
   company: string | null;
+  /** HiBob's departments left out of the employees (Bringits); absent in an older payload. */
+  excluded?: string[];
   /** The last month whose payroll JE is posted (the series ends there). */
   through: string | null;
   /** Closed months after it whose payroll JE is not posted yet. */

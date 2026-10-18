@@ -157,10 +157,11 @@ view). It holds counts only: no names or IDs leave the server.
 - **HiBob's Bringits department is left out** in every month (finance's choice in October 2026): its people
   (`DIM_EMPLOYEE.EMPLOYEE_GROUP`) and its planned events (`FCT_HEADCOUNT_EVENT.DEPARTMENT`).
   - It covers the count, today's KPI, the breakdowns and the charts.
-  - A department is matched when its name contains "bringits", in any case (`EXCLUDED_GROUPS` in
-    `server/salary-projection.cjs`; `SALARY_PROJECTION_EXCLUDE_GROUPS` replaces the list).
+  - A department is matched when its name contains "bringits", in any case. The list is `EXCLUDED_GROUPS` in
+    `server/metrics.cjs`, shared with the Metrics page, which leaves Bringits out of its employees too.
+    `HEADCOUNT_EXCLUDE_GROUPS` replaces the list.
   - The page names what was left out. `--dry-run` also prints how many of its people are employed today.
-  - The payroll (NetSuite) and the Metrics page are unchanged.
+  - The payroll (NetSuite) is unchanged.
 - **Beside the count, not in it**, HiBob's planned events (`FCT_HEADCOUNT_EVENT`, counted by month, type,
   sub-type, employee and opening status in `fetchHeadcountPlan`; `headcountSeries` in
   `src/forecast/salary-projection.mjs`):
@@ -279,7 +280,7 @@ and P&L Projection were added (`docs/metrics.md`, `docs/pnl-projection.md`).
 | `SALARY_PROJECTION_TTL_MIN` | `CASH_PROJECTION_TTL_MIN` (30) | Minutes before cached figures are refreshed in the background |
 | `SALARY_PROJECTION_TIMEOUT_MIN` | `CASH_PROJECTION_TIMEOUT_MIN` (10) | A computation running longer is abandoned |
 | `SALARY_PROJECTION_PREWARM` | `CASH_PROJECTION_PREWARM` | `1` = compute 30 s after the server starts if the cache is empty |
-| `SALARY_PROJECTION_EXCLUDE_GROUPS` | `bringits` | HiBob departments left out of the headcount (comma-separated; a name containing one, any case). Empty keeps every department |
+| `HEADCOUNT_EXCLUDE_GROUPS` | `bringits` | HiBob departments left out of the headcount here and on the Metrics page (comma-separated; a name containing one, any case). Empty keeps every department |
 
 NetSuite settings are the server's usual `NETSUITE_*` variables (`NET_CASH_SUBSIDIARY`, default 3); NetSuite
 also gives Deel. Snowflake (`SNOWFLAKE_*`) is used for the planned changes (hires, leavers, returns from leave,

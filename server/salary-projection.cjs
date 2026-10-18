@@ -41,8 +41,8 @@
 //   • headcount  — HiBob (Snowflake): its employees at each month-end and today from their start and leave dates
 //                  (DIM_EMPLOYEE, as the Metrics page; future dates too: signed hires, people leaving), and beside
 //                  them, not counted, HiBob's open positions and leave events (FCT_HEADCOUNT_EVENT), as counts by
-//                  month (headcountSeries). HiBob's Bringits department is left out (EXCLUDED_GROUPS). No names
-//                  or ids leave the server.
+//                  month (headcountSeries). HiBob's Bringits department is left out (EXCLUDED_GROUPS in
+//                  metrics.cjs, shared with the Metrics page). No names or ids leave the server.
 //
 // The projection is made in ILS, the currency payroll is paid in; forecast € = ₪ ÷ the ILS/EUR ratio of
 // the last closed month's permanent payroll. The current month is projected as a whole month (its
@@ -62,7 +62,7 @@ const SCHEMA_VERSION = 14; // 3: the actual months and each account's default me
 const DEFAULT_CACHE_FILE = path.join(ROOT, 'data', 'salary-projection-cache.json');
 const CLASSIFICATION_FILE = path.join(ROOT, 'data', 'salary-classification.json');
 const { ProjectionError } = cp;
-const { employedOn, lastDayOf, sfEmployeeSpans, shiftMonth } = require('./metrics.cjs');
+const { employedOn, excludedGroups, excludedNames, isExcludedGroup, lastDayOf, sfEmployeeSpans, shiftMonth } = require('./metrics.cjs');
 
 // Finance's classification (ProfitandLoss988.xlsx: yellow = permanent, green = temporary), in its order.
 // Names are fallbacks: the page shows NetSuite's account names when it has them.
@@ -110,13 +110,6 @@ const ACTUALS_ONLY = new Set(['760023', '760029', '760008', '760014']);
 const CHANGE_SOURCES = ['Open position', 'Terminated', 'Leave end'];
 // The NetSuite vendors of the Deel section: names (or ids) containing this.
 const DEEL_VENDOR = 'deel';
-// HiBob departments left out of the headcount, its employees and planned events alike: groups whose name
-// contains one of these, any case. SALARY_PROJECTION_EXCLUDE_GROUPS (comma-separated) replaces the list.
-const EXCLUDED_GROUPS = ['bringits'];
-const excludedGroups = () => {
-  const env = process.env.SALARY_PROJECTION_EXCLUDE_GROUPS;
-  return (env === undefined ? EXCLUDED_GROUPS : env.split(',')).map((g) => g.trim().toLowerCase()).filter(Boolean);
-};
 
 // Below this share of the largest recent month, a closed month counts as not posted yet.
 const MATERIAL_SHARE = 0.5;
@@ -295,17 +288,15 @@ function deelOf(deel, Y) {
  * HiBob's headcount for the payload, as counts: employees today, and over the projection's months the employees
  * at month-end with who joined and left, from their start and leave dates (future ones too: signed hires, people
  * leaving), with HiBob's open positions and leave events beside them (headcountSeries). The excluded departments
- * (excludedGroups) are left out of all of it, in every month. Employee spans never leave the server.
+ * (excludedGroups in server/metrics.cjs, shared with the Metrics page) are left out of all of it, in every month.
+ * Employee spans never leave the server.
  *   headcount  { company, spans: [{ start, end, type, group }] | null, events: [{ month, type, subType, employee, status,
  *              department, position, count }], error }
  */
 function headcountOf(headcount, blocks, currentKey, now, headcountSeries, exclude = excludedGroups()) {
   const asOf = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
   if (!headcount) return { company: '', asOf, today: null, months: [], events: [], excluded: { groups: [], today: 0 }, error: 'The headcount (HiBob) was not read.' };
-  const isOut = (group) => {
-    const g = String(group || '').toLowerCase();
-    return !!g && exclude.some((x) => g.includes(x));
-  };
+  const isOut = (group) => isExcludedGroup(group, exclude);
   const outSpans = (headcount.spans || []).filter((s) => isOut(s.group));
   const spans = headcount.spans ? headcount.spans.filter((s) => !isOut(s.group)) : null;
   const months = blocks.flatMap((b) => b.rows.map((r) => r.mKey));
@@ -343,19 +334,15 @@ function headcountOf(headcount, blocks, currentKey, now, headcountSeries, exclud
       employee: !!e.employee, status: String(e.status || ''), department: String(e.department || ''),
       position: String(e.position || '').slice(0, 120), count: num(e.count),
     }));
-  // What was left out, as the page and the CLI say it: HiBob's own names (the first spelling of each) and today's count.
-  const outNames = new Map();
-  for (const g of [...outSpans.map((s) => s.group), ...valid.filter((e) => isOut(e.department)).map((e) => e.department)]) {
-    const name = String(g).trim();
-    if (!outNames.has(name.toLowerCase())) outNames.set(name.toLowerCase(), name);
-  }
+  // What was left out, as the page and the CLI say it: HiBob's own names and today's count.
+  const outNames = excludedNames([...outSpans.map((s) => s.group), ...valid.filter((e) => isOut(e.department)).map((e) => e.department)]);
   return {
     company: String(headcount.company || ''),
     asOf,
     today: spans ? spans.filter((s) => employedOn(s, asOf)).length : null,
     months: headcountSeries({ months, currentMonth: currentKey, known, events }),
     events,
-    excluded: { groups: [...outNames.values()].sort(), today: outSpans.filter((s) => employedOn(s, asOf)).length },
+    excluded: { groups: outNames, today: outSpans.filter((s) => employedOn(s, asOf)).length },
     error: headcount.error || null,
   };
 }

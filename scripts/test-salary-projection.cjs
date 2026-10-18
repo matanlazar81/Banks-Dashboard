@@ -757,17 +757,17 @@ async function testDeelAndHeadcount(payload) {
   check(JSON.stringify(h.excluded) === JSON.stringify({ groups: ['BRINGITS'], today: 1 }) && m(mk(Y, 5)).leavers === 0 && m(mk(Y, 11)).openings === 2
     && !h.months.some((x) => Object.keys(x.byDept).some((k) => /bringits/i.test(k))) && !h.events.some((e) => /bringits/i.test(e.department)),
     'HiBob\'s Bringits department is left out in every month, whatever the case: its people (one left in May, one still here), its planned events, the breakdowns; the payload names it with today\'s count');
-  const prevExclude = process.env.SALARY_PROJECTION_EXCLUDE_GROUPS;
-  process.env.SALARY_PROJECTION_EXCLUDE_GROUPS = '';
+  const prevExclude = process.env.HEADCOUNT_EXCLUDE_GROUPS;
+  process.env.HEADCOUNT_EXCLUDE_GROUPS = '';
   let all;
   try {
     all = (await sp.buildSalaryProjection({ rows: syntheticRows(), now: NOW, headcount: HEADCOUNT })).payload.headcount;
   } finally {
-    if (prevExclude === undefined) delete process.env.SALARY_PROJECTION_EXCLUDE_GROUPS; else process.env.SALARY_PROJECTION_EXCLUDE_GROUPS = prevExclude;
+    if (prevExclude === undefined) delete process.env.HEADCOUNT_EXCLUDE_GROUPS; else process.env.HEADCOUNT_EXCLUDE_GROUPS = prevExclude;
   }
   check(all.today === 6 && all.months.find((x) => x.mKey === mk(Y, 5)).leavers === 1 && all.months.find((x) => x.mKey === mk(Y, 11)).openings === 5
     && all.excluded.groups.length === 0 && all.events.length === EVENTS.length,
-    'SALARY_PROJECTION_EXCLUDE_GROUPS replaces the list: empty keeps every department');
+    'HEADCOUNT_EXCLUDE_GROUPS replaces the list: empty keeps every department');
 
   const wErr = (await sp.buildSalaryProjection({ rows: syntheticRows(), now: NOW, deel: { vendors: [], rows: [], error: 'Deel could not be read.' }, headcount: { company: 'LSports', spans: null, events: [], error: 'HiBob failed.' } })).payload;
   check(wErr.warnings.includes('Deel could not be read.') && wErr.warnings.includes('HiBob failed.') && wErr.headcount.today === null && wErr.headcount.months.every((x) => x.employees === null),

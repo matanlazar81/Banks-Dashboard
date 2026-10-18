@@ -14,7 +14,8 @@
 //                         expenses) against cap % × projected FY revenue
 //   Payroll / revenue,    each closed month through the last one whose payroll JE is posted in NetSuite
 //   revenue per employee  (76xxxx, gross of capitalised salaries; P&L total revenue), plus year to date;
-//                         employees = HiBob (Snowflake) employees of the P&L's company active at month-end
+//                         employees = HiBob (Snowflake) employees of the P&L's company active at month-end,
+//                         without HiBob's Bringits department (EXCLUDED_GROUPS, as the Salary Projection)
 //   Projection year       the 2027 targets saved on the New Bank Dashboard apply, as in both pages'
 //                         Targets view (src/forecast/targets.mjs): revenue, EBITDA, December cash, ARR,
 //                         and cloud (server costs as a % of revenue, or the category's % change)
@@ -413,6 +414,29 @@ const lastDayOf = (mKey) => `${mKey}-${pad2(new Date(Date.UTC(Number(mKey.slice(
  *  or before it and not left before it. */
 const employedOn = (s, day) => !!s.start && s.start <= day && !(s.end && s.end < day);
 
+// HiBob departments left out of every headcount, this page's and the Salary Projection's (finance's choice,
+// October 2026): groups (DIM_EMPLOYEE.EMPLOYEE_GROUP, FCT_HEADCOUNT_EVENT.DEPARTMENT) whose name contains one of
+// these, any case. HEADCOUNT_EXCLUDE_GROUPS (comma-separated) replaces the list; empty keeps every department.
+const EXCLUDED_GROUPS = ['bringits'];
+const excludedGroups = () => {
+  const env = process.env.HEADCOUNT_EXCLUDE_GROUPS;
+  return (env === undefined ? EXCLUDED_GROUPS : env.split(',')).map((g) => g.trim().toLowerCase()).filter(Boolean);
+};
+/** Whether a HiBob group is left out of the headcount. */
+const isExcludedGroup = (group, exclude = excludedGroups()) => {
+  const g = String(group || '').toLowerCase();
+  return !!g && exclude.some((x) => g.includes(x));
+};
+/** HiBob's names of the groups left out, as the pages say them: the first spelling of each, sorted. */
+function excludedNames(groups) {
+  const names = new Map();
+  for (const g of groups) {
+    const name = String(g).trim();
+    if (!names.has(name.toLowerCase())) names.set(name.toLowerCase(), name);
+  }
+  return [...names.values()].sort();
+}
+
 /** Employees active at each month-end ({ start, end, type }: 'YYYY-MM-DD', end null while employed):
  *  started on or before the last day and not left before it. { mKey: { total, byType } } */
 function headcountByMonth(spans, months) {
@@ -435,14 +459,16 @@ function headcountByMonth(spans, months) {
  *   rows: the P&L's current-year rows (eur: payroll = 76xxxx gross, totalRevenue); only closed months count.
  *   A closed month's payroll counts as posted when it is at least half the year's largest month, so a
  *   partly posted JE does not end the series early or late.
- *   spans: employees ({ start, end, type }) or null when they could not be read.
+ *   spans: employees ({ start, end, type, group }) or null when they could not be read. The excluded HiBob
+ *   departments (isExcludedGroup) are left out; `excluded` names them.
  */
-function peopleMetrics(rows, spans, company) {
+function peopleMetrics(rows, spans, company, exclude = excludedGroups()) {
   const closed = rows.filter(isActual);
   const top = Math.max(0, ...closed.map((r) => num(r.eur.payroll)));
   const lastIdx = top > 0 ? closed.reduce((last, r, i) => (num(r.eur.payroll) >= top / 2 ? i : last), -1) : -1;
   const shown = closed.slice(0, lastIdx + 1);
-  const heads = spans ? headcountByMonth(spans, shown.map((r) => r.mKey)) : null;
+  const kept = spans ? spans.filter((s) => !isExcludedGroup(s.group, exclude)) : null;
+  const heads = kept ? headcountByMonth(kept, shown.map((r) => r.mKey)) : null;
   const months = shown.map((r) => {
     const payroll = num(r.eur.payroll);
     const revenue = num(r.eur.totalRevenue);
@@ -463,6 +489,7 @@ function peopleMetrics(rows, spans, company) {
   const n = months.length;
   return {
     company,
+    excluded: spans ? excludedNames(spans.filter((s) => isExcludedGroup(s.group, exclude)).map((s) => s.group)) : [],
     through: n ? months[n - 1].mKey : null,
     pending: closed.slice(lastIdx + 1).map((r) => r.mKey),
     months,
@@ -831,4 +858,5 @@ module.exports = {
   createMetricsHandler, createMetricsSettingsHandler, createMetricsDepositsHandler,
   buildMetrics, buildDetail, nrrSeries, nrrDetail, churnQuarterDetail, churnYtdDetail, churnForecastDetail, DETAILS,
   shiftMonth, lastClosedMonth, cloudTargetsOf, headcountByMonth, peopleMetrics, employedOn, lastDayOf, sfEmployeeSpans,
+  EXCLUDED_GROUPS, excludedGroups, isExcludedGroup, excludedNames,
 };
