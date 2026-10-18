@@ -10,7 +10,7 @@ import { projectedMonths } from '../forecast/salary-projection.mjs';
 import { monthLongLabel, type Accent, type Column } from '../new-dashboard/model.ts';
 import type { YearView } from '../new-dashboard/types.ts';
 import { fetchSalaryProjection } from './api.ts';
-import { isSalaryBreakdownLine, salaryBreakdown } from './breakdown.ts';
+import { headcountBreakdown, isHeadcountBreakdownLine, isSalaryBreakdownLine, salaryBreakdown } from './breakdown.ts';
 import { useClassification } from './classification.ts';
 import ClassifyPanel from './ClassifyPanel.tsx';
 import HeadcountSection from './HeadcountSection.tsx';
@@ -80,8 +80,10 @@ export default function SalaryProjection() {
   const closeBreakdown = useCallback(() => setOpenCell(null), []);
   const breakdownLines = useMemo(() => new Set(table ? table.lines.map((l) => l.key).filter(isSalaryBreakdownLine) : []), [table]);
   const sectionAccents = useMemo(() => new Set(table ? table.lines.flatMap((l) => (l.accent ? [l.accent] : [])) : []), [table]);
+  // One window for both tables: a headcount line answers in people, the others in the currency.
   const breakdownOf = useCallback<BreakdownFetcher>((req) => Promise.resolve<BreakdownResponse>(
-    shown ? salaryBreakdown(shown, req) : { ok: false, status: 'error', error: 'The projection is not loaded yet.' },
+    !shown ? { ok: false, status: 'error', error: 'The projection is not loaded yet.' }
+      : isHeadcountBreakdownLine(req.line) ? headcountBreakdown(shown, req) : salaryBreakdown(shown, req),
   ), [shown]);
 
   const hasLine = (key: string) => !!table && table.lines.some((l) => l.key === key);
@@ -253,7 +255,14 @@ export default function SalaryProjection() {
             </section>
 
             {headcountTable && data.headcount && (
-              <HeadcountSection table={headcountTable} headcount={data.headcount} computedMonth={data.computedMonth} ccy={ccy} />
+              <HeadcountSection
+                table={headcountTable}
+                headcount={data.headcount}
+                computedMonth={data.computedMonth}
+                ccy={ccy}
+                onOpenCell={onOpenCell}
+                activeCell={openCell ? openCell.id : null}
+              />
             )}
 
             {data.overrides && <OverridesSection payload={data} ccy={ccy} />}

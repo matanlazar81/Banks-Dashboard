@@ -683,9 +683,10 @@ function createSnowflakeClient(env) {
 
   // ── HiBob's planned headcount events (the Salary Projection's headcount forecast) ──
   // FCT_HEADCOUNT_EVENT rows from January fromYear, counted by month, EVENT_TYPE ('increase' / 'decrease'),
-  // EVENT_SUB_TYPE, whether the event is a known employee's (else an opening) and the opening's status. Events of
-  // a known employee count only when DIM_EMPLOYEE puts them in `company`; openings carry no company and all count.
-  // Counts only: no names, ids or costs. Returns [{ month, type, subType, employee, status, count }].
+  // EVENT_SUB_TYPE, whether the event is a known employee's (else an opening), the opening's status, the HiBob
+  // group (DEPARTMENT) and, for an opening only, its position (a role, not a person). Events of a known employee
+  // count only when DIM_EMPLOYEE puts them in `company`; openings carry no company and all count.
+  // Counts only: no names, ids or costs. Returns [{ month, type, subType, employee, status, department, position, count }].
   async function fetchHeadcountPlan(fromYear, company) {
     const from = parseInt(fromYear);
     if (!(from >= 2000 && from <= 2100)) throw new Error('fetchHeadcountPlan: invalid year');
@@ -696,13 +697,15 @@ function createSnowflakeClient(env) {
              h.EVENT_SUB_TYPE AS S,
              IFF(h.EMPLOYEE_ID IS NULL, 0, 1) AS HAS_EMPLOYEE,
              h.OPENING_STATUS AS STATUS,
+             h.DEPARTMENT AS DEPT,
+             IFF(h.EMPLOYEE_ID IS NULL, h.POSITION_NAME, NULL) AS POS,
              COUNT(*) AS N
       FROM ${T_FCT_HEADCOUNT_EVENT} h
       WHERE h.EVENT_MONTH_DATE >= '${from}-01-01'
         AND (h.EMPLOYEE_ID IS NULL
              OR h.EMPLOYEE_ID IN (SELECT e.EMPLOYEE_ID FROM ${T_DIM_EMPLOYEE} e WHERE e.COMPANY_NAME = ?))
-      GROUP BY 1, 2, 3, 4, 5
-      ORDER BY 1, 2, 3, 4, 5
+      GROUP BY 1, 2, 3, 4, 5, 6, 7
+      ORDER BY 1, 2, 3, 4, 5, 6, 7
     `, [String(company || '')]);
     return rows.map(r => ({
       month: String(r.M || ''),
@@ -710,6 +713,8 @@ function createSnowflakeClient(env) {
       subType: String(r.S || ''),
       employee: Number(r.HAS_EMPLOYEE) === 1,
       status: r.STATUS ? String(r.STATUS) : '',
+      department: r.DEPT ? String(r.DEPT) : '',
+      position: r.POS ? String(r.POS) : '',
       count: Number(r.N) || 0,
     }));
   }

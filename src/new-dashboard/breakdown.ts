@@ -65,6 +65,8 @@ export interface BreakdownReady {
   generatedAt: string;
   /** Present on a by-department answer: the account row it splits (cell = that row's amount). */
   account?: { acct: string; name: string; link: string | null; of: string };
+  /** 'count': the figures are people, not amounts in the currency. */
+  unit?: 'count';
 }
 
 export type BreakdownResponse = BreakdownReady | { ok: true; status: 'computing' } | { ok: false; status: 'error'; error: string };

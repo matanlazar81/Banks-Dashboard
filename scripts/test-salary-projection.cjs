@@ -670,27 +670,27 @@ const DEEL = {
 };
 // HiBob: employees with their dates (no names), and planned events by month, type, sub-type, employee and status.
 const SPANS = [
-  { start: '2019-01-01', end: null, type: 'Full-time' },
-  { start: '2025-11-15', end: null, type: 'Full-time' },
-  { start: '2024-02-01', end: mk(Y, 3) + '-31', type: 'Full-time' }, // employed at the end of March, gone in April
-  { start: mk(Y, 5) + '-10', end: null, type: 'Student' },
-  { start: '2023-01-01', end: mk(Y, 10) + '-05', type: 'Full-time' }, // left in the current month
-  { start: mk(Y, 10) + '-01', end: null, type: 'Full-time' }, // joined in the current month
-  { start: mk(Y, 12) + '-01', end: null, type: 'Full-time' }, // signed, starts in December
-  { start: '2022-01-01', end: mk(T, 1) + '-31', type: 'Full-time' }, // leaving at the end of January next year
+  { start: '2019-01-01', end: null, type: 'Full-time', group: 'R&D' },
+  { start: '2025-11-15', end: null, type: 'Full-time', group: 'Sales' },
+  { start: '2024-02-01', end: mk(Y, 3) + '-31', type: 'Full-time', group: 'R&D' }, // employed at the end of March, gone in April
+  { start: mk(Y, 5) + '-10', end: null, type: 'Student', group: 'R&D' },
+  { start: '2023-01-01', end: mk(Y, 10) + '-05', type: 'Full-time', group: 'Finance' }, // left in the current month
+  { start: mk(Y, 10) + '-01', end: null, type: 'Full-time', group: 'Sales' }, // joined in the current month
+  { start: mk(Y, 12) + '-01', end: null, type: 'Full-time', group: null }, // signed, starts in December (no group yet)
+  { start: '2022-01-01', end: mk(T, 1) + '-31', type: 'Full-time', group: 'Finance' }, // leaving at the end of January next year
 ];
 const EVENTS = [
-  { month: mk(Y, 4), type: 'decrease', subType: 'Terminated', employee: true, status: '', count: 1 },
-  { month: mk(Y, 6), type: 'increase', subType: 'Open position', employee: false, status: 'Open', count: 1 },
-  { month: mk(Y, 6), type: 'increase', subType: 'Open position', employee: false, status: 'Closed', count: 2 },
-  { month: mk(Y, 8), type: 'increase', subType: 'Leave end', employee: true, status: '', count: 1 },
-  { month: mk(Y, 10), type: 'decrease', subType: 'Terminated', employee: true, status: '', count: 1 },
-  { month: mk(Y, 11), type: 'increase', subType: 'Open position', employee: false, status: 'Approved', count: 2 },
-  { month: mk(Y, 12), type: 'increase', subType: 'Hired', employee: true, status: 'Filled', count: 1 },
-  { month: mk(Y, 12), type: 'increase', subType: 'Leave end', employee: true, status: '', count: 1 },
-  { month: mk(T, 2), type: 'decrease', subType: 'Leave start', employee: true, status: '', count: 1 },
-  { month: mk(T, 3), type: 'decrease', subType: 'Position cut', employee: false, status: '', count: 1 },
-  { month: mk(T, 4), type: 'transfer', subType: 'Moved', employee: false, status: '', count: 4 },
+  { month: mk(Y, 4), type: 'decrease', subType: 'Terminated', employee: true, status: '', department: 'R&D', position: '', count: 1 },
+  { month: mk(Y, 6), type: 'increase', subType: 'Open position', employee: false, status: 'Open', department: 'Sales', position: 'Account Manager', count: 1 },
+  { month: mk(Y, 6), type: 'increase', subType: 'Open position', employee: false, status: 'Closed', department: 'R&D', position: 'QA Engineer', count: 2 },
+  { month: mk(Y, 8), type: 'increase', subType: 'Leave end', employee: true, status: '', department: 'HR', position: '', count: 1 },
+  { month: mk(Y, 10), type: 'decrease', subType: 'Terminated', employee: true, status: '', department: 'Finance', position: '', count: 1 },
+  { month: mk(Y, 11), type: 'increase', subType: 'Open position', employee: false, status: 'Approved', department: 'R&D', position: 'Backend Developer', count: 2 },
+  { month: mk(Y, 12), type: 'increase', subType: 'Hired', employee: true, status: 'Filled', department: 'R&D', position: '', count: 1 },
+  { month: mk(Y, 12), type: 'increase', subType: 'Leave end', employee: true, status: '', department: 'R&D', position: '', count: 1 },
+  { month: mk(T, 2), type: 'decrease', subType: 'Leave start', employee: true, status: '', department: 'Sales', position: '', count: 1 },
+  { month: mk(T, 3), type: 'decrease', subType: 'Position cut', employee: false, status: '', department: 'Finance', position: 'Controller', count: 1 },
+  { month: mk(T, 4), type: 'transfer', subType: 'Moved', employee: false, status: '', department: '', position: '', count: 4 },
 ];
 const HEADCOUNT = { company: 'LSports', spans: SPANS, events: EVENTS, error: null };
 
@@ -750,7 +750,7 @@ async function testDeelAndHeadcount(payload) {
   check(m(mk(Y, 8)).returns === 1 && m(mk(Y, 12)).returns === 1 && m(mk(T, 2)).leaveStarts === 1 && m(mk(T, 4)).hires === 0 && m(mk(T, 4)).employees === 5,
     'returns from leave and leave starts are shown in their month but do not move the count; an unknown event type is left out');
   const json = JSON.stringify(p.headcount);
-  check(!('spans' in p.headcount) && !/2019-01-01|2025-11-15|Full-time|Student/.test(json), 'no employee detail in the payload: counts only');
+  check(!('spans' in p.headcount) && !/2019-01-01|2025-11-15|2024-02-01|employeeId|EMPLOYEE_ID/.test(json), 'no employee detail in the payload: counts only (by group and employment type at most)');
 
   const wErr = (await sp.buildSalaryProjection({ rows: syntheticRows(), now: NOW, deel: { vendors: [], rows: [], error: 'Deel could not be read.' }, headcount: { company: 'LSports', spans: null, events: [], error: 'HiBob failed.' } })).payload;
   check(wErr.warnings.includes('Deel could not be read.') && wErr.warnings.includes('HiBob failed.') && wErr.headcount.today === null && wErr.headcount.months.every((x) => x.employees === null),
@@ -873,6 +873,49 @@ async function testDeelAndHeadcount(payload) {
   check(noLeave.lines.map((l) => l.key).join(',') === 'hc-employees,hc-hires,hc-leavers' && noLeave.columns.length === 13 && model.buildHeadcountTable(wErr, 'both') === null
     && model.buildHeadcountTable(payload, 'both') === null,
     'no open positions or leave events: no such lines; follows the year view; no employees (or not read): no table');
+  console.log('\nHEADCOUNT: clicking a figure (src/salary-projection/breakdown.ts)');
+  const byOff = p.headcount.months.filter((x) => ['employees', 'hires', 'leavers'].some((f) => ['byDept', 'byType']
+    .some((k) => Object.values(x[k] || {}).reduce((s, c) => s + c[f], 0) !== x[f]))).map((x) => x.mKey);
+  check(!byOff.length && p.headcount.months.every((x) => x.byDept && x.byType)
+    && p.headcount.months.find((x) => x.mKey === mk(Y, 10)).byDept.Sales.hires === 1 && p.headcount.months.find((x) => x.mKey === mk(Y, 12)).byDept['No department'].hires === 1,
+    'every month carries its counts by HiBob group and employment type, adding up to the totals (no group: "No department")', byOff.join(','));
+  const placed = sm.placedHeadcountEvents(p.headcount.events, p.computedMonth);
+  check(JSON.stringify(placed.map((e) => [e.month, e.kind, e.count, e.carried])) === JSON.stringify([
+    [mk(Y, 10), 'openings', 1, true], [mk(Y, 8), 'returns', 1, false], [mk(Y, 11), 'openings', 2, false], [mk(Y, 12), 'returns', 1, false],
+    [mk(T, 2), 'leaveStarts', 1, false], [mk(T, 3), 'cuts', 1, false],
+  ]) && placed[0].position === 'Account Manager',
+    'placedHeadcountEvents: each event in the month the table shows it (June\'s open role in October, marked as carried)');
+  check(['hc-employees', 'hc-hires', 'hc-leavers', 'hc-openings', 'hc-cuts', 'hc-returns', 'hc-leave-starts'].every(bd.isHeadcountBreakdownLine) && !bd.isHeadcountBreakdownLine('hires'),
+    'every headcount line opens a breakdown');
+  const hcOff = [];
+  hcTable.lines.forEach((l) => hcTable.columns.forEach((c, i) => {
+    if (Math.abs(l.values[i]) < 1) return;
+    const r = bd.headcountBreakdown(p, { line: l.key, period: c.kind === 'fy' ? `FY-${c.year}` : c.mKey, variant: 'base', ccy: 'ils' });
+    if (r.status !== 'ready' || r.unit !== 'count' || r.cell !== l.values[i] || r.sections[0].total !== r.cell) hcOff.push(`${l.key} ${c.id}`);
+  }));
+  check(!hcOff.length, 'every headcount cell: the breakdown (in people) equals the cell, its first section adding up to it', hcOff.slice(0, 3).join('; '));
+  const hcAsk = (line, period) => bd.headcountBreakdown(p, { line, period, variant: 'base', ccy: 'ils' });
+  const sep = hcAsk('hc-employees', mk(Y, 9));
+  check(JSON.stringify(sep.sections.map((s) => s.id)) === JSON.stringify(['departments', 'types'])
+    && JSON.stringify(sep.sections[0].rows.map((r) => [r.label, r.amount])) === JSON.stringify([['Finance', 2], ['R&D', 2], ['Sales', 1]])
+    && JSON.stringify(sep.sections[1].rows.map((r) => [r.label, r.amount])) === JSON.stringify([['Full-time', 4], ['Student', 1]]),
+    'employees at the end of September: by department and by employment type');
+  const fyEmp = hcAsk('hc-employees', `FY-${Y}`);
+  const fyHires = hcAsk('hc-hires', `FY-${Y}`);
+  const fyLeavers = hcAsk('hc-leavers', `FY-${Y}`);
+  check(fyEmp.cell === 6 && fyEmp.sections[0].id === 'departments' && /December/.test(fyEmp.notes[0])
+    && fyHires.sections[0].id === 'months' && fyHires.cell === 3 && fyLeavers.cell === -2 && fyLeavers.sections[0].rows.every((r) => r.amount < 0),
+    'a full year: employees as at December; hires and leavers by month first (leavers negative, as in the table)');
+  const novOpen = hcAsk('hc-openings', mk(Y, 11));
+  const octOpen = hcAsk('hc-openings', mk(Y, 10));
+  check(novOpen.cell === 2 && novOpen.sections.map((s) => s.id).join(',') === 'departments,roles' && novOpen.sections[0].rows[0].hint === 'Backend Developer ×2'
+    && novOpen.sections[1].rows[0].label === 'Backend Developer · R&D' && /not counted/.test(novOpen.notes[0])
+    && /from an earlier month/.test(octOpen.sections[0].rows[0].hint),
+    'open positions: by department (hover: the roles) and by role; an earlier month\'s opening says so');
+  check(hcAsk('hc-hires', '2031-01').status === 'error' && hcAsk('760001', mk(Y, 10)).status === 'error'
+    && hcAsk('hc-employees', mk(Y, 9)).periodStatus === 'actual' && hcAsk('hc-employees', mk(Y, 10)).periodStatus === 'current',
+    'unknown periods and lines answer with an error; HiBob\'s own statuses');
+
   const kpis = model.computeSalaryKpis(p, 'ils');
   check(kpis.headcount && kpis.headcount.today === 5 && kpis.headcount.asOf === '2026-10-15'
     && JSON.stringify(kpis.headcount.yearEnd) === JSON.stringify([{ year: Y, value: 6 }, { year: T, value: 5 }]) && model.computeSalaryKpis(payload, 'ils').headcount === null,

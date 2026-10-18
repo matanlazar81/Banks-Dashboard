@@ -480,17 +480,18 @@ function peopleMetrics(rows, spans, company) {
   };
 }
 
-/** HiBob employees of one company with their start and leave dates (Snowflake; no names or ids). */
+/** HiBob employees of one company with their start and leave dates, type and group (Snowflake; no names or ids). */
 async function sfEmployeeSpans(sf, company) {
   const T = require(path.join(ROOT, 'snowflake-api.cjs')).SF_TABLES;
   const rows = await sf.query(`
     SELECT TO_VARCHAR(START_DATE, 'YYYY-MM-DD') AS S,
            TO_VARCHAR(TERMINATION_DATE, 'YYYY-MM-DD') AS E,
-           EMPLOYMENT_TYPE AS T
+           EMPLOYMENT_TYPE AS T,
+           EMPLOYEE_GROUP AS G
     FROM ${T.DIM_EMPLOYEE}
     WHERE COMPANY_NAME = ? AND START_DATE IS NOT NULL
   `, [company]);
-  return rows.map((r) => ({ start: String(r.S || ''), end: r.E ? String(r.E) : null, type: r.T ? String(r.T) : null }));
+  return rows.map((r) => ({ start: String(r.S || ''), end: r.E ? String(r.E) : null, type: r.T ? String(r.T) : null, group: r.G ? String(r.G) : null }));
 }
 
 // ── the pack ────────────────────────────────────────────────────────────────

@@ -7,7 +7,10 @@
 //   total-increments / total-overrides by account and department
 //   deel|ACCT / total-deel            an actual month by vendor (the total also by account); a forecast month by
 //                                     the months its run-rate averages; a year by month (the total also by account)
-import { countedChangeRows, countedIncrementRows, deelByMonth, deelRunRate } from '../forecast/salary-projection.mjs';
+// The headcount table's cells (headcountBreakdown), in people:
+//   hc-employees / hc-hires / hc-leavers  by HiBob group (department) and employment type; a year by month too
+//   hc-openings and HiBob's other events  by department (open positions with their roles); a year by month too
+import { countedChangeRows, countedIncrementRows, deelByMonth, deelRunRate, placedHeadcountEvents } from '../forecast/salary-projection.mjs';
 import type { BreakdownReady, BreakdownRequest, BreakdownResponse, BreakdownRow, BreakdownSection } from '../new-dashboard/breakdown.ts';
 import { monthLongLabel } from '../new-dashboard/model.ts';
 import { deelRateText, SOURCE_KEY, SOURCE_LINE, SOURCES } from './model.ts';
@@ -208,4 +211,110 @@ export function salaryBreakdown(payload: SalaryPayload, req: BreakdownRequest): 
   }
 
   return fail('This line has no breakdown.');
+}
+
+// ── The headcount table (HiBob), in people ──
+type HeadcountField = 'employees' | 'hires' | 'leavers';
+type HeadcountEventKind = 'openings' | 'cuts' | 'returns' | 'leaveStarts';
+const HEADCOUNT_LINES: Record<string, { label: string; field?: HeadcountField; kind?: HeadcountEventKind; sign: 1 | -1 }> = {
+  'hc-employees': { label: 'Employees at month-end', field: 'employees', sign: 1 },
+  'hc-hires': { label: 'Hires', field: 'hires', sign: 1 },
+  'hc-leavers': { label: 'Leavers', field: 'leavers', sign: -1 },
+  'hc-openings': { label: 'Open positions (not counted)', kind: 'openings', sign: 1 },
+  'hc-cuts': { label: 'Planned leavers, no employee (not counted)', kind: 'cuts', sign: 1 },
+  'hc-returns': { label: 'Returns from leave', kind: 'returns', sign: 1 },
+  'hc-leave-starts': { label: 'Leave starts', kind: 'leaveStarts', sign: 1 },
+};
+
+/** Lines of the headcount table whose cells open a breakdown: all of them. */
+export function isHeadcountBreakdownLine(key: string): boolean {
+  return key in HEADCOUNT_LINES;
+}
+
+const deptName = (d: string) => d || 'No department';
+
+/**
+ * The breakdown of one cell of the headcount table, in people (unit 'count'): employees, hires and leavers by HiBob
+ * group (department) and employment type, HiBob's events by department (open positions with their roles); a full
+ * year also by month. The first section adds up to the cell. Counts only: no names.
+ */
+export function headcountBreakdown(payload: SalaryPayload, req: BreakdownRequest): BreakdownResponse {
+  const fail = (error: string): BreakdownResponse => ({ ok: false, status: 'error', error });
+  const def = HEADCOUNT_LINES[req.line];
+  const hc = payload.headcount;
+  if (!def || !hc) return fail('This line has no breakdown.');
+  const fy = /^FY-(\d{4})$/.exec(req.period);
+  const months = hc.months.filter((m) => (fy ? m.mKey.startsWith(`${fy[1]}-`) : m.mKey === req.period));
+  if (!months.length) return fail('This period is not in the projection.');
+  const base = {
+    ok: true as const, status: 'ready' as const, line: req.line, lineLabel: def.label, period: req.period,
+    periodLabel: fy ? `FY ${fy[1]}` : monthLongLabel(req.period), periodStatus: (fy ? 'fy' : months[0].status) as BreakdownReady['periodStatus'],
+    ccy: req.ccy, generatedAt: payload.generatedAt, unit: 'count' as const,
+  };
+  const byMonth = (valueOf: (mKey: string) => number) => section('months', 'By month', null, months
+    .map((m) => item(`month|${m.mKey}`, monthLongLabel(m.mKey), valueOf(m.mKey)))
+    .filter((r) => r.amount !== 0));
+  const counted = (map: Record<string, number>, keyPrefix: string, labelOf: (k: string) => string, hints: Record<string, string> = {}) => Object.entries(map)
+    .filter(([, n]) => n !== 0)
+    .map(([k, n]) => item(`${keyPrefix}${k}`, labelOf(k), n, { hint: hints[k] ?? null }))
+    .sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount) || a.label.localeCompare(b.label));
+
+  // Employees, hires and leavers: HiBob's employees by their dates.
+  if (def.field) {
+    const field = def.field;
+    // A year of employees is its December, as the table's full-year column.
+    const picked = field === 'employees' && fy ? [months[months.length - 1]] : months;
+    const cell = def.sign * picked.reduce((s, m) => s + (m[field] ?? 0), 0);
+    const sumOf = (key: 'byDept' | 'byType') => {
+      const out: Record<string, number> = {};
+      for (const m of picked) for (const [k, c] of Object.entries(m[key] ?? {})) out[k] = (out[k] ?? 0) + def.sign * c[field];
+      return out;
+    };
+    if (!picked.some((m) => m.byDept)) return fail('Refresh the page for the headcount by department.');
+    const depts = section('departments', 'By department', 'HiBob groups.', counted(sumOf('byDept'), 'dept|', deptName));
+    const types = section('types', 'By employment type', null, counted(sumOf('byType'), 'type|', (k) => k));
+    const sections = fy && field !== 'employees'
+      ? [byMonth((mKey) => def.sign * (months.find((m) => m.mKey === mKey)?.[field] ?? 0)), depts, types]
+      : [depts, types];
+    return {
+      ...base, cell, sections,
+      notes: [
+        `HiBob (${hc.company}): employees by their start and leave dates, signed hires and people leaving included${field === 'employees' && fy ? '; a full year shows its December' : ''}. Counts only, no names.`,
+      ],
+    };
+  }
+
+  // HiBob's events, placed in the months the table shows them.
+  const kind = def.kind as HeadcountEventKind;
+  const inPeriod = new Set(months.map((m) => m.mKey));
+  const events = placedHeadcountEvents(hc.events, payload.computedMonth).filter((e) => e.kind === kind && inPeriod.has(e.month));
+  const cell = events.reduce((s, e) => s + e.count, 0);
+  if (!cell) return fail('Nothing to show for this cell.');
+  const byDept: Record<string, number> = {};
+  const roles: Record<string, string[]> = {};
+  for (const e of events) {
+    byDept[e.department] = (byDept[e.department] ?? 0) + e.count;
+    if (e.position) (roles[e.department] ??= []).push(`${e.position}${e.count > 1 ? ` ×${e.count}` : ''}${e.carried ? ' (from an earlier month)' : ''}`);
+  }
+  const hints = Object.fromEntries(Object.entries(roles).map(([d, list]) => [d, list.join('; ')]));
+  const depts = section('departments', 'By department', kind === 'openings' ? 'Hover a department for its roles.' : 'HiBob groups.', counted(byDept, 'dept|', deptName, hints));
+  const sections = [
+    ...(fy ? [byMonth((mKey) => events.filter((e) => e.month === mKey).reduce((s, e) => s + e.count, 0))] : []),
+    depts,
+  ];
+  if (kind === 'openings') {
+    const byRole: Record<string, number> = {};
+    for (const e of events) {
+      const k = `${e.position || 'Role not given'} · ${deptName(e.department)}`;
+      byRole[k] = (byRole[k] ?? 0) + e.count;
+    }
+    sections.push(section('roles', 'By role', null, counted(byRole, 'role|', (k) => k)));
+  }
+  const what: Record<HeadcountEventKind, string> = {
+    openings: 'HiBob\'s open positions (FCT_HEADCOUNT_EVENT): roles with no employee yet. Shown, not counted: the headcount is HiBob\'s employees. Openings from earlier months still open show in the current month.',
+    cuts: 'HiBob\'s planned leavers with no employee named yet (FCT_HEADCOUNT_EVENT). Shown, not counted.',
+    returns: 'HiBob\'s returns from leave. People on leave are employees, so the count does not move.',
+    leaveStarts: 'HiBob\'s leave starts. People on leave are employees, so the count does not move.',
+  };
+  return { ...base, cell, sections, notes: [what[kind]] };
 }
