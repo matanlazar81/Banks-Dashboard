@@ -235,6 +235,29 @@ function testPeople() {
     'employees unavailable: payroll / revenue still shows, revenue per employee is empty with a warning');
   const none = m.peopleMetrics(pnlPayload().variants.plan.years[1].rows, EXTRAS.employees, 'LSports');
   check(none.months.length === 0 && none.ytd === null && none.through === null, 'no closed month yet: nothing to show');
+
+  // HiBob's Bringits department: 20 people who left in May, one still here (two spellings).
+  const rowsY = pnlPayload().variants.plan.years[0].rows;
+  const bringits = [
+    ...Array.from({ length: 20 }, () => ({ start: '2020-01-01', end: '2026-05-20', type: 'Full Time', group: 'BRINGITS' })),
+    { start: '2022-01-01', end: null, type: 'Full Time', group: 'Bringits' },
+  ];
+  const plain = m.peopleMetrics(rowsY, EXTRAS.employees, 'LSports');
+  const withB = m.peopleMetrics(rowsY, [...EXTRAS.employees, ...bringits], 'LSports');
+  check(JSON.stringify(withB.months) === JSON.stringify(plain.months) && JSON.stringify(withB.ytd) === JSON.stringify(plain.ytd)
+    && JSON.stringify(withB.excluded) === '["BRINGITS"]' && JSON.stringify(plain.excluded) === '[]' && JSON.stringify(build().people.excluded) === '[]',
+    'HiBob\'s Bringits department is left out of the employees, any case, as on the Salary Projection: the figures do not move; the payload names it');
+  const prevExclude = process.env.HEADCOUNT_EXCLUDE_GROUPS;
+  process.env.HEADCOUNT_EXCLUDE_GROUPS = '';
+  let all;
+  try {
+    all = m.peopleMetrics(rowsY, [...EXTRAS.employees, ...bringits], 'LSports');
+  } finally {
+    if (prevExclude === undefined) delete process.env.HEADCOUNT_EXCLUDE_GROUPS; else process.env.HEADCOUNT_EXCLUDE_GROUPS = prevExclude;
+  }
+  check(all.months[0].headcount === plain.months[0].headcount + 21 && all.months[5].headcount === plain.months[5].headcount + 1 && all.excluded.length === 0
+    && m.isExcludedGroup('Bringits R&D') && !m.isExcludedGroup('R&D') && !m.isExcludedGroup(null),
+    'HEADCOUNT_EXCLUDE_GROUPS replaces the list (empty counts everyone); a department matches when its name contains it');
 }
 
 function testWarnings() {

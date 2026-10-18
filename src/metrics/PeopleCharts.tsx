@@ -139,7 +139,8 @@ export default function PeopleCharts({ people }: { people: People }) {
             ? <ColumnChart columns={perHeadCols} format={people$} label="Revenue per employee a month, by month and the year-to-date average" />
             : <p className="py-6 text-sm text-slate-500">Employees could not be read from HiBob right now.</p>}
           <p className="mt-1 text-[11px] text-slate-500">
-            Employees: {people.company || 'the company'}&apos;s employees in HiBob active at each month-end (any employment type).
+            Employees: {people.company || 'the company'}&apos;s employees in HiBob active at each month-end (any employment type)
+            {people.excluded && people.excluded.length ? `, without ${people.excluded.join(' and ')}` : ''}.
             The {ytd.label} column is the months&apos; revenue ÷ employee-months, so it compares with the months.
           </p>
         </div>

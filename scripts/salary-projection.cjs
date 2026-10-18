@@ -169,7 +169,7 @@ async function main() {
     const out = hc.excluded || { groups: [], today: 0 };
     console.log(out.groups.length
       ? `  Left out in every month: HiBob's ${out.groups.join(', ')} (${out.today} employee(s) today, and its planned events)`
-      : `  Left out: nothing (no HiBob department matches ${process.env.SALARY_PROJECTION_EXCLUDE_GROUPS === undefined ? '"bringits"' : `SALARY_PROJECTION_EXCLUDE_GROUPS="${process.env.SALARY_PROJECTION_EXCLUDE_GROUPS}"`})`);
+      : `  Left out: nothing (no HiBob department matches ${process.env.HEADCOUNT_EXCLUDE_GROUPS === undefined ? '"bringits"' : `HEADCOUNT_EXCLUDE_GROUPS="${process.env.HEADCOUNT_EXCLUDE_GROUPS}"`})`);
     if (hc.months.some((m) => m.employees !== null)) for (const block of payload.blocks) printHeadcount(payload, block);
     console.log(`\nHiBob's planned events from January ${payload.years[0]} (FCT_HEADCOUNT_EVENT), by type, sub-type, employee and opening status, and how each counts:`);
     const kinds = new Map();
