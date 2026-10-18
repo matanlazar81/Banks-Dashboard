@@ -922,6 +922,87 @@ async function testDeelAndHeadcount(payload) {
     'KPI: headcount today and at the end of each year; none without HiBob');
 }
 
+async function testCharts(payload) {
+  console.log('\nCHARTS: the Charts view\'s data (src/salary-projection/charts.ts)');
+  const model = await import(pathToFileURL(path.join(ROOT, 'src', 'salary-projection', 'model.ts')).href);
+  const charts = await import(pathToFileURL(path.join(ROOT, 'src', 'salary-projection', 'charts.ts')).href);
+  const { payload: p } = await sp.buildSalaryProjection({ rows: syntheticRows(), now: NOW, deel: DEEL, headcount: HEADCOUNT });
+  const lineAt = (table, key, mKey) => table.lines.find((l) => l.key === key).values[table.columns.findIndex((c) => c.id === mKey)];
+  const sumOf = (point, keys) => keys.reduce((s, k) => s + point[k], 0);
+
+  const table = model.buildSalaryTable(p, 'ils', 'both');
+  const { series, points } = charts.payrollChart(table);
+  const keys = series.map((s) => s.key);
+  check(JSON.stringify(keys) === JSON.stringify(['permanent', 'temporary', 'other', 'deel']) && JSON.stringify(series.map((s) => s.accent)) === JSON.stringify(['sky', 'emerald', 'slate', 'pink']),
+    'payroll chart: the table\'s sections in its order, Deel on top, each in its section\'s colour; only the sections with amounts', keys.join(','));
+  check(points.length === 24 && points.every((pt) => pt.label === table.columns.find((c) => c.id === pt.mKey).label)
+    && points.filter((pt) => !pt.projected).map((pt) => pt.mKey).join(',') === range(1, 9).map((m) => mk(Y, m)).join(',')
+    && points.find((pt) => pt.mKey === mk(Y, 10)).status === 'current',
+    'one point per month (no full-year columns); January to September actual, the current month and the forecast projected (faded)');
+  const off = points.filter((pt) => !near(sumOf(pt, ['permanent', 'temporary', 'other']), pt.payroll, 0.05) || !near(sumOf(pt, keys), pt.total, 0.05)
+    || !near(pt.total, lineAt(table, 'payroll-deel', pt.mKey), 0.05) || pt.deel !== lineAt(table, 'total-deel', pt.mKey) || pt.changes !== 0).map((pt) => pt.mKey);
+  check(!off.length, 'every month: the sections add up to Total payroll, and with Deel to the column (Payroll + Deel), as in the table', off.slice(0, 3).join(','));
+  const eur = charts.payrollChart(model.buildSalaryTable(p, 'eur', 'current'));
+  check(eur.points.length === 12 && eur.points[0].permanent === lineAt(model.buildSalaryTable(p, 'eur', 'current'), 'total-permanent', mk(Y, 1)) && eur.points[0].permanent < points[0].permanent,
+    'the currency and year view of the table: euros, the current year only');
+
+  const gross = { acct: '760001', name: 'Gross Salaries' };
+  const rate = payload.basis.ilsPerEur;
+  const changes = sp.changesOf({ error: null, rows: [
+    { ...gross, month: mk(Y, 10), source: 'Terminated', department: 'R&D', actual: true, eur: -22_000, ils: -80_000 },
+    { ...gross, month: mk(Y, 12), source: 'Open position', department: 'Sales', actual: true, eur: 23_000, ils: 85_000 },
+    { ...gross, month: mk(Y, 11), source: 'Terminated', department: 'R&D', actual: false, eur: -50_000, ils: -185_000 },
+  ] }, Y, rate);
+  const overrides = sp.overridesOf({ error: null, rows: [
+    { ...gross, month: mk(T, 2), department: 'R&D', mode: 'Increment', eur: 1_300, ils: 5_000, memo: '' },
+    { ...gross, month: mk(Y, 12), department: 'Sales', mode: 'Override', eur: 50_000, ils: 185_000, memo: '' },
+  ] }, Y, rate);
+  const planned = { ...payload, changes, overrides };
+  const both = charts.payrollChart(model.buildSalaryTable(planned, 'ils', 'both'));
+  const oct = both.points.find((pt) => pt.mKey === mk(Y, 10));
+  const pOff = both.points.filter((pt) => !near(sumOf(pt, both.series.map((s) => s.key)), pt.total, 0.05) || pt.total !== pt.payroll).map((pt) => pt.mKey);
+  check(JSON.stringify(both.series.map((s) => s.key)) === JSON.stringify(['permanent', 'changes', 'increments', 'temporary', 'other']) && !pOff.length
+    && oct.changes === -80_000 && both.points.find((pt) => pt.mKey === mk(Y, 11)).changes === 0 && both.points.find((pt) => pt.mKey === mk(T, 2)).increments === 5_000,
+    'planned changes: Headcount changes and Override increments between permanent and temporary, as counted in Total payroll (a leaver below zero, FALSE rows and overrides not drawn); the column is Total payroll', pOff.join(','));
+  check(!charts.payrollChart(model.buildSalaryTable(planned, 'ils', 'next')).series.some((s) => s.key === 'changes')
+    && charts.payrollChart(model.buildSalaryTable(planned, 'ils', 'next')).series.some((s) => s.key === 'increments')
+    && !charts.payrollChart(model.buildSalaryTable(planned, 'ils', 'current')).series.some((s) => s.key === 'increments'),
+    'a section with no amount in the years shown is not drawn (no legend entry)');
+
+  const hcTable = model.buildHeadcountTable(p, 'both');
+  const { points: hc, employeesAxis, movesAxis } = charts.headcountChart(hcTable, p.headcount);
+  const hOff = hc.filter((pt) => pt.employees !== lineAt(hcTable, 'hc-employees', pt.mKey) || pt.hires !== lineAt(hcTable, 'hc-hires', pt.mKey)
+    || pt.leavers !== lineAt(hcTable, 'hc-leavers', pt.mKey) || pt.openings !== lineAt(hcTable, 'hc-openings', pt.mKey)).map((pt) => pt.mKey);
+  check(hc.length === 24 && !hOff.length && hc.find((pt) => pt.mKey === mk(Y, 4)).leavers === -1,
+    'headcount chart: employees at month-end, hires, leavers (negative) and open positions, as in the headcount table', hOff.join(','));
+  const sep = hc.find((pt) => pt.mKey === mk(Y, 9));
+  check(hc.filter((pt) => pt.employeesActual !== null).length === 9 && sep.employeesActual === 5 && sep.employeesProjected === 5
+    && hc.filter((pt) => pt.employeesProjected !== null).length === 16 && hc.find((pt) => pt.mKey === mk(Y, 8)).employeesProjected === null,
+    'the line: actual months solid, projected ones dashed, joined at the last actual month-end');
+  const next = charts.headcountChart(model.buildHeadcountTable(p, 'next'), p.headcount).points;
+  const gap = charts.headcountChart(hcTable, { ...p.headcount, months: p.headcount.months.map((x) => (x.mKey === mk(Y, 5) ? { ...x, employees: null, hires: null, leavers: null } : x)) }).points;
+  const may = gap.find((pt) => pt.mKey === mk(Y, 5));
+  check(next.length === 12 && next.every((pt) => pt.projected && pt.employeesActual === null && pt.employeesProjected !== null)
+    && may.employees === null && may.employeesActual === null && may.hires === 0 && may.leavers === 0,
+    'only next year: all dashed; a month HiBob has no figure for is a gap, not 0');
+
+  check(charts.formatAxisMoney(4_250_000, 'ils') === '₪4.25M' && charts.formatAxisMoney(1_000_000, 'eur') === '€1M' && charts.formatAxisMoney(850_000, 'ils') === '₪850K'
+    && charts.formatAxisMoney(1_500, 'ils') === '₪1.5K' && charts.formatAxisMoney(-120_000, 'eur') === '−€120K' && charts.formatAxisMoney(0, 'ils') === '₪0' && charts.formatAxisMoney(999, 'ils') === '₪999',
+    'axis ticks: compact, in the currency');
+
+  const ax = (a) => `${a.domain.map((v) => +v.toFixed(2)).join('..')} [${a.ticks.join(',')}]`;
+  check(ax(charts.valueAxis(0, 7_000_000)) === '0..8000000 [0,2000000,4000000,6000000,8000000]' && ax(charts.valueAxis(-400_000, 7_000_000)) === '-460000..8000000 [0,2000000,4000000,6000000,8000000]'
+    && ax(charts.valueAxis(-3_000_000, 7_000_000)) === '-3450000..8000000 [-2000000,0,2000000,4000000,6000000,8000000]' && ax(charts.valueAxis(0, 5_900_000)) === '0..6000000 [0,2000000,4000000,6000000]'
+    && ax(charts.valueAxis(-1, 1, true)) === '-1..1 [-1,0,1]' && ax(charts.valueAxis(-3, 8, true)) === '-3.45..8 [-2,0,2,4,6,8]' && ax(charts.valueAxis(0, 0, true)) === '0..1 [0,1]',
+    'column axes: clean steps from zero; below zero only as far as the lowest column (a small dip takes no whole step); whole numbers for people', ax(charts.valueAxis(-400_000, 7_000_000)));
+  const bothKeys = both.series.map((s) => s.key);
+  const stacked = (pt, sign) => bothKeys.reduce((s, k) => s + (pt[k] * sign > 0 ? pt[k] : 0), 0);
+  const covers = both.points.every((pt) => stacked(pt, -1) >= both.axis.domain[0] && stacked(pt, 1) <= both.axis.domain[1]);
+  check(ax(charts.rangeAxis(170, 180)) === '165..185 [165,170,175,180,185]' && ax(charts.rangeAxis(175, 175)) === '174..176 [174,175,176]' && ax(charts.rangeAxis(4, 6)) === '3..7 [3,4,5,6,7]'
+    && ax(employeesAxis) === '3..7 [3,4,5,6,7]' && ax(movesAxis) === '-1..1 [-1,0,1]' && both.axis.domain[0] < 0 && covers,
+    'the line\'s axis: whole steps around the line, room above and below; each chart\'s axis covers its columns (above and below zero)', `${ax(employeesAxis)} ${ax(movesAxis)} ${ax(both.axis)}`);
+}
+
 async function main() {
   console.log('=== salary-projection checks (synthetic data) ===');
   const payload = await testPayload();
@@ -932,6 +1013,7 @@ async function main() {
   await testHandler(payload);
   await testModel(payload);
   await testDeelAndHeadcount(payload);
+  await testCharts(payload);
   if (process.argv.includes('--write-fixture')) {
     const file = path.join(__dirname, 'fixtures', 'salary-projection-sample.json');
     const overrides = sp.overridesOf({ error: null, rows: [
