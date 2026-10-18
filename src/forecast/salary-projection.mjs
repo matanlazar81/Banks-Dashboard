@@ -14,7 +14,8 @@
 // (countedIncrementRows) and Snowflake's hires, leavers and returns from leave (countedChangeRows). The
 // accounts' own figures leave them out.
 //
-// Below the payroll: Deel (NetSuite, by account: deelByMonth) and the headcount (HiBob: headcountSeries).
+// Below the payroll: Deel (NetSuite, by account, forecast at its last six months' average: deelByMonth) and the
+// headcount (HiBob's employees: headcountSeries).
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const SALARY_METHODS = ['run-rate', 'last-year', 'none'];
@@ -132,15 +133,20 @@ export function projectedMonths(blocks) {
 }
 
 // ── Deel ─────────────────────────────────────────────────────────────────────
+/** The months Deel's run-rate averages: the last six up to the run-rate month. */
+export const DEEL_RUN_RATE_MONTHS = 6;
+
 /**
- * Deel's monthly run-rate by account: the last three months up to runRateMonth that have Deel postings (looking
- * back 12 months at most), each account's sum over them ÷ their number. A bill booked a month late or a move to
- * another account leaves the total right.
+ * Deel's monthly run-rate by account: the average of the last six months up to runRateMonth (from Deel's first
+ * posting, when that is later), each account's sum over them ÷ their number. A month without a bill counts as 0,
+ * so a bill booked a month late, and the month that then holds two, average out; a move to another account
+ * leaves the total right.
  *   rows  [{ month: 'YYYY-MM', acct, eur, ils }] Deel's NetSuite costs (costs positive)
- * Returns { months: ['YYYY-MM', ...] (oldest first), byAcct: { [acct]: { eur, ils } } }.
+ * Returns { months: ['YYYY-MM', ...] (oldest first; none when Deel has no postings), byAcct: { [acct]: { eur, ils } } }.
  */
 export function deelRunRate(rows, runRateMonth) {
   const byMonth = new Map();
+  let first = null;
   for (const r of rows || []) {
     if (!r || !/^\d{4}-\d{2}$/.test(String(r.month)) || !(r.month <= runRateMonth)) continue;
     const accts = byMonth.get(r.month) || {};
@@ -148,15 +154,15 @@ export function deelRunRate(rows, runRateMonth) {
     a.eur += num(r.eur);
     a.ils += num(r.ils);
     byMonth.set(r.month, accts);
+    if (Math.abs(num(r.eur)) >= 0.5 || Math.abs(num(r.ils)) >= 0.5) first = first === null || r.month < first ? r.month : first;
   }
   const months = [];
-  for (let i = 0, m = runRateMonth; i < 12 && months.length < 3; i++, m = shiftMonth(m, -1)) {
-    const accts = byMonth.get(m);
-    if (accts && Object.values(accts).some((a) => Math.abs(a.eur) >= 0.5 || Math.abs(a.ils) >= 0.5)) months.push(m);
+  if (first !== null) {
+    for (let i = 0, m = runRateMonth; i < DEEL_RUN_RATE_MONTHS && m >= first; i++, m = shiftMonth(m, -1)) months.push(m);
   }
   const byAcct = {};
   for (const m of months) {
-    for (const [acct, a] of Object.entries(byMonth.get(m))) {
+    for (const [acct, a] of Object.entries(byMonth.get(m) || {})) {
       const s = byAcct[acct] || (byAcct[acct] = { eur: 0, ils: 0 });
       s.eur += a.eur / months.length;
       s.ils += a.ils / months.length;
@@ -194,13 +200,12 @@ export function deelByMonth(blocks, rows, runRateMonth) {
 
 // ── Headcount (HiBob) ────────────────────────────────────────────────────────
 /**
- * How a HiBob event (FCT_HEADCOUNT_EVENT) counts, or null for an unknown event type:
- *   'returns' / 'leaveStarts'  a sub-type about leave (e.g. 'Leave end'): shown, but people on leave are still
- *                              employees, so the count does not move
- *   'employee'                 an event of a known employee: HiBob's employees already hold it (their start and
- *                              leave dates), so it is not counted again
- *   'openings' / 'cuts'        an increase or decrease with no employee yet: a planned hire (an open position) or a
- *                              planned leaver HiBob's employees do not hold
+ * How a HiBob event (FCT_HEADCOUNT_EVENT) shows, or null for an unknown event type. None of them moves the count,
+ * which is HiBob's employees (their start and leave dates):
+ *   'returns' / 'leaveStarts'  a sub-type about leave (e.g. 'Leave end'): people on leave are still employees
+ *   'employee'                 an event of a known employee: HiBob's employees already hold it (their dates)
+ *   'openings' / 'cuts'        an increase or decrease with no employee yet: an open position, or a planned leaver
+ *                              HiBob's employees do not hold; shown, not counted
  */
 export function headcountKind(type, subType, employee) {
   const t = String(type || '').toLowerCase();
@@ -211,20 +216,20 @@ export function headcountKind(type, subType, employee) {
 }
 
 /**
- * Employees at each month-end, and who joined and left, over the projection's months.
+ * Employees at each month-end, and who joined and left, over the projection's months: HiBob's employees, as
+ * HiBob has them.
  *   months        'YYYY-MM' in order (the projection's)
  *   currentMonth  'YYYY-MM'
  *   known         { 'YYYY-MM': { employees, hires, leavers } } HiBob's employees from their start and leave dates,
  *                 future ones included (signed hires, people leaving): every month shown and the one before the
  *                 first (null when they could not be read)
  *   events        [{ month, type, subType, employee, status, count }] HiBob's planned events (FCT_HEADCOUNT_EVENT)
- * Months before the current one are HiBob's employees as they were. From the current month on, the same dates
- * (who is signed to start, who is leaving) plus what HiBob's employees do not hold yet: open positions (planned
- * hires with no employee) and planned leavers with no employee, from their month on. Openings planned for earlier
- * months and still open count in the current month. Leave events show in their month and do not move the count.
- * Returns [{ mKey, status, employees, hires, leavers, openings, returns, leaveStarts }]: hires and leavers include
- * the planned ones, openings is the open positions among the hires (employees, hires and leavers null where
- * HiBob's employees are missing).
+ * The count is HiBob's employees only: months before the current one as they were, later ones by the dates HiBob
+ * already holds (who is signed to start, who is leaving). HiBob's events are shown beside it and never move it:
+ * open positions and planned leavers with no employee from the current month on (openings planned for earlier
+ * months and still open, in the current month), and leave events in their month.
+ * Returns [{ mKey, status, employees, hires, leavers, openings, cuts, returns, leaveStarts }] (employees, hires
+ * and leavers null where HiBob's employees are missing).
  */
 export function headcountSeries({ months, currentMonth, known, events }) {
   const byMonth = new Map();
@@ -241,24 +246,13 @@ export function headcountSeries({ months, currentMonth, known, events }) {
     else if (kind === 'openings' && /^open/i.test(String(e.status || ''))) add(currentMonth, 'openings', n);
   }
   const dates = known || null;
-  let planned = 0;
   return (months || []).map((mKey) => {
     const p = byMonth.get(mKey) || { openings: 0, cuts: 0, returns: 0, leaveStarts: 0 };
     const k = dates ? dates[mKey] : null;
-    if (mKey < currentMonth) {
-      return {
-        mKey, status: 'actual',
-        employees: k ? num(k.employees) : null, hires: k ? num(k.hires) : null, leavers: k ? num(k.leavers) : null,
-        openings: 0, returns: p.returns, leaveStarts: p.leaveStarts,
-      };
-    }
-    planned += p.openings - p.cuts;
     return {
-      mKey, status: mKey === currentMonth ? 'current' : 'forecast',
-      employees: k ? num(k.employees) + planned : null,
-      hires: k ? num(k.hires) + p.openings : null,
-      leavers: k ? num(k.leavers) + p.cuts : null,
-      openings: p.openings, returns: p.returns, leaveStarts: p.leaveStarts,
+      mKey, status: mKey < currentMonth ? 'actual' : mKey === currentMonth ? 'current' : 'forecast',
+      employees: k ? num(k.employees) : null, hires: k ? num(k.hires) : null, leavers: k ? num(k.leavers) : null,
+      ...p,
     };
   });
 }

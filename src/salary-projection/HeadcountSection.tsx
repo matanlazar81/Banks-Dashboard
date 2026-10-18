@@ -1,6 +1,6 @@
-// The headcount under the payroll table: HiBob's employees at month-end with hires and leavers, month by month
-// (from their start and leave dates, future ones too, plus HiBob's open positions from the current month). People,
-// not money: the same columns and year view as the payroll table.
+// The headcount under the payroll table: HiBob's employees at month-end with hires and leavers, month by month,
+// from their start and leave dates (future ones too); HiBob's open positions are shown, not counted. People, not
+// money: the same columns and year view as the payroll table.
 import ProjectionTable, { type TableMarkers } from '../new-dashboard/ProjectionTable.tsx';
 import { monthLongLabel, type ProjectionTable as Table } from '../new-dashboard/model.ts';
 import type { Ccy, SalaryPayload } from './types.ts';
@@ -23,7 +23,7 @@ export default function HeadcountSection({ table, headcount, computedMonth, ccy 
         <h2 className="text-sm font-semibold text-slate-800">Headcount by month</h2>
         <span className="text-xs text-slate-500">
           HiBob ({headcount.company}){headcount.today !== null ? `: ${headcount.today.toLocaleString('en-US')} employees on ${asOf}` : ''}.
-          {' '}Employees by their start and leave dates in HiBob (signed hires and people leaving included); from {current}, plus HiBob's open positions. Hover a line for how it is counted.
+          {' '}HiBob's employees by their start and leave dates, signed hires and people leaving included. From {current}, HiBob's open positions are shown below the count, not in it. Hover a line for how it is counted.
         </span>
       </div>
       <ProjectionTable table={table} ccy={ccy} anchorDate={null} markers={MARKERS} unitLabel="People" />

@@ -88,7 +88,7 @@ export default function SalaryProjection() {
   const unclassified = shown ? shown.accounts.filter((a) => a.group === 'other') : [];
   const canClassify = !!(data && data.actual);
   const method = runRate
-    ? `Permanent: ${runRate} run-rate · Temporary: same month last year for ${data ? data.years[0] : ''}, 0 in ${data ? data.years[1] : ''}${notProjected.length ? ` · Not projected: ${notProjected.map((a) => a.acct).join(', ')}` : ''}${added ? ` · ${added.charAt(0).toUpperCase()}${added.slice(1)} added from the current month` : ''}${hasDeel ? ' · Deel: average of its last months' : ''}`
+    ? `Permanent: ${runRate} run-rate · Temporary: same month last year for ${data ? data.years[0] : ''}, 0 in ${data ? data.years[1] : ''}${notProjected.length ? ` · Not projected: ${notProjected.map((a) => a.acct).join(', ')}` : ''}${added ? ` · ${added.charAt(0).toUpperCase()}${added.slice(1)} added from the current month` : ''}${hasDeel ? ' · Deel: average of its last 6 months' : ''}`
     : '';
 
   async function onExport() {
@@ -251,8 +251,8 @@ export default function SalaryProjection() {
               ].filter(Boolean).join(' and ')}${hasChanges || hasIncrements ? ' are added to Total payroll from the current month on (closed months are NetSuite\'s actuals, which already include what happened)' : ''}${hasOverrides ? `${hasChanges || hasIncrements ? '; ' : ''}the override file's overrides, in italics, are for reference and not in Total payroll` : ''}.`}
               {changesFalse > 0 && ` Snowflake's payroll forecast also has ${changesFalse} planned hire, leaver or return row${changesFalse === 1 ? '' : 's'} from the current month on marked FALSE: ${changesFalse === 1 ? 'it is' : 'they are'} not counted. Only changes marked TRUE are added.`}
               {notProjected.length > 0 && ` Actuals only, not projected: ${notProjected.map((a) => `${a.acct} ${a.name}`).join(', ')}.`}
-              {hasDeel && ' Below Total payroll, Deel (people abroad) is its NetSuite costs on every account but payroll ones; forecast months carry the average of its last three months with postings. Payroll + Deel adds the two.'}
-              {headcountTable && ' The headcount is HiBob\'s: employees at each month-end, people on leave included, from their start and leave dates (signed hires and people leaving included). From the current month on it adds HiBob\'s open positions; returns from leave and leave starts (maternity and others), when HiBob has them, are shown but do not change it.'}
+              {hasDeel && ' Below Total payroll, Deel (people abroad) is its NetSuite costs on every account but payroll ones; forecast months carry the average of its last six months (a month without a bill counts as 0). Payroll + Deel adds the two.'}
+              {headcountTable && ' The headcount is HiBob\'s employees at each month-end, people on leave included, from their start and leave dates (signed hires and people leaving included). HiBob\'s open positions, and its returns from leave and leave starts (maternity and others) when it has them, are shown but do not change it.'}
               {' '}The current month is projected as a whole month. Forecasts are made in shekels; euros use the rate above.
               Use Permanent / temporary to change how an account is projected.
             </p>
