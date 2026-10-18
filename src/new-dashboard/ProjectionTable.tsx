@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Info } from 'lucide-react';
 import type { Ccy } from './types.ts';
-import { CCY_SYMBOL, formatFull, formatSignedThousands, formatThousands, monthLongLabel, type Column, type ProjectionTable as Table, type TableLine } from './model.ts';
+import { CCY_SYMBOL, formatCount, formatFull, formatSignedThousands, formatThousands, monthLongLabel, type Column, type ProjectionTable as Table, type TableLine } from './model.ts';
 import { BREAKDOWN_LINES } from './breakdown.ts';
 
 /** Which lines get the table's markers. The defaults are the cash projection's lines. */
@@ -55,7 +55,8 @@ interface CellProps {
 
 function Cell({ line, col, markers, value, ccy, anchorDate, prevClosingLabel, onOpen, active }: CellProps) {
   const emphasize = line.kind === 'balance' || line.kind === 'subtotal';
-  const k = Math.round(value / 1000);
+  const count = line.unit === 'count';
+  const k = count ? Math.round(value) : Math.round(value / 1000);
   const negativeBad = (markers.negativeLines.has(line.key) || line.kind === 'balance') && k < 0;
   const tone = line.signed
     ? (k > 0 ? 'text-emerald-700' : k < 0 ? 'text-rose-600' : '')
@@ -63,10 +64,10 @@ function Cell({ line, col, markers, value, ccy, anchorDate, prevClosingLabel, on
   const isAnchor = line.key === markers.anchorLine && col.status === 'current';
   const isRollForward = line.key === markers.rollForwardLine && col.rollForward;
   const where = col.kind === 'fy' ? `FY ${col.year}` : monthLongLabel(col.mKey!);
-  let title = `${line.label} · ${where}: ${formatFull(value, ccy)}`;
+  let title = `${line.label} · ${where}: ${count ? k.toLocaleString('en-US') : formatFull(value, ccy)}`;
   if (isAnchor && anchorDate) title += ` (re-anchored to the NetSuite bank balance of ${anchorDate})`;
   if (isRollForward && prevClosingLabel) title += ` (rolled forward: equals the ${prevClosingLabel} closing)`;
-  const text = line.signed ? formatSignedThousands(value) : formatThousands(value);
+  const text = count ? formatCount(value, line.signed) : line.signed ? formatSignedThousands(value) : formatThousands(value);
   return (
     <td
       className={`whitespace-nowrap px-2 py-1.5 text-right tabular-nums ${columnTone(col)} ${dividerClass(col)} ${emphasize ? 'font-semibold' : ''} ${tone} ${line.kind === 'note' ? 'text-xs text-slate-500' : ''} ${active ? 'outline outline-2 -outline-offset-2 outline-sky-500' : ''}`}
@@ -96,9 +97,11 @@ interface Props {
   /** Lines whose cells open a breakdown (default: the cash projection's). */
   breakdownLines?: ReadonlySet<string>;
   markers?: TableMarkers;
+  /** The label column's heading (default: '€ thousands' / '₪ thousands'). */
+  unitLabel?: string;
 }
 
-export default function ProjectionTable({ table, ccy, anchorDate, onOpenCell, activeCell, breakdownLines = BREAKDOWN_LINES, markers = CASH_MARKERS }: Props) {
+export default function ProjectionTable({ table, ccy, anchorDate, onOpenCell, activeCell, breakdownLines = BREAKDOWN_LINES, markers = CASH_MARKERS, unitLabel }: Props) {
   const scroller = useRef<HTMLDivElement>(null);
   const layoutKey = table.columns.map((c) => c.id).join('|');
 
@@ -127,7 +130,7 @@ export default function ProjectionTable({ table, ccy, anchorDate, onOpenCell, ac
               data-label-col="true"
               className={`sticky left-0 z-20 border-b border-slate-200 bg-white px-3 py-2 text-left align-bottom text-xs font-medium text-slate-500 ${LABEL_W}`}
             >
-              {CCY_SYMBOL[ccy]} thousands
+              {unitLabel ?? `${CCY_SYMBOL[ccy]} thousands`}
             </th>
             {table.groups.map((g, i) => (
               <th

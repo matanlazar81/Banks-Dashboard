@@ -7,8 +7,10 @@ export default function SalaryKpiStrip({ kpis, ccy }: { kpis: SalaryKpis; ccy: C
   const [current, next] = kpis.byYear;
   const through = kpis.ytd.through;
   const withChanges = (note: string, changes: number) => (Math.abs(changes) >= 0.5 ? `${note}, incl. ${formatFull(changes, ccy)} of planned changes` : note);
+  const hc = kpis.headcount;
+  const yearEnd = hc ? hc.yearEnd.find((y): y is { year: number; value: number } => y.value !== null) : undefined;
   return (
-    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+    <div className={`grid grid-cols-2 gap-3 ${hc ? 'lg:grid-cols-5' : 'lg:grid-cols-4'}`}>
       <KpiCard
         label="Payroll year to date"
         value={through ? kpis.ytd.value : null}
@@ -23,6 +25,15 @@ export default function SalaryKpiStrip({ kpis, ccy }: { kpis: SalaryKpis; ccy: C
         ccy={ccy}
         note={`Per month, ${monthLongLabel(kpis.runRate.mKey)}`}
       />
+      {hc && (
+        <KpiCard
+          label="Headcount today"
+          value={hc.today}
+          ccy={ccy}
+          display={hc.today === null ? undefined : hc.today.toLocaleString('en-US')}
+          note={`HiBob, ${new Date(`${hc.asOf}T12:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}${yearEnd ? ` · Dec ${yearEnd.year}: ${yearEnd.value.toLocaleString('en-US')} forecast` : ''}`}
+        />
+      )}
     </div>
   );
 }

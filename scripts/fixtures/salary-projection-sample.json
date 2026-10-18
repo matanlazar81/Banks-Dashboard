@@ -1,8 +1,8 @@
 {
   "ok": true,
-  "schemaVersion": 9,
+  "schemaVersion": 10,
   "status": "ready",
-  "generatedAt": "2026-10-15T18:44:36.105Z",
+  "generatedAt": "2026-10-18T06:00:34.307Z",
   "computedMonth": "2026-10",
   "company": "lsports",
   "years": [
@@ -760,6 +760,390 @@
         "department": "Finance",
         "eur": -87000,
         "ils": -323000
+      }
+    ],
+    "error": null
+  },
+  "deel": {
+    "vendors": [
+      "Deel Inc. (synthetic)",
+      "Deel Ltd (synthetic)"
+    ],
+    "rows": [
+      {
+        "month": "2025-12",
+        "acct": "660004",
+        "name": "Contractors",
+        "vendor": "Deel Inc. (synthetic)",
+        "eur": 50000,
+        "ils": 200000
+      },
+      {
+        "month": "2026-01",
+        "acct": "660004",
+        "name": "Contractors",
+        "vendor": "Deel Inc. (synthetic)",
+        "eur": 60000,
+        "ils": 222000
+      },
+      {
+        "month": "2026-02",
+        "acct": "660004",
+        "name": "Contractors",
+        "vendor": "Deel Inc. (synthetic)",
+        "eur": 60000,
+        "ils": 222000
+      },
+      {
+        "month": "2026-03",
+        "acct": "660004",
+        "name": "Contractors",
+        "vendor": "Deel Inc. (synthetic)",
+        "eur": 60000,
+        "ils": 222000
+      },
+      {
+        "month": "2026-04",
+        "acct": "660004",
+        "name": "Contractors",
+        "vendor": "Deel Inc. (synthetic)",
+        "eur": 60000,
+        "ils": 222000
+      },
+      {
+        "month": "2026-05",
+        "acct": "660004",
+        "name": "Contractors",
+        "vendor": "Deel Inc. (synthetic)",
+        "eur": 60000,
+        "ils": 222000
+      },
+      {
+        "month": "2026-06",
+        "acct": "660004",
+        "name": "Contractors",
+        "vendor": "Deel Inc. (synthetic)",
+        "eur": 60000,
+        "ils": 222000
+      },
+      {
+        "month": "2026-07",
+        "acct": "660004",
+        "name": "Contractors",
+        "vendor": "Deel Inc. (synthetic)",
+        "eur": 60000,
+        "ils": 222000
+      },
+      {
+        "month": "2026-08",
+        "acct": "660004",
+        "name": "Contractors",
+        "vendor": "Deel Inc. (synthetic)",
+        "eur": 60000,
+        "ils": 222000
+      },
+      {
+        "month": "2026-08",
+        "acct": "660004",
+        "name": "Contractors",
+        "vendor": "Deel Ltd (synthetic)",
+        "eur": 10000,
+        "ils": 37000
+      }
+    ],
+    "onPayroll": [
+      {
+        "acct": "760001",
+        "name": "Gross Salaries"
+      }
+    ],
+    "error": null
+  },
+  "headcount": {
+    "company": "LSports",
+    "asOf": "2026-10-15",
+    "today": 4,
+    "months": [
+      {
+        "mKey": "2026-01",
+        "status": "actual",
+        "employees": 4,
+        "hires": 0,
+        "leavers": 0,
+        "returns": 0,
+        "leaveStarts": 0
+      },
+      {
+        "mKey": "2026-02",
+        "status": "actual",
+        "employees": 4,
+        "hires": 0,
+        "leavers": 0,
+        "returns": 0,
+        "leaveStarts": 0
+      },
+      {
+        "mKey": "2026-03",
+        "status": "actual",
+        "employees": 4,
+        "hires": 0,
+        "leavers": 0,
+        "returns": 0,
+        "leaveStarts": 0
+      },
+      {
+        "mKey": "2026-04",
+        "status": "actual",
+        "employees": 3,
+        "hires": 0,
+        "leavers": 1,
+        "returns": 0,
+        "leaveStarts": 0
+      },
+      {
+        "mKey": "2026-05",
+        "status": "actual",
+        "employees": 4,
+        "hires": 1,
+        "leavers": 0,
+        "returns": 0,
+        "leaveStarts": 0
+      },
+      {
+        "mKey": "2026-06",
+        "status": "actual",
+        "employees": 4,
+        "hires": 0,
+        "leavers": 0,
+        "returns": 0,
+        "leaveStarts": 0
+      },
+      {
+        "mKey": "2026-07",
+        "status": "actual",
+        "employees": 4,
+        "hires": 0,
+        "leavers": 0,
+        "returns": 0,
+        "leaveStarts": 0
+      },
+      {
+        "mKey": "2026-08",
+        "status": "actual",
+        "employees": 4,
+        "hires": 0,
+        "leavers": 0,
+        "returns": 1,
+        "leaveStarts": 0
+      },
+      {
+        "mKey": "2026-09",
+        "status": "actual",
+        "employees": 4,
+        "hires": 0,
+        "leavers": 0,
+        "returns": 0,
+        "leaveStarts": 0
+      },
+      {
+        "mKey": "2026-10",
+        "status": "current",
+        "employees": 4,
+        "hires": 1,
+        "leavers": 1,
+        "returns": 0,
+        "leaveStarts": 0
+      },
+      {
+        "mKey": "2026-11",
+        "status": "forecast",
+        "employees": 6,
+        "hires": 2,
+        "leavers": 0,
+        "returns": 0,
+        "leaveStarts": 0
+      },
+      {
+        "mKey": "2026-12",
+        "status": "forecast",
+        "employees": 6,
+        "hires": 0,
+        "leavers": 0,
+        "returns": 1,
+        "leaveStarts": 0
+      },
+      {
+        "mKey": "2027-01",
+        "status": "forecast",
+        "employees": 6,
+        "hires": 0,
+        "leavers": 0,
+        "returns": 0,
+        "leaveStarts": 0
+      },
+      {
+        "mKey": "2027-02",
+        "status": "forecast",
+        "employees": 6,
+        "hires": 0,
+        "leavers": 0,
+        "returns": 0,
+        "leaveStarts": 1
+      },
+      {
+        "mKey": "2027-03",
+        "status": "forecast",
+        "employees": 6,
+        "hires": 0,
+        "leavers": 0,
+        "returns": 0,
+        "leaveStarts": 0
+      },
+      {
+        "mKey": "2027-04",
+        "status": "forecast",
+        "employees": 6,
+        "hires": 0,
+        "leavers": 0,
+        "returns": 0,
+        "leaveStarts": 0
+      },
+      {
+        "mKey": "2027-05",
+        "status": "forecast",
+        "employees": 6,
+        "hires": 0,
+        "leavers": 0,
+        "returns": 0,
+        "leaveStarts": 0
+      },
+      {
+        "mKey": "2027-06",
+        "status": "forecast",
+        "employees": 6,
+        "hires": 0,
+        "leavers": 0,
+        "returns": 0,
+        "leaveStarts": 0
+      },
+      {
+        "mKey": "2027-07",
+        "status": "forecast",
+        "employees": 6,
+        "hires": 0,
+        "leavers": 0,
+        "returns": 0,
+        "leaveStarts": 0
+      },
+      {
+        "mKey": "2027-08",
+        "status": "forecast",
+        "employees": 6,
+        "hires": 0,
+        "leavers": 0,
+        "returns": 0,
+        "leaveStarts": 0
+      },
+      {
+        "mKey": "2027-09",
+        "status": "forecast",
+        "employees": 6,
+        "hires": 0,
+        "leavers": 0,
+        "returns": 0,
+        "leaveStarts": 0
+      },
+      {
+        "mKey": "2027-10",
+        "status": "forecast",
+        "employees": 6,
+        "hires": 0,
+        "leavers": 0,
+        "returns": 0,
+        "leaveStarts": 0
+      },
+      {
+        "mKey": "2027-11",
+        "status": "forecast",
+        "employees": 6,
+        "hires": 0,
+        "leavers": 0,
+        "returns": 0,
+        "leaveStarts": 0
+      },
+      {
+        "mKey": "2027-12",
+        "status": "forecast",
+        "employees": 6,
+        "hires": 0,
+        "leavers": 0,
+        "returns": 0,
+        "leaveStarts": 0
+      }
+    ],
+    "events": [
+      {
+        "month": "2026-04",
+        "type": "decrease",
+        "subType": "Terminated",
+        "open": false,
+        "count": 1
+      },
+      {
+        "month": "2026-06",
+        "type": "increase",
+        "subType": "Open position",
+        "open": true,
+        "count": 1
+      },
+      {
+        "month": "2026-06",
+        "type": "increase",
+        "subType": "Open position",
+        "open": false,
+        "count": 2
+      },
+      {
+        "month": "2026-08",
+        "type": "increase",
+        "subType": "Leave end",
+        "open": false,
+        "count": 1
+      },
+      {
+        "month": "2026-10",
+        "type": "decrease",
+        "subType": "Terminated",
+        "open": false,
+        "count": 1
+      },
+      {
+        "month": "2026-11",
+        "type": "increase",
+        "subType": "Open position",
+        "open": true,
+        "count": 2
+      },
+      {
+        "month": "2026-12",
+        "type": "increase",
+        "subType": "Leave end",
+        "open": false,
+        "count": 1
+      },
+      {
+        "month": "2027-02",
+        "type": "decrease",
+        "subType": "Leave start",
+        "open": false,
+        "count": 1
+      },
+      {
+        "month": "2027-03",
+        "type": "transfer",
+        "subType": "Moved",
+        "open": false,
+        "count": 4
       }
     ],
     "error": null

@@ -7,18 +7,20 @@ interface CardProps {
   ccy: Ccy;
   note: string;
   tone?: 'default' | 'warn';
+  /** Shown instead of the amount in millions (a value that is not money, e.g. a headcount). */
+  display?: string;
 }
 
-export function KpiCard({ label, value, ccy, note, tone = 'default' }: CardProps) {
+export function KpiCard({ label, value, ccy, note, tone = 'default', display }: CardProps) {
   const negative = value != null && value < 0;
   return (
     <div className="rounded-lg border border-slate-200 bg-white px-4 py-3">
       <div className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</div>
       <div
         className={`mt-1 text-2xl font-semibold tabular-nums ${negative || tone === 'warn' ? 'text-rose-600' : 'text-slate-900'}`}
-        title={value == null ? undefined : formatFull(value, ccy)}
+        title={value == null || display !== undefined ? undefined : formatFull(value, ccy)}
       >
-        {value == null ? '–' : formatMillions(value, ccy)}
+        {value == null ? '–' : display ?? formatMillions(value, ccy)}
       </div>
       <div className="mt-0.5 text-xs text-slate-500">{note}</div>
     </div>

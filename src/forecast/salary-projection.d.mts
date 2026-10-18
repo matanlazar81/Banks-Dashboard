@@ -43,3 +43,51 @@ export declare function countedChangeRows<R extends { month: string }>(
 ): R[];
 
 export declare function projectedMonths(blocks: { rows: { mKey: string; status: SalaryRow['status'] }[] }[]): Set<string>;
+
+/** Deel's costs by account (NetSuite, costs positive). */
+export interface DeelAmountRow {
+  month: string;
+  acct: string;
+  eur: number;
+  ils: number;
+}
+
+export declare function deelRunRate(rows: DeelAmountRow[], runRateMonth: string): { months: string[]; byAcct: AccountAmounts };
+
+export declare function deelByMonth(
+  blocks: { rows: { mKey: string; status: SalaryRow['status'] }[] }[],
+  rows: DeelAmountRow[],
+  runRateMonth: string,
+): Map<string, { eur: Record<string, number>; ils: Record<string, number> }>;
+
+export type HeadcountKind = 'hires' | 'leavers' | 'returns' | 'leaveStarts';
+
+/** HiBob's planned events (FCT_HEADCOUNT_EVENT), counted by month, type and sub-type. */
+export interface HeadcountEventCount {
+  month: string;
+  type: string;
+  subType: string;
+  /** An opening with no employee yet, still open. */
+  open: boolean;
+  count: number;
+}
+
+export interface HeadcountMonth {
+  mKey: string;
+  status: SalaryRow['status'];
+  /** Employees at month-end (null when HiBob's employees could not be read). */
+  employees: number | null;
+  hires: number | null;
+  leavers: number | null;
+  returns: number;
+  leaveStarts: number;
+}
+
+export declare function headcountKind(type: string, subType: string): HeadcountKind | null;
+
+export declare function headcountSeries(input: {
+  months: string[];
+  currentMonth: string;
+  actual: Record<string, { employees: number; hires: number; leavers: number }> | null;
+  events: HeadcountEventCount[];
+}): HeadcountMonth[];

@@ -118,17 +118,58 @@ the file's rows (collapsed): month, account, department, type (Override replaces
 month; Increment adds to it), amount and comment. Rows after December of the next year are only there, and a
 note counts them.
 
+**Deel** (people abroad), below Total payroll. Deel is booked in NetSuite as a vendor, not on the payroll
+accounts, so it is read by vendor (`fetchVendorSpend` in `netsuite-api.cjs`):
+- **The read.** Vendors whose name or ID contains "deel" (`DEEL_VENDOR`), LSports, by posting period, both books.
+  It takes their GL lines on expense accounts: the vendor on the transaction (bills) or on the line (journals).
+  It reads January of the previous year to December of the current one, in one call through the NetSuite queue.
+- **Payroll accounts are left out.** Deel posted on a payroll account (76xxxx) is already in Total payroll; the
+  Deel header names such accounts.
+- **Lines.** One line per account (e.g. 660004 Contractors), then **Total Deel**, then **Payroll + Deel**
+  (Total payroll + Total Deel). Total payroll itself is unchanged.
+- **Actual months** are NetSuite's as booked.
+- **Forecast months** use the run-rate (`deelRunRate` / `deelByMonth` in `src/forecast/salary-projection.mjs`):
+  the average of the last three months up to the last closed month that have Deel postings, looking back 12 months
+  at most. Each account gets its sum over those months, divided by their number, so a bill booked a month late, or
+  Deel moving to another account, leaves the total right.
+- **Clicking a Deel figure:**
+  - An actual month shows it by vendor; Total Deel also shows it by account.
+  - A forecast month shows the months it averages, each ÷ their number.
+  - A year shows it by month; Total Deel also shows it by account.
+
+**Headcount (HiBob)**, a table of its own under the payroll table (people, not money; the same columns and year
+view). It holds counts only: no names or IDs leave the server.
+- **The months before the current one** come from HiBob's employees in Snowflake (`DIM_EMPLOYEE`, read as the
+  Metrics page reads them: `sfEmployeeSpans` and `employedOn` in `server/metrics.cjs`, company
+  `METRICS_HEADCOUNT_COMPANY`, default LSports). Each month shows:
+  - **Employees at month-end**: people employed on the last day, people on leave included.
+  - **Hires**: people counted at this month-end but not the one before.
+  - **Leavers**: the reverse.
+- **From the current month on**, the previous month-end plus HiBob's planned events (`FCT_HEADCOUNT_EVENT`, counted
+  by month, type and sub-type in `fetchHeadcountPlan`; `headcountSeries` in `src/forecast/salary-projection.mjs`):
+  - **Hires**: an increase event. Openings planned for earlier months that are still open (no employee,
+    `OPENING_STATUS` Open) count in the current month, as the old dashboard carries them.
+  - **Leavers**: a decrease event.
+  - **Returns from leave and leave starts**: a sub-type about leave (e.g. `Leave end`, maternity). They are shown,
+    but they do not change the count: people on leave are employees.
+- **The FY column** shows employees in December, and hires and leavers summed.
+- **The KPI** "Headcount today" shows employees today and the December forecast.
+- **Money is unchanged.** Planned hires, leavers and returns from leave stay in Total payroll from Snowflake's
+  payroll forecast (above). Leave starts have no money in that forecast, so Total payroll does not change for them.
+
 **The page**
-- KPIs: payroll year to date, full-year payroll for each year (with the planned changes), and the permanent
-  monthly run-rate.
+- KPIs: payroll year to date, full-year payroll for each year (with the planned changes), the permanent
+  monthly run-rate, and the headcount today (HiBob).
 - The table: sections, each with a header row and a subtotal: **Permanent**, **Headcount changes** (hires,
   leavers, returns from leave; counted), **Override file** (increments counted, overrides for reference),
-  **Temporary** and, when there are any, **Not classified**; then the total payroll. Hovering a header says how
-  its section is projected. The Excel export keeps the headers as label-only rows.
-- Under the table: the override file's rows (above).
+  **Temporary** and, when there are any, **Not classified**; then the total payroll; then **Deel** and
+  **Payroll + Deel**. Hovering a header says how its section is projected. The Excel export keeps the headers as
+  label-only rows, and adds the headcount under the table.
+- Under the table: the headcount by month (above), then the override file's rows (above).
 - Controls: Permanent / temporary (the classification panel), ILS (default) or EUR, one year or both,
   Refresh, and Export (Excel, the table as shown).
-- Hovering an account shows how it is projected; clicking a planned-change figure opens its breakdown (above).
+- Hovering an account shows how it is projected; clicking a planned-change or Deel figure opens its breakdown
+  (above).
 
 Responses, caching and refresh work exactly like the P&L Projection (`createProjectionHandler` in
 `server/cash-projection.cjs`). The cache file is `data/salary-projection-cache.json`. The page has no plan,
@@ -192,15 +233,16 @@ and P&L Projection were added (`docs/metrics.md`, `docs/pnl-projection.md`).
 | `SALARY_PROJECTION_TIMEOUT_MIN` | `CASH_PROJECTION_TIMEOUT_MIN` (10) | A computation running longer is abandoned |
 | `SALARY_PROJECTION_PREWARM` | `CASH_PROJECTION_PREWARM` | `1` = compute 30 s after the server starts if the cache is empty |
 
-NetSuite settings are the server's usual `NETSUITE_*` variables (`NET_CASH_SUBSIDIARY`, default 3). Snowflake
-(`SNOWFLAKE_*`) is used for the planned changes (hires, leavers, returns from leave, the override file) and by
-`--reconcile`.
+NetSuite settings are the server's usual `NETSUITE_*` variables (`NET_CASH_SUBSIDIARY`, default 3); NetSuite
+also gives Deel. Snowflake (`SNOWFLAKE_*`) is used for the planned changes (hires, leavers, returns from leave,
+the override file), the headcount (HiBob; `METRICS_HEADCOUNT_COMPANY`, default LSports, shared with the Metrics
+page) and by `--reconcile`.
 
 ## Checking it
 
 ```bash
-node scripts/test-salary-projection.cjs          # synthetic: classification, last closed month, run-rate, same month last year, actuals only, €, cache, UI model, planned changes
-node scripts/salary-projection.cjs --dry-run     # real data (NetSuite)
+node scripts/test-salary-projection.cjs          # synthetic: classification, last closed month, run-rate, same month last year, actuals only, €, cache, UI model, planned changes, Deel, headcount
+node scripts/salary-projection.cjs --dry-run     # real data: also Deel's vendors, accounts and run-rate months, the headcount by month, and HiBob's event types with the line each counts in
 node scripts/salary-projection.cjs --reconcile   # real data: Snowflake vs NetSuite P&L, payroll accounts, closed months
 ```
 
@@ -222,3 +264,9 @@ node scripts/salary-projection.cjs --reconcile   # real data: Snowflake vs NetSu
   as a separate line.
 - Actuals are NetSuite's by posting period, so a late posting into a closed period appears on the next
   refresh.
+- Deel is found by vendor name ("deel"); a Deel vendor named otherwise is missed. The vendors found are named
+  in the Deel header and by `--dry-run`. Only LSports (subsidiary 3) is read.
+- The headcount forecast counts HiBob's planned events from the previous month-end, so it assumes the events
+  table also holds this month's changes that already happened. Openings carry no company, so all count;
+  events of known employees count only when HiBob puts them in the company. `--dry-run` shows today's headcount
+  next to the current month's forecast, and the event types found.

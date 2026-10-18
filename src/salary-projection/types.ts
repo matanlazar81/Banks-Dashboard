@@ -1,8 +1,8 @@
 // Response shapes of GET /api/salary-projection (server/salary-projection.cjs).
 import type { Ccy, ComputingResponse, ErrorResponse, MonthStatus } from '../new-dashboard/types.ts';
-import type { AccountAmounts, SalaryMethod } from '../forecast/salary-projection.mjs';
+import type { AccountAmounts, HeadcountEventCount, HeadcountMonth, SalaryMethod } from '../forecast/salary-projection.mjs';
 
-export type { Ccy, MonthStatus, SalaryMethod };
+export type { Ccy, HeadcountEventCount, HeadcountMonth, MonthStatus, SalaryMethod };
 
 /** Permanent, temporary, or not classified (projected like temporary until someone picks). */
 export type SalaryGroup = 'permanent' | 'temporary' | 'other';
@@ -49,6 +49,16 @@ export interface PayrollChange {
   ils: number;
 }
 
+/** Deel's NetSuite costs on one account, vendor and month (costs positive). */
+export interface DeelRow {
+  month: string;
+  acct: string;
+  name: string;
+  vendor: string;
+  eur: number;
+  ils: number;
+}
+
 export interface SalaryMonthRow {
   mKey: string;
   status: MonthStatus;
@@ -88,6 +98,25 @@ export interface SalaryPayload {
    * them to Total payroll from the current month on; a read failure is also in `warnings`.
    */
   changes?: { rows: PayrollChange[]; error: string | null };
+  /**
+   * Deel (NetSuite): the costs of the vendors named "deel", from January of the previous year, on every account
+   * but payroll ones (onPayroll lists those: already in Total payroll). The page shows them below Total payroll,
+   * forecast months at their run-rate (deelByMonth).
+   */
+  deel?: { vendors: string[]; rows: DeelRow[]; onPayroll: { acct: string; name: string }[]; error: string | null };
+  /**
+   * HiBob's headcount, counts only: employees today, and by month the employees at month-end with hires and
+   * leavers (HiBob's in months before the current one, its planned events from it), plus its planned events.
+   */
+  headcount?: {
+    company: string;
+    /** 'YYYY-MM-DD' of `today`. */
+    asOf: string;
+    today: number | null;
+    months: HeadcountMonth[];
+    events: HeadcountEventCount[];
+    error: string | null;
+  };
   degraded: boolean;
   failedFeeds: string[];
   warnings: string[];

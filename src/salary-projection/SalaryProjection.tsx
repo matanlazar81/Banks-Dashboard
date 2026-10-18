@@ -12,7 +12,8 @@ import { fetchSalaryProjection } from './api.ts';
 import { isSalaryBreakdownLine, salaryBreakdown } from './breakdown.ts';
 import { useClassification } from './classification.ts';
 import ClassifyPanel from './ClassifyPanel.tsx';
-import { buildSalaryTable, computeSalaryKpis, withClassification } from './model.ts';
+import HeadcountSection from './HeadcountSection.tsx';
+import { buildHeadcountTable, buildSalaryTable, computeSalaryKpis, withClassification } from './model.ts';
 import OverridesSection from './OverridesSection.tsx';
 import SalaryKpiStrip from './SalaryKpiStrip.tsx';
 import type { Ccy } from './types.ts';
@@ -51,6 +52,7 @@ export default function SalaryProjection() {
   // The payload re-projected with the classification the page shows (saved choices plus unsaved edits).
   const shown = useMemo(() => (data ? withClassification(data, classification.current) : null), [data, classification.current]);
   const table = useMemo(() => (shown ? buildSalaryTable(shown, ccy, view) : null), [shown, ccy, view]);
+  const headcountTable = useMemo(() => (shown ? buildHeadcountTable(shown, view) : null), [shown, view]);
   const kpis = useMemo(() => (shown ? computeSalaryKpis(shown, ccy) : null), [shown, ccy]);
   // Planned-change cells open their breakdown, built here from the payload (no server call).
   const [openCell, setOpenCell] = useState<{ line: string; period: string; id: string } | null>(null);
@@ -67,6 +69,7 @@ export default function SalaryProjection() {
   const hasChanges = hasLine('total-changes');
   const hasIncrements = hasLine('total-increments');
   const hasOverrides = hasLine('total-overrides');
+  const hasDeel = hasLine('total-deel');
   // What Total payroll adds from the current month on.
   const added = [hasChanges && 'hires and leavers', hasIncrements && 'override increments'].filter(Boolean).join(' and ');
 
@@ -78,7 +81,7 @@ export default function SalaryProjection() {
   const unclassified = shown ? shown.accounts.filter((a) => a.group === 'other') : [];
   const canClassify = !!(data && data.actual);
   const method = runRate
-    ? `Permanent: ${runRate} run-rate · Temporary: same month last year for ${data ? data.years[0] : ''}, 0 in ${data ? data.years[1] : ''}${notProjected.length ? ` · Not projected: ${notProjected.map((a) => a.acct).join(', ')}` : ''}${added ? ` · ${added.charAt(0).toUpperCase()}${added.slice(1)} added from the current month` : ''}`
+    ? `Permanent: ${runRate} run-rate · Temporary: same month last year for ${data ? data.years[0] : ''}, 0 in ${data ? data.years[1] : ''}${notProjected.length ? ` · Not projected: ${notProjected.map((a) => a.acct).join(', ')}` : ''}${added ? ` · ${added.charAt(0).toUpperCase()}${added.slice(1)} added from the current month` : ''}${hasDeel ? ' · Deel: average of its last months' : ''}`
     : '';
 
   async function onExport() {
@@ -87,7 +90,11 @@ export default function SalaryProjection() {
     setExportError(null);
     try {
       const { exportTableXlsx } = await import('../new-dashboard/exportXlsx.ts');
-      await exportTableXlsx({ what: 'salary projection', years: data.years, generatedAt: data.generatedAt, table, subtitle: method, ccy });
+      // The headcount goes under the payroll (the same columns), as people.
+      const sheet = headcountTable
+        ? { ...table, lines: [...table.lines, { key: 'header-headcount', label: 'Headcount (HiBob), people', kind: 'header' as const, values: [] }, ...headcountTable.lines] }
+        : table;
+      await exportTableXlsx({ what: 'salary projection', years: data.years, generatedAt: data.generatedAt, table: sheet, subtitle: method, ccy });
     } catch (e) {
       setExportError(e instanceof Error ? e.message : 'The export failed.');
     } finally {
@@ -106,7 +113,7 @@ export default function SalaryProjection() {
         <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
           <div>
             <h1 className="text-lg font-semibold text-slate-900">Salary Projection</h1>
-            <p className="text-sm text-slate-500">LSports · payroll by GL account{y0 ? ` ${y0}–${y1}` : ''}, permanent and temporary</p>
+            <p className="text-sm text-slate-500">LSports · payroll by GL account{y0 ? ` ${y0}–${y1}` : ''}, permanent and temporary, with Deel and the headcount</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {canClassify && (
@@ -203,7 +210,7 @@ export default function SalaryProjection() {
                 <div className="flex items-baseline gap-2">
                   <h2 className="text-sm font-semibold text-slate-800">Payroll by GL account and month</h2>
                   <span className="text-xs text-slate-500">
-                    Hover an account for how it is projected{breakdownLines.size ? '; click a planned change for its breakdown' : ''}.
+                    Hover an account for how it is projected{breakdownLines.size ? `; click a planned change${hasDeel ? ' or Deel' : ''} for its breakdown` : ''}.
                   </span>
                 </div>
                 <Legend overrides={hasOverrides} />
@@ -219,6 +226,10 @@ export default function SalaryProjection() {
               />
             </section>
 
+            {headcountTable && data.headcount && (
+              <HeadcountSection table={headcountTable} headcount={data.headcount} computedMonth={data.computedMonth} ccy={ccy} />
+            )}
+
             {data.overrides && <OverridesSection payload={data} ccy={ccy} />}
 
             <p className="max-w-5xl text-xs leading-relaxed text-slate-500">
@@ -228,10 +239,12 @@ export default function SalaryProjection() {
               accounts (bonuses, recuperation, maternity and other one-offs) repeat the same month of the previous
               year for the rest of {y0}, so seasonal payments stay in their month; in {y1} they are 0.
               {(hasChanges || hasIncrements || hasOverrides) && ` Between the two groups come the planned changes: ${[
-                hasChanges && 'planned hires, leavers and returns from leave (Snowflake\'s payroll forecast)',
+                hasChanges && 'planned hires, leavers and returns from leave (HiBob\'s forecast, through Snowflake\'s payroll forecast)',
                 hasIncrements && 'the override file\'s increments',
               ].filter(Boolean).join(' and ')}${hasChanges || hasIncrements ? ' are added to Total payroll from the current month on (closed months are NetSuite\'s actuals, which already include what happened)' : ''}${hasOverrides ? `${hasChanges || hasIncrements ? '; ' : ''}the override file's overrides, in italics, are for reference and not in Total payroll` : ''}.`}
               {notProjected.length > 0 && ` Actuals only, not projected: ${notProjected.map((a) => `${a.acct} ${a.name}`).join(', ')}.`}
+              {hasDeel && ' Below Total payroll, Deel (people abroad) is its NetSuite costs on every account but payroll ones; forecast months carry the average of its last three months with postings. Payroll + Deel adds the two.'}
+              {headcountTable && ' The headcount is HiBob\'s: employees at each month-end, people on leave included. From the current month on it moves with HiBob\'s planned hires and leavers; returns from leave and leave starts (maternity and others) are shown but do not change it.'}
               {' '}The current month is projected as a whole month. Forecasts are made in shekels; euros use the rate above.
               Use Permanent / temporary to change how an account is projected.
             </p>

@@ -33,7 +33,7 @@ function getSfClient() {
   // Same staleness-check pattern as getNsClient: if the in-memory client is missing methods we
   // expect from current snowflake-api.cjs, evict the require cache and rebuild so new functions
   // become visible without a full process restart.
-  const expected           = ['fetchQuarterlyChurnMRR', 'fetchVendorsYearlyGrid', 'fetchPayrollOverrides', 'fetchPayrollChanges'];
+  const expected           = ['fetchQuarterlyChurnMRR', 'fetchVendorsYearlyGrid', 'fetchPayrollOverrides', 'fetchPayrollChanges', 'fetchHeadcountPlan'];
   const isStale = sfClient && expected.some(m => typeof sfClient[m] !== 'function');
   if (!sfClient || isStale) {
     try {
@@ -50,7 +50,7 @@ function getNsClient(subsidiaryId         = 3) {
   // the running Node process is holding an old require()'d copy from before the most
   // recent deploy. Evict the require cache and rebuild so the new methods become visible
   // without a full process restart.
-  const expected           = ['fetchBankClassifiedYearly', 'fetchPaidVendorsYearly'];
+  const expected           = ['fetchBankClassifiedYearly', 'fetchPaidVendorsYearly', 'fetchVendorSpend'];
   const cached = nsClients[subsidiaryId];
   const isStale = cached && expected.some(m => typeof cached[m] !== 'function');
   if (!cached || isStale) {

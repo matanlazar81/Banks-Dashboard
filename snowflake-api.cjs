@@ -678,6 +678,37 @@ function createSnowflakeClient(env) {
     }));
   }
 
+  // ── HiBob's planned headcount events (the Salary Projection's headcount forecast) ──
+  // FCT_HEADCOUNT_EVENT rows from January fromYear, counted by month, EVENT_TYPE ('increase' / 'decrease') and
+  // EVENT_SUB_TYPE, with a flag for openings still open (no employee yet, OPENING_STATUS 'Open'). Events of a
+  // known employee count only when DIM_EMPLOYEE puts them in `company`; openings carry no company and all count.
+  // Counts only: no names, ids or costs. Returns [{ month, type, subType, open, count }].
+  async function fetchHeadcountPlan(fromYear, company) {
+    const from = parseInt(fromYear);
+    if (!(from >= 2000 && from <= 2100)) throw new Error('fetchHeadcountPlan: invalid year');
+    console.log(`[Snowflake] Fetching planned headcount events from ${from}...`);
+    const rows = await query(`
+      SELECT TO_VARCHAR(DATE_TRUNC('month', h.EVENT_MONTH_DATE), 'YYYY-MM') AS M,
+             h.EVENT_TYPE AS T,
+             h.EVENT_SUB_TYPE AS S,
+             IFF(h.EMPLOYEE_ID IS NULL AND h.OPENING_STATUS = 'Open', 1, 0) AS STILL_OPEN,
+             COUNT(*) AS N
+      FROM ${T_FCT_HEADCOUNT_EVENT} h
+      WHERE h.EVENT_MONTH_DATE >= '${from}-01-01'
+        AND (h.EMPLOYEE_ID IS NULL
+             OR h.EMPLOYEE_ID IN (SELECT e.EMPLOYEE_ID FROM ${T_DIM_EMPLOYEE} e WHERE e.COMPANY_NAME = ?))
+      GROUP BY 1, 2, 3, 4
+      ORDER BY 1, 2, 3, 4
+    `, [String(company || '')]);
+    return rows.map(r => ({
+      month: String(r.M || ''),
+      type: String(r.T || ''),
+      subType: String(r.S || ''),
+      open: Number(r.STILL_OPEN) === 1,
+      count: Number(r.N) || 0,
+    }));
+  }
+
   // ── Finance budget per month (800% GL accounts = currency defense / hedging from FCT_BUDGET) ──
   async function fetchFinanceBudget(year) {
     const yr = year || 2026;
@@ -2008,6 +2039,7 @@ function createSnowflakeClient(env) {
     fetchPayrollByAccount,
     fetchPayrollOverrides,
     fetchPayrollChanges,
+    fetchHeadcountPlan,
     fetchMonthlyHCImpact,
     getConnection,
   };

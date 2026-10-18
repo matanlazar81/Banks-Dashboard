@@ -5,7 +5,9 @@
 //
 //   node scripts/salary-projection.cjs --dry-run       print both years by account, ₪ thousands (Total payroll
 //                                                      adds the planned hires, leavers and returns from leave
-//                                                      and the override file's increments, as the page does)
+//                                                      and the override file's increments, as the page does),
+//                                                      then Deel and Payroll + Deel, the headcount (HiBob) by
+//                                                      month, and what HiBob's events and Deel's vendors were
 //   node scripts/salary-projection.cjs --json          print the API payload
 //   node scripts/salary-projection.cjs --write-cache   compute and write data/salary-projection-cache.json;
 //                                                      a running server serves it on its next request
@@ -40,8 +42,8 @@ const eur = (n) => `€${Math.round(Number(n) || 0).toLocaleString('en-US')}`.pa
 
 // planned: Map(label → Map(mKey → ₪)) the planned changes that count in Total payroll, as on the page:
 // Snowflake's hires, leavers and returns from leave (countedChangeRows) and the override file's increments
-// (countedIncrementRows).
-function printYear(payload, block, planned) {
+// (countedIncrementRows). deel: Map(mKey → { ils: { [acct]: ₪ } }) Deel as the page shows it (deelByMonth).
+function printYear(payload, block, planned, deel) {
   console.log(`\n${block.year} (${block.kind}) — ₪ thousands`);
   console.log(`  ${'account'.padEnd(44)}${block.rows.map((r) => `${r.mKey.slice(2)}${r.status === 'actual' ? 'A' : r.status === 'current' ? 'C' : 'F'}`.padStart(8)).join('')}${'FY'.padStart(9)}`);
   const sumRow = (accts) => block.rows.map((r) => accts.reduce((s, a) => s + (r.ils[a] || 0), 0));
@@ -60,7 +62,28 @@ function printYear(payload, block, planned) {
     }
   }
   const changes = plannedRow(labels);
-  print('Total payroll', sumRow(payload.accounts.map((a) => a.acct)).map((v, i) => v + changes[i]));
+  const total = sumRow(payload.accounts.map((a) => a.acct)).map((v, i) => v + changes[i]);
+  print('Total payroll', total);
+  const deelAccts = [...new Set(payload.deel.rows.map((r) => r.acct))].sort();
+  if (deelAccts.length) {
+    const names = new Map(payload.deel.rows.map((r) => [r.acct, r.name]));
+    const deelRow = (accts) => block.rows.map((r) => accts.reduce((s, a) => s + ((deel.get(r.mKey) || { ils: {} }).ils[a] || 0), 0));
+    for (const a of deelAccts) print(`Deel ${a} - ${names.get(a) || ''}`, deelRow([a]));
+    const deelTotal = deelRow(deelAccts);
+    print('Total Deel', deelTotal);
+    print('Payroll + Deel', total.map((v, i) => v + deelTotal[i]));
+  }
+}
+
+// The headcount (HiBob) of one year: people, not thousands.
+function printHeadcount(payload, block) {
+  const byKey = new Map(payload.headcount.months.map((m) => [m.mKey, m]));
+  const cell = (v) => String(v === null || v === undefined ? '–' : v).padStart(8);
+  console.log(`\n${block.year} headcount (HiBob ${payload.headcount.company}) — people`);
+  console.log(`  ${''.padEnd(44)}${block.rows.map((r) => `${r.mKey.slice(2)}${r.mKey < payload.computedMonth ? 'A' : r.mKey === payload.computedMonth ? 'C' : 'F'}`.padStart(8)).join('')}`);
+  for (const [label, k] of [['Employees at month-end', 'employees'], ['Hires', 'hires'], ['Leavers', 'leavers'], ['Returns from leave', 'returns'], ['Leave starts', 'leaveStarts']]) {
+    console.log(`  ${label.padEnd(44)}${block.rows.map((r) => cell((byKey.get(r.mKey) || {})[k])).join('')}`);
+  }
 }
 
 async function reconcile(ns) {
@@ -126,7 +149,39 @@ async function main() {
     const CHANGE_LABEL = { 'Open position': 'Planned hires', Terminated: 'Leavers', 'Leave end': 'Returns from leave' };
     for (const source of Object.keys(CHANGE_LABEL)) for (const r of countedChanges) if (r.source === source) add(`${CHANGE_LABEL[source]} (Snowflake)`, r);
     for (const r of countedIncrements) add(`${r.acct} increment (override file)`, r);
-    for (const block of payload.blocks) printYear(payload, block, planned);
+    const deel = sm.deelByMonth(payload.blocks, payload.deel.rows, payload.basis.runRateMonth);
+    for (const block of payload.blocks) printYear(payload, block, planned, deel);
+
+    const dl = payload.deel;
+    const rate = sm.deelRunRate(dl.rows, payload.basis.runRateMonth);
+    console.log(`\nDeel (NetSuite): ${dl.error ? dl.error : `${dl.vendors.length} vendor(s): ${dl.vendors.join(', ') || '–'}`}`);
+    for (const a of [...new Set(dl.rows.map((r) => r.acct))].sort()) {
+      const of = dl.rows.filter((r) => r.acct === a);
+      console.log(`  ${a.padEnd(8)}${(of[0].name || '').slice(0, 40).padEnd(41)}${of.length} row(s), ${of[0].month} to ${of[of.length - 1].month}`);
+    }
+    for (const a of dl.onPayroll) console.log(`  ${a.acct.padEnd(8)}${(a.name || '').slice(0, 40).padEnd(41)}payroll account: already in Total payroll, not in Deel`);
+    console.log(`  Forecast months: ${rate.months.length ? `the average of ${rate.months.join(', ')}` : '0 (no Deel postings in the 12 months up to the run-rate month)'}`);
+
+    const hc = payload.headcount;
+    console.log(`\nHeadcount (HiBob ${hc.company}): ${hc.error ? hc.error : `${hc.today === null ? '–' : hc.today} employees on ${hc.asOf}`}`);
+    if (hc.months.some((m) => m.employees !== null)) for (const block of payload.blocks) printHeadcount(payload, block);
+    console.log(`\nHiBob's planned events from January ${payload.years[0]} (FCT_HEADCOUNT_EVENT), by type and sub-type, and the line each counts in:`);
+    const kinds = new Map();
+    for (const e of hc.events) {
+      const k = `${e.type}|${e.subType}`;
+      const g = kinds.get(k) || { type: e.type, subType: e.subType, count: 0, open: 0, first: e.month, last: e.month };
+      g.count += e.count;
+      if (e.open) g.open += e.count;
+      if (e.month < g.first) g.first = e.month;
+      if (e.month > g.last) g.last = e.month;
+      kinds.set(k, g);
+    }
+    if (!kinds.size) console.log('  (none)');
+    const LINE = { hires: 'Hires', leavers: 'Leavers', returns: 'Returns from leave (count unchanged)', leaveStarts: 'Leave starts (count unchanged)' };
+    for (const g of kinds.values()) {
+      const line = LINE[sm.headcountKind(g.type, g.subType)] || 'not counted (unknown type)';
+      console.log(`  ${g.type.padEnd(10)}${(g.subType || '–').slice(0, 30).padEnd(31)}${String(g.count).padStart(6)} event(s)${g.open ? `, ${g.open} still-open opening(s)` : ''}  ${g.first} to ${g.last}  → ${line}`);
+    }
     console.log(`\nPlanned hires, leavers and returns from leave on payroll accounts (Snowflake): ${ch.error ? ch.error : `${countedChanges.size} of ${ch.rows.length} account-month row(s) counted (the projected months)`}`);
     console.log(`\nOverride file, payroll rows from January ${payload.years[0]}: ${ov.error ? ov.error : `${ov.rows.length} row(s)`}`);
     console.log('  (+ = an increment counted in Total payroll; increments in closed months are not counted, overrides never are)');

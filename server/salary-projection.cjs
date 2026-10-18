@@ -34,6 +34,14 @@
 // src/forecast/salary-projection.mjs); overrides are for reference. The account projection itself (blocks)
 // leaves them out; a Snowflake failure only drops them, with a note.
 //
+// Below the payroll, two more reads travel with the payload; a failure of either only drops it, with a note:
+//   • Deel       — NetSuite costs of the vendors named "deel" (ns.fetchVendorSpend), by account and posting
+//                  period from January of the previous year, every account but payroll ones (those are already
+//                  in Total payroll). Forecast months carry its run-rate (deelByMonth).
+//   • headcount  — HiBob (Snowflake): employees at each month-end and today (DIM_EMPLOYEE, as the Metrics
+//                  page) and HiBob's planned hires, leavers and leaves (FCT_HEADCOUNT_EVENT), as counts by month
+//                  (headcountSeries). No names or ids leave the server.
+//
 // The projection is made in ILS, the currency payroll is paid in; forecast € = ₪ ÷ the ILS/EUR ratio of
 // the last closed month's permanent payroll. The current month is projected as a whole month (its
 // partial postings are not a month's payroll), as on the P&L Projection.
@@ -48,10 +56,11 @@ const cp = require('./cash-projection.cjs');
 const { readDoc, createDocHandler } = require('./json-store.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
-const SCHEMA_VERSION = 9; // 3: the actual months and each account's default method; 4: the override file's payroll rows; 5: temporary 0 next year; 6: override rows on 760001 only; 7: Snowflake's planned hires, leavers and returns from leave; 8: every payroll account, as the old dashboard; 9: planned changes by department (the page's breakdowns)
+const SCHEMA_VERSION = 10; // 3: the actual months and each account's default method; 4: the override file's payroll rows; 5: temporary 0 next year; 6: override rows on 760001 only; 7: Snowflake's planned hires, leavers and returns from leave; 8: every payroll account, as the old dashboard; 9: planned changes by department (the page's breakdowns); 10: Deel and the headcount (HiBob)
 const DEFAULT_CACHE_FILE = path.join(ROOT, 'data', 'salary-projection-cache.json');
 const CLASSIFICATION_FILE = path.join(ROOT, 'data', 'salary-classification.json');
 const { ProjectionError } = cp;
+const { employedOn, lastDayOf, sfEmployeeSpans, shiftMonth } = require('./metrics.cjs');
 
 // Finance's classification (ProfitandLoss988.xlsx: yellow = permanent, green = temporary), in its order.
 // Names are fallbacks: the page shows NetSuite's account names when it has them.
@@ -97,6 +106,8 @@ const GROUP_OF = new Map(SALARY_GL_GROUPS.flatMap((g) => g.accounts.map(([acct])
 const ACTUALS_ONLY = new Set(['760023', '760029', '760008', '760014']);
 // Snowflake's planned payroll changes: FCT_EXPENSE sources of its HR-driven payroll forecast, in table order.
 const CHANGE_SOURCES = ['Open position', 'Terminated', 'Leave end'];
+// The NetSuite vendors of the Deel section: names (or ids) containing this.
+const DEEL_VENDOR = 'deel';
 
 // Below this share of the largest recent month, a closed month counts as not posted yet.
 const MATERIAL_SHARE = 0.5;
@@ -243,6 +254,76 @@ function changesOf(changes, Y, ilsPerEur) {
 }
 
 /**
+ * Deel's NetSuite costs for the payload: from January of the previous year (its run-rate can reach back), sorted
+ * by month, account and vendor. Payroll accounts (76xxxx) are already in Total payroll, so their rows are left
+ * out and the accounts listed in onPayroll.
+ */
+function deelOf(deel, Y) {
+  if (!deel) return { vendors: [], rows: [], onPayroll: [], error: 'Deel was not read.' };
+  const names = new Map((deel.vendors || []).map((v) => [Number(v.id), String(v.name || '')]));
+  const rows = [];
+  const onPayroll = new Map();
+  for (const r of deel.rows || []) {
+    const month = String(r.month || '');
+    const acct = String(r.acct || '');
+    if (!/^\d{4}-\d{2}$/.test(month) || month < `${Y - 1}-01` || !acct) continue;
+    if (isPayroll(acct)) {
+      if (!onPayroll.has(acct)) onPayroll.set(acct, String(r.name || ''));
+      continue;
+    }
+    rows.push({ month, acct, name: String(r.name || ''), vendor: names.get(Number(r.vendor)) || 'Deel', eur: cents(r.eur), ils: cents(r.ils) });
+  }
+  rows.sort((a, b) => (a.month !== b.month ? (a.month < b.month ? -1 : 1) : a.acct !== b.acct ? a.acct.localeCompare(b.acct) : a.vendor.localeCompare(b.vendor)));
+  return {
+    vendors: [...new Set(names.values())].filter(Boolean).sort(),
+    rows,
+    onPayroll: [...onPayroll.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([acct, name]) => ({ acct, name })),
+    error: deel.error || null,
+  };
+}
+
+/**
+ * HiBob's headcount for the payload, as counts: employees today, and over the projection's months the employees
+ * at month-end with who joined and left (headcountSeries). Employee spans never leave the server.
+ *   headcount  { company, spans: [{ start, end, type }] | null, events: [{ month, type, subType, open, count }], error }
+ */
+function headcountOf(headcount, blocks, currentKey, now, headcountSeries) {
+  const asOf = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
+  if (!headcount) return { company: '', asOf, today: null, months: [], events: [], error: 'The headcount (HiBob) was not read.' };
+  const spans = headcount.spans || null;
+  const months = blocks.flatMap((b) => b.rows.map((r) => r.mKey));
+  // Every month before the current one, from the month before the first shown (where the first one starts).
+  let actual = null;
+  if (spans && months.length) {
+    actual = {};
+    for (let m = shiftMonth(months[0], -1); m < currentKey; m = shiftMonth(m, 1)) {
+      const day = lastDayOf(m);
+      const before = lastDayOf(shiftMonth(m, -1));
+      const c = { employees: 0, hires: 0, leavers: 0 };
+      for (const s of spans) {
+        const isIn = employedOn(s, day);
+        const wasIn = employedOn(s, before);
+        if (isIn) c.employees++;
+        if (isIn && !wasIn) c.hires++;
+        if (wasIn && !isIn) c.leavers++;
+      }
+      actual[m] = c;
+    }
+  }
+  const events = (headcount.events || [])
+    .filter((e) => e && /^\d{4}-\d{2}$/.test(String(e.month || '')) && num(e.count) > 0)
+    .map((e) => ({ month: String(e.month), type: String(e.type || ''), subType: String(e.subType || ''), open: !!e.open, count: num(e.count) }));
+  return {
+    company: String(headcount.company || ''),
+    asOf,
+    today: spans ? spans.filter((s) => employedOn(s, asOf)).length : null,
+    months: headcountSeries({ months, currentMonth: currentKey, actual, events }),
+    events,
+    error: headcount.error || null,
+  };
+}
+
+/**
  * The payload from payroll rows (the tests call it directly).
  *   rows   [{ month: 'YYYY-MM', acct, name, eur, ils }] costs positive, January of the previous year onwards
  *   now    Date (drives the current year and month)
@@ -251,9 +332,13 @@ function changesOf(changes, Y, ilsPerEur) {
  *              rows (Snowflake), or null when not read
  *   changes    { rows: [{ month, acct, name, source, department, eur, ils }], error } Snowflake's planned hires,
  *              leavers and returns from leave, or null when not read
+ *   deel       { vendors: [{ id, name }], rows: [{ month, acct, name, vendor, eur, ils }], error } Deel's NetSuite
+ *              costs (costs positive), or null when not read
+ *   headcount  { company, spans: [{ start, end, type }] | null, events: [{ month, type, subType, open, count }],
+ *              error } HiBob's employees and planned events, or null when not read
  */
-async function buildSalaryProjection({ rows, now, saved = {}, overrides = null, changes = null }) {
-  const { projectSalary, groupOfMethod } = await loadSalaryModule();
+async function buildSalaryProjection({ rows, now, saved = {}, overrides = null, changes = null, deel = null, headcount = null }) {
+  const { projectSalary, groupOfMethod, headcountSeries } = await loadSalaryModule();
   const Y = now.getFullYear();
   const T = Y + 1;
   const curIdx = now.getMonth();
@@ -343,6 +428,9 @@ async function buildSalaryProjection({ rows, now, saved = {}, overrides = null, 
   }
   if (fxFallback) warnings.push(`No payroll month gives an ILS/EUR ratio; forecast € use ₪${FALLBACK_ILS_PER_EUR} per €.`);
   if (changes && changes.error) warnings.push(changes.error);
+  if (deel && deel.error) warnings.push(deel.error);
+  else if (deel && !(deel.vendors || []).length) warnings.push(`NetSuite has no vendor named "${DEEL_VENDOR}", so the Deel section is empty.`);
+  if (headcount && headcount.error) warnings.push(headcount.error);
 
   const payload = {
     ok: true,
@@ -358,6 +446,8 @@ async function buildSalaryProjection({ rows, now, saved = {}, overrides = null, 
     actual,
     overrides: overridesOf(overrides, Y, ilsPerEur),
     changes: changesOf(changes, Y, ilsPerEur),
+    deel: deelOf(deel, Y),
+    headcount: headcountOf(headcount, blocks, currentKey, now, headcountSeries),
     degraded: false,
     failedFeeds: [],
     warnings,
@@ -396,6 +486,44 @@ async function readChanges(getSfClient, Y) {
   }
 }
 
+/**
+ * HiBob's employees (start and leave dates, no names) and planned events of the Metrics page's company
+ * (METRICS_HEADCOUNT_COMPANY, default LSports): { company, spans, events, error }; never throws.
+ */
+async function readHeadcount(getSfClient, Y) {
+  const company = process.env.METRICS_HEADCOUNT_COMPANY || 'LSports';
+  let sf = null;
+  try { sf = getSfClient ? getSfClient() : null; } catch { sf = null; }
+  if (!sf || typeof sf.query !== 'function' || typeof sf.fetchHeadcountPlan !== 'function') {
+    return { company, spans: null, events: [], error: 'Snowflake is not configured on this server, so the headcount (HiBob) is not shown.' };
+  }
+  const [spans, events] = await Promise.all([
+    sfEmployeeSpans(sf, company).catch((e) => { console.error(`[salary-projection] HiBob employees failed: ${e && e.message}`); return null; }),
+    sf.fetchHeadcountPlan(Y, company).catch((e) => { console.error(`[salary-projection] HiBob planned events failed: ${e && e.message}`); return null; }),
+  ]);
+  const failed = [!spans && 'employees', !events && 'planned events'].filter(Boolean);
+  return {
+    company,
+    spans,
+    events: events || [],
+    error: failed.length ? `HiBob's ${failed.join(' and ')} could not be read from Snowflake, so the headcount is incomplete. Try Refresh in a minute.` : null,
+  };
+}
+
+/** Deel's NetSuite costs, January of the previous year to December of this one: { vendors, rows, error }; never throws. */
+async function readDeel(ns, queue, Y) {
+  if (!ns || typeof ns.fetchVendorSpend !== 'function') {
+    return { vendors: [], rows: [], error: 'The NetSuite client on this server cannot read Deel yet, so the Deel section is empty.' };
+  }
+  try {
+    const { vendors, rows } = await queue(() => ns.fetchVendorSpend({ name: DEEL_VENDOR, fromYear: Y - 1, toYear: Y }));
+    return { vendors, rows, error: null };
+  } catch (e) {
+    console.error(`[salary-projection] Deel failed: ${e && e.message}`);
+    return { vendors: [], rows: [], error: 'Deel could not be read from NetSuite, so its section is empty. Try Refresh in a minute.' };
+  }
+}
+
 /** Compute the payload. opts: now, getNsClient(sub), getSfClient(), queueNsCall(fn), classificationFile (tests) */
 async function computeSalaryProjection(opts) {
   const now = opts.now || new Date();
@@ -407,17 +535,19 @@ async function computeSalaryProjection(opts) {
   if (!ns) throw new ProjectionError('The NetSuite client is unavailable on this server.');
   const queue = opts.queueNsCall || ((fn) => fn());
   const Y = now.getFullYear();
-  const [actuals, overrides, changes] = await Promise.all([
+  const [actuals, overrides, changes, deel, headcount] = await Promise.all([
     queue(() => ns.fetchPnlActuals({ fromYear: Y - 1, toYear: Y, basis: 'period' })).catch((e) => {
       console.error(`[salary-projection] NetSuite payroll failed: ${e && e.message}`);
       return null;
     }),
     readOverrides(opts.getSfClient, Y),
     readChanges(opts.getSfClient, Y),
+    readDeel(ns, queue, Y),
+    readHeadcount(opts.getSfClient, Y),
   ]);
   if (!actuals || !actuals.byMonth) throw new ProjectionError('NetSuite payroll could not be loaded. Try Refresh in a minute.');
   const saved = readSavedMethods(opts.classificationFile || CLASSIFICATION_FILE);
-  return buildSalaryProjection({ rows: payrollRows(actuals.byMonth), now, saved, overrides, changes });
+  return buildSalaryProjection({ rows: payrollRows(actuals.byMonth), now, saved, overrides, changes, deel, headcount });
 }
 
 /**
@@ -452,10 +582,13 @@ module.exports = {
   payrollRows,
   overridesOf,
   changesOf,
+  deelOf,
+  headcountOf,
   loadSalaryModule,
   SALARY_GL_GROUPS,
   ACTUALS_ONLY,
   CHANGE_SOURCES,
+  DEEL_VENDOR,
   SCHEMA_VERSION,
   DEFAULT_CACHE_FILE,
   CLASSIFICATION_FILE,

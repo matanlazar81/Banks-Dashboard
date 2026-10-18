@@ -2785,6 +2785,73 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
     return [...out.values()];
   }
 
+  // ── One vendor's costs by account and month (the Salary Projection's Deel section) ──
+  // The vendors whose name or ID contains `name` (letters, digits and spaces, any case), and the GL lines of their
+  // transactions on expense accounts: the vendor on the transaction (a bill) or on the line (a journal). On a bill
+  // the line's entity can be a customer, so a line belongs to the transaction's vendor when that one matches.
+  // Payments are left out: they carry no cost, only the exchange difference of paying a bill.
+  // By posting period as fetchPnlActuals, both books (1 €, 2 ₪), costs positive, January fromYear – December toYear.
+  // Returns { vendors: [{ id, name }], rows: [{ month: 'YYYY-MM', acct, name, vendor (id), eur, ils }] }.
+  async function fetchVendorSpend({ name, fromYear, toYear } = {}) {
+    const n = String(name || '').trim().toLowerCase();
+    if (!/^[a-z0-9 ]{3,40}$/.test(n)) throw new Error(`fetchVendorSpend: bad name ${name}`);
+    const y0 = parseInt(fromYear, 10);
+    const y1 = parseInt(toYear ?? fromYear, 10);
+    if (!Number.isInteger(y0) || !Number.isInteger(y1) || y0 > y1 || y0 < 2000 || y1 > 2100) throw new Error(`fetchVendorSpend: bad years ${fromYear}–${toYear}`);
+    const unescape = (s) => String(s || '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+    const found = await suiteqlAll(`
+      SELECT v.id AS id, v.entityid AS entityid, v.companyname AS companyname
+      FROM vendor v
+      WHERE LOWER(v.companyname) LIKE '%${n}%' OR LOWER(v.entityid) LIKE '%${n}%'
+    `);
+    const vendors = found
+      .map((v) => ({ id: Number(v.id), name: unescape(v.companyname || v.entityid) }))
+      .filter((v) => Number.isInteger(v.id));
+    if (!vendors.length) return { vendors, rows: [] };
+    const ids = vendors.map((v) => v.id).join(', ');
+    const years = Array.from({ length: y1 - y0 + 1 }, (_, i) => y0 + i);
+    const dateFilter = `(${years.map((y) => `BUILTIN.DF(t.postingperiod) LIKE '% ${y}'`).join(' OR ')})`;
+    const toMonth = (raw) => {
+      const m = /^([A-Za-z]{3}) (\d{4})$/.exec(String(raw || ''));
+      return m && PERIOD_MONTHS[m[1]] ? `${m[2]}-${PERIOD_MONTHS[m[1]]}` : null;
+    };
+    const vendorExpr = `CASE WHEN t.entity IN (${ids}) THEN t.entity ELSE tl.entity END`;
+    const bookQuery = (book) => suiteqlAll(`
+      SELECT BUILTIN.DF(t.postingperiod) AS m, NVL(a.acctnumber, 'COGS') AS acct,
+             MAX(a.accountsearchdisplaynamecopy) AS name, ${vendorExpr} AS vendor, SUM(NVL(tal.amount, 0)) AS amt
+      FROM transactionaccountingline tal
+      JOIN transaction t ON tal.transaction = t.id
+      JOIN transactionline tl ON tl.transaction = tal.transaction AND tl.id = tal.transactionline
+      JOIN account a ON tal.account = a.id
+      WHERE t.subsidiary = ${subsidiaryId}
+        AND tal.posting = 'T' AND tal.accountingbook = ${book}
+        AND a.accttype IN ('Expense', 'COGS', 'OthExpense')
+        AND t.type <> 'VendPymt'
+        AND (t.entity IN (${ids}) OR tl.entity IN (${ids}))
+        AND ${dateFilter}
+      GROUP BY BUILTIN.DF(t.postingperiod), NVL(a.acctnumber, 'COGS'), ${vendorExpr}
+    `);
+    const eurRows = await bookQuery(1);
+    const ilsRows = await bookQuery(2);
+    const out = new Map();
+    const add = (rows, field) => {
+      for (const r of rows) {
+        const month = toMonth(r.m);
+        if (!month) continue;
+        const acct = String(r.acct || 'COGS');
+        const vendor = Number(r.vendor) || 0;
+        const k = `${month}|${acct}|${vendor}`;
+        const cell = out.get(k) || { month, acct, name: unescape(r.name || acct), vendor, eur: 0, ils: 0 };
+        cell[field] = Math.round((cell[field] + (parseFloat(r.amt) || 0)) * 100) / 100; // debit-positive = cost
+        out.set(k, cell);
+      }
+    };
+    add(eurRows, 'eur');
+    add(ilsRows, 'ils');
+    console.log(`[NS API] Vendor spend "${n}" ${y0}–${y1}: ${vendors.length} vendor(s), ${eurRows.length}+${ilsRows.length} rows`);
+    return { vendors, rows: [...out.values()] };
+  }
+
   // ── Posted month-end FX revaluation check ──
   // True when NetSuite already carries the POSTED month-end FxReval mark dated exactly
   // `dateStr` (the positive month-end entry on Bank/CredCard accounts, EUR primary book).
@@ -2807,7 +2874,7 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
     return Number.isFinite(impact) && impact > 0;
   }
 
-  return { suiteql, suiteqlAll, fetchPnlActuals, fetchAccountIds, fetchAccountByDepartment, fetchFxConversions, fetchAgingData, fetchCollectionData, buildCollectionJson, fetchClientAnomalies, fetchAllSOsByBillingPeriod, fetchRevenueData, fetchMRRData, fetchBankBalance, fetchVendorBills, fetchVendorPaymentHistory, fetchBankAccountList, fetchBankAccountListAsOf, fetchSalaryData, fetchVendorActuals, fetchRevenueActuals, fetchCustomerCashReceipts, fetchCashflowHistory, fetchExpenseCategoryData, fetchPaymentsByCategory, fetchCashflowBreakdown, fetchCashflowTransactions, fetchExpenseTransactions, fetchSalaryBreakdown, fetchInvoiceBasedProjection, fetchMonthlyRevaluation, fetchVendorBillsByAccount, fetchNSBudget, fetchCurrencyDefenseBudget, fetchPaidVendorsYearly, fetchBankClassifiedYearly, fetchDividendDistributions, fetchVendorPaymentsDetail, fetchLatestFxRate, hasPostedMonthEndReval };
+  return { suiteql, suiteqlAll, fetchPnlActuals, fetchAccountIds, fetchAccountByDepartment, fetchVendorSpend, fetchFxConversions, fetchAgingData, fetchCollectionData, buildCollectionJson, fetchClientAnomalies, fetchAllSOsByBillingPeriod, fetchRevenueData, fetchMRRData, fetchBankBalance, fetchVendorBills, fetchVendorPaymentHistory, fetchBankAccountList, fetchBankAccountListAsOf, fetchSalaryData, fetchVendorActuals, fetchRevenueActuals, fetchCustomerCashReceipts, fetchCashflowHistory, fetchExpenseCategoryData, fetchPaymentsByCategory, fetchCashflowBreakdown, fetchCashflowTransactions, fetchExpenseTransactions, fetchSalaryBreakdown, fetchInvoiceBasedProjection, fetchMonthlyRevaluation, fetchVendorBillsByAccount, fetchNSBudget, fetchCurrencyDefenseBudget, fetchPaidVendorsYearly, fetchBankClassifiedYearly, fetchDividendDistributions, fetchVendorPaymentsDetail, fetchLatestFxRate, hasPostedMonthEndReval };
 }
 
 
