@@ -117,8 +117,6 @@ export interface SalaryPayload {
     today: number | null;
     months: HeadcountMonth[];
     events: HeadcountEventCount[];
-    /** HiBob's departments left out of all of it (HiBob's names) and how many of their people are employed today. */
-    excluded?: { groups: string[]; today: number };
     error: string | null;
   };
   degraded: boolean;

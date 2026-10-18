@@ -1,8 +1,8 @@
 {
   "ok": true,
-  "schemaVersion": 14,
+  "schemaVersion": 13,
   "status": "ready",
-  "generatedAt": "2026-10-18T10:03:44.721Z",
+  "generatedAt": "2026-10-18T08:32:17.380Z",
   "computedMonth": "2026-10",
   "company": "lsports",
   "years": [
@@ -1945,12 +1945,6 @@
         "count": 4
       }
     ],
-    "excluded": {
-      "groups": [
-        "BRINGITS"
-      ],
-      "today": 1
-    },
     "error": null
   },
   "degraded": false,
