@@ -65,12 +65,15 @@ August, and the page says September is pending.
   `METRICS_HEADCOUNT_COMPANY`), any employment type. An employee counts when they started on or before
   the month's last day and had not left before it. Hover a month for the split by employment type.
   HiBob's Bringits department counts too: its people's pay is in the same payroll (as on the Salary Projection).
+  HiBob's records are counted as people, as on the Salary Projection (`peopleOf` in `server/metrics.cjs`): an
+  employee with more than one record (a move to another department) counts once, and the October 2026 move to
+  Bringits (HiBob's Technology group) counts from before it.
 - **Year-to-date column:** the months' revenue ÷ employee-months, i.e. revenue a month per employee, so it
   compares with the monthly columns.
 - **The figure above the chart:** the months' revenue per average employee, and that pace over a full
   year.
-- **Data read:** only start dates, leave dates and the employment type, with no names or ids, cached like
-  the other reads.
+- **Data read:** start dates, leave dates, the employment type, the department and the employee id, with no names,
+  cached like the other reads. The id only tells one person's records apart; it never leaves the server.
 - **If HiBob can't be read:** payroll / revenue still shows, and revenue per employee is empty with a
   warning.
 

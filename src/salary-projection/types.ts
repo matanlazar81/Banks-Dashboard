@@ -117,6 +117,11 @@ export interface SalaryPayload {
     today: number | null;
     months: HeadcountMonth[];
     events: HeadcountEventCount[];
+    /**
+     * How HiBob's records became people (for --dry-run): records, people, people with more than one record (merged by
+     * employee id), and people counted from before a move HiBob records as a new start date. Absent in an older payload.
+     */
+    records?: { rows: number; people: number; merged: number; moved: number } | null;
     error: string | null;
   };
   degraded: boolean;

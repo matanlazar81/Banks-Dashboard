@@ -83,7 +83,7 @@ function printHeadcount(payload, block) {
   const cell = (v) => String(v === null || v === undefined ? '–' : v).padStart(8);
   console.log(`\n${block.year} headcount (HiBob ${payload.headcount.company}) — people`);
   console.log(`  ${''.padEnd(44)}${block.rows.map((r) => `${r.mKey.slice(2)}${r.mKey < payload.computedMonth ? 'A' : r.mKey === payload.computedMonth ? 'C' : 'F'}`.padStart(8)).join('')}`);
-  for (const [label, k] of [['Employees at month-end', 'employees'], ['Hires', 'hires'], ['Leavers', 'leavers'], ['Open positions (not counted)', 'openings'], ['Planned leavers, no employee (not counted)', 'cuts'], ['Returns from leave', 'returns'], ['Leave starts', 'leaveStarts']]) {
+  for (const [label, k] of [['Employees at month-end', 'employees'], ['Hires', 'hires'], ['Leavers', 'leavers'], ['Transfers between departments', 'transfers'], ['Open positions (not counted)', 'openings'], ['Planned leavers, no employee (not counted)', 'cuts'], ['Returns from leave', 'returns'], ['Leave starts', 'leaveStarts']]) {
     console.log(`  ${label.padEnd(44)}${block.rows.map((r) => cell((byKey.get(r.mKey) || {})[k])).join('')}`);
   }
 }
@@ -166,6 +166,12 @@ async function main() {
 
     const hc = payload.headcount;
     console.log(`\nHeadcount (HiBob ${hc.company}): ${hc.error ? hc.error : `${hc.today === null ? '–' : hc.today} employees on ${hc.asOf}`}`);
+    if (hc.records) {
+      const { HEADCOUNT_MOVES } = require(path.join(ROOT, 'server', 'metrics.cjs'));
+      const r = hc.records;
+      console.log(`  HiBob records: ${r.rows} for ${r.people} people. ${r.merged} with more than one record (merged by employee id: a move between them is a transfer).`
+        + ` ${r.moved} counted from before a move HiBob records as a new start date (${HEADCOUNT_MOVES.map((mv) => `${mv.group} in ${mv.month}`).join(', ')}).`);
+    }
     if (hc.months.some((m) => m.employees !== null)) for (const block of payload.blocks) printHeadcount(payload, block);
     console.log(`\nHiBob's planned events from January ${payload.years[0]} (FCT_HEADCOUNT_EVENT), by type, sub-type, employee and opening status, and how each counts:`);
     const kinds = new Map();

@@ -412,16 +412,58 @@ const lastDayOf = (mKey) => `${mKey}-${pad2(new Date(Date.UTC(Number(mKey.slice(
 /** Whether an employee ({ start, end }: 'YYYY-MM-DD', end null while employed) is employed on a day: started on
  *  or before it and not left before it. */
 const employedOn = (s, day) => !!s.start && s.start <= day && !(s.end && s.end < day);
+const dayBefore = (day) => new Date(Date.UTC(Number(day.slice(0, 4)), Number(day.slice(5, 7)) - 1, Number(day.slice(8, 10)) - 1)).toISOString().slice(0, 10);
 
-/** Employees active at each month-end ({ start, end, type }: 'YYYY-MM-DD', end null while employed):
- *  started on or before the last day and not left before it. { mKey: { total, byType } } */
+// HiBob department moves that its records show as a new start date (finance, October 2026: 12 people moved from
+// LSports' departments to Bringits, HiBob's Technology group). People whose first record starts in the group in the
+// month were already employees: they count from before the move, and the move is a transfer, not a hire.
+const HEADCOUNT_MOVES = [{ month: '2026-10', group: 'Technology' }];
+/** The department of a period added before a move (HiBob does not say which it was). */
+const beforeMove = (group) => `Before moving to ${group}`;
+
+/**
+ * HiBob's employees as people: a person's records ({ start, end, type, group, id }) merged by employee id, so a move
+ * to another department that HiBob records as a second record is a transfer, not a leaver and a hire. A person whose
+ * first record starts a listed move (HEADCOUNT_MOVES) was already employed: a period before it is added. Records
+ * without an id are a person each. [{ periods }], each person's periods by start.
+ */
+function peopleOf(spans, moves = HEADCOUNT_MOVES) {
+  const people = [];
+  const byId = new Map();
+  for (const s of spans || []) {
+    if (s.id === null || s.id === undefined || s.id === '') { people.push({ periods: [s] }); continue; }
+    let p = byId.get(s.id);
+    if (!p) { p = { periods: [] }; byId.set(s.id, p); people.push(p); }
+    p.periods.push(s);
+  }
+  for (const p of people) {
+    p.periods.sort((a, b) => String(a.start).localeCompare(String(b.start)));
+    const first = p.periods[0];
+    const group = String(first.group || '');
+    if (first.start && moves.some((mv) => first.start.slice(0, 7) === mv.month && group.toLowerCase() === mv.group.toLowerCase())) {
+      p.periods.unshift({ start: '1900-01-01', end: dayBefore(first.start), type: first.type, group: beforeMove(group), moved: true });
+    }
+  }
+  return people;
+}
+
+/** A person's period on a day (the latest that started by it), or null when not employed. */
+function periodOn(person, day) {
+  let hit = null;
+  for (const s of person.periods) if (employedOn(s, day)) hit = s;
+  return hit;
+}
+
+/** People employed at each month-end (records merged: peopleOf), by employment type. { mKey: { total, byType } } */
 function headcountByMonth(spans, months) {
+  const people = peopleOf(spans);
   return Object.fromEntries(months.map((mKey) => {
     const day = lastDayOf(mKey);
     const byType = {};
     let total = 0;
-    for (const s of spans) {
-      if (!employedOn(s, day)) continue;
+    for (const p of people) {
+      const s = periodOn(p, day);
+      if (!s) continue;
       total++;
       const t = s.type || 'Unspecified';
       byType[t] = (byType[t] || 0) + 1;
@@ -480,18 +522,25 @@ function peopleMetrics(rows, spans, company) {
   };
 }
 
-/** HiBob employees of one company with their start and leave dates, type and group (Snowflake; no names or ids). */
+/**
+ * HiBob employees of one company with their start and leave dates, type and group (Snowflake; no names). The
+ * employee id tells one person's records apart (peopleOf); it never leaves the server.
+ */
 async function sfEmployeeSpans(sf, company) {
   const T = require(path.join(ROOT, 'snowflake-api.cjs')).SF_TABLES;
   const rows = await sf.query(`
     SELECT TO_VARCHAR(START_DATE, 'YYYY-MM-DD') AS S,
            TO_VARCHAR(TERMINATION_DATE, 'YYYY-MM-DD') AS E,
            EMPLOYMENT_TYPE AS T,
-           EMPLOYEE_GROUP AS G
+           EMPLOYEE_GROUP AS G,
+           EMPLOYEE_ID AS I
     FROM ${T.DIM_EMPLOYEE}
     WHERE COMPANY_NAME = ? AND START_DATE IS NOT NULL
   `, [company]);
-  return rows.map((r) => ({ start: String(r.S || ''), end: r.E ? String(r.E) : null, type: r.T ? String(r.T) : null, group: r.G ? String(r.G) : null }));
+  return rows.map((r) => ({
+    start: String(r.S || ''), end: r.E ? String(r.E) : null, type: r.T ? String(r.T) : null, group: r.G ? String(r.G) : null,
+    id: r.I === null || r.I === undefined ? null : String(r.I),
+  }));
 }
 
 // ── the pack ────────────────────────────────────────────────────────────────
@@ -831,4 +880,5 @@ module.exports = {
   createMetricsHandler, createMetricsSettingsHandler, createMetricsDepositsHandler,
   buildMetrics, buildDetail, nrrSeries, nrrDetail, churnQuarterDetail, churnYtdDetail, churnForecastDetail, DETAILS,
   shiftMonth, lastClosedMonth, cloudTargetsOf, headcountByMonth, peopleMetrics, employedOn, lastDayOf, sfEmployeeSpans,
+  HEADCOUNT_MOVES, peopleOf, periodOn,
 };

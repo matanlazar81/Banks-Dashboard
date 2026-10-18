@@ -344,13 +344,15 @@ function deelLines(payload: SalaryPayload): DeelDefs & { sums: Map<string, Month
 }
 
 // ── Headcount (HiBob), a table of its own under the payroll: people, not money ──
-type HeadcountFigures = { employees: number; hires: number; leavers: number; openings: number; cuts: number; returns: number; leaveStarts: number };
+type HeadcountFigures = {
+  employees: number; hires: number; leavers: number; transfers: number; openings: number; cuts: number; returns: number; leaveStarts: number;
+};
 type HeadcountLineDef = LineDefOf<HeadcountFigures, string>;
 
 /**
- * HiBob's employees at month-end, hires and leavers, then, when HiBob has them, its open positions, planned leavers
- * with no employee, returns from leave and leave starts (shown, not counted), over the year view (the same
- * columns as the payroll table). null when HiBob's employees could not be read.
+ * HiBob's employees at month-end, hires and leavers, then, when HiBob has them, transfers between departments, its
+ * open positions, planned leavers with no employee, returns from leave and leave starts (shown, not counted), over the
+ * year view (the same columns as the payroll table). null when HiBob's employees could not be read.
  */
 export function buildHeadcountTable(payload: SalaryPayload, view: YearView): ProjectionTable<string> | null {
   const hc = payload.headcount;
@@ -362,14 +364,14 @@ export function buildHeadcountTable(payload: SalaryPayload, view: YearView): Pro
     rows: b.rows.map((r) => {
       const m = byKey.get(r.mKey);
       const f: HeadcountFigures = {
-        employees: m?.employees ?? 0, hires: m?.hires ?? 0, leavers: m?.leavers ?? 0, openings: m?.openings ?? 0, cuts: m?.cuts ?? 0,
-        returns: m?.returns ?? 0, leaveStarts: m?.leaveStarts ?? 0,
+        employees: m?.employees ?? 0, hires: m?.hires ?? 0, leavers: m?.leavers ?? 0, transfers: m?.transfers ?? 0, openings: m?.openings ?? 0,
+        cuts: m?.cuts ?? 0, returns: m?.returns ?? 0, leaveStarts: m?.leaveStarts ?? 0,
       };
       return { mKey: r.mKey, status: m ? m.status : r.status, eur: f, ils: f };
     }),
   }));
   const current = monthLongLabel(payload.computedMonth);
-  const has = (k: 'openings' | 'cuts' | 'returns' | 'leaveStarts') => hc.months.some((m) => (m[k] ?? 0) > 0);
+  const has = (k: 'transfers' | 'openings' | 'cuts' | 'returns' | 'leaveStarts') => hc.months.some((m) => (m[k] ?? 0) > 0);
   const defs: HeadcountLineDef[] = [
     {
       key: 'hc-employees', label: 'Employees at month-end', kind: 'balance', fy: 'last', unit: 'count', value: (f) => f.employees,
@@ -384,6 +386,12 @@ export function buildHeadcountTable(payload: SalaryPayload, view: YearView): Pro
       hint: 'People who left, or are leaving (their leave dates in HiBob).',
     },
   ];
+  if (has('transfers')) {
+    defs.push({
+      key: 'hc-transfers', label: 'Transfers between departments', kind: 'note', fy: 'sum', unit: 'count', value: (f) => f.transfers,
+      hint: 'People who moved to another HiBob department (October 2026: from LSports\' departments to Bringits). They were already employees, so the count does not move: not hires. Click a figure for the department they moved to.',
+    });
+  }
   if (has('openings')) {
     defs.push({
       key: 'hc-openings', label: 'Open positions (not counted)', kind: 'note', fy: 'sum', unit: 'count', value: (f) => f.openings,

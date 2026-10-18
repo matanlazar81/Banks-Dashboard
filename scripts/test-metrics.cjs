@@ -235,6 +235,17 @@ function testPeople() {
     'employees unavailable: payroll / revenue still shows, revenue per employee is empty with a warning');
   const none = m.peopleMetrics(pnlPayload().variants.plan.years[1].rows, EXTRAS.employees, 'LSports');
   check(none.months.length === 0 && none.ytd === null && none.through === null, 'no closed month yet: nothing to show');
+
+  // HiBob records counted as people: a move to another department is the same employee (as on the Salary Projection).
+  const moves = [
+    { id: 'b', start: '2023-02-01', end: null, type: 'Full Time', group: 'Finance' }, // a second record; the first never ended
+    { id: 'b', start: '2026-10-01', end: null, type: 'Full Time', group: 'Technology' },
+    { id: 'd', start: '2026-10-12', end: null, type: 'Full Time', group: 'Technology' }, // one record: its start is the move
+    { id: 'e', start: '2026-10-20', end: null, type: 'Full Time', group: 'Arena' }, // a real hire
+  ];
+  const mv = m.headcountByMonth(moves, ['2026-09', '2026-10']);
+  check(mv['2026-09'].total === 2 && mv['2026-10'].total === 3 && mv['2026-10'].byType['Full Time'] === 3,
+    'employees are people: two records of one employee count once; the October 2026 move to Technology counts from before', JSON.stringify(mv));
 }
 
 function testWarnings() {

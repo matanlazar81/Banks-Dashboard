@@ -922,6 +922,42 @@ async function testDeelAndHeadcount(payload) {
     'KPI: headcount today and at the end of each year; none without HiBob');
 }
 
+async function testTransfers() {
+  console.log('\nHEADCOUNT: people, not records; department moves are transfers (peopleOf, server/metrics.cjs)');
+  const model = await import(pathToFileURL(path.join(ROOT, 'src', 'salary-projection', 'model.ts')).href);
+  const bd = await import(pathToFileURL(path.join(ROOT, 'src', 'salary-projection', 'breakdown.ts')).href);
+  const charts = await import(pathToFileURL(path.join(ROOT, 'src', 'salary-projection', 'charts.ts')).href);
+  const MOVES = [
+    { id: 'a', start: '2020-01-01', end: null, type: 'Full-time', group: 'R&D' }, // stays
+    { id: 'b', start: '2023-02-01', end: null, type: 'Full-time', group: 'Finance' }, // a second record; the first never ended
+    { id: 'b', start: mk(Y, 10) + '-01', end: null, type: 'Full-time', group: 'Technology' },
+    { id: 'c', start: '2022-05-01', end: mk(Y, 9) + '-30', type: 'Full-time', group: 'Sales' }, // the first record ends the day before
+    { id: 'c', start: mk(Y, 10) + '-01', end: null, type: 'Full-time', group: 'Bringits' },
+    { id: 'd', start: mk(Y, 10) + '-12', end: null, type: 'Full-time', group: 'Technology' }, // one record: its start is the move
+    { id: 'e', start: mk(Y, 10) + '-20', end: null, type: 'Full-time', group: 'Arena' }, // a real hire
+  ];
+  const { payload: q } = await sp.buildSalaryProjection({ rows: syntheticRows(), now: NOW, headcount: { company: 'LSports', spans: MOVES, events: [], error: null } });
+  const qm = (mKey) => q.headcount.months.find((x) => x.mKey === mKey);
+  check(qm(mk(Y, 1)).employees === 4 && qm(mk(Y, 9)).employees === 4 && qm(mk(Y, 9)).hires === 0 && qm(mk(Y, 9)).leavers === 0 && qm(mk(Y, 9)).transfers === 0
+    && qm(mk(Y, 10)).employees === 5 && qm(mk(Y, 10)).hires === 1 && qm(mk(Y, 10)).leavers === 0 && qm(mk(Y, 10)).transfers === 3 && q.headcount.today === 4,
+    'a move is a transfer, not a leaver and a hire: a second record (still open, or the first ending the day before) is the same person; one record starting in Technology in October 2026 counts from before; a real hire still counts');
+  check(qm(mk(Y, 10)).byDept.Technology.transfers === 2 && qm(mk(Y, 10)).byDept.Bringits.transfers === 1 && qm(mk(Y, 10)).byDept.Arena.hires === 1 && !qm(mk(Y, 10)).byDept.Finance
+    && qm(mk(Y, 9)).byDept.Finance.employees === 1 && qm(mk(Y, 9)).byDept['Before moving to Technology'].employees === 1
+    && JSON.stringify(q.headcount.records) === JSON.stringify({ rows: 7, people: 5, merged: 2, moved: 1 }) && !/"id"|"a"|"b"/.test(JSON.stringify(q.headcount)),
+    'by department: a transfer counts in the department moved to; before it, the earlier record\'s department ("Before moving to Technology" when HiBob has none); a summary of the records, no ids');
+
+  const qt = model.buildHeadcountTable(q, 'current');
+  const tl = qt.lines.find((l) => l.key === 'hc-transfers');
+  const oct = qt.columns.findIndex((c) => c.id === mk(Y, 10));
+  const tb = bd.headcountBreakdown(q, { line: 'hc-transfers', period: mk(Y, 10), variant: 'base', ccy: 'ils' });
+  const { payload: p } = await sp.buildSalaryProjection({ rows: syntheticRows(), now: NOW, headcount: HEADCOUNT });
+  check(tl && tl.kind === 'note' && tl.values[oct] === 3 && qt.lines.find((l) => l.key === 'hc-hires').values[oct] === 1
+    && !model.buildHeadcountTable(p, 'both').lines.some((l) => l.key === 'hc-transfers')
+    && tb.status === 'ready' && tb.cell === 3 && JSON.stringify(tb.sections[0].rows.map((r) => [r.label, r.amount])) === JSON.stringify([['Technology', 2], ['Bringits', 1]])
+    && charts.headcountChart(qt, q.headcount).points.find((pt) => pt.mKey === mk(Y, 10)).transfers === 3,
+    'the table: a Transfers line (not counted) only when there are any, hires without the moves; a transfer\'s breakdown is by the department moved to; the charts\' hover has them');
+}
+
 async function testCharts(payload) {
   console.log('\nCHARTS: the Charts view\'s data (src/salary-projection/charts.ts)');
   const model = await import(pathToFileURL(path.join(ROOT, 'src', 'salary-projection', 'model.ts')).href);
@@ -1013,6 +1049,7 @@ async function main() {
   await testHandler(payload);
   await testModel(payload);
   await testDeelAndHeadcount(payload);
+  await testTransfers();
   await testCharts(payload);
   if (process.argv.includes('--write-fixture')) {
     const file = path.join(__dirname, 'fixtures', 'salary-projection-sample.json');

@@ -245,6 +245,7 @@ export function headcountSeries({ months, currentMonth, known, events }) {
     return {
       mKey, status: mKey < currentMonth ? 'actual' : mKey === currentMonth ? 'current' : 'forecast',
       employees: k ? num(k.employees) : null, hires: k ? num(k.hires) : null, leavers: k ? num(k.leavers) : null,
+      transfers: k ? num(k.transfers) : null,
       ...p,
       ...(k && k.byDept ? { byDept: k.byDept } : {}),
       ...(k && k.byType ? { byType: k.byType } : {}),

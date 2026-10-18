@@ -9,6 +9,7 @@
 //                                     the months its run-rate averages; a year by month (the total also by account)
 // The headcount table's cells (headcountBreakdown), in people:
 //   hc-employees / hc-hires / hc-leavers  by HiBob group (department) and employment type; a year by month too
+//   hc-transfers                          the same, by the department moved to
 //   hc-openings and HiBob's other events  by department (open positions with their roles); a year by month too
 import { countedChangeRows, countedIncrementRows, deelByMonth, deelRunRate, placedHeadcountEvents } from '../forecast/salary-projection.mjs';
 import type { BreakdownReady, BreakdownRequest, BreakdownResponse, BreakdownRow, BreakdownSection } from '../new-dashboard/breakdown.ts';
@@ -214,12 +215,13 @@ export function salaryBreakdown(payload: SalaryPayload, req: BreakdownRequest): 
 }
 
 // ── The headcount table (HiBob), in people ──
-type HeadcountField = 'employees' | 'hires' | 'leavers';
+type HeadcountField = 'employees' | 'hires' | 'leavers' | 'transfers';
 type HeadcountEventKind = 'openings' | 'cuts' | 'returns' | 'leaveStarts';
 const HEADCOUNT_LINES: Record<string, { label: string; field?: HeadcountField; kind?: HeadcountEventKind; sign: 1 | -1 }> = {
   'hc-employees': { label: 'Employees at month-end', field: 'employees', sign: 1 },
   'hc-hires': { label: 'Hires', field: 'hires', sign: 1 },
   'hc-leavers': { label: 'Leavers', field: 'leavers', sign: -1 },
+  'hc-transfers': { label: 'Transfers between departments', field: 'transfers', sign: 1 },
   'hc-openings': { label: 'Open positions (not counted)', kind: 'openings', sign: 1 },
   'hc-cuts': { label: 'Planned leavers, no employee (not counted)', kind: 'cuts', sign: 1 },
   'hc-returns': { label: 'Returns from leave', kind: 'returns', sign: 1 },
@@ -259,7 +261,7 @@ export function headcountBreakdown(payload: SalaryPayload, req: BreakdownRequest
     .map(([k, n]) => item(`${keyPrefix}${k}`, labelOf(k), n, { hint: hints[k] ?? null }))
     .sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount) || a.label.localeCompare(b.label));
 
-  // Employees, hires and leavers: HiBob's employees by their dates.
+  // Employees, hires, leavers and transfers: HiBob's employees by their dates.
   if (def.field) {
     const field = def.field;
     // A year of employees is its December, as the table's full-year column.
@@ -267,11 +269,12 @@ export function headcountBreakdown(payload: SalaryPayload, req: BreakdownRequest
     const cell = def.sign * picked.reduce((s, m) => s + (m[field] ?? 0), 0);
     const sumOf = (key: 'byDept' | 'byType') => {
       const out: Record<string, number> = {};
-      for (const m of picked) for (const [k, c] of Object.entries(m[key] ?? {})) out[k] = (out[k] ?? 0) + def.sign * c[field];
+      for (const m of picked) for (const [k, c] of Object.entries(m[key] ?? {})) out[k] = (out[k] ?? 0) + def.sign * (c[field] ?? 0);
       return out;
     };
     if (!picked.some((m) => m.byDept)) return fail('Refresh the page for the headcount by department.');
-    const depts = section('departments', 'By department', 'HiBob groups.', counted(sumOf('byDept'), 'dept|', deptName));
+    const transfers = field === 'transfers';
+    const depts = section('departments', transfers ? 'By department moved to' : 'By department', 'HiBob groups.', counted(sumOf('byDept'), 'dept|', deptName));
     const types = section('types', 'By employment type', null, counted(sumOf('byType'), 'type|', (k) => k));
     const sections = fy && field !== 'employees'
       ? [byMonth((mKey) => def.sign * (months.find((m) => m.mKey === mKey)?.[field] ?? 0)), depts, types]
@@ -279,7 +282,9 @@ export function headcountBreakdown(payload: SalaryPayload, req: BreakdownRequest
     return {
       ...base, cell, sections,
       notes: [
-        `HiBob (${hc.company}): employees by their start and leave dates, signed hires and people leaving included${field === 'employees' && fy ? '; a full year shows its December' : ''}. Counts only, no names.`,
+        transfers
+          ? `HiBob (${hc.company}): people who moved to another department. They were already employees, so the count does not move. A move HiBob records as a new start date counts from before it. Counts only, no names.`
+          : `HiBob (${hc.company}): employees by their start and leave dates, signed hires and people leaving included${field === 'employees' && fy ? '; a full year shows its December' : ''}. Counts only, no names.`,
       ],
     };
   }
