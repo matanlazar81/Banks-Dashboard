@@ -678,8 +678,6 @@ const SPANS = [
   { start: mk(Y, 10) + '-01', end: null, type: 'Full-time', group: 'Sales' }, // joined in the current month
   { start: mk(Y, 12) + '-01', end: null, type: 'Full-time', group: null }, // signed, starts in December (no group yet)
   { start: '2022-01-01', end: mk(T, 1) + '-31', type: 'Full-time', group: 'Finance' }, // leaving at the end of January next year
-  { start: '2021-03-01', end: mk(Y, 5) + '-20', type: 'Full-time', group: 'BRINGITS' }, // left out (Bringits), gone in May
-  { start: '2020-06-01', end: null, type: 'Full-time', group: 'Bringits' }, // left out (Bringits), still employed
 ];
 const EVENTS = [
   { month: mk(Y, 4), type: 'decrease', subType: 'Terminated', employee: true, status: '', department: 'R&D', position: '', count: 1 },
@@ -693,7 +691,6 @@ const EVENTS = [
   { month: mk(T, 2), type: 'decrease', subType: 'Leave start', employee: true, status: '', department: 'Sales', position: '', count: 1 },
   { month: mk(T, 3), type: 'decrease', subType: 'Position cut', employee: false, status: '', department: 'Finance', position: 'Controller', count: 1 },
   { month: mk(T, 4), type: 'transfer', subType: 'Moved', employee: false, status: '', department: '', position: '', count: 4 },
-  { month: mk(Y, 11), type: 'increase', subType: 'Open position', employee: false, status: 'Open', department: 'Bringits', position: 'Trader', count: 3 }, // left out
 ];
 const HEADCOUNT = { company: 'LSports', spans: SPANS, events: EVENTS, error: null };
 
@@ -737,7 +734,7 @@ async function testDeelAndHeadcount(payload) {
   check(JSON.stringify(p.blocks) === JSON.stringify(payload.blocks), 'the account projection (blocks) is unchanged by Deel and the headcount');
   const h = p.headcount;
   const m = (mKey) => h.months.find((x) => x.mKey === mKey);
-  check(h.company === 'LSports' && h.asOf === '2026-10-15' && h.today === 5 && h.error === null && h.months.length === 24 && h.events.length === EVENTS.length - 1
+  check(h.company === 'LSports' && h.asOf === '2026-10-15' && h.today === 5 && h.error === null && h.months.length === 24 && h.events.length === EVENTS.length
     && h.events.every((e) => 'employee' in e && 'status' in e),
     'headcount: the company, today (who joined and left this month counted as of today) and every month of both years');
   check(m(mk(Y, 1)).employees === 5 && m(mk(Y, 3)).employees === 5 && m(mk(Y, 4)).employees === 4 && m(mk(Y, 4)).leavers === 1 && m(mk(Y, 5)).hires === 1 && m(mk(Y, 9)).employees === 5
@@ -754,20 +751,6 @@ async function testDeelAndHeadcount(payload) {
     'returns from leave and leave starts are shown in their month but do not move the count; an unknown event type is left out');
   const json = JSON.stringify(p.headcount);
   check(!('spans' in p.headcount) && !/2019-01-01|2025-11-15|2024-02-01|employeeId|EMPLOYEE_ID/.test(json), 'no employee detail in the payload: counts only (by group and employment type at most)');
-  check(JSON.stringify(h.excluded) === JSON.stringify({ groups: ['BRINGITS'], today: 1 }) && m(mk(Y, 5)).leavers === 0 && m(mk(Y, 11)).openings === 2
-    && !h.months.some((x) => Object.keys(x.byDept).some((k) => /bringits/i.test(k))) && !h.events.some((e) => /bringits/i.test(e.department)),
-    'HiBob\'s Bringits department is left out in every month, whatever the case: its people (one left in May, one still here), its planned events, the breakdowns; the payload names it with today\'s count');
-  const prevExclude = process.env.HEADCOUNT_EXCLUDE_GROUPS;
-  process.env.HEADCOUNT_EXCLUDE_GROUPS = '';
-  let all;
-  try {
-    all = (await sp.buildSalaryProjection({ rows: syntheticRows(), now: NOW, headcount: HEADCOUNT })).payload.headcount;
-  } finally {
-    if (prevExclude === undefined) delete process.env.HEADCOUNT_EXCLUDE_GROUPS; else process.env.HEADCOUNT_EXCLUDE_GROUPS = prevExclude;
-  }
-  check(all.today === 6 && all.months.find((x) => x.mKey === mk(Y, 5)).leavers === 1 && all.months.find((x) => x.mKey === mk(Y, 11)).openings === 5
-    && all.excluded.groups.length === 0 && all.events.length === EVENTS.length,
-    'HEADCOUNT_EXCLUDE_GROUPS replaces the list: empty keeps every department');
 
   const wErr = (await sp.buildSalaryProjection({ rows: syntheticRows(), now: NOW, deel: { vendors: [], rows: [], error: 'Deel could not be read.' }, headcount: { company: 'LSports', spans: null, events: [], error: 'HiBob failed.' } })).payload;
   check(wErr.warnings.includes('Deel could not be read.') && wErr.warnings.includes('HiBob failed.') && wErr.headcount.today === null && wErr.headcount.months.every((x) => x.employees === null),
@@ -799,7 +782,7 @@ async function testDeelAndHeadcount(payload) {
       fetchPayrollOverrides: async () => [],
       fetchPayrollChanges: async () => [],
       fetchHeadcountPlan: async (from, company) => { askedPlan = { from, company }; return EVENTS; },
-      query: async (sql, binds) => { spansSql = { sql, binds }; return SPANS.map((s) => ({ S: s.start, E: s.end, T: s.type, G: s.group })); },
+      query: async (sql, binds) => { spansSql = { sql, binds }; return SPANS.map((s) => ({ S: s.start, E: s.end, T: s.type })); },
     };
     const run = (nsClient, sfClient) => quiet(() => sp.computeSalaryProjection({ now: NOW, getNsClient: () => nsClient, getSfClient: () => sfClient, queueNsCall: (fn) => { queued++; return fn(); } }));
     const { payload: c } = await run(ns, sf);
@@ -887,9 +870,6 @@ async function testDeelAndHeadcount(payload) {
   check(hcTable.columns.find((c) => c.mKey === mk(Y, 9)).status === 'actual' && hcTable.columns.find((c) => c.mKey === mk(Y, 10)).status === 'current',
     'its own statuses: HiBob\'s months before the current one are actual');
   const noLeave = model.buildHeadcountTable({ ...p, headcount: { ...p.headcount, months: p.headcount.months.map((x) => ({ ...x, openings: 0, cuts: 0, returns: 0, leaveStarts: 0 })) } }, 'next');
-  check(model.excludedGroupsText(p.headcount) === 'BRINGITS' && /without BRINGITS \(left out in every month\)/.test(hl('hc-employees').hint)
-    && model.excludedGroupsText({ ...p.headcount, excluded: { groups: ['A', 'B', 'C'], today: 0 } }) === 'A, B and C' && model.excludedGroupsText({ ...p.headcount, excluded: undefined }) === '',
-    'the page names the department left out (none for an older payload)');
   check(noLeave.lines.map((l) => l.key).join(',') === 'hc-employees,hc-hires,hc-leavers' && noLeave.columns.length === 13 && model.buildHeadcountTable(wErr, 'both') === null
     && model.buildHeadcountTable(payload, 'both') === null,
     'no open positions or leave events: no such lines; follows the year view; no employees (or not read): no table');

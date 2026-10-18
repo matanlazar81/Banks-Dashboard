@@ -64,17 +64,13 @@ August, and the page says September is pending.
 - **Employees:** HiBob (Snowflake `DIM_EMPLOYEE__FINANCE`) employees of the P&L's company (LSports,
   `METRICS_HEADCOUNT_COMPANY`), any employment type. An employee counts when they started on or before
   the month's last day and had not left before it. Hover a month for the split by employment type.
-- **HiBob's Bringits department is left out** in every month, as on the Salary Projection (finance's choice in
-  October 2026). The page says so under the chart.
-  - A department (`EMPLOYEE_GROUP`) is matched when its name contains "bringits", in any case.
-  - The list is `EXCLUDED_GROUPS` in `server/metrics.cjs`, shared by both pages. `HEADCOUNT_EXCLUDE_GROUPS`
-    (comma-separated) replaces it; empty keeps every department.
+  HiBob's Bringits department counts too: its people's pay is in the same payroll (as on the Salary Projection).
 - **Year-to-date column:** the months' revenue ÷ employee-months, i.e. revenue a month per employee, so it
   compares with the monthly columns.
 - **The figure above the chart:** the months' revenue per average employee, and that pace over a full
   year.
-- **Data read:** only start dates, leave dates, the employment type and the department (group), with no names
-  or ids, cached like the other reads.
+- **Data read:** only start dates, leave dates and the employment type, with no names or ids, cached like
+  the other reads.
 - **If HiBob can't be read:** payroll / revenue still shows, and revenue per employee is empty with a
   warning.
 

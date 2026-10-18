@@ -347,12 +347,6 @@ function deelLines(payload: SalaryPayload): DeelDefs & { sums: Map<string, Month
 type HeadcountFigures = { employees: number; hires: number; leavers: number; openings: number; cuts: number; returns: number; leaveStarts: number };
 type HeadcountLineDef = LineDefOf<HeadcountFigures, string>;
 
-/** HiBob's departments left out of the headcount, for the page's notes: 'Bringits', 'A, B and C'; '' when none. */
-export function excludedGroupsText(hc: SalaryPayload['headcount']): string {
-  const groups = hc && hc.excluded ? hc.excluded.groups : [];
-  return groups.length > 1 ? `${groups.slice(0, -1).join(', ')} and ${groups[groups.length - 1]}` : groups.join('');
-}
-
 /**
  * HiBob's employees at month-end, hires and leavers, then, when HiBob has them, its open positions, planned leavers
  * with no employee, returns from leave and leave starts (shown, not counted), over the year view (the same
@@ -376,11 +370,10 @@ export function buildHeadcountTable(payload: SalaryPayload, view: YearView): Pro
   }));
   const current = monthLongLabel(payload.computedMonth);
   const has = (k: 'openings' | 'cuts' | 'returns' | 'leaveStarts') => hc.months.some((m) => (m[k] ?? 0) > 0);
-  const without = excludedGroupsText(hc);
   const defs: HeadcountLineDef[] = [
     {
       key: 'hc-employees', label: 'Employees at month-end', kind: 'balance', fy: 'last', unit: 'count', value: (f) => f.employees,
-      hint: `HiBob (${hc.company}): its employees on the last day of the month, people on leave included, from their start and leave dates in HiBob, future ones too (signed hires, people leaving). Only HiBob's employees count${without ? `, without ${without} (left out in every month)` : ''}. Full year: December.`,
+      hint: `HiBob (${hc.company}): its employees on the last day of the month, people on leave included, from their start and leave dates in HiBob, future ones too (signed hires, people leaving). Only HiBob's employees count. Full year: December.`,
     },
     {
       key: 'hc-hires', label: 'Hires', kind: 'item', fy: 'sum', signed: true, unit: 'count', value: (f) => f.hires,
