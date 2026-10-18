@@ -154,6 +154,13 @@ view). It holds counts only: no names or IDs leave the server.
   - **Employees at month-end**: people employed on the last day, people on leave included.
   - **Hires**: people counted at this month-end but not the one before.
   - **Leavers**: the reverse.
+- **HiBob's Bringits department is left out** in every month (finance's choice in October 2026): its people
+  (`DIM_EMPLOYEE.EMPLOYEE_GROUP`) and its planned events (`FCT_HEADCOUNT_EVENT.DEPARTMENT`).
+  - It covers the count, today's KPI, the breakdowns and the charts.
+  - A department is matched when its name contains "bringits", in any case (`EXCLUDED_GROUPS` in
+    `server/salary-projection.cjs`; `SALARY_PROJECTION_EXCLUDE_GROUPS` replaces the list).
+  - The page names what was left out. `--dry-run` also prints how many of its people are employed today.
+  - The payroll (NetSuite) and the Metrics page are unchanged.
 - **Beside the count, not in it**, HiBob's planned events (`FCT_HEADCOUNT_EVENT`, counted by month, type,
   sub-type, employee and opening status in `fetchHeadcountPlan`; `headcountSeries` in
   `src/forecast/salary-projection.mjs`):
@@ -272,6 +279,7 @@ and P&L Projection were added (`docs/metrics.md`, `docs/pnl-projection.md`).
 | `SALARY_PROJECTION_TTL_MIN` | `CASH_PROJECTION_TTL_MIN` (30) | Minutes before cached figures are refreshed in the background |
 | `SALARY_PROJECTION_TIMEOUT_MIN` | `CASH_PROJECTION_TIMEOUT_MIN` (10) | A computation running longer is abandoned |
 | `SALARY_PROJECTION_PREWARM` | `CASH_PROJECTION_PREWARM` | `1` = compute 30 s after the server starts if the cache is empty |
+| `SALARY_PROJECTION_EXCLUDE_GROUPS` | `bringits` | HiBob departments left out of the headcount (comma-separated; a name containing one, any case). Empty keeps every department |
 
 NetSuite settings are the server's usual `NETSUITE_*` variables (`NET_CASH_SUBSIDIARY`, default 3); NetSuite
 also gives Deel. Snowflake (`SNOWFLAKE_*`) is used for the planned changes (hires, leavers, returns from leave,

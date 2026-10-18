@@ -4,6 +4,7 @@
 import ProjectionTable, { type TableMarkers } from '../new-dashboard/ProjectionTable.tsx';
 import { monthLongLabel, type Column, type ProjectionTable as Table } from '../new-dashboard/model.ts';
 import { isHeadcountBreakdownLine } from './breakdown.ts';
+import { excludedGroupsText } from './model.ts';
 import type { Ccy, SalaryPayload } from './types.ts';
 
 const MARKERS: TableMarkers = { anchorLine: null, rollForwardLine: '', closingLine: '', negativeLines: new Set() };
@@ -22,12 +23,13 @@ export default function HeadcountSection({ table, headcount, computedMonth, ccy,
   const breakdownLines = new Set(table.lines.map((l) => l.key).filter(isHeadcountBreakdownLine));
   const asOf = new Date(`${headcount.asOf}T12:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
   const current = monthLongLabel(computedMonth);
+  const without = excludedGroupsText(headcount);
   return (
     <section className="rounded-lg border border-slate-200 bg-white">
       <div className="flex flex-wrap items-baseline gap-2 border-b border-slate-200 px-4 py-2.5">
         <h2 className="text-sm font-semibold text-slate-800">Headcount by month</h2>
         <span className="text-xs text-slate-500">
-          HiBob ({headcount.company}){headcount.today !== null ? `: ${headcount.today.toLocaleString('en-US')} employees on ${asOf}` : ''}.
+          HiBob ({headcount.company}{without ? `, without ${without}` : ''}){headcount.today !== null ? `: ${headcount.today.toLocaleString('en-US')} employees on ${asOf}` : ''}.
           {' '}HiBob's employees by their start and leave dates, signed hires and people leaving included. From {current}, HiBob's open positions are shown below the count, not in it. Hover a line for how it is counted; click a figure for it by department.
         </span>
       </div>
