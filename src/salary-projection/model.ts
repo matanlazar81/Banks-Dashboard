@@ -2,10 +2,11 @@
 // temporary, not classified) and the total, after applying the page's classification (saved choices plus
 // unsaved edits). Between permanent and temporary come the planned changes: Snowflake's hires, leavers and
 // returns from leave and the override file's increments, which count in Total payroll from the current month
-// on, and the override file's overrides, for reference only.
+// on, and the override file's overrides, for reference only. Below Total payroll: Deel, then Payroll + Deel.
+// The headcount (HiBob) is a table of its own (buildHeadcountTable): people, not money.
 // Columns, full-year values and formatting are the New Bank Dashboard's (src/new-dashboard/model.ts). No React,
 // no DOM — unit-tested by scripts/test-salary-projection.cjs.
-import { countedChangeRows, countedIncrementRows, groupOfMethod, projectSalary } from '../forecast/salary-projection.mjs';
+import { countedChangeRows, countedIncrementRows, deelByMonth, deelRunRate, groupOfMethod, projectSalary } from '../forecast/salary-projection.mjs';
 import { buildYearTable, monthLongLabel, type LineDefOf, type ProjectionTable } from '../new-dashboard/model.ts';
 import type { YearView } from '../new-dashboard/types.ts';
 import type { Ccy, PayrollChange, PayrollOverride, SalaryAccount, SalaryFigures, SalaryGroup, SalaryMethod, SalaryPayload } from './types.ts';
@@ -78,12 +79,20 @@ interface PlannedDefs {
   totalKeys: string[];
 }
 
+/** Deel's table lines (its header, accounts and total) and its account lines' keys. */
+interface DeelDefs {
+  defs: SalaryLineDef[];
+  keys: string[];
+}
+
 /**
  * The table lines: each group's header, accounts and subtotal, then the total. The planned changes' lines (when
  * given, with their own headers) come right after the permanent group; Total payroll adds those in totalKeys.
+ * Deel's lines (when given) come after Total payroll, then Payroll + Deel.
  */
 export function salaryLineDefs(
   accounts: SalaryAccount[], runRateMonth: string, years: [number, number], planned: PlannedDefs = { defs: [], totalKeys: [] },
+  deel: DeelDefs = { defs: [], keys: [] },
 ): SalaryLineDef[] {
   const runRate = monthLongLabel(runRateMonth);
   const defs: SalaryLineDef[] = [];
@@ -107,22 +116,38 @@ export function salaryLineDefs(
     key: 'total', label: 'Total payroll', kind: 'subtotal', fy: 'sum', value: sumOf([...accounts.map((a) => a.acct), ...planned.totalKeys]),
     hint: `Every payroll account (76xxxx): permanent + temporary${added ? `, plus ${added} from the current month on` : ''}.${has('total-overrides') ? ' The override file\'s overrides are not in it.' : ''}`,
   });
+  if (deel.defs.length) {
+    defs.push(...deel.defs, {
+      key: 'payroll-deel', label: 'Payroll + Deel', kind: 'subtotal', fy: 'sum',
+      value: sumOf([...accounts.map((a) => a.acct), ...planned.totalKeys, ...deel.keys]),
+      hint: 'Total payroll plus Total Deel: the payroll in Israel and the people abroad through Deel.',
+    });
+  }
   return defs;
 }
 
-/** Columns + lines for the currency and year view, with the planned changes between permanent and temporary. */
+/**
+ * Columns + lines for the currency and year view, with the planned changes between permanent and temporary and
+ * Deel below Total payroll.
+ */
 export function buildSalaryTable(payload: SalaryPayload, ccy: Ccy, view: YearView): ProjectionTable<string> {
   const planned = plannedLines(payload);
-  const blocks = planned.defs.length
+  const deel = deelLines(payload);
+  const extra = [planned.sums, deel.sums].filter((m) => m.size);
+  const blocks = extra.length
     ? payload.blocks.map((b) => ({
       ...b,
       rows: b.rows.map((r) => {
-        const s = planned.sums.get(r.mKey);
-        return s ? { ...r, eur: { ...r.eur, ...s.eur }, ils: { ...r.ils, ...s.ils } } : r;
+        let row = r;
+        for (const sums of extra) {
+          const s = sums.get(r.mKey);
+          if (s) row = { ...row, eur: { ...row.eur, ...s.eur }, ils: { ...row.ils, ...s.ils } };
+        }
+        return row;
       }),
     }))
     : payload.blocks;
-  return buildYearTable(blocks, ccy, view, salaryLineDefs(payload.accounts, payload.basis.runRateMonth, payload.years, planned));
+  return buildYearTable(blocks, ccy, view, salaryLineDefs(payload.accounts, payload.basis.runRateMonth, payload.years, planned, deel));
 }
 
 // ── Planned changes, between permanent and temporary: Snowflake's hires, leavers and returns from leave, then
@@ -135,9 +160,9 @@ export const SOURCES: Source[] = ['Open position', 'Terminated', 'Leave end'];
 export const SOURCE_KEY: Record<Source, string> = { 'Open position': 'hires', Terminated: 'leavers', 'Leave end': 'returns' };
 export const SOURCE_LINE: Record<Source, string> = { 'Open position': 'Planned hires', Terminated: 'Leavers', 'Leave end': 'Returns from leave' };
 const SOURCE_HINT: Record<Source, string> = {
-  'Open position': 'Planned hires: open positions in Snowflake\'s payroll forecast.',
-  Terminated: 'Leavers (negative): employees leaving, from Snowflake\'s payroll forecast.',
-  'Leave end': 'Returns from leave, from Snowflake\'s payroll forecast.',
+  'Open position': 'Planned hires: open positions in HiBob\'s forecast (Snowflake\'s payroll forecast).',
+  Terminated: 'Leavers (negative): employees leaving, from HiBob\'s forecast (Snowflake\'s payroll forecast).',
+  'Leave end': 'Returns from leave (maternity and others), from HiBob\'s forecast (Snowflake\'s payroll forecast).',
 };
 const COUNTED = ' Added to Total payroll from the current month on (closed months are NetSuite\'s actuals, which already include what happened).';
 
@@ -188,7 +213,7 @@ function plannedLines(payload: SalaryPayload): PlannedDefs & { sums: Map<string,
   }
   const changeSources = SOURCES.filter((source) => changes.has(source));
   if (changeSources.length) {
-    defs.push(header('header-changes', 'Headcount changes', `Planned hires, leavers and returns from leave on the payroll accounts, from Snowflake's payroll forecast.${COUNTED}`));
+    defs.push(header('header-changes', 'Headcount changes', `Planned hires, leavers and returns from leave on the payroll accounts, from HiBob's forecast (Snowflake's payroll forecast). The people are in the headcount table under this one.${COUNTED}`));
   }
   for (const source of changeSources) {
     const key = SOURCE_KEY[source];
@@ -203,7 +228,7 @@ function plannedLines(payload: SalaryPayload): PlannedDefs & { sums: Map<string,
     totalKeys.push(...keys);
     defs.push({
       key: 'total-changes', label: 'Total headcount changes', kind: 'subtotal', fy: 'sum', value: sumOf(keys),
-      hint: `Planned hires, leavers and returns from leave (Snowflake).${COUNTED}`,
+      hint: `Planned hires, leavers and returns from leave (HiBob, through Snowflake).${COUNTED}`,
     });
   }
 
@@ -253,6 +278,101 @@ function plannedLines(payload: SalaryPayload): PlannedDefs & { sums: Map<string,
   return { sums, defs, totalKeys };
 }
 
+// ── Deel, below Total payroll: NetSuite's costs of the Deel vendors by account, actual months as booked and the
+// months the projection makes at Deel's run-rate (deelByMonth). Amounts are keyed by line ('deel|660004'). ──
+function deelLines(payload: SalaryPayload): DeelDefs & { sums: Map<string, MonthSums> } {
+  const sums = new Map<string, MonthSums>();
+  const deel = payload.deel;
+  if (!deel || !deel.rows.length) return { defs: [], keys: [], sums };
+  const runRateMonth = payload.basis.runRateMonth;
+  const accts = new Set<string>();
+  for (const [mKey, m] of deelByMonth(payload.blocks, deel.rows, runRateMonth)) {
+    const s: MonthSums = { eur: {}, ils: {} };
+    for (const ccy of ['eur', 'ils'] as const) {
+      for (const [acct, v] of Object.entries(m[ccy])) {
+        s[ccy][`deel|${acct}`] = v;
+        if (Math.abs(v) >= 0.5) accts.add(acct);
+      }
+    }
+    sums.set(mKey, s);
+  }
+  if (!accts.size) return { defs: [], keys: [], sums: new Map() };
+  const rate = deelRunRate(deel.rows, runRateMonth);
+  const forecast = rate.months.length
+    ? `the average of ${rate.months.map(monthLongLabel).join(', ')}, the last ${rate.months.length > 1 ? `${rate.months.length} months` : 'month'} with Deel postings up to ${monthLongLabel(runRateMonth)}`
+    : `0, no Deel postings in the 12 months up to ${monthLongLabel(runRateMonth)}`;
+  const names = new Map(deel.rows.map((r) => [r.acct, r.name]));
+  const list = [...accts].sort();
+  const keys = list.map((acct) => `deel|${acct}`);
+  const onPayroll = deel.onPayroll.length
+    ? ` Deel on payroll accounts (${listOf(deel.onPayroll.map((a) => accountLabel(a.acct, a.name)), 4)}) is already in Total payroll.`
+    : '';
+  return {
+    sums,
+    keys,
+    defs: [
+      header('header-deel', 'Deel', `People abroad through Deel: NetSuite's costs of ${listOf(deel.vendors, 4) || 'Deel'} by posting period, on every account but payroll ones. Not in Total payroll.${onPayroll}`),
+      ...list.map((acct): SalaryLineDef => ({
+        key: `deel|${acct}`, label: accountLabel(acct, names.get(acct) ?? ''), kind: 'item', fy: 'sum', value: (f) => f[`deel|${acct}`] ?? 0,
+        hint: `Deel on this account. Actual months: NetSuite. Forecast: ${forecast}.`,
+      })),
+      { key: 'total-deel', label: 'Total Deel', kind: 'subtotal', fy: 'sum', value: sumOf(keys), hint: `Deel's costs: NetSuite in actual months; forecast months ${forecast}.` },
+    ],
+  };
+}
+
+// ── Headcount (HiBob), a table of its own under the payroll: people, not money ──
+type HeadcountFigures = { employees: number; hires: number; leavers: number; returns: number; leaveStarts: number };
+type HeadcountLineDef = LineDefOf<HeadcountFigures, string>;
+
+/**
+ * Employees at month-end, hires, leavers and, when HiBob has them, returns from leave and leave starts, over the
+ * year view (the same columns as the payroll table). null when HiBob's employees could not be read.
+ */
+export function buildHeadcountTable(payload: SalaryPayload, view: YearView): ProjectionTable<string> | null {
+  const hc = payload.headcount;
+  if (!hc || !hc.months.some((m) => m.employees !== null)) return null;
+  const byKey = new Map(hc.months.map((m) => [m.mKey, m]));
+  const years = payload.blocks.map((b) => ({
+    year: b.year,
+    kind: b.kind,
+    rows: b.rows.map((r) => {
+      const m = byKey.get(r.mKey);
+      const f: HeadcountFigures = { employees: m?.employees ?? 0, hires: m?.hires ?? 0, leavers: m?.leavers ?? 0, returns: m?.returns ?? 0, leaveStarts: m?.leaveStarts ?? 0 };
+      return { mKey: r.mKey, status: m ? m.status : r.status, eur: f, ils: f };
+    }),
+  }));
+  const current = monthLongLabel(payload.computedMonth);
+  const has = (k: 'returns' | 'leaveStarts') => hc.months.some((m) => m[k] > 0);
+  const defs: HeadcountLineDef[] = [
+    {
+      key: 'hc-employees', label: 'Employees at month-end', kind: 'balance', fy: 'last', unit: 'count', value: (f) => f.employees,
+      hint: `HiBob (${hc.company}): people employed on the last day of the month, people on leave included. Before ${current}: HiBob's employees. From ${current}: the month before, plus HiBob's planned hires, minus its leavers. Full year: December.`,
+    },
+    {
+      key: 'hc-hires', label: 'Hires', kind: 'item', fy: 'sum', signed: true, unit: 'count', value: (f) => f.hires,
+      hint: `Before ${current}: people who joined. From ${current}: HiBob's planned hires; openings from earlier months still open count in ${current}.`,
+    },
+    {
+      key: 'hc-leavers', label: 'Leavers', kind: 'item', fy: 'sum', signed: true, unit: 'count', value: (f) => -f.leavers,
+      hint: `Before ${current}: people who left. From ${current}: HiBob's planned leavers.`,
+    },
+  ];
+  if (has('returns')) {
+    defs.push({
+      key: 'hc-returns', label: 'Returns from leave', kind: 'note', fy: 'sum', unit: 'count', value: (f) => f.returns,
+      hint: 'HiBob\'s returns from leave (maternity and others). They are employees all along, so the count does not move; their pay comes back (Returns from leave in the payroll table).',
+    });
+  }
+  if (has('leaveStarts')) {
+    defs.push({
+      key: 'hc-leave-starts', label: 'Leave starts', kind: 'note', fy: 'sum', unit: 'count', value: (f) => f.leaveStarts,
+      hint: 'HiBob\'s leave starts (maternity and others). They stay employees, so the count does not move. Snowflake\'s payroll forecast has no amounts for them, so Total payroll does not change.',
+    });
+  }
+  return buildYearTable(years, 'ils', view, defs);
+}
+
 export interface SalaryKpis {
   /** Payroll of the actual months of the current year. */
   ytd: { value: number; through: string | null };
@@ -260,6 +380,8 @@ export interface SalaryKpis {
   byYear: { year: number; value: number; changes: number }[];
   /** The permanent accounts' monthly run-rate (the last closed month). */
   runRate: { value: number; mKey: string };
+  /** HiBob's employees today and at the end of each year (forecast); null without HiBob. */
+  headcount: { today: number | null; asOf: string; yearEnd: { year: number; value: number | null }[] } | null;
 }
 
 export function computeSalaryKpis(payload: SalaryPayload, ccy: Ccy): SalaryKpis {
@@ -273,6 +395,7 @@ export function computeSalaryKpis(payload: SalaryPayload, ccy: Ccy): SalaryKpis 
   };
   const current = payload.blocks.find((b) => b.kind === 'current') ?? payload.blocks[0];
   const actual = current.rows.filter((r) => r.status === 'actual');
+  const hc = payload.headcount;
   // The run-rate month's own figures when it is in the table; else (January) the first projected month,
   // which carries it.
   const rateRow = current.rows.find((r) => r.mKey === payload.basis.runRateMonth) ?? current.rows.find((r) => r.status !== 'actual') ?? current.rows[0];
@@ -284,5 +407,8 @@ export function computeSalaryKpis(payload: SalaryPayload, ccy: Ccy): SalaryKpis 
       return { year: b.year, value: b.rows.reduce((s, r) => s + all(r[ccy]), 0) + changes, changes };
     }),
     runRate: { value: permanent(rateRow[ccy]), mKey: payload.basis.runRateMonth },
+    headcount: hc && hc.today !== null
+      ? { today: hc.today, asOf: hc.asOf, yearEnd: payload.years.map((year) => ({ year, value: hc.months.find((m) => m.mKey === `${year}-12`)?.employees ?? null })) }
+      : null,
   };
 }

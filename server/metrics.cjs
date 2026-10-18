@@ -409,6 +409,10 @@ async function sfCustomerRevenue(sf, from, to) {
 // ── payroll and revenue per employee ────────────────────────────────────────
 const lastDayOf = (mKey) => `${mKey}-${pad2(new Date(Date.UTC(Number(mKey.slice(0, 4)), Number(mKey.slice(5)), 0)).getUTCDate())}`;
 
+/** Whether an employee ({ start, end }: 'YYYY-MM-DD', end null while employed) is employed on a day: started on
+ *  or before it and not left before it. */
+const employedOn = (s, day) => !!s.start && s.start <= day && !(s.end && s.end < day);
+
 /** Employees active at each month-end ({ start, end, type }: 'YYYY-MM-DD', end null while employed):
  *  started on or before the last day and not left before it. { mKey: { total, byType } } */
 function headcountByMonth(spans, months) {
@@ -417,7 +421,7 @@ function headcountByMonth(spans, months) {
     const byType = {};
     let total = 0;
     for (const s of spans) {
-      if (!s.start || s.start > day || (s.end && s.end < day)) continue;
+      if (!employedOn(s, day)) continue;
       total++;
       const t = s.type || 'Unspecified';
       byType[t] = (byType[t] || 0) + 1;
@@ -825,5 +829,5 @@ function createMetricsDepositsHandler(deps = {}) {
 module.exports = {
   createMetricsHandler, createMetricsSettingsHandler, createMetricsDepositsHandler,
   buildMetrics, buildDetail, nrrSeries, nrrDetail, churnQuarterDetail, churnYtdDetail, churnForecastDetail, DETAILS,
-  shiftMonth, lastClosedMonth, cloudTargetsOf, headcountByMonth, peopleMetrics,
+  shiftMonth, lastClosedMonth, cloudTargetsOf, headcountByMonth, peopleMetrics, employedOn, lastDayOf, sfEmployeeSpans,
 };

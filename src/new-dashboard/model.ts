@@ -22,6 +22,8 @@ export interface LineDefOf<F, K extends string = string> {
   fy: 'sum' | 'first' | 'last';
   /** Shown with an explicit + / − and green / red instead of parentheses. */
   signed?: boolean;
+  /** 'count': whole numbers (people), not an amount in thousands. */
+  unit?: 'count';
 }
 type LineDef = LineDefOf<Figures, LineKey>;
 
@@ -88,6 +90,7 @@ export interface TableLine<K extends string = LineKey> {
   kind: LineKind;
   hint?: string;
   signed?: boolean;
+  unit?: 'count';
   /** One value per column, in display sign. */
   values: number[];
 }
@@ -164,7 +167,7 @@ export function buildYearTable<F, K extends string>(years: YearOf<F>[], ccy: Ccy
       for (const r of block.rows) values.push(line.value(r[ccy]));
       values.push(fyValue(line, block.rows, ccy));
     }
-    return { key: line.key, label: line.label, kind: line.kind, hint: line.hint, signed: line.signed, values };
+    return { key: line.key, label: line.label, kind: line.kind, hint: line.hint, signed: line.signed, unit: line.unit, values };
   });
   return { columns, lines, groups };
 }
@@ -215,6 +218,14 @@ export function formatSignedThousands(n: number): string {
   const k = Math.round(n / 1000);
   if (k === 0 || Object.is(k, -0)) return '–';
   return k < 0 ? `−${intFmt.format(-k)}` : `+${intFmt.format(k)}`;
+}
+
+/** A count of people: '1,235', or with an explicit sign '+3' / '−3' (true minus); '–' when it is 0. */
+export function formatCount(n: number, signed = false): string {
+  const v = Math.round(n);
+  if (v === 0 || Object.is(v, -0)) return '–';
+  if (signed) return v < 0 ? `−${intFmt.format(-v)}` : `+${intFmt.format(v)}`;
+  return v < 0 ? `(${intFmt.format(-v)})` : intFmt.format(v);
 }
 
 export const CCY_SYMBOL: Record<Ccy, string> = { eur: '€', ils: '₪' };

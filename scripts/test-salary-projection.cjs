@@ -638,6 +638,211 @@ async function testModel(payload) {
     'follows the currency; unknown periods and lines answer with an error');
 }
 
+// ── 5. Deel and the headcount (HiBob) ───────────────────────────────────────
+// Deel: two vendors on 660004, no bill in September (booked late), one posting on a payroll account.
+const DEEL = {
+  vendors: [{ id: 11, name: 'Deel Inc. (synthetic)' }, { id: 12, name: 'Deel Ltd (synthetic)' }],
+  rows: [
+    { month: mk(Y - 2, 12), acct: '660004', name: 'Contractors', vendor: 11, eur: 1_000, ils: 4_000 },
+    { month: mk(Y - 1, 12), acct: '660004', name: 'Contractors', vendor: 11, eur: 50_000, ils: 200_000 },
+    ...range(1, 8).map((m) => ({ month: mk(Y, m), acct: '660004', name: 'Contractors', vendor: 11, eur: 60_000, ils: 222_000 })),
+    { month: mk(Y, 8), acct: '660004', name: 'Contractors', vendor: 12, eur: 10_000, ils: 37_000 },
+    { month: mk(Y, 8), acct: '760001', name: 'Gross Salaries', vendor: 11, eur: 2_000, ils: 7_400 },
+  ],
+};
+// HiBob: employees with their dates (no names), and planned events by month, type and sub-type.
+const SPANS = [
+  { start: '2019-01-01', end: null, type: 'Full-time' },
+  { start: '2025-11-15', end: null, type: 'Full-time' },
+  { start: '2024-02-01', end: mk(Y, 3) + '-31', type: 'Full-time' }, // employed at the end of March, gone in April
+  { start: mk(Y, 5) + '-10', end: null, type: 'Student' },
+  { start: '2023-01-01', end: mk(Y, 10) + '-05', type: 'Full-time' }, // leaves in the current month
+  { start: mk(Y, 10) + '-01', end: null, type: 'Full-time' }, // joined in the current month
+  { start: mk(Y, 12) + '-01', end: null, type: 'Full-time' }, // signed, starts in December
+];
+const EVENTS = [
+  { month: mk(Y, 4), type: 'decrease', subType: 'Terminated', open: false, count: 1 },
+  { month: mk(Y, 6), type: 'increase', subType: 'Open position', open: true, count: 1 },
+  { month: mk(Y, 6), type: 'increase', subType: 'Open position', open: false, count: 2 },
+  { month: mk(Y, 8), type: 'increase', subType: 'Leave end', open: false, count: 1 },
+  { month: mk(Y, 10), type: 'decrease', subType: 'Terminated', open: false, count: 1 },
+  { month: mk(Y, 11), type: 'increase', subType: 'Open position', open: true, count: 2 },
+  { month: mk(Y, 12), type: 'increase', subType: 'Leave end', open: false, count: 1 },
+  { month: mk(T, 2), type: 'decrease', subType: 'Leave start', open: false, count: 1 },
+  { month: mk(T, 3), type: 'transfer', subType: 'Moved', open: false, count: 4 },
+];
+const HEADCOUNT = { company: 'LSports', spans: SPANS, events: EVENTS, error: null };
+
+async function testDeelAndHeadcount(payload) {
+  const sm = await sp.loadSalaryModule();
+  console.log('\nDEEL: run-rate and months (src/forecast/salary-projection.mjs)');
+  const a = (month, acct, eur) => ({ month, acct, eur, ils: eur * 4 });
+  const late = sm.deelRunRate([a(mk(Y, 6), '660004', 90), a(mk(Y, 7), '660004', 100), a(mk(Y, 8), '660004', 110), a(mk(Y, 9), '660004', 0)], mk(Y, 9));
+  check(JSON.stringify(late.months) === JSON.stringify([mk(Y, 6), mk(Y, 7), mk(Y, 8)]) && late.byAcct['660004'].eur === 100 && late.byAcct['660004'].ils === 400,
+    'a month without postings (a bill booked late) is skipped: the last three months that have them, averaged');
+  const moved = sm.deelRunRate([a(mk(Y, 7), '660004', 100), a(mk(Y, 8), '660010', 100), a(mk(Y, 9), '660010', 100)], mk(Y, 9));
+  check(near(moved.byAcct['660004'].eur, 33.33) && near(moved.byAcct['660010'].eur, 66.67) && near(moved.byAcct['660004'].eur + moved.byAcct['660010'].eur, 100, 0.02),
+    'a move to another account: each account its share, the total is right');
+  const two = sm.deelRunRate([a(mk(Y, 8), '660004', 80), a(mk(Y, 9), '660004', 120), a(mk(Y, 10), '660004', 999)], mk(Y, 9));
+  check(two.months.length === 2 && two.byAcct['660004'].eur === 100, 'fewer than three months: the ones there are; months after the run-rate month never count');
+  const none = sm.deelRunRate([a(mk(Y - 2, 1), '660004', 80)], mk(Y, 9));
+  check(none.months.length === 0 && JSON.stringify(none.byAcct) === '{}', 'no postings in the last 12 months: no run-rate');
+  const byMonth = sm.deelByMonth(payload.blocks, [a(mk(Y, 8), '660004', 80), a(mk(Y, 9), '660004', 120), a(mk(Y, 10), '660004', 999)], payload.basis.runRateMonth);
+  check(byMonth.get(mk(Y, 9)).eur['660004'] === 120 && byMonth.get(mk(Y, 10)).eur['660004'] === 100 && byMonth.get(mk(T, 12)).eur['660004'] === 100 && byMonth.size === 24,
+    'deelByMonth: actual months as booked, the current month (its partial postings ignored) and forecast months at the run-rate');
+
+  console.log('\nHEADCOUNT: HiBob\'s events and the series (src/forecast/salary-projection.mjs)');
+  check(sm.headcountKind('increase', 'Open position') === 'hires' && sm.headcountKind('decrease', 'Terminated') === 'leavers'
+    && sm.headcountKind('increase', 'Leave end') === 'returns' && sm.headcountKind('Decrease', 'Maternity leave') === 'leaveStarts' && sm.headcountKind('transfer', 'x') === null,
+    'events: increase = hire, decrease = leaver; a sub-type about leave = a return or a leave start; an unknown type counts nowhere');
+
+  console.log('\nDEEL AND HEADCOUNT: the payload (server/salary-projection.cjs)');
+  const { payload: p } = await sp.buildSalaryProjection({ rows: syntheticRows(), now: NOW, deel: DEEL, headcount: HEADCOUNT });
+  const d = p.deel;
+  check(d.error === null && JSON.stringify(d.vendors) === JSON.stringify(['Deel Inc. (synthetic)', 'Deel Ltd (synthetic)'])
+    && d.rows.length === 10 && d.rows[0].month === mk(Y - 1, 12) && d.rows.every((r) => r.acct === '660004') && d.rows.find((r) => r.month === mk(Y, 8) && r.vendor === 'Deel Ltd (synthetic)'),
+    `Deel: rows from January ${Y - 1} with their vendor's name; payroll accounts left out`);
+  check(JSON.stringify(d.onPayroll) === JSON.stringify([{ acct: '760001', name: 'Gross Salaries' }]), 'a Deel posting on a payroll account is listed (already in Total payroll)');
+  check(JSON.stringify(p.blocks) === JSON.stringify(payload.blocks), 'the account projection (blocks) is unchanged by Deel and the headcount');
+  const h = p.headcount;
+  const m = (mKey) => h.months.find((x) => x.mKey === mKey);
+  check(h.company === 'LSports' && h.asOf === '2026-10-15' && h.today === 4 && h.error === null && h.months.length === 24 && h.events.length === EVENTS.length,
+    'headcount: the company, today (who joined and left this month counted as of today) and every month of both years');
+  check(m(mk(Y, 1)).employees === 4 && m(mk(Y, 3)).employees === 4 && m(mk(Y, 4)).employees === 3 && m(mk(Y, 4)).leavers === 1 && m(mk(Y, 5)).hires === 1 && m(mk(Y, 9)).employees === 4
+    && m(mk(Y, 9)).status === 'actual',
+    'months before the current one: HiBob\'s employees at month-end, who joined and who left (leaving on the 31st counts in March)');
+  const idOff = h.months.filter((x, i) => i > 0 && x.employees !== h.months[i - 1].employees + x.hires - x.leavers).map((x) => x.mKey);
+  check(!idOff.length, 'every month: employees = the month before + hires − leavers', idOff.join(','));
+  check(m(mk(Y, 10)).status === 'current' && m(mk(Y, 10)).hires === 1 && m(mk(Y, 10)).leavers === 1 && m(mk(Y, 10)).employees === 4
+    && m(mk(Y, 11)).employees === 6 && m(mk(Y, 12)).employees === 6 && m(mk(T, 12)).employees === 6,
+    'from the current month: HiBob\'s planned hires and leavers; an opening from June still open counts in October, a filled one does not');
+  check(m(mk(Y, 8)).returns === 1 && m(mk(Y, 12)).returns === 1 && m(mk(T, 2)).leaveStarts === 1 && m(mk(T, 3)).hires === 0,
+    'returns from leave and leave starts are shown in their month but do not move the count; an unknown event type is left out');
+  const json = JSON.stringify(p.headcount);
+  check(!('spans' in p.headcount) && !/2019-01-01|2025-11-15|Full-time|Student/.test(json), 'no employee detail in the payload: counts only');
+
+  const wErr = (await sp.buildSalaryProjection({ rows: syntheticRows(), now: NOW, deel: { vendors: [], rows: [], error: 'Deel could not be read.' }, headcount: { company: 'LSports', spans: null, events: [], error: 'HiBob failed.' } })).payload;
+  check(wErr.warnings.includes('Deel could not be read.') && wErr.warnings.includes('HiBob failed.') && wErr.headcount.today === null && wErr.headcount.months.every((x) => x.employees === null),
+    'read failures: a warning each; no employees means no headcount');
+  const wNone = (await sp.buildSalaryProjection({ rows: syntheticRows(), now: NOW, deel: { vendors: [], rows: [], error: null } })).payload;
+  check(wNone.warnings.some((w) => /no vendor named "deel"/.test(w)), 'no Deel vendor in NetSuite: a warning');
+
+  // The reads, through computeSalaryProjection. HiBob's employees are read as the Metrics page reads them
+  // (server/metrics.cjs), with snowflake-api.cjs's table names: a checkout without node_modules (no
+  // snowflake-sdk) gets the names alone.
+  const sfFile = require.resolve(path.join(ROOT, 'snowflake-api.cjs'));
+  try { require(sfFile); } catch {
+    require.cache[sfFile] = { id: sfFile, filename: sfFile, loaded: true, exports: { SF_TABLES: { DIM_EMPLOYEE: 'DL_PRODUCTION.CONSUMER_HUB__FINANCE.DIM_EMPLOYEE__FINANCE' } } };
+  }
+  const prevId = process.env.NETSUITE_ACCOUNT_ID;
+  const prevCo = process.env.METRICS_HEADCOUNT_COMPANY;
+  process.env.NETSUITE_ACCOUNT_ID = 'TEST';
+  delete process.env.METRICS_HEADCOUNT_COMPANY;
+  try {
+    let askedDeel = null;
+    let queued = 0;
+    const ns = {
+      fetchPnlActuals: async () => syntheticPnlActuals(),
+      fetchVendorSpend: async (q) => { askedDeel = q; return DEEL; },
+    };
+    let askedPlan = null;
+    let spansSql = null;
+    const sf = {
+      fetchPayrollOverrides: async () => [],
+      fetchPayrollChanges: async () => [],
+      fetchHeadcountPlan: async (from, company) => { askedPlan = { from, company }; return EVENTS; },
+      query: async (sql, binds) => { spansSql = { sql, binds }; return SPANS.map((s) => ({ S: s.start, E: s.end, T: s.type })); },
+    };
+    const run = (nsClient, sfClient) => quiet(() => sp.computeSalaryProjection({ now: NOW, getNsClient: () => nsClient, getSfClient: () => sfClient, queueNsCall: (fn) => { queued++; return fn(); } }));
+    const { payload: c } = await run(ns, sf);
+    check(askedDeel && askedDeel.name === 'deel' && askedDeel.fromYear === Y - 1 && askedDeel.toYear === Y && queued === 2,
+      `Deel: one NetSuite read of the vendors named "deel", ${Y - 1}–${Y}, through the NetSuite queue`);
+    check(askedPlan && askedPlan.from === Y && askedPlan.company === 'LSports' && /DIM_EMPLOYEE/.test(spansSql.sql) && JSON.stringify(spansSql.binds) === '["LSports"]',
+      'HiBob: employees and planned events of LSports (a bound parameter)');
+    check(c.headcount.today === 4 && c.deel.rows.length === 10 && !c.warnings.some((w) => /Deel|HiBob|headcount/.test(w)), 'read fine: Deel and the headcount, no warning');
+    const broken = (await run(
+      { fetchPnlActuals: async () => syntheticPnlActuals(), fetchVendorSpend: async () => { throw new Error('secret detail'); } },
+      { ...sf, fetchHeadcountPlan: async () => { throw new Error('secret detail'); } },
+    )).payload;
+    check(broken.status === 'ready' && broken.deel.rows.length === 0 && broken.warnings.some((w) => /Deel could not be read/.test(w))
+      && broken.headcount.today === 4 && broken.headcount.events.length === 0 && broken.warnings.some((w) => /HiBob's planned events could not be read/.test(w))
+      && !broken.warnings.join(' ').includes('secret'),
+      'a Deel or HiBob failure: the page still loads, with a note (the detail stays in the server log)');
+    const old = (await run({ fetchPnlActuals: async () => syntheticPnlActuals() }, null)).payload;
+    check(old.status === 'ready' && old.warnings.some((w) => /cannot read Deel yet/.test(w)) && old.warnings.some((w) => /headcount \(HiBob\) is not shown/.test(w)),
+      'an older NetSuite client or no Snowflake: notes, the payroll still shows');
+  } finally {
+    if (prevId === undefined) delete process.env.NETSUITE_ACCOUNT_ID; else process.env.NETSUITE_ACCOUNT_ID = prevId;
+    if (prevCo !== undefined) process.env.METRICS_HEADCOUNT_COMPANY = prevCo;
+  }
+
+  console.log('\nDEEL AND HEADCOUNT: the page (src/salary-projection/model.ts, breakdown.ts)');
+  const model = await import(pathToFileURL(path.join(ROOT, 'src', 'salary-projection', 'model.ts')).href);
+  const bd = await import(pathToFileURL(path.join(ROOT, 'src', 'salary-projection', 'breakdown.ts')).href);
+  const table = model.buildSalaryTable(p, 'ils', 'both');
+  const keys = table.lines.map((l) => l.key);
+  check(JSON.stringify(keys.slice(keys.indexOf('total'))) === JSON.stringify(['total', 'header-deel', 'deel|660004', 'total-deel', 'payroll-deel']),
+    'below Total payroll: a Deel header, its accounts, Total Deel, then Payroll + Deel', keys.slice(-6).join(','));
+  const line = (k, t = table) => t.lines.find((l) => l.key === k);
+  const col = (id, t = table) => t.columns.findIndex((c) => c.id === id);
+  const base = model.buildSalaryTable(payload, 'ils', 'both');
+  check(JSON.stringify(line('total').values) === JSON.stringify(base.lines.find((l) => l.key === 'total').values), 'Total payroll is unchanged by Deel');
+  const sumOff = [];
+  table.columns.forEach((c, i) => {
+    if (!near(line('payroll-deel').values[i], line('total').values[i] + line('total-deel').values[i], 0.05)) sumOff.push(c.id);
+    if (!near(line('total-deel').values[i], line('deel|660004').values[i], 0.05)) sumOff.push(`${c.id} deel`);
+  });
+  check(!sumOff.length, 'Payroll + Deel = Total payroll + Total Deel, Total Deel = its accounts, in every column', sumOff.slice(0, 3).join('; '));
+  const dl = line('deel|660004').values;
+  const rateIls = (222_000 + 222_000 + 259_000) / 3;
+  check(dl[col(mk(Y, 8))] === 259_000 && dl[col(mk(Y, 9))] === 0 && near(dl[col(mk(Y, 10))], rateIls, 0.01) && near(dl[col(mk(T, 6))], rateIls, 0.01),
+    'Deel: NetSuite in actual months (none booked in September), the average of June–August in the current and forecast months');
+  check(line('header-deel').kind === 'header' && /Deel Inc\. \(synthetic\), Deel Ltd \(synthetic\)|Deel Inc\. \(synthetic\); Deel Ltd \(synthetic\)/.test(line('header-deel').hint)
+    && /760001 - Gross Salaries\) is already in Total payroll/.test(line('header-deel').hint)
+    && /average of June 2026, July 2026, August 2026/.test(line('deel|660004').hint) && line('payroll-deel').kind === 'subtotal',
+    'hints name the vendors, a payroll account already in Total payroll, and the months the forecast averages');
+  check(!model.buildSalaryTable(payload, 'ils', 'both').lines.some((l) => /deel/.test(l.key)) && !model.buildSalaryTable({ ...p, deel: undefined }, 'ils', 'both').lines.some((l) => /deel/.test(l.key)),
+    'no Deel rows (or an older payload): no Deel lines');
+
+  const deelOff = [];
+  table.lines.filter((l) => bd.isSalaryBreakdownLine(l.key) && /deel/.test(l.key)).forEach((l) => table.columns.forEach((c, i) => {
+    if (Math.abs(l.values[i]) < 1) return;
+    const r = bd.salaryBreakdown(p, { line: l.key, period: c.kind === 'fy' ? `FY-${c.year}` : c.mKey, variant: 'base', ccy: 'ils' });
+    if (r.status !== 'ready' || !near(r.cell, l.values[i], 0.05) || !near(r.sections[0].total, r.cell, 0.05)) deelOff.push(`${l.key} ${c.id}`);
+  }));
+  check(bd.isSalaryBreakdownLine('deel|660004') && bd.isSalaryBreakdownLine('total-deel') && !bd.isSalaryBreakdownLine('payroll-deel') && !deelOff.length,
+    'every Deel cell opens a breakdown that equals the cell, its first section adding up to it', deelOff.slice(0, 3).join('; '));
+  const deelAsk = (period, lineKey = 'deel|660004') => bd.salaryBreakdown(p, { line: lineKey, period, variant: 'base', ccy: 'ils' });
+  const aug = deelAsk(mk(Y, 8));
+  check(JSON.stringify(aug.sections[0].rows.map((r) => [r.label, r.amount])) === JSON.stringify([['Deel Inc. (synthetic)', 222_000], ['Deel Ltd (synthetic)', 37_000]]),
+    'an actual month: by vendor');
+  const nov = deelAsk(mk(Y, 11));
+  check(nov.sections[0].id === 'run-rate' && JSON.stringify(nov.sections[0].rows.map((r) => r.label)) === JSON.stringify(['June 2026 ÷ 3', 'July 2026 ÷ 3', 'August 2026 ÷ 3']),
+    'a forecast month: the months its run-rate averages, each ÷ 3');
+  const fyT = deelAsk(`FY-${T}`, 'total-deel');
+  check(fyT.sections.map((s) => s.id).join(',') === 'accounts,months' && fyT.sections[1].rows.length === 12 && /Not in Total payroll/.test(fyT.notes.join(' ')),
+    'Total Deel for a year: by account and by month');
+
+  const hcTable = model.buildHeadcountTable(p, 'both');
+  const hl = (k) => hcTable.lines.find((l) => l.key === k);
+  check(JSON.stringify(hcTable.lines.map((l) => l.key)) === JSON.stringify(['hc-employees', 'hc-hires', 'hc-leavers', 'hc-returns', 'hc-leave-starts'])
+    && hcTable.lines.every((l) => l.unit === 'count') && hl('hc-hires').signed && hl('hc-leavers').signed,
+    'headcount table: employees, hires, leavers, returns from leave, leave starts; counts, hires and leavers signed');
+  check(hcTable.columns.length === 26 && hl('hc-employees').values[col(`fy-${Y}`, hcTable)] === 6 && hl('hc-employees').values[col(mk(Y, 4), hcTable)] === 3
+    && hl('hc-leavers').values[col(mk(Y, 4), hcTable)] === -1 && hl('hc-hires').values[col(`fy-${Y}`, hcTable)] === 1 + 1 + 2,
+    'the payroll table\'s columns; full year: employees at December, hires and leavers summed (leavers negative)');
+  check(hcTable.columns.find((c) => c.mKey === mk(Y, 9)).status === 'actual' && hcTable.columns.find((c) => c.mKey === mk(Y, 10)).status === 'current',
+    'its own statuses: HiBob\'s months before the current one are actual');
+  const noLeave = model.buildHeadcountTable({ ...p, headcount: { ...p.headcount, months: p.headcount.months.map((x) => ({ ...x, returns: 0, leaveStarts: 0 })) } }, 'next');
+  check(noLeave.lines.map((l) => l.key).join(',') === 'hc-employees,hc-hires,hc-leavers' && noLeave.columns.length === 13 && model.buildHeadcountTable(wErr, 'both') === null
+    && model.buildHeadcountTable(payload, 'both') === null,
+    'no leave events: no leave lines; follows the year view; no employees (or not read): no table');
+  const kpis = model.computeSalaryKpis(p, 'ils');
+  check(kpis.headcount && kpis.headcount.today === 4 && kpis.headcount.asOf === '2026-10-15'
+    && JSON.stringify(kpis.headcount.yearEnd) === JSON.stringify([{ year: Y, value: 6 }, { year: T, value: 6 }]) && model.computeSalaryKpis(payload, 'ils').headcount === null,
+    'KPI: headcount today and at the end of each year; none without HiBob');
+}
+
 async function main() {
   console.log('=== salary-projection checks (synthetic data) ===');
   const payload = await testPayload();
@@ -647,6 +852,7 @@ async function main() {
   await testOverrides(payload);
   await testHandler(payload);
   await testModel(payload);
+  await testDeelAndHeadcount(payload);
   if (process.argv.includes('--write-fixture')) {
     const file = path.join(__dirname, 'fixtures', 'salary-projection-sample.json');
     const overrides = sp.overridesOf({ error: null, rows: [
@@ -658,7 +864,8 @@ async function main() {
       { month: mk(Y, 12), acct: '760001', name: 'Gross Salaries', source: 'Open position', department: 'Sales', eur: 23_000, ils: 85_000 },
       { month: mk(T, 1), acct: '760001', name: 'Gross Salaries', source: 'Terminated', department: 'Finance', eur: -87_000, ils: -323_000 },
     ] }, Y, payload.basis.ilsPerEur);
-    fs.writeFileSync(file, JSON.stringify({ ...payload, overrides, changes, cache: { ageSec: 0, stale: false, staleReason: null, refreshing: false, lastError: null } }, null, 2) + '\n');
+    const { deel, headcount } = (await sp.buildSalaryProjection({ rows: syntheticRows(), now: NOW, deel: DEEL, headcount: HEADCOUNT })).payload;
+    fs.writeFileSync(file, JSON.stringify({ ...payload, overrides, changes, deel, headcount, cache: { ageSec: 0, stale: false, staleReason: null, refreshing: false, lastError: null } }, null, 2) + '\n');
     console.log(`\nwrote ${path.relative(ROOT, file)}`);
   }
   console.log(failures ? `\n❌ FAIL — ${failures} check(s) failed.` : '\n✅ PASS — all checks green.');
