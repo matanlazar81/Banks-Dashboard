@@ -3,18 +3,18 @@ import { Download, Loader2, RefreshCw, SlidersHorizontal } from 'lucide-react';
 import { useProjection } from '../new-dashboard/useProjection.ts';
 import BreakdownWindows from '../new-dashboard/BreakdownWindows.tsx';
 import type { BreakdownFetcher, BreakdownResponse } from '../new-dashboard/breakdown.ts';
-import ProjectionTable, { type TableMarkers } from '../new-dashboard/ProjectionTable.tsx';
+import ProjectionTable, { ACCENT_SWATCH, type TableMarkers } from '../new-dashboard/ProjectionTable.tsx';
 import { ComputingCard, ErrorCard, Segmented, Skeleton, Warnings } from '../new-dashboard/PageParts.tsx';
 import { readParam, writeParam } from '../new-dashboard/urlParams.ts';
 import { projectedMonths } from '../forecast/salary-projection.mjs';
-import { monthLongLabel, type Column } from '../new-dashboard/model.ts';
+import { monthLongLabel, type Accent, type Column } from '../new-dashboard/model.ts';
 import type { YearView } from '../new-dashboard/types.ts';
 import { fetchSalaryProjection } from './api.ts';
 import { isSalaryBreakdownLine, salaryBreakdown } from './breakdown.ts';
 import { useClassification } from './classification.ts';
 import ClassifyPanel from './ClassifyPanel.tsx';
 import HeadcountSection from './HeadcountSection.tsx';
-import { buildHeadcountTable, buildSalaryTable, computeSalaryKpis, withClassification } from './model.ts';
+import { buildHeadcountTable, buildSalaryTable, computeSalaryKpis, SECTION_NAMES, SECTION_ORDER, withClassification } from './model.ts';
 import OverridesSection from './OverridesSection.tsx';
 import SalaryKpiStrip from './SalaryKpiStrip.tsx';
 import type { Ccy } from './types.ts';
@@ -25,6 +25,23 @@ const MARKERS: TableMarkers = {
   closingLine: 'total',
   negativeLines: new Set(),
 };
+
+/** The table's sections and their colours, the ones shown only, in the table's order. */
+function SectionLegend({ accents }: { accents: ReadonlySet<Accent> }) {
+  const shown = SECTION_ORDER.filter((a) => accents.has(a));
+  if (!shown.length) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-slate-200 px-4 py-1.5 text-xs text-slate-600">
+      <span className="text-slate-500">Sections:</span>
+      {shown.map((a) => (
+        <span key={a} className="inline-flex items-center gap-1.5">
+          <span className={`h-3 w-1.5 rounded-sm ${ACCENT_SWATCH[a]}`} />
+          {SECTION_NAMES[a]}
+        </span>
+      ))}
+    </div>
+  );
+}
 
 function Legend({ overrides }: { overrides: boolean }) {
   return (
@@ -62,6 +79,7 @@ export default function SalaryProjection() {
   }, []);
   const closeBreakdown = useCallback(() => setOpenCell(null), []);
   const breakdownLines = useMemo(() => new Set(table ? table.lines.map((l) => l.key).filter(isSalaryBreakdownLine) : []), [table]);
+  const sectionAccents = useMemo(() => new Set(table ? table.lines.flatMap((l) => (l.accent ? [l.accent] : [])) : []), [table]);
   const breakdownOf = useCallback<BreakdownFetcher>((req) => Promise.resolve<BreakdownResponse>(
     shown ? salaryBreakdown(shown, req) : { ok: false, status: 'error', error: 'The projection is not loaded yet.' },
   ), [shown]);
@@ -88,7 +106,7 @@ export default function SalaryProjection() {
   const unclassified = shown ? shown.accounts.filter((a) => a.group === 'other') : [];
   const canClassify = !!(data && data.actual);
   const method = runRate
-    ? `Permanent: ${runRate} run-rate · Temporary: same month last year for ${data ? data.years[0] : ''}, 0 in ${data ? data.years[1] : ''}${notProjected.length ? ` · Not projected: ${notProjected.map((a) => a.acct).join(', ')}` : ''}${added ? ` · ${added.charAt(0).toUpperCase()}${added.slice(1)} added from the current month` : ''}${hasDeel ? ' · Deel: average of its last months' : ''}`
+    ? `Permanent: ${runRate} run-rate · Temporary: same month last year for ${data ? data.years[0] : ''}, 0 in ${data ? data.years[1] : ''}${notProjected.length ? ` · Not projected: ${notProjected.map((a) => a.acct).join(', ')}` : ''}${added ? ` · ${added.charAt(0).toUpperCase()}${added.slice(1)} added from the current month` : ''}${hasDeel ? ' · Deel: average of its last 6 months' : ''}`
     : '';
 
   async function onExport() {
@@ -222,6 +240,7 @@ export default function SalaryProjection() {
                 </div>
                 <Legend overrides={hasOverrides} />
               </div>
+              <SectionLegend accents={sectionAccents} />
               <ProjectionTable
                 table={table}
                 ccy={ccy}
@@ -251,8 +270,8 @@ export default function SalaryProjection() {
               ].filter(Boolean).join(' and ')}${hasChanges || hasIncrements ? ' are added to Total payroll from the current month on (closed months are NetSuite\'s actuals, which already include what happened)' : ''}${hasOverrides ? `${hasChanges || hasIncrements ? '; ' : ''}the override file's overrides, in italics, are for reference and not in Total payroll` : ''}.`}
               {changesFalse > 0 && ` Snowflake's payroll forecast also has ${changesFalse} planned hire, leaver or return row${changesFalse === 1 ? '' : 's'} from the current month on marked FALSE: ${changesFalse === 1 ? 'it is' : 'they are'} not counted. Only changes marked TRUE are added.`}
               {notProjected.length > 0 && ` Actuals only, not projected: ${notProjected.map((a) => `${a.acct} ${a.name}`).join(', ')}.`}
-              {hasDeel && ' Below Total payroll, Deel (people abroad) is its NetSuite costs on every account but payroll ones; forecast months carry the average of its last three months with postings. Payroll + Deel adds the two.'}
-              {headcountTable && ' The headcount is HiBob\'s: employees at each month-end, people on leave included, from their start and leave dates (signed hires and people leaving included). From the current month on it adds HiBob\'s open positions; returns from leave and leave starts (maternity and others), when HiBob has them, are shown but do not change it.'}
+              {hasDeel && ' Below Total payroll, Deel (people abroad) is its NetSuite costs on every account but payroll ones; forecast months carry the average of its last six months (a month without a bill counts as 0). Payroll + Deel adds the two.'}
+              {headcountTable && ' The headcount is HiBob\'s employees at each month-end, people on leave included, from their start and leave dates (signed hires and people leaving included). HiBob\'s open positions, and its returns from leave and leave starts (maternity and others) when it has them, are shown but do not change it.'}
               {' '}The current month is projected as a whole month. Forecasts are made in shekels; euros use the rate above.
               Use Permanent / temporary to change how an account is projected.
             </p>

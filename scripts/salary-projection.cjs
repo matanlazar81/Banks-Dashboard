@@ -83,7 +83,7 @@ function printHeadcount(payload, block) {
   const cell = (v) => String(v === null || v === undefined ? '–' : v).padStart(8);
   console.log(`\n${block.year} headcount (HiBob ${payload.headcount.company}) — people`);
   console.log(`  ${''.padEnd(44)}${block.rows.map((r) => `${r.mKey.slice(2)}${r.mKey < payload.computedMonth ? 'A' : r.mKey === payload.computedMonth ? 'C' : 'F'}`.padStart(8)).join('')}`);
-  for (const [label, k] of [['Employees at month-end', 'employees'], ['Hires', 'hires'], ['  of which open positions', 'openings'], ['Leavers', 'leavers'], ['Returns from leave', 'returns'], ['Leave starts', 'leaveStarts']]) {
+  for (const [label, k] of [['Employees at month-end', 'employees'], ['Hires', 'hires'], ['Leavers', 'leavers'], ['Open positions (not counted)', 'openings'], ['Planned leavers, no employee (not counted)', 'cuts'], ['Returns from leave', 'returns'], ['Leave starts', 'leaveStarts']]) {
     console.log(`  ${label.padEnd(44)}${block.rows.map((r) => cell((byKey.get(r.mKey) || {})[k])).join('')}`);
   }
 }
@@ -180,19 +180,20 @@ async function main() {
     }
     if (!kinds.size) console.log('  (none)');
     const LINE = {
-      openings: 'Hires (an open position)', cuts: 'Leavers (planned, no employee)', employee: 'not again: already in HiBob\'s employees (their dates)',
-      returns: 'Returns from leave (count unchanged)', leaveStarts: 'Leave starts (count unchanged)',
+      openings: 'Open positions (shown, not counted)', cuts: 'Planned leavers, no employee (shown, not counted)',
+      employee: 'in HiBob\'s employees already (their dates)',
+      returns: 'Returns from leave (shown, count unchanged)', leaveStarts: 'Leave starts (shown, count unchanged)',
     };
     for (const g of kinds.values()) {
       const kind = sm.headcountKind(g.type, g.subType, g.employee);
-      // As headcountSeries: before the current month, only openings still open count (in the current month).
-      const line = g.past && kind === 'openings' ? (/^open/i.test(g.status) ? `Hires in ${payload.computedMonth} (an opening still open)` : 'not counted (an earlier month, not open)')
-        : g.past && kind === 'cuts' ? 'not counted (an earlier month)'
-          : LINE[kind] || 'not counted (unknown type)';
+      // As headcountSeries: before the current month, only openings still open show (in the current month).
+      const line = g.past && kind === 'openings' ? (/^open/i.test(g.status) ? `Open positions in ${payload.computedMonth} (still open; shown, not counted)` : 'not shown (an earlier month, not open)')
+        : g.past && kind === 'cuts' ? 'not shown (an earlier month)'
+          : LINE[kind] || 'not shown (unknown type)';
       console.log(`  ${g.type.padEnd(10)}${(g.subType || '–').slice(0, 24).padEnd(25)}${(g.employee ? 'employee' : 'no employee').padEnd(12)}${(g.status || '–').slice(0, 14).padEnd(15)}${String(g.count).padStart(5)}  ${g.first} to ${g.last}  → ${line}`);
     }
     const cur = hc.months.find((m) => m.mKey === payload.computedMonth);
-    if (cur && hc.today !== null) console.log(`  Today ${hc.today} employees; ${payload.computedMonth} month-end forecast ${cur.employees} (${cur.hires} hire(s), ${cur.openings} of them open positions; ${cur.leavers} leaver(s))`);
+    if (cur && hc.today !== null) console.log(`  Today ${hc.today} employees; ${payload.computedMonth} month-end ${cur.employees} by HiBob's dates (${cur.hires} hire(s), ${cur.leavers} leaver(s) this month; ${cur.openings} open position(s) not counted)`);
     console.log(`\nPlanned hires, leavers and returns from leave on payroll accounts (Snowflake): ${ch.error ? ch.error : `${countedChanges.size} of ${ch.rows.length} account-month row(s) counted (marked TRUE, in the projected months)`}`);
     if (!ch.error) {
       // How each source splits: TRUE / FALSE (IS_SOURCE_ACTUAL), in the projected months and in closed ones.

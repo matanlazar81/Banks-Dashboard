@@ -10,7 +10,7 @@
 import { countedChangeRows, countedIncrementRows, deelByMonth, deelRunRate } from '../forecast/salary-projection.mjs';
 import type { BreakdownReady, BreakdownRequest, BreakdownResponse, BreakdownRow, BreakdownSection } from '../new-dashboard/breakdown.ts';
 import { monthLongLabel } from '../new-dashboard/model.ts';
-import { SOURCE_KEY, SOURCE_LINE, SOURCES } from './model.ts';
+import { deelRateText, SOURCE_KEY, SOURCE_LINE, SOURCES } from './model.ts';
 import type { PayrollChange, PayrollOverride, SalaryPayload } from './types.ts';
 
 type Source = PayrollChange['source'];
@@ -177,9 +177,7 @@ export function salaryBreakdown(payload: SalaryPayload, req: BreakdownRequest): 
     const cell = round(months.reduce((s, m) => s + valueOf(m, acct), 0));
     if (Math.abs(cell) < 0.5) return fail('Nothing to show for this cell.');
     const lineLabel = acct ? `Deel · ${accountLabel(acct, names.get(acct) ?? '')}` : 'Total Deel';
-    const rateText = rate.months.length
-      ? `the average of ${rate.months.map(monthLongLabel).join(', ')}, the last ${rate.months.length > 1 ? `${rate.months.length} months` : 'month'} with Deel postings up to ${monthLongLabel(runRateMonth)}`
-      : `0, no Deel postings in the 12 months up to ${monthLongLabel(runRateMonth)}`;
+    const rateText = deelRateText(rate.months, runRateMonth);
     const notes = [
       `NetSuite: the costs of ${deel.vendors.join(', ') || 'Deel'} by posting period, on ${acct ? 'this account' : 'every account but payroll ones'}. Forecast months: ${rateText}.`,
       'Not in Total payroll: Payroll + Deel adds it.',
@@ -201,7 +199,7 @@ export function salaryBreakdown(payload: SalaryPayload, req: BreakdownRequest): 
       // A forecast month: each month of the run-rate, divided by their number, so the rows add up to the cell.
       const n = rate.months.length;
       const rows = deel.rows.filter((r) => rate.months.includes(r.month) && (!acct || r.acct === acct));
-      sections.push(section('run-rate', 'Run-rate: the months it averages', `Each month ÷ ${n}.`,
+      sections.push(section('run-rate', 'Run-rate: the months it averages', `Each month ÷ ${n}; a month without a Deel bill counts as 0.`,
         sumBy(rows, (r) => r.month, (r) => `${monthLongLabel(r.month)} ÷ ${n}`, (r) => amount(r) / n)
           .sort((a, b) => a.key.localeCompare(b.key)).map((m) => item(`month|${m.key}`, m.label, m.amount))));
       if (!acct) sections.push(section('accounts', 'By account', null, accountRows((a) => valueOf(months[0], a))));

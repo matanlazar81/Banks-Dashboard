@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Info } from 'lucide-react';
 import type { Ccy } from './types.ts';
-import { CCY_SYMBOL, formatCount, formatFull, formatSignedThousands, formatThousands, monthLongLabel, type Column, type ProjectionTable as Table, type TableLine } from './model.ts';
+import { CCY_SYMBOL, formatCount, formatFull, formatSignedThousands, formatThousands, monthLongLabel, type Accent, type Column, type ProjectionTable as Table, type TableLine } from './model.ts';
 import { BREAKDOWN_LINES } from './breakdown.ts';
 
 /** Which lines get the table's markers. The defaults are the cash projection's lines. */
@@ -18,6 +18,21 @@ export interface TableMarkers {
 const CASH_MARKERS: TableMarkers = { anchorLine: 'opening', rollForwardLine: 'opening', closingLine: 'closing', negativeLines: new Set(['net']) };
 
 const LABEL_W = 'w-52 min-w-52';
+
+// A section's colour: the header row's band and text, and the bar beside its lines' labels (stronger on totals).
+const ACCENT: Record<Accent, { band: string; text: string; bar: string; barStrong: string }> = {
+  sky: { band: 'bg-sky-50', text: 'text-sky-800', bar: 'border-l-sky-300', barStrong: 'border-l-sky-500' },
+  amber: { band: 'bg-amber-50', text: 'text-amber-800', bar: 'border-l-amber-300', barStrong: 'border-l-amber-500' },
+  violet: { band: 'bg-violet-50', text: 'text-violet-800', bar: 'border-l-violet-300', barStrong: 'border-l-violet-500' },
+  emerald: { band: 'bg-emerald-50', text: 'text-emerald-800', bar: 'border-l-emerald-300', barStrong: 'border-l-emerald-500' },
+  slate: { band: 'bg-slate-100', text: 'text-slate-700', bar: 'border-l-slate-300', barStrong: 'border-l-slate-500' },
+  pink: { band: 'bg-pink-50', text: 'text-pink-800', bar: 'border-l-pink-300', barStrong: 'border-l-pink-500' },
+};
+
+/** A swatch of a section's colour, for a page's legend. */
+export const ACCENT_SWATCH: Record<Accent, string> = {
+  sky: 'bg-sky-400', amber: 'bg-amber-400', violet: 'bg-violet-400', emerald: 'bg-emerald-400', slate: 'bg-slate-400', pink: 'bg-pink-400',
+};
 
 function columnTone(col: Column): string {
   if (col.kind === 'fy') return 'bg-slate-100';
@@ -119,6 +134,13 @@ export default function ProjectionTable({ table, ccy, anchorDate, onOpenCell, ac
   const anchorLabel = anchorDate
     ? new Date(`${anchorDate}T12:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
     : null;
+  // With section colours, every label keeps the bar's width (transparent where a line has none), so labels align.
+  const accented = table.lines.some((l) => l.accent);
+  const barOf = (line: TableLine<string>, strong: boolean) => {
+    if (!accented) return '';
+    if (!line.accent) return 'border-l-4 border-l-transparent';
+    return `border-l-4 ${strong ? ACCENT[line.accent].barStrong : ACCENT[line.accent].bar}`;
+  };
 
   return (
     <div ref={scroller} className="overflow-x-auto">
@@ -157,13 +179,15 @@ export default function ProjectionTable({ table, ccy, anchorDate, onOpenCell, ac
         </thead>
         <tbody>
           {table.lines.map((line) => {
-            // A section title: the label over the lines below it, and empty cells that keep the column shading.
+            // A section title: the label over the lines below it, and empty cells that keep the column shading (or,
+            // in the section's colour, a band across the table).
             if (line.kind === 'header') {
+              const accent = line.accent ? ACCENT[line.accent] : null;
               return (
                 <tr key={line.key}>
                   <th
                     scope="row"
-                    className={`sticky left-0 z-10 bg-white px-3 pb-1 pt-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500 ${LABEL_W}`}
+                    className={`sticky left-0 z-10 px-3 pb-1 pt-3 text-left text-[11px] font-semibold uppercase tracking-wide ${accent ? `${accent.band} ${accent.text}` : 'bg-white text-slate-500'} ${barOf(line, true)} ${LABEL_W}`}
                   >
                     <span className="inline-flex items-center gap-1">
                       {line.label}
@@ -174,7 +198,7 @@ export default function ProjectionTable({ table, ccy, anchorDate, onOpenCell, ac
                       )}
                     </span>
                   </th>
-                  {table.columns.map((col) => <td key={col.id} className={`${columnTone(col)} ${dividerClass(col)}`} />)}
+                  {table.columns.map((col) => <td key={col.id} className={`${accent ? accent.band : columnTone(col)} ${dividerClass(col)}`} />)}
                 </tr>
               );
             }
@@ -187,7 +211,7 @@ export default function ProjectionTable({ table, ccy, anchorDate, onOpenCell, ac
               <tr key={line.key} className={rowBorder}>
                 <th
                   scope="row"
-                  className={`sticky left-0 z-10 bg-white px-3 py-1.5 text-left font-normal ${LABEL_W} ${line.kind === 'item' ? 'pl-6 text-slate-700' : ''} ${line.kind === 'balance' || line.kind === 'subtotal' ? 'font-semibold text-slate-900' : ''} ${line.kind === 'note' ? 'pl-6 text-xs italic text-slate-500' : ''}`}
+                  className={`sticky left-0 z-10 bg-white px-3 py-1.5 text-left font-normal ${LABEL_W} ${barOf(line, line.kind === 'subtotal' || line.kind === 'balance')} ${line.kind === 'item' ? 'pl-6 text-slate-700' : ''} ${line.kind === 'balance' || line.kind === 'subtotal' ? 'font-semibold text-slate-900' : ''} ${line.kind === 'note' ? 'pl-6 text-xs italic text-slate-500' : ''}`}
                 >
                   <span className="inline-flex items-center gap-1">
                     {line.label}

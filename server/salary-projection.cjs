@@ -37,11 +37,11 @@
 // Below the payroll, two more reads travel with the payload; a failure of either only drops it, with a note:
 //   • Deel       — NetSuite costs of the vendors named "deel" (ns.fetchVendorSpend), by account and posting
 //                  period from January of the previous year, every account but payroll ones (those are already
-//                  in Total payroll). Forecast months carry its run-rate (deelByMonth).
-//   • headcount  — HiBob (Snowflake): employees at each month-end and today from their start and leave dates
-//                  (DIM_EMPLOYEE, as the Metrics page; future dates too: signed hires, people leaving), plus
-//                  HiBob's open positions and leave events (FCT_HEADCOUNT_EVENT), as counts by month
-//                  (headcountSeries). No names or ids leave the server.
+//                  in Total payroll). Forecast months carry its last six months' average (deelByMonth).
+//   • headcount  — HiBob (Snowflake): its employees at each month-end and today from their start and leave dates
+//                  (DIM_EMPLOYEE, as the Metrics page; future dates too: signed hires, people leaving), and beside
+//                  them, not counted, HiBob's open positions and leave events (FCT_HEADCOUNT_EVENT), as counts by
+//                  month (headcountSeries). No names or ids leave the server.
 //
 // The projection is made in ILS, the currency payroll is paid in; forecast € = ₪ ÷ the ILS/EUR ratio of
 // the last closed month's permanent payroll. The current month is projected as a whole month (its
@@ -57,7 +57,7 @@ const cp = require('./cash-projection.cjs');
 const { readDoc, createDocHandler } = require('./json-store.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
-const SCHEMA_VERSION = 11; // 3: the actual months and each account's default method; 4: the override file's payroll rows; 5: temporary 0 next year; 6: override rows on 760001 only; 7: Snowflake's planned hires, leavers and returns from leave; 8: every payroll account, as the old dashboard; 9: planned changes by department (the page's breakdowns); 10: Deel and the headcount (HiBob); 11: the headcount from HiBob's dates plus its open positions, and planned changes count only when marked TRUE (IS_SOURCE_ACTUAL)
+const SCHEMA_VERSION = 12; // 3: the actual months and each account's default method; 4: the override file's payroll rows; 5: temporary 0 next year; 6: override rows on 760001 only; 7: Snowflake's planned hires, leavers and returns from leave; 8: every payroll account, as the old dashboard; 9: planned changes by department (the page's breakdowns); 10: Deel and the headcount (HiBob); 11: the headcount from HiBob's dates plus its open positions, and planned changes count only when marked TRUE (IS_SOURCE_ACTUAL); 12: the headcount is HiBob's employees only (open positions shown, not counted)
 const DEFAULT_CACHE_FILE = path.join(ROOT, 'data', 'salary-projection-cache.json');
 const CLASSIFICATION_FILE = path.join(ROOT, 'data', 'salary-classification.json');
 const { ProjectionError } = cp;
@@ -286,7 +286,8 @@ function deelOf(deel, Y) {
 /**
  * HiBob's headcount for the payload, as counts: employees today, and over the projection's months the employees
  * at month-end with who joined and left, from their start and leave dates (future ones too: signed hires, people
- * leaving), plus HiBob's open positions (headcountSeries). Employee spans never leave the server.
+ * leaving), with HiBob's open positions and leave events beside them (headcountSeries). Employee spans never leave
+ * the server.
  *   headcount  { company, spans: [{ start, end, type }] | null, events: [{ month, type, subType, employee, status, count }], error }
  */
 function headcountOf(headcount, blocks, currentKey, now, headcountSeries) {

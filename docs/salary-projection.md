@@ -133,10 +133,12 @@ accounts, so it is read by vendor (`fetchVendorSpend` in `netsuite-api.cjs`):
 - **Lines.** One line per account (e.g. 660004 Contractors), then **Total Deel**, then **Payroll + Deel**
   (Total payroll + Total Deel). Total payroll itself is unchanged.
 - **Actual months** are NetSuite's as booked.
-- **Forecast months** use the run-rate (`deelRunRate` / `deelByMonth` in `src/forecast/salary-projection.mjs`):
-  the average of the last three months up to the last closed month that have Deel postings, looking back 12 months
-  at most. Each account gets its sum over those months, divided by their number, so a bill booked a month late, or
-  Deel moving to another account, leaves the total right.
+- **Forecast months** use the run-rate (`deelRunRate` / `deelByMonth` in `src/forecast/salary-projection.mjs`,
+  finance's choice in October 2026): the average of the last six months up to the last closed month
+  (`DEEL_RUN_RATE_MONTHS`), or of the months since Deel's first bill when that is later.
+  - A month without a bill counts as 0, so a bill booked a month late and the month that then holds two average
+    out.
+  - Each account gets its sum over the six months ÷ 6, so Deel moving to another account leaves the total right.
 - **Clicking a Deel figure:**
   - An actual month shows it by vendor; Total Deel also shows it by account.
   - A forecast month shows the months it averages, each ÷ their number.
@@ -144,30 +146,31 @@ accounts, so it is read by vendor (`fetchVendorSpend` in `netsuite-api.cjs`):
 
 **Headcount (HiBob)**, a table of its own under the payroll table (people, not money; the same columns and year
 view). It holds counts only: no names or IDs leave the server.
-- **Every month** comes from HiBob's employees in Snowflake and their start and leave dates (`DIM_EMPLOYEE`, read
-  as the Metrics page reads them: `sfEmployeeSpans` and `employedOn` in `server/metrics.cjs`, company
-  `METRICS_HEADCOUNT_COMPANY`, default LSports). Future dates count too, so forecast months already hold who is
-  signed to start and who is leaving. Each month shows:
+- **The count is HiBob's employees only**, aligned with HiBob (finance's choice in October 2026). Every month comes
+  from HiBob's employees in Snowflake and their start and leave dates (`DIM_EMPLOYEE`, read as the Metrics page
+  reads them: `sfEmployeeSpans` and `employedOn` in `server/metrics.cjs`, company `METRICS_HEADCOUNT_COMPANY`,
+  default LSports). Future dates count too, so forecast months already hold who is signed to start and who is
+  leaving. Each month shows:
   - **Employees at month-end**: people employed on the last day, people on leave included.
   - **Hires**: people counted at this month-end but not the one before.
   - **Leavers**: the reverse.
-- **From the current month on**, HiBob's planned events add what its employees do not hold yet
-  (`FCT_HEADCOUNT_EVENT`, counted by month, type, sub-type, employee and opening status in `fetchHeadcountPlan`;
-  `headcountSeries` in `src/forecast/salary-projection.mjs`):
-  - **Open positions** (an increase with no employee) count as hires in their month, shown as **of which open
-    positions**. Openings planned for earlier months whose status starts with "Open" count in the current month,
-    as the old dashboard carries them.
-  - **A planned leaver with no employee** (a decrease with no employee) counts as a leaver.
-  - **Events of a known employee** (e.g. `Hired`, `Terminated`) are not counted again: their dates are already in
-    HiBob's employees.
-  - **Returns from leave and leave starts**: a sub-type about leave (e.g. `Leave end`, maternity). They are shown,
-    but they do not change the count: people on leave are employees.
+- **Beside the count, not in it**, HiBob's planned events (`FCT_HEADCOUNT_EVENT`, counted by month, type,
+  sub-type, employee and opening status in `fetchHeadcountPlan`; `headcountSeries` in
+  `src/forecast/salary-projection.mjs`):
+  - **Open positions (not counted)**: an increase with no employee, in the month it is planned for, from the
+    current month on. Openings planned for earlier months whose status starts with "Open" show in the current
+    month, as the old dashboard carries them.
+  - **Planned leavers, no employee (not counted)**: a decrease with no employee.
+  - **Returns from leave and leave starts**: a sub-type about leave (e.g. `Leave end`, maternity). People on leave
+    are employees, so the count does not move.
+  - **Events of a known employee** (e.g. `Hired`, `Terminated`) are left out: their dates are already in HiBob's
+    employees.
 - What the data held in October 2026: `FCT_HEADCOUNT_EVENT` had only future hires (8 open positions, October 2026
   to January 2027, and 1 signed hire), with no leavers and no leave events.
-- **The FY column** shows employees in December, and hires, open positions and leavers summed.
-- **The KPI** "Headcount today" shows employees today and the December forecast.
-- **Money is unchanged.** Planned hires, leavers and returns from leave stay in Total payroll from Snowflake's
-  payroll forecast (above). Leave starts have no money in that forecast, so Total payroll does not change for them.
+- **The FY column** shows employees in December, and the other lines summed.
+- **The KPI** "Headcount today" shows HiBob's employees today and in December by their dates.
+- **Money:** the planned hires, leavers and returns from leave in Total payroll come from Snowflake's payroll
+  forecast (above), and only those marked TRUE count. Leave starts have no money in that forecast.
 
 **The page**
 - KPIs: payroll year to date, full-year payroll for each year (with the planned changes), the permanent
@@ -177,6 +180,11 @@ view). It holds counts only: no names or IDs leave the server.
   **Temporary** and, when there are any, **Not classified**; then the total payroll; then **Deel** and
   **Payroll + Deel**. Hovering a header says how its section is projected. The Excel export keeps the headers as
   label-only rows, and adds the headcount under the table.
+- **Section colours.** Each section has its own colour: Permanent blue, Headcount changes amber, Override file
+  violet, Temporary green, Not classified grey, Deel pink. The header row is a band of that colour, and a bar of it
+  runs beside each line's label (stronger on the subtotal). Total payroll and Payroll + Deel stay neutral. A legend
+  above the table names the sections shown. The Excel export colours the header rows and the line labels the same
+  way. The colours are an optional `accent` on the shared table's lines, so the other pages are unchanged.
 - Under the table: the headcount by month (above), then the override file's rows (above).
 - Controls: Permanent / temporary (the classification panel), ILS (default) or EUR, one year or both,
   Refresh, and Export (Excel, the table as shown).
@@ -278,7 +286,7 @@ node scripts/salary-projection.cjs --reconcile   # real data: Snowflake vs NetSu
   refresh.
 - Deel is found by vendor name ("deel"); a Deel vendor named otherwise is missed. The vendors found are named
   in the Deel header and by `--dry-run`. Only LSports (subsidiary 3) is read.
-- The headcount forecast is HiBob's dates plus its open positions: a signed hire who is not in HiBob's employees
-  yet counts only if HiBob lists them as an opening. Openings carry no company, so all count. `--dry-run` shows
-  today's headcount next to the current month's forecast, and each event type with how it counts.
+- The headcount is HiBob's employees and their dates: a signed hire who is not in HiBob's employees yet does not
+  count (an opening for them shows on the open positions line). Openings carry no company, so all show.
+  `--dry-run` shows today's headcount next to the current month-end, and each event type with how it shows.
 - Leaves (maternity) are counted only when HiBob's events have them; in October 2026 they had none.

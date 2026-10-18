@@ -52,6 +52,8 @@ export interface DeelAmountRow {
   ils: number;
 }
 
+export declare const DEEL_RUN_RATE_MONTHS: number;
+
 export declare function deelRunRate(rows: DeelAmountRow[], runRateMonth: string): { months: string[]; byAcct: AccountAmounts };
 
 export declare function deelByMonth(
@@ -77,14 +79,16 @@ export interface HeadcountEventCount {
 export interface HeadcountMonth {
   mKey: string;
   status: SalaryRow['status'];
-  /** Employees at month-end (null when HiBob's employees could not be read). */
+  /** HiBob's employees at month-end (null when they could not be read). */
   employees: number | null;
-  /** Who joined (and, from the current month, who is signed to start, plus open positions). */
+  /** Who joined, or is signed to join (HiBob's start dates). */
   hires: number | null;
-  /** Who left (and, from the current month, who is leaving). */
+  /** Who left, or is leaving (HiBob's leave dates). */
   leavers: number | null;
-  /** The open positions among the hires (0 before the current month). */
+  /** HiBob's open positions planned for the month (shown, not counted; 0 before the current month). */
   openings: number;
+  /** HiBob's planned leavers with no employee (shown, not counted; 0 before the current month). */
+  cuts: number;
   returns: number;
   leaveStarts: number;
 }
