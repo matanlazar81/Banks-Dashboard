@@ -7,6 +7,7 @@ import { Fragment, useMemo, type ReactNode } from 'react';
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ReferenceDot, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { formatCount, formatFull, monthLongLabel, type Accent, type ProjectionTable as Table } from '../new-dashboard/model.ts';
 import { formatAxisMoney, headcountChart, payrollChart, type HeadcountPoint, type PayrollPoint, type PayrollSeries } from './charts.ts';
+import { excludedGroupsText } from './model.ts';
 import type { Ccy, MonthStatus, SalaryPayload } from './types.ts';
 
 /**
@@ -229,13 +230,14 @@ function HeadcountCharts({ table, headcount }: { table: Table<string>; headcount
   if (!known.length || !employeesAxis) return null;
   const lastActual = [...known].reverse().find((p) => !p.projected);
   const last = known[known.length - 1];
+  const without = excludedGroupsText(headcount);
   const keys = ['hires', 'leavers'];
   const box = (key: string, fill: string) => (b: unknown) => <Segment box={b as SegmentBox} seriesKey={key} keys={keys} fill={fill} />;
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <ChartCard
         title="Employees at month-end"
-        note={`HiBob (${headcount.company}): employees on the last day of the month, people on leave included.`}
+        note={`HiBob (${headcount.company}${without ? `, without ${without}` : ''}): employees on the last day of the month, people on leave included.`}
         keyItems={(
           <>
             {points.some((p) => !p.projected) && <KeyItem color={EMPLOYEES} label="Actual" mark="line" />}

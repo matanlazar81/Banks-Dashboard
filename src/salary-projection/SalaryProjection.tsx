@@ -14,7 +14,7 @@ import { headcountBreakdown, isHeadcountBreakdownLine, isSalaryBreakdownLine, sa
 import { useClassification } from './classification.ts';
 import ClassifyPanel from './ClassifyPanel.tsx';
 import HeadcountSection from './HeadcountSection.tsx';
-import { buildHeadcountTable, buildSalaryTable, computeSalaryKpis, SECTION_NAMES, SECTION_ORDER, withClassification } from './model.ts';
+import { buildHeadcountTable, buildSalaryTable, computeSalaryKpis, excludedGroupsText, SECTION_NAMES, SECTION_ORDER, withClassification } from './model.ts';
 import OverridesSection from './OverridesSection.tsx';
 import SalaryKpiStrip from './SalaryKpiStrip.tsx';
 import type { Ccy } from './types.ts';
@@ -112,6 +112,8 @@ export default function SalaryProjection() {
   const chooseTab = (t: Tab) => { setTab(t); writeParam('tab', t === 'charts' ? t : null); };
 
   const runRate = data ? monthLongLabel(data.basis.runRateMonth) : null;
+  // HiBob's departments the headcount leaves out (Bringits), for the notes.
+  const hcWithout = data ? excludedGroupsText(data.headcount) : '';
   const notProjected = shown ? shown.accounts.filter((a) => a.method === 'none') : [];
   const unclassified = shown ? shown.accounts.filter((a) => a.group === 'other') : [];
   const canClassify = !!(data && data.actual);
@@ -302,7 +304,7 @@ export default function SalaryProjection() {
               {changesFalse > 0 && ` Snowflake's payroll forecast also has ${changesFalse} planned hire, leaver or return row${changesFalse === 1 ? '' : 's'} from the current month on marked FALSE: ${changesFalse === 1 ? 'it is' : 'they are'} not counted. Only changes marked TRUE are added.`}
               {notProjected.length > 0 && ` Actuals only, not projected: ${notProjected.map((a) => `${a.acct} ${a.name}`).join(', ')}.`}
               {hasDeel && ' Below Total payroll, Deel (people abroad) is its NetSuite costs on every account but payroll ones; forecast months carry the average of its last six months (a month without a bill counts as 0). Payroll + Deel adds the two.'}
-              {headcountTable && ' The headcount is HiBob\'s employees at each month-end, people on leave included, from their start and leave dates (signed hires and people leaving included). HiBob\'s open positions, and its returns from leave and leave starts (maternity and others) when it has them, are shown but do not change it.'}
+              {headcountTable && ` The headcount is HiBob's employees at each month-end, people on leave included, from their start and leave dates (signed hires and people leaving included)${hcWithout ? `, without HiBob's ${hcWithout} in any month` : ''}. HiBob's open positions, and its returns from leave and leave starts (maternity and others) when it has them, are shown but do not change it.`}
               {' '}The current month is projected as a whole month. Forecasts are made in shekels; euros use the rate above.
               Use Permanent / temporary to change how an account is projected.
             </p>
