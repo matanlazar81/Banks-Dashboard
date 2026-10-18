@@ -3,18 +3,18 @@ import { Download, Loader2, RefreshCw, SlidersHorizontal } from 'lucide-react';
 import { useProjection } from '../new-dashboard/useProjection.ts';
 import BreakdownWindows from '../new-dashboard/BreakdownWindows.tsx';
 import type { BreakdownFetcher, BreakdownResponse } from '../new-dashboard/breakdown.ts';
-import ProjectionTable, { type TableMarkers } from '../new-dashboard/ProjectionTable.tsx';
+import ProjectionTable, { ACCENT_SWATCH, type TableMarkers } from '../new-dashboard/ProjectionTable.tsx';
 import { ComputingCard, ErrorCard, Segmented, Skeleton, Warnings } from '../new-dashboard/PageParts.tsx';
 import { readParam, writeParam } from '../new-dashboard/urlParams.ts';
 import { projectedMonths } from '../forecast/salary-projection.mjs';
-import { monthLongLabel, type Column } from '../new-dashboard/model.ts';
+import { monthLongLabel, type Accent, type Column } from '../new-dashboard/model.ts';
 import type { YearView } from '../new-dashboard/types.ts';
 import { fetchSalaryProjection } from './api.ts';
 import { isSalaryBreakdownLine, salaryBreakdown } from './breakdown.ts';
 import { useClassification } from './classification.ts';
 import ClassifyPanel from './ClassifyPanel.tsx';
 import HeadcountSection from './HeadcountSection.tsx';
-import { buildHeadcountTable, buildSalaryTable, computeSalaryKpis, withClassification } from './model.ts';
+import { buildHeadcountTable, buildSalaryTable, computeSalaryKpis, SECTION_NAMES, SECTION_ORDER, withClassification } from './model.ts';
 import OverridesSection from './OverridesSection.tsx';
 import SalaryKpiStrip from './SalaryKpiStrip.tsx';
 import type { Ccy } from './types.ts';
@@ -25,6 +25,23 @@ const MARKERS: TableMarkers = {
   closingLine: 'total',
   negativeLines: new Set(),
 };
+
+/** The table's sections and their colours, the ones shown only, in the table's order. */
+function SectionLegend({ accents }: { accents: ReadonlySet<Accent> }) {
+  const shown = SECTION_ORDER.filter((a) => accents.has(a));
+  if (!shown.length) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-slate-200 px-4 py-1.5 text-xs text-slate-600">
+      <span className="text-slate-500">Sections:</span>
+      {shown.map((a) => (
+        <span key={a} className="inline-flex items-center gap-1.5">
+          <span className={`h-3 w-1.5 rounded-sm ${ACCENT_SWATCH[a]}`} />
+          {SECTION_NAMES[a]}
+        </span>
+      ))}
+    </div>
+  );
+}
 
 function Legend({ overrides }: { overrides: boolean }) {
   return (
@@ -62,6 +79,7 @@ export default function SalaryProjection() {
   }, []);
   const closeBreakdown = useCallback(() => setOpenCell(null), []);
   const breakdownLines = useMemo(() => new Set(table ? table.lines.map((l) => l.key).filter(isSalaryBreakdownLine) : []), [table]);
+  const sectionAccents = useMemo(() => new Set(table ? table.lines.flatMap((l) => (l.accent ? [l.accent] : [])) : []), [table]);
   const breakdownOf = useCallback<BreakdownFetcher>((req) => Promise.resolve<BreakdownResponse>(
     shown ? salaryBreakdown(shown, req) : { ok: false, status: 'error', error: 'The projection is not loaded yet.' },
   ), [shown]);
@@ -222,6 +240,7 @@ export default function SalaryProjection() {
                 </div>
                 <Legend overrides={hasOverrides} />
               </div>
+              <SectionLegend accents={sectionAccents} />
               <ProjectionTable
                 table={table}
                 ccy={ccy}

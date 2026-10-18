@@ -7,7 +7,7 @@
 // Columns, full-year values and formatting are the New Bank Dashboard's (src/new-dashboard/model.ts). No React,
 // no DOM — unit-tested by scripts/test-salary-projection.cjs.
 import { countedChangeRows, countedIncrementRows, deelByMonth, deelRunRate, groupOfMethod, projectSalary } from '../forecast/salary-projection.mjs';
-import { buildYearTable, monthLongLabel, type LineDefOf, type ProjectionTable } from '../new-dashboard/model.ts';
+import { buildYearTable, monthLongLabel, type Accent, type LineDefOf, type ProjectionTable } from '../new-dashboard/model.ts';
 import type { YearView } from '../new-dashboard/types.ts';
 import type { Ccy, PayrollChange, PayrollOverride, SalaryAccount, SalaryFigures, SalaryGroup, SalaryMethod, SalaryPayload } from './types.ts';
 
@@ -60,10 +60,21 @@ function itemHint(group: SalaryGroup, method: SalaryMethod, runRate: string, yea
 
 const sumOf = (accts: string[]) => (f: SalaryFigures) => accts.reduce((s, a) => s + (f[a] ?? 0), 0);
 
-/** A section title row over a group of lines (no amounts). */
-const header = (key: string, label: string, hint: string): SalaryLineDef => ({ key, label, kind: 'header', fy: 'sum', value: () => 0, hint });
+/** A section title row over a group of lines (no amounts), in the section's colour. */
+const header = (key: string, label: string, hint: string, accent: Accent): SalaryLineDef => ({ key, label, kind: 'header', fy: 'sum', value: () => 0, hint, accent });
 
 const GROUP_HEADER: Record<SalaryGroup, string> = { permanent: 'Permanent', temporary: 'Temporary', other: 'Not classified' };
+
+/** Each section's colour (the header row's band and the bar beside its lines), and the page legend's names. */
+const GROUP_ACCENT: Record<SalaryGroup, Accent> = { permanent: 'sky', temporary: 'emerald', other: 'slate' };
+const CHANGES_ACCENT: Accent = 'amber';
+const OVERRIDES_ACCENT: Accent = 'violet';
+const DEEL_ACCENT: Accent = 'pink';
+export const SECTION_NAMES: Record<Accent, string> = {
+  sky: 'Permanent', amber: 'Headcount changes', violet: 'Override file', emerald: 'Temporary', slate: 'Not classified', pink: 'Deel',
+};
+/** The legend's order: the table's. */
+export const SECTION_ORDER: Accent[] = ['sky', 'amber', 'violet', 'emerald', 'slate', 'pink'];
 
 function groupHeaderHint(group: SalaryGroup, runRate: string, years: [number, number]): string {
   if (group === 'permanent') return `Recurring pay and its burden. Forecast: ${runRate} carried into every month.`;
@@ -99,11 +110,12 @@ export function salaryLineDefs(
   for (const group of GROUPS) {
     const list = accounts.filter((a) => a.group === group);
     if (list.length) {
-      defs.push(header(`header-${group}`, GROUP_HEADER[group], groupHeaderHint(group, runRate, years)));
+      const accent = GROUP_ACCENT[group];
+      defs.push(header(`header-${group}`, GROUP_HEADER[group], groupHeaderHint(group, runRate, years), accent));
       for (const a of list) {
-        defs.push({ key: a.acct, label: `${a.acct} - ${a.name}`, kind: 'item', fy: 'sum', value: (f) => f[a.acct] ?? 0, hint: itemHint(group, a.method, runRate, years) });
+        defs.push({ key: a.acct, label: `${a.acct} - ${a.name}`, kind: 'item', fy: 'sum', value: (f) => f[a.acct] ?? 0, hint: itemHint(group, a.method, runRate, years), accent });
       }
-      defs.push({ key: `total-${group}`, label: SUBTOTAL_LABEL[group], kind: 'subtotal', fy: 'sum', value: sumOf(list.map((a) => a.acct)) });
+      defs.push({ key: `total-${group}`, label: SUBTOTAL_LABEL[group], kind: 'subtotal', fy: 'sum', value: sumOf(list.map((a) => a.acct)), accent });
     }
     if (group === 'permanent') defs.push(...planned.defs);
   }
@@ -213,14 +225,14 @@ function plannedLines(payload: SalaryPayload): PlannedDefs & { sums: Map<string,
   }
   const changeSources = SOURCES.filter((source) => changes.has(source));
   if (changeSources.length) {
-    defs.push(header('header-changes', 'Headcount changes', `Planned hires, leavers and returns from leave on the payroll accounts, from HiBob's forecast (Snowflake's payroll forecast). The people are in the headcount table under this one.${COUNTED}`));
+    defs.push(header('header-changes', 'Headcount changes', `Planned hires, leavers and returns from leave on the payroll accounts, from HiBob's forecast (Snowflake's payroll forecast). The people are in the headcount table under this one.${COUNTED}`, CHANGES_ACCENT));
   }
   for (const source of changeSources) {
     const key = SOURCE_KEY[source];
     const accts = [...(changes.get(source) ?? new Map<string, string>()).entries()].sort(([a], [b]) => a.localeCompare(b)).map(([a, n]) => accountLabel(a, n));
     defs.push({
       key, label: SOURCE_LINE[source], kind: 'item', fy: 'sum', value: (f) => f[key] ?? 0,
-      hint: `${SOURCE_HINT[source]} Accounts: ${listOf(accts, 8)}.${COUNTED}`,
+      hint: `${SOURCE_HINT[source]} Accounts: ${listOf(accts, 8)}.${COUNTED}`, accent: CHANGES_ACCENT,
     });
   }
   if (changeSources.length) {
@@ -228,7 +240,7 @@ function plannedLines(payload: SalaryPayload): PlannedDefs & { sums: Map<string,
     totalKeys.push(...keys);
     defs.push({
       key: 'total-changes', label: 'Total headcount changes', kind: 'subtotal', fy: 'sum', value: sumOf(keys),
-      hint: `Planned hires, leavers and returns from leave (HiBob, through Snowflake).${COUNTED}`,
+      hint: `Planned hires, leavers and returns from leave (HiBob, through Snowflake).${COUNTED}`, accent: CHANGES_ACCENT,
     });
   }
 
@@ -246,7 +258,7 @@ function plannedLines(payload: SalaryPayload): PlannedDefs & { sums: Map<string,
   }
   const list = [...lines.entries()].sort(([, a], [, b]) => a.acct.localeCompare(b.acct));
   if (list.length) {
-    defs.push(header('header-overrides', 'Override file', 'The override sheet\'s rows (Snowflake): increments are added to Total payroll from the current month on; overrides are for reference.'));
+    defs.push(header('header-overrides', 'Override file', 'The override sheet\'s rows (Snowflake): increments are added to Total payroll from the current month on; overrides are for reference.', OVERRIDES_ACCENT));
   }
   for (const mode of MODES) {
     const ofMode = list.filter(([, l]) => l.mode === mode);
@@ -259,6 +271,7 @@ function plannedLines(payload: SalaryPayload): PlannedDefs & { sums: Map<string,
         key, label: `${accountLabel(l.acct, l.name)} (${MODE_KEY[mode]})`, kind: mode === 'Increment' ? 'item' : 'note', fy: 'sum',
         value: (f) => f[key] ?? 0,
         hint: `${MODE_HINT[mode]}${departments ? ` Departments: ${departments}.` : ''}${comments ? ` Comments: ${comments}.` : ''}${estimated}`,
+        accent: OVERRIDES_ACCENT,
       });
     }
     const keys = ofMode.map(([k]) => k);
@@ -266,12 +279,12 @@ function plannedLines(payload: SalaryPayload): PlannedDefs & { sums: Map<string,
       totalKeys.push(...keys);
       defs.push({
         key: 'total-increments', label: 'Total increments', kind: 'subtotal', fy: 'sum', value: sumOf(keys),
-        hint: 'The override file\'s increments from the current month on: in Total payroll.',
+        hint: 'The override file\'s increments from the current month on: in Total payroll.', accent: OVERRIDES_ACCENT,
       });
     } else {
       defs.push({
         key: 'total-overrides', label: 'Total overrides (not in total payroll)', kind: 'subtotal', fy: 'sum', value: sumOf(keys),
-        hint: 'The override file\'s overrides, for reference: not in Total payroll.',
+        hint: 'The override file\'s overrides, for reference: not in Total payroll.', accent: OVERRIDES_ACCENT,
       });
     }
   }
@@ -317,12 +330,15 @@ function deelLines(payload: SalaryPayload): DeelDefs & { sums: Map<string, Month
     sums,
     keys,
     defs: [
-      header('header-deel', 'Deel', `People abroad through Deel: NetSuite's costs of ${listOf(deel.vendors, 4) || 'Deel'} by posting period, on every account but payroll ones. Not in Total payroll.${onPayroll}`),
+      header('header-deel', 'Deel', `People abroad through Deel: NetSuite's costs of ${listOf(deel.vendors, 4) || 'Deel'} by posting period, on every account but payroll ones. Not in Total payroll.${onPayroll}`, DEEL_ACCENT),
       ...list.map((acct): SalaryLineDef => ({
         key: `deel|${acct}`, label: accountLabel(acct, names.get(acct) ?? ''), kind: 'item', fy: 'sum', value: (f) => f[`deel|${acct}`] ?? 0,
-        hint: `Deel on this account. Actual months: NetSuite. Forecast: ${forecast}.`,
+        hint: `Deel on this account. Actual months: NetSuite. Forecast: ${forecast}.`, accent: DEEL_ACCENT,
       })),
-      { key: 'total-deel', label: 'Total Deel', kind: 'subtotal', fy: 'sum', value: sumOf(keys), hint: `Deel's costs: NetSuite in actual months; forecast months ${forecast}.` },
+      {
+        key: 'total-deel', label: 'Total Deel', kind: 'subtotal', fy: 'sum', value: sumOf(keys),
+        hint: `Deel's costs: NetSuite in actual months; forecast months ${forecast}.`, accent: DEEL_ACCENT,
+      },
     ],
   };
 }

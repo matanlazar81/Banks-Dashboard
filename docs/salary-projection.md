@@ -180,6 +180,11 @@ view). It holds counts only: no names or IDs leave the server.
   **Temporary** and, when there are any, **Not classified**; then the total payroll; then **Deel** and
   **Payroll + Deel**. Hovering a header says how its section is projected. The Excel export keeps the headers as
   label-only rows, and adds the headcount under the table.
+- **Section colours.** Each section has its own colour: Permanent blue, Headcount changes amber, Override file
+  violet, Temporary green, Not classified grey, Deel pink. The header row is a band of that colour, and a bar of it
+  runs beside each line's label (stronger on the subtotal). Total payroll and Payroll + Deel stay neutral. A legend
+  above the table names the sections shown. The Excel export colours the header rows and the line labels the same
+  way. The colours are an optional `accent` on the shared table's lines, so the other pages are unchanged.
 - Under the table: the headcount by month (above), then the override file's rows (above).
 - Controls: Permanent / temporary (the classification panel), ILS (default) or EUR, one year or both,
   Refresh, and Export (Excel, the table as shown).

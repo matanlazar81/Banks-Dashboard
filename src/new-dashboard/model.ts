@@ -10,6 +10,9 @@ export type LineKey =
 /** 'header' is a section title row: its label only, no amounts. */
 export type LineKind = 'balance' | 'item' | 'subtotal' | 'note' | 'header';
 
+/** A section's colour: its header row is tinted and its lines carry a bar of it (the Salary Projection's groups). */
+export type Accent = 'sky' | 'amber' | 'violet' | 'emerald' | 'slate' | 'pink';
+
 /** One table line over a month's figures F (shared with the P&L Projection, which has its own F). */
 export interface LineDefOf<F, K extends string = string> {
   key: K;
@@ -24,6 +27,8 @@ export interface LineDefOf<F, K extends string = string> {
   signed?: boolean;
   /** 'count': whole numbers (people), not an amount in thousands. */
   unit?: 'count';
+  /** The colour of the section the line belongs to. */
+  accent?: Accent;
 }
 type LineDef = LineDefOf<Figures, LineKey>;
 
@@ -91,6 +96,7 @@ export interface TableLine<K extends string = LineKey> {
   hint?: string;
   signed?: boolean;
   unit?: 'count';
+  accent?: Accent;
   /** One value per column, in display sign. */
   values: number[];
 }
@@ -167,7 +173,7 @@ export function buildYearTable<F, K extends string>(years: YearOf<F>[], ccy: Ccy
       for (const r of block.rows) values.push(line.value(r[ccy]));
       values.push(fyValue(line, block.rows, ccy));
     }
-    return { key: line.key, label: line.label, kind: line.kind, hint: line.hint, signed: line.signed, unit: line.unit, values };
+    return { key: line.key, label: line.label, kind: line.kind, hint: line.hint, signed: line.signed, unit: line.unit, accent: line.accent, values };
   });
   return { columns, lines, groups };
 }

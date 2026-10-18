@@ -593,6 +593,18 @@ async function testModel(payload) {
     'planned changes: a "Headcount changes" and an "Override file" header, no amounts');
   const onlyChanges = model.buildSalaryTable({ ...payload, changes }, 'ils', 'both').lines.map((l) => l.key);
   check(onlyChanges.includes('total-changes') && !onlyChanges.some((k) => /increment|override/.test(k)), 'planned changes without the override file');
+  const accentOf = (k) => ovLine(k).accent;
+  const offAccent = ovTable.lines.filter((l) => {
+    const want = /^(header-permanent|total-permanent)$/.test(l.key) || sp.SALARY_GL_GROUPS[0].accounts.some(([a]) => a === l.key) ? 'sky'
+      : /^(header-changes|hires|leavers|returns|total-changes)$/.test(l.key) ? 'amber'
+        : /^(header-overrides|total-increments|total-overrides)$|^(increment|override)\|/.test(l.key) ? 'violet'
+          : /^(header-temporary|total-temporary)$/.test(l.key) || sp.SALARY_GL_GROUPS[1].accounts.some(([a]) => a === l.key) ? 'emerald'
+            : /^(header-other|total-other|760040)$/.test(l.key) ? 'slate' : undefined;
+    return l.accent !== want;
+  }).map((l) => l.key);
+  check(!offAccent.length && accentOf('total') === undefined && JSON.stringify([...model.SECTION_ORDER].sort()) === JSON.stringify(Object.keys(model.SECTION_NAMES).sort())
+    && model.SECTION_NAMES.sky === 'Permanent' && model.SECTION_NAMES.amber === 'Headcount changes' && model.SECTION_NAMES.emerald === 'Temporary' && model.SECTION_NAMES.pink === 'Deel',
+    'colours: Permanent blue, headcount changes amber, the override file violet, Temporary green, not classified grey; Total payroll none', offAccent.join(','));
   const plain = (p) => JSON.stringify(model.buildSalaryTable(p, 'ils', 'both').lines.map((l) => l.key)) === JSON.stringify(expected);
   check(plain({ ...payload, overrides: { error: null, rows: [] }, changes: { error: null, rows: [] } }) && plain({ ...payload, overrides: undefined, changes: undefined })
     && plain({ ...payload, overrides: { error: null, rows: overrides.rows.filter((r) => r.month > mk(T, 12)) } })
@@ -822,6 +834,8 @@ async function testDeelAndHeadcount(payload) {
     'hints name the vendors, a payroll account already in Total payroll, and the months the forecast averages');
   check(!model.buildSalaryTable(payload, 'ils', 'both').lines.some((l) => /deel/.test(l.key)) && !model.buildSalaryTable({ ...p, deel: undefined }, 'ils', 'both').lines.some((l) => /deel/.test(l.key)),
     'no Deel rows (or an older payload): no Deel lines');
+  check(['header-deel', 'deel|660004', 'total-deel'].every((k) => line(k).accent === 'pink') && line('payroll-deel').accent === undefined,
+    'Deel\'s lines in pink; Payroll + Deel in none');
 
   const deelOff = [];
   table.lines.filter((l) => bd.isSalaryBreakdownLine(l.key) && /deel/.test(l.key)).forEach((l) => table.columns.forEach((c, i) => {
