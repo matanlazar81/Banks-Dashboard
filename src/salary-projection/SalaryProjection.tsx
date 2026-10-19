@@ -98,7 +98,7 @@ export default function SalaryProjection() {
   const hasIncrements = hasLine('total-increments');
   const hasOverrides = hasLine('total-overrides');
   const hasDeel = hasLine('total-deel');
-  // Snowflake's planned changes in the projected months that are marked FALSE: listed in the note, never added.
+  // Snowflake's planned changes in the projected months that are marked FALSE: shown in italics, never added.
   const changesFalse = useMemo(() => {
     if (!shown || !shown.changes) return 0;
     const projected = projectedMonths(shown.blocks);
@@ -299,7 +299,7 @@ export default function SalaryProjection() {
                 hasChanges && 'planned hires, leavers and returns from leave (HiBob\'s forecast, through Snowflake\'s payroll forecast)',
                 hasIncrements && 'the override file\'s increments',
               ].filter(Boolean).join(' and ')}${hasChanges || hasIncrements ? ' are added to Total payroll from the current month on (closed months are NetSuite\'s actuals, which already include what happened)' : ''}${hasOverrides ? `${hasChanges || hasIncrements ? '; ' : ''}the override file's overrides, in italics, are for reference and not in Total payroll` : ''}.`}
-              {changesFalse > 0 && ` Snowflake's payroll forecast also has ${changesFalse} planned hire, leaver or return row${changesFalse === 1 ? '' : 's'} from the current month on marked FALSE: ${changesFalse === 1 ? 'it is' : 'they are'} not counted. Only changes marked TRUE are added.`}
+              {changesFalse > 0 && ` Snowflake's payroll forecast also has ${changesFalse} planned hire, leaver or return row${changesFalse === 1 ? '' : 's'} from the current month on marked FALSE: ${changesFalse === 1 ? 'it shows' : 'they show'} in italics under Headcount changes, for reference, and ${changesFalse === 1 ? 'is' : 'are'} not counted. Only changes marked TRUE are added.`}
               {notProjected.length > 0 && ` Actuals only, not projected: ${notProjected.map((a) => `${a.acct} ${a.name}`).join(', ')}.`}
               {hasDeel && ' Below Total payroll, Deel (people abroad) is its NetSuite costs on every account but payroll ones; forecast months carry the average of its last six months (a month without a bill counts as 0). Payroll + Deel adds the two.'}
               {headcountTable && ' The headcount is HiBob\'s employees at each month-end, people on leave included, from their start and leave dates (signed hires and people leaving included). A move to another department is a transfer, not a hire: the people count before and after it. HiBob\'s open positions, and its returns from leave and leave starts (maternity and others) when it has them, are shown but do not change it.'}

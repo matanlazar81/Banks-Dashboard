@@ -514,18 +514,22 @@ async function testModel(payload) {
   check(changes.rows.some((r) => r.month === mk(Y, 11) && r.actual === false) && countedCh.every((r) => r.actual === true)
     && sm.countedChangeRows(payload.blocks, [{ month: mk(Y, 11), actual: false }, { month: mk(Y, 11) }]).length === 0,
     'a change marked FALSE (or without a mark) never counts, even in a forecast month');
+  const uncountedCh = sm.uncountedChangeRows(payload.blocks, changes.rows);
+  check(uncountedCh.length === 1 && uncountedCh[0] === changes.rows.find((r) => r.month === mk(Y, 11) && r.actual === false)
+    && sm.uncountedChangeRows(payload.blocks, [{ month: mk(Y, 2), actual: false }, { month: mk(Y, 11), actual: true }, { month: mk(Y, 11) }]).length === 1,
+    'uncountedChangeRows: the changes not marked TRUE in the current and forecast months (the same row objects); not closed months, not TRUE ones');
 
   const ovTable = model.buildSalaryTable(withOv, 'ils', 'both');
   const ovKeys = ovTable.lines.map((l) => l.key);
   const ovExpected = [
     'header-permanent', ...sp.SALARY_GL_GROUPS[0].accounts.map(([a]) => a), 'total-permanent',
-    'header-changes', 'hires', 'leavers', 'returns', 'total-changes',
+    'header-changes', 'hires', 'leavers', 'returns', 'total-changes', 'leavers-false', 'total-changes-false',
     'header-overrides', 'increment|760001', 'increment|760002', 'total-increments', 'override|760001', 'total-overrides',
     'header-temporary', ...sp.SALARY_GL_GROUPS[1].accounts.map(([a]) => a), 'total-temporary',
     'header-other', '760040', 'total-other', 'total',
   ];
   check(JSON.stringify(ovKeys) === JSON.stringify(ovExpected),
-    'between Total permanent and the temporary accounts: hires, leavers, returns + Total headcount changes, then increments + Total increments, then overrides + Total overrides', ovKeys.join(','));
+    'between Total permanent and the temporary accounts: hires, leavers, returns + Total headcount changes, those marked FALSE + Total FALSE, then increments + Total increments, then overrides + Total overrides', ovKeys.join(','));
   const ovLine = (k, t = ovTable) => t.lines.find((l) => l.key === k);
   const col = (id, t = ovTable) => t.columns.findIndex((c) => c.id === id);
   check(ovLine('hires').label === 'Planned hires' && ovLine('leavers').label === 'Leavers' && ovLine('returns').label === 'Returns from leave'
@@ -537,6 +541,12 @@ async function testModel(payload) {
   check(near(lv[col(mk(Y, 10))], -117_000, 0.05) && lv[col(mk(Y, 2))] === 0 && near(lv[col(mk(T, 1))], -323_000, 0.05) && near(ovLine('total-changes').values[col(mk(Y, 12))], 104_000, 0.05),
     'planned changes summed across the payroll accounts in their months (leavers negative); 0 in closed months');
   check(lv[col(mk(Y, 11))] === 0, 'November: its only leaver row is marked FALSE, so 0');
+  check(ovLine('leavers-false').label === 'Leavers (FALSE, not counted)' && ovLine('leavers-false').kind === 'note'
+    && ovLine('total-changes-false').label === 'Total FALSE (not in total payroll)' && ovLine('total-changes-false').kind === 'subtotal'
+    && ovLine('leavers-false').values[col(mk(Y, 11))] === -185_000 && ovLine('leavers-false').values[col(mk(Y, 10))] === 0
+    && /Marked FALSE in Snowflake/.test(ovLine('leavers-false').hint) && /not counted in Total payroll/.test(ovLine('total-changes-false').hint)
+    && /marked FALSE show in italics/.test(ovLine('header-changes').hint),
+    'the change marked FALSE shows under the counted ones as an italic note with its own total, saying it is not counted');
   check(ovLine('increment|760001').kind === 'item' && ovLine('total-increments').kind === 'subtotal' && ovLine('override|760001').kind === 'note'
     && ovLine('total-overrides').kind === 'subtotal' && /not in total payroll/.test(ovLine('total-overrides').label)
     && ovLine('increment|760001').label === '760001 - Gross Salaries (increment)' && ovLine('override|760001').label === '760001 - Gross Salaries (override)',
@@ -558,10 +568,11 @@ async function testModel(payload) {
     const v = (k) => ovLine(k).values[i];
     if (!near(v('total'), base('total')[i] + v('total-changes') + v('total-increments'), 0.05)) totalOff.push(c.id);
     if (!near(v('total-changes'), v('hires') + v('leavers') + v('returns'), 0.05)) subOff.push(`${c.id} changes`);
+    if (!near(v('total-changes-false'), v('leavers-false'), 0.05)) subOff.push(`${c.id} changes marked FALSE`);
     if (!near(v('total-increments'), v('increment|760001') + v('increment|760002'), 0.05)) subOff.push(`${c.id} increments`);
     if (!near(v('total-overrides'), v('override|760001'), 0.05)) subOff.push(`${c.id} overrides`);
   });
-  check(!totalOff.length, 'Total payroll = the accounts + Total headcount changes + Total increments, in every column (overrides not in it)', totalOff.slice(0, 3).join('; '));
+  check(!totalOff.length, 'Total payroll = the accounts + Total headcount changes + Total increments, in every column (overrides and changes marked FALSE not in it)', totalOff.slice(0, 3).join('; '));
   check(!subOff.length, 'each subtotal = its lines, in every column', subOff.slice(0, 3).join('; '));
   const incY = 20_000 * rate + 37_000 + 1_850;
   const chY = -110_000 - 7_000 + 85_000 + 19_000;
@@ -593,10 +604,20 @@ async function testModel(payload) {
     'planned changes: a "Headcount changes" and an "Override file" header, no amounts');
   const onlyChanges = model.buildSalaryTable({ ...payload, changes }, 'ils', 'both').lines.map((l) => l.key);
   check(onlyChanges.includes('total-changes') && !onlyChanges.some((k) => /increment|override/.test(k)), 'planned changes without the override file');
+  // Every change marked FALSE (Snowflake in October 2026): the section stays, with nothing counted.
+  const allFalse = { ...payload, changes: sp.changesOf({ error: null, rows: changes.rows.map((r) => ({ ...r, actual: false })) }, Y, rate) };
+  const falseTable = model.buildSalaryTable(allFalse, 'ils', 'both');
+  const falseKeys = falseTable.lines.map((l) => l.key);
+  const falseAt = (k, id) => falseTable.lines.find((l) => l.key === k).values[falseTable.columns.findIndex((c) => c.id === id)];
+  check(JSON.stringify(falseKeys.slice(falseKeys.indexOf('header-changes'), falseKeys.indexOf('header-temporary')))
+      === JSON.stringify(['header-changes', 'hires-false', 'leavers-false', 'returns-false', 'total-changes-false'])
+    && near(falseAt('leavers-false', mk(Y, 10)), -117_000, 0.05) && near(falseAt('total-changes-false', `fy-${Y}`), chY - 185_000, 0.05)
+    && JSON.stringify(falseTable.lines.find((l) => l.key === 'total').values) === JSON.stringify(table.lines.find((l) => l.key === 'total').values),
+    'every change marked FALSE: Headcount changes still shows them, in italics, and Total payroll is the accounts\' own');
   const accentOf = (k) => ovLine(k).accent;
   const offAccent = ovTable.lines.filter((l) => {
     const want = /^(header-permanent|total-permanent)$/.test(l.key) || sp.SALARY_GL_GROUPS[0].accounts.some(([a]) => a === l.key) ? 'sky'
-      : /^(header-changes|hires|leavers|returns|total-changes)$/.test(l.key) ? 'amber'
+      : /^(header-changes|(hires|leavers|returns|total-changes)(-false)?)$/.test(l.key) ? 'amber'
         : /^(header-overrides|total-increments|total-overrides)$|^(increment|override)\|/.test(l.key) ? 'violet'
           : /^(header-temporary|total-temporary)$/.test(l.key) || sp.SALARY_GL_GROUPS[1].accounts.some(([a]) => a === l.key) ? 'emerald'
             : /^(header-other|total-other|760040)$/.test(l.key) ? 'slate' : undefined;
@@ -614,7 +635,7 @@ async function testModel(payload) {
   console.log('\nBREAKDOWN: clicking a planned change (src/salary-projection/breakdown.ts)');
   const bd = await import(pathToFileURL(path.join(ROOT, 'src', 'salary-projection', 'breakdown.ts')).href);
   const ask = (line, period, more = {}) => bd.salaryBreakdown(withOv, { line, period, variant: 'base', ccy: 'ils', ...more });
-  check(['hires', 'leavers', 'returns', 'total-changes', 'increment|760001', 'override|760001', 'total-increments', 'total-overrides'].every(bd.isSalaryBreakdownLine)
+  check(['hires', 'leavers', 'returns', 'total-changes', 'hires-false', 'total-changes-false', 'increment|760001', 'override|760001', 'total-increments', 'total-overrides'].every(bd.isSalaryBreakdownLine)
     && !['760001', 'total', 'total-permanent', 'header-changes'].some(bd.isSalaryBreakdownLine),
     'the planned changes and their totals open a breakdown; accounts, headers and Total payroll do not');
   const bdOff = [];
@@ -642,6 +663,12 @@ async function testModel(payload) {
     'Total headcount changes for the year: by type and account (closed months left out, as in the table)');
   const chDrill = ask('total-changes', `FY-${Y}`, { row: 'leavers|760001' });
   check(chDrill.cell === -110_000 && chDrill.sections[0].rows.length === 2, 'and each of its accounts opens by department');
+  const lvFalse = ask('leavers-false', mk(Y, 11));
+  check(lvFalse.status === 'ready' && lvFalse.lineLabel === 'Leavers (FALSE, not counted)' && lvFalse.cell === -185_000
+    && JSON.stringify(sec(lvFalse, 'departments').rows.map((r) => [r.label, r.amount])) === JSON.stringify([['R&D', -185_000]])
+    && lvFalse.notes.some((n) => /Marked FALSE in Snowflake/.test(n)) && ask('total-changes-false', `FY-${Y}`).lineLabel === 'Total FALSE (not in total payroll)'
+    && ask('leavers-false', mk(Y, 11), { row: '760001' }).cell === -185_000,
+    'a change marked FALSE opens the same breakdown (by account and department), saying it is not counted');
   const incNov = ask('increment|760001', mk(Y, 11));
   const incRows = incNov.sections[0].rows;
   check(near(incNov.cell, 20_000 * rate + 37_000, 0.05) && incNov.lineLabel === '760001 - Gross Salaries (increment)'

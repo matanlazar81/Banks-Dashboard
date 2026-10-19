@@ -3,6 +3,7 @@
 // Pure, no React: unit-tested by scripts/test-salary-projection.cjs.
 //   hires / leavers / returns         by account (each opens by department), and by department
 //   total-changes                     by type and account (each opens by department), and by department
+//   the same with -false              the changes marked FALSE (shown, not counted), the same way
 //   increment|ACCT / override|ACCT    the override file's rows by department, with their comments; a year also by month
 //   total-increments / total-overrides by account and department
 //   deel|ACCT / total-deel            an actual month by vendor (the total also by account); a forecast month by
@@ -11,10 +12,10 @@
 //   hc-employees / hc-hires / hc-leavers  by HiBob group (department) and employment type; a year by month too
 //   hc-transfers                          the same, by the department moved to
 //   hc-openings and HiBob's other events  by department (open positions with their roles); a year by month too
-import { countedChangeRows, countedIncrementRows, deelByMonth, deelRunRate, placedHeadcountEvents } from '../forecast/salary-projection.mjs';
+import { countedChangeRows, countedIncrementRows, deelByMonth, deelRunRate, placedHeadcountEvents, uncountedChangeRows } from '../forecast/salary-projection.mjs';
 import type { BreakdownReady, BreakdownRequest, BreakdownResponse, BreakdownRow, BreakdownSection } from '../new-dashboard/breakdown.ts';
 import { monthLongLabel } from '../new-dashboard/model.ts';
-import { deelRateText, SOURCE_KEY, SOURCE_LINE, SOURCES } from './model.ts';
+import { deelRateText, NOT_COUNTED, SOURCE_KEY, SOURCE_LINE, SOURCES } from './model.ts';
 import type { PayrollChange, PayrollOverride, SalaryPayload } from './types.ts';
 
 type Source = PayrollChange['source'];
@@ -24,9 +25,13 @@ const SOURCE_OF_KEY = new Map<string, Source>(SOURCES.map((s) => [SOURCE_KEY[s],
 const MODE_OF_KEY: Record<string, Mode> = { increment: 'Increment', override: 'Override' };
 const TOTAL_MODE: Record<string, Mode> = { 'total-increments': 'Increment', 'total-overrides': 'Override' };
 
-/** Table lines whose cells open a breakdown: the planned changes, Deel, and their totals. */
+/** A planned-change line's key without the ending of the ones marked FALSE ('hires-false' → 'hires'). */
+const changeKeyOf = (key: string) => (key.endsWith(NOT_COUNTED) ? key.slice(0, -NOT_COUNTED.length) : key);
+
+/** Table lines whose cells open a breakdown: the planned changes (counted or not), Deel, and their totals. */
 export function isSalaryBreakdownLine(key: string): boolean {
-  return SOURCE_OF_KEY.has(key) || key === 'total-changes' || key in TOTAL_MODE || /^(increment|override|deel)\|/.test(key) || key === 'total-deel';
+  const change = changeKeyOf(key);
+  return SOURCE_OF_KEY.has(change) || change === 'total-changes' || key in TOTAL_MODE || /^(increment|override|deel)\|/.test(key) || key === 'total-deel';
 }
 
 const round = (n: number) => Math.round(n * 100) / 100;
@@ -92,15 +97,22 @@ export function salaryBreakdown(payload: SalaryPayload, req: BreakdownRequest): 
     periodStatus: period.status, ccy, generatedAt: payload.generatedAt,
   };
 
-  // Snowflake's planned hires, leavers and returns from leave.
-  const source = SOURCE_OF_KEY.get(req.line);
-  if (source || req.line === 'total-changes') {
-    const all = inPeriod(countedChangeRows(payload.blocks, payload.changes ? payload.changes.rows : []));
+  // Snowflake's planned hires, leavers and returns from leave: those marked TRUE (counted), or with "-false" those
+  // marked FALSE (shown, not counted).
+  const uncounted = req.line.endsWith(NOT_COUNTED);
+  const source = SOURCE_OF_KEY.get(changeKeyOf(req.line));
+  if (source || changeKeyOf(req.line) === 'total-changes') {
+    const changeRows = payload.changes ? payload.changes.rows : [];
+    const all = inPeriod(uncounted ? uncountedChangeRows(payload.blocks, changeRows) : countedChangeRows(payload.blocks, changeRows));
     const rows = source ? all.filter((r) => r.source === source) : all;
-    const lineLabel = source ? SOURCE_LINE[source] : 'Total headcount changes';
+    const lineLabel = uncounted
+      ? (source ? `${SOURCE_LINE[source]} (FALSE, not counted)` : 'Total FALSE (not in total payroll)')
+      : (source ? SOURCE_LINE[source] : 'Total headcount changes');
     const notes = [
       `HiBob's forecast in Snowflake's payroll forecast (${source ? `source "${source}"` : 'sources "Open position", "Terminated" and "Leave end"'}), LSports, every payroll account: monthly totals by account and department, no employee detail.`,
-      'Counted in Total payroll from the current month on, when marked TRUE (IS_SOURCE_ACTUAL); FALSE ones are left out. Closed months are NetSuite\'s actuals, which already include what happened.',
+      uncounted
+        ? 'Marked FALSE in Snowflake (IS_SOURCE_ACTUAL): shown for reference from the current month on, not counted in Total payroll. Only changes marked TRUE are added.'
+        : 'Counted in Total payroll from the current month on, when marked TRUE (IS_SOURCE_ACTUAL); FALSE ones are left out. Closed months are NetSuite\'s actuals, which already include what happened.',
     ];
 
     // One account row by department (the second window).
