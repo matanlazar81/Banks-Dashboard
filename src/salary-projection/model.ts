@@ -6,7 +6,7 @@
 // The headcount (HiBob) is a table of its own (buildHeadcountTable): people, not money.
 // Columns, full-year values and formatting are the New Bank Dashboard's (src/new-dashboard/model.ts). No React,
 // no DOM — unit-tested by scripts/test-salary-projection.cjs.
-import { countedChangeRows, countedIncrementRows, deelByMonth, deelRunRate, groupOfMethod, projectSalary } from '../forecast/salary-projection.mjs';
+import { countedChangeRows, countedIncrementRows, deelByMonth, deelRunRate, groupOfMethod, projectSalary, uncountedChangeRows } from '../forecast/salary-projection.mjs';
 import { buildYearTable, monthLongLabel, type Accent, type LineDefOf, type ProjectionTable } from '../new-dashboard/model.ts';
 import type { YearView } from '../new-dashboard/types.ts';
 import type { Ccy, PayrollChange, PayrollOverride, SalaryAccount, SalaryFigures, SalaryGroup, SalaryMethod, SalaryPayload } from './types.ts';
@@ -177,6 +177,9 @@ const SOURCE_HINT: Record<Source, string> = {
   'Leave end': 'Returns from leave (maternity and others), from HiBob\'s forecast (Snowflake\'s payroll forecast).',
 };
 const COUNTED = ' Added to Total payroll from the current month on, when Snowflake marks the change TRUE; FALSE ones are left out (closed months are NetSuite\'s actuals, which already include what happened).';
+/** The key ending of a planned-change line marked FALSE: shown for reference, not counted ('hires-false'). */
+export const NOT_COUNTED = '-false';
+const NOT_COUNTED_HINT = ' Marked FALSE in Snowflake (IS_SOURCE_ACTUAL): shown for reference from the current month on, not counted in Total payroll. Only changes marked TRUE are added.';
 
 const MODES: Mode[] = ['Increment', 'Override'];
 const MODE_KEY: Record<Mode, string> = { Increment: 'increment', Override: 'override' };
@@ -195,8 +198,9 @@ const accountLabel = (acct: string, name: string) => `${acct}${name ? ` - ${name
  * The planned changes as table lines, each source under its header. Each month's amounts are keyed by line
  * ('hires', 'increment|760001'), so they never mix with the accounts' own figures.
  *   - Snowflake's planned hires, leavers and returns from leave: one line per source summed across the payroll
- *     accounts, then "Total headcount changes". They show only where they count in Total payroll: the projected
- *     months (countedChangeRows).
+ *     accounts, then "Total headcount changes", in the projected months (countedChangeRows: those marked TRUE,
+ *     which count in Total payroll). Those marked FALSE follow as italic notes, then "Total FALSE", for reference
+ *     (uncountedChangeRows), so the section never disappears when Snowflake marks every change FALSE.
  *   - The override file: one line per account and type, summing an account's rows of a month across
  *     departments. Increments (then "Total increments") count the same way (countedIncrementRows); overrides
  *     (italic notes, then "Total overrides") show in every month of the table, for reference.
@@ -215,24 +219,32 @@ function plannedLines(payload: SalaryPayload): PlannedDefs & { sums: Map<string,
   const totalKeys: string[] = [];
 
   // Snowflake's planned hires, leavers and returns from leave: one line per source, summed across the payroll
-  // accounts (the hint names them).
-  const changes = new Map<Source, Map<string, string>>();
-  for (const r of countedChangeRows(payload.blocks, payload.changes ? payload.changes.rows : [])) {
-    const accts = changes.get(r.source) ?? new Map<string, string>();
-    if (!accts.has(r.acct)) accts.set(r.acct, r.name);
-    changes.set(r.source, accts);
-    addTo(SOURCE_KEY[r.source], r.month, r.eur, r.ils);
-  }
+  // accounts (the hint names them). Those marked TRUE count; those marked FALSE follow, for reference.
+  const changeRows = payload.changes ? payload.changes.rows : [];
+  const bySource = (rows: PayrollChange[], suffix: string) => {
+    const out = new Map<Source, Map<string, string>>();
+    for (const r of rows) {
+      const accts = out.get(r.source) ?? new Map<string, string>();
+      if (!accts.has(r.acct)) accts.set(r.acct, r.name);
+      out.set(r.source, accts);
+      addTo(`${SOURCE_KEY[r.source]}${suffix}`, r.month, r.eur, r.ils);
+    }
+    return out;
+  };
+  const changes = bySource(countedChangeRows(payload.blocks, changeRows), '');
+  const uncounted = bySource(uncountedChangeRows(payload.blocks, changeRows), NOT_COUNTED);
+  const accountsOf = (accts: Map<string, string> | undefined) => listOf([...(accts ?? new Map<string, string>()).entries()]
+    .sort(([a], [b]) => a.localeCompare(b)).map(([a, n]) => accountLabel(a, n)), 8);
   const changeSources = SOURCES.filter((source) => changes.has(source));
-  if (changeSources.length) {
-    defs.push(header('header-changes', 'Headcount changes', `Planned hires, leavers and returns from leave on the payroll accounts, from HiBob's forecast (Snowflake's payroll forecast). The people are in the headcount table under this one.${COUNTED}`, CHANGES_ACCENT));
+  const uncountedSources = SOURCES.filter((source) => uncounted.has(source));
+  if (changeSources.length || uncountedSources.length) {
+    defs.push(header('header-changes', 'Headcount changes', `Planned hires, leavers and returns from leave on the payroll accounts, from HiBob's forecast (Snowflake's payroll forecast). The people are in the headcount table under this one.${COUNTED}${uncountedSources.length ? ' Those marked FALSE show in italics, for reference.' : ''}`, CHANGES_ACCENT));
   }
   for (const source of changeSources) {
     const key = SOURCE_KEY[source];
-    const accts = [...(changes.get(source) ?? new Map<string, string>()).entries()].sort(([a], [b]) => a.localeCompare(b)).map(([a, n]) => accountLabel(a, n));
     defs.push({
       key, label: SOURCE_LINE[source], kind: 'item', fy: 'sum', value: (f) => f[key] ?? 0,
-      hint: `${SOURCE_HINT[source]} Accounts: ${listOf(accts, 8)}.${COUNTED}`, accent: CHANGES_ACCENT,
+      hint: `${SOURCE_HINT[source]} Accounts: ${accountsOf(changes.get(source))}.${COUNTED}`, accent: CHANGES_ACCENT,
     });
   }
   if (changeSources.length) {
@@ -241,6 +253,20 @@ function plannedLines(payload: SalaryPayload): PlannedDefs & { sums: Map<string,
     defs.push({
       key: 'total-changes', label: 'Total headcount changes', kind: 'subtotal', fy: 'sum', value: sumOf(keys),
       hint: `Planned hires, leavers and returns from leave (HiBob, through Snowflake).${COUNTED}`, accent: CHANGES_ACCENT,
+    });
+  }
+  for (const source of uncountedSources) {
+    const key = `${SOURCE_KEY[source]}${NOT_COUNTED}`;
+    defs.push({
+      key, label: `${SOURCE_LINE[source]} (FALSE, not counted)`, kind: 'note', fy: 'sum', value: (f) => f[key] ?? 0,
+      hint: `${SOURCE_HINT[source]} Accounts: ${accountsOf(uncounted.get(source))}.${NOT_COUNTED_HINT}`, accent: CHANGES_ACCENT,
+    });
+  }
+  if (uncountedSources.length) {
+    defs.push({
+      key: `total-changes${NOT_COUNTED}`, label: 'Total FALSE (not in total payroll)', kind: 'subtotal', fy: 'sum',
+      value: sumOf(uncountedSources.map((source) => `${SOURCE_KEY[source]}${NOT_COUNTED}`)),
+      hint: `Planned hires, leavers and returns from leave marked FALSE (HiBob, through Snowflake).${NOT_COUNTED_HINT}`, accent: CHANGES_ACCENT,
     });
   }
 

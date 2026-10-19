@@ -42,6 +42,11 @@ export declare function countedChangeRows<R extends { month: string; actual: boo
   rows: R[],
 ): R[];
 
+export declare function uncountedChangeRows<R extends { month: string; actual: boolean }>(
+  blocks: { rows: { mKey: string; status: SalaryRow['status'] }[] }[],
+  rows: R[],
+): R[];
+
 export declare function projectedMonths(blocks: { rows: { mKey: string; status: SalaryRow['status'] }[] }[]): Set<string>;
 
 /** Deel's costs by account (NetSuite, costs positive). */

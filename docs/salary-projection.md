@@ -84,6 +84,10 @@ from January of the current year, from two Snowflake sources (`plannedLines` in 
    applied, in any month. A TRUE change in a closed month is history, so NetSuite's actuals already hold it. In
    October 2026 the data team said every row was FALSE, so no planned change counted; the page's note and
    `--dry-run` say how many rows are FALSE.
+   **Changes marked FALSE still show**, from the current month on: under the counted lines, in italics, one line
+   per source (**Planned hires (FALSE, not counted)** and so on), then **Total FALSE (not in total payroll)**
+   (`uncountedChangeRows`). So the section never disappears when every change is FALSE (finance, October 2026:
+   the HiBob adjustments had disappeared from the page). Clicking one opens the same breakdown as a counted line.
 2. **The override file**: the override sheet's rows (`OVERIDE_TEMP`, loaded into `FCT_EXPENSE` as
    `future_cost_override` / `future_cost_increment`) on the same accounts (the sheet's column A)
    (`fetchPayrollOverrides`). One line per account and type, summing the account's rows of a month across
@@ -112,7 +116,8 @@ How they count:
 - **Clicking a figure** opens its breakdown, in the same movable window as the cash and P&L projections
   (`src/salary-projection/breakdown.ts`, built on the page from the payload, no server call):
   - **Planned hires / Leavers / Returns from leave:** by account (click one for its departments), and by
-    department across the accounts. **Total headcount changes:** the same, by type and account.
+    department across the accounts. **Total headcount changes:** the same, by type and account. The lines marked
+    FALSE and **Total FALSE** open the same way, over the FALSE rows.
   - **The override file's lines:** by department, hovering one shows the file's comments; a full year also by
     month. **Total increments / Total overrides:** by account and department.
   - Each window's first list adds up to the clicked figure. The hires and leavers are read by department for
@@ -200,7 +205,7 @@ view). It holds counts only: no names or IDs leave the server.
 - KPIs: payroll year to date, full-year payroll for each year (with the planned changes), the permanent
   monthly run-rate, and the headcount today (HiBob).
 - The table: sections, each with a header row and a subtotal: **Permanent**, **Headcount changes** (hires,
-  leavers, returns from leave; counted), **Override file** (increments counted, overrides for reference),
+  leavers, returns from leave; TRUE ones counted, FALSE ones in italics for reference), **Override file** (increments counted, overrides for reference),
   **Temporary** and, when there are any, **Not classified**; then the total payroll; then **Deel** and
   **Payroll + Deel**. Hovering a header says how its section is projected. The Excel export keeps the headers as
   label-only rows, and adds the headcount under the table.

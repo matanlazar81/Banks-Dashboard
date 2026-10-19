@@ -125,6 +125,15 @@ export function countedChangeRows(blocks, rows) {
   return (rows || []).filter((r) => r && r.actual === true && projected.has(r.month));
 }
 
+/**
+ * The same changes in the months the projection makes that are not marked TRUE: the page shows them for reference,
+ * and Total payroll never counts them. Returns the rows (the same objects).
+ */
+export function uncountedChangeRows(blocks, rows) {
+  const projected = projectedMonths(blocks);
+  return (rows || []).filter((r) => r && r.actual !== true && projected.has(r.month));
+}
+
 /** The months the projection makes (the current month and forecast months): where planned changes count. */
 export function projectedMonths(blocks) {
   const months = new Set();
