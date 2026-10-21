@@ -78,8 +78,17 @@ export interface NextFixingPlan {
   freeByFixing: number | null;
   moveToHapoalim: number;
 }
-export interface PathPoint { month: string; date: string; required: number; expected: number; available: number; surplus: number }
-export interface ReservePlan { policy: Policy; next: NextFixingPlan; path: PathPoint[]; maxConvertNow: number | null }
+export interface PathPoint {
+  month: string;
+  date: string;
+  required: number;
+  expected: number;
+  available: number;
+  surplus: number;
+  /** What can be converted before this fixing, in total, and still cover it and every later one. */
+  convertibleBefore: number;
+}
+export interface ReservePlan { policy: Policy; next: NextFixingPlan; path: PathPoint[] }
 export declare function planReserve(input: {
   upcoming: Upcoming[];
   policy?: Policy;

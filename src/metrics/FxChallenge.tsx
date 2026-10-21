@@ -185,8 +185,8 @@ function Recommendation({ model, policy, onPolicy, inflowMonths }: { model: FxMo
           {n.freeByFixing !== null && model.inflow && (
             <li>
               With the typical inflow ({formatEur(model.inflow.perMonth)} a month, {inflowMonths.map((m) => monthName(m).slice(0, 3)).join('–')}), about{' '}
-              {formatEur(n.inflowUntil)} comes in before the fixing, so {formatEur(n.freeByFixing)} is free by then.
-              {plan.maxConvertNow !== null ? <> Over the next {plan.path.length} fixings, <strong>{formatEur(plan.maxConvertNow)}</strong> can be converted today with every fixing still covered, if inflows stay typical.</> : null}
+              {formatEur(n.inflowUntil)} comes in before the fixing, so <strong>{formatEur(n.freeByFixing)}</strong> can be converted before it,
+              in total, as the euros come in, with the next {plan.path.length} fixings still covered.
             </li>
           )}
         </ul>
@@ -199,7 +199,7 @@ function Recommendation({ model, policy, onPolicy, inflowMonths }: { model: FxMo
                   <th className={TH}>Keep ({POLICY_LABEL[plan.policy].toLowerCase()})</th>
                   <th className={TH}>Expected</th>
                   <th className={TH} title="Today's liquid euros, plus typical inflows and deposits maturing by then, less the earlier fixings at the amount kept">Euros by then</th>
-                  <th className={TH}>Spare</th>
+                  <th className={TH} title="Euros converted before a fixing are gone at it and every later one">Can be converted before it</th>
                 </tr>
               </thead>
               <tbody>
@@ -209,12 +209,12 @@ function Recommendation({ model, policy, onPolicy, inflowMonths }: { model: FxMo
                     <td className={TD}>{formatEur(p.required)}</td>
                     <td className={`${TD} text-slate-500`}>{formatEur(p.expected)}</td>
                     <td className={TD}>{formatEur(p.available)}</td>
-                    <td className={`${TD} font-medium ${p.surplus < 0 ? 'text-rose-700' : 'text-emerald-700'}`}>{formatEur(p.surplus)}</td>
+                    <td className={`${TD} font-medium ${p.surplus < 0 ? 'text-rose-700' : 'text-emerald-700'}`}>{p.surplus < 0 ? `short ${formatEur(-p.surplus)}` : formatEur(p.convertibleBefore)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            <p className="mt-1 text-[11px] text-slate-500">If nothing else is converted. Spare is what could be converted today and still cover that fixing.</p>
+            <p className="mt-1 text-[11px] text-slate-500">If nothing else is converted and inflows stay typical: the euros converted before a fixing, in total, can reach that column and every fixing is still covered.</p>
           </div>
         )}
       </div>

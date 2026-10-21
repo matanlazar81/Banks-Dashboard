@@ -140,8 +140,16 @@ async function testPlan(fx) {
   const c = fx.planReserve({ upcoming, policy: 'today', eur: pos, today: TODAY, inflowPerDay: 100000 });
   check(c.next.required === 800000 && near(c.next.freeNow, 507150.74) && c.next.inflowUntil === 1600000 && near(c.next.freeByFixing, 2107150.74),
     'today\'s band only: €507K free now; with €100K a day of inflow (16 days), €2.11M by the fixing');
-  check(c.path.length === 6 && near(c.path[0].surplus, 1307150.74 + 1600000 - 800000) && near(c.path[1].available, 1307150.74 + 100000 * 46 - 800000)
-    && near(c.maxConvertNow, Math.min(...c.path.map((x) => x.surplus))), 'the path: euros by each fixing less the earlier ones; what is free today is the smallest spare');
+  check(c.path.length === 6 && near(c.path[0].surplus, 1307150.74 + 1600000 - 800000) && near(c.path[1].available, 1307150.74 + 100000 * 46 - 800000),
+    'the path: euros by each fixing, with inflows and maturing deposits, less the earlier fixings');
+  const suffixMin = (p, i) => Math.max(0, Math.min(...p.slice(i).map((x) => x.surplus)));
+  check(c.path.every((x, i) => near(x.convertibleBefore, suffixMin(c.path, i))) && near(c.next.freeByFixing, c.path[0].convertibleBefore),
+    'what can be converted before a fixing is the smallest spare from it on (euros converted then are gone later too)');
+  const dry = fx.planReserve({ upcoming, policy: 'p95', eur: pos, today: TODAY, inflowPerDay: 0 });
+  check(dry.path[0].surplus > dry.path[5].surplus && dry.path[0].convertibleBefore === suffixMin(dry.path, 0) && dry.next.freeByFixing === 0,
+    'with nothing coming in, a later fixing caps what can be converted before the first (here nothing)');
+  const none = fx.planReserve({ upcoming, policy: 'p95', eur: pos, today: TODAY });
+  check(none.path.length === 1 && none.next.freeByFixing === null && none.next.inflowUntil === null, 'without the inflow, only the next fixing is planned');
   check(fx.planReserve({ upcoming: [], eur: pos, today: TODAY }) === null, 'no fixings left → no plan');
 
   const flows = [

@@ -233,29 +233,38 @@ export function planReserve({ upcoming, policy = 'p95', eur, inflowPerDay = null
   // With the backup deposits covering the tail, the liquid euros only have to cover today's band.
   const needLiquidWithBackup = Math.max(0, todayAmount - maturing, required - maturing - backup);
   const inflowUntil = inflowPerDay == null ? null : inflowTo(f0);
-  const next = {
-    month: f0.month, date: f0.date, required, todayAmount, hapoalim, other, liquid, maturing, backup,
-    needLiquid, needLiquidWithBackup,
-    freeNow: Math.max(0, liquid - needLiquid),
-    freeNowWithBackup: Math.max(0, liquid - needLiquidWithBackup),
-    shortfall: Math.max(0, needLiquid - liquid),
-    inflowUntil,
-    freeByFixing: inflowUntil == null ? null : Math.max(0, liquid + inflowUntil - needLiquid),
-    // The euros have to be in the Hapoalim account on the day.
-    moveToHapoalim: Math.min(other, Math.max(0, required - maturing - hapoalim)),
-  };
 
   // Euros at each fixing, if nothing else is converted: today's liquid euros, plus typical inflows and deposits
-  // maturing by then, less the earlier fixings at the policy amount.
+  // maturing by then, less the earlier fixings at the policy amount. Euros converted before a fixing are gone at
+  // it and at every later one, so what can be converted before a fixing, in total, is the smallest spare from
+  // that fixing on.
   let before = 0;
   const path = fx.map((f) => {
     const req = requirementOf(policy, f.conv, f.risk);
     const available = liquid + inflowTo(f) + maturingBy(f.date) - before;
     before += req;
-    return { month: f.month, date: f.date, required: req, expected: f.risk.expectedEur, available, surplus: available - req };
+    return { month: f.month, date: f.date, required: req, expected: f.risk.expectedEur, available, surplus: available - req, convertibleBefore: 0 };
   });
-  const maxConvertNow = inflowPerDay == null ? null : Math.max(0, Math.min(...path.map((p) => p.surplus)));
-  return { policy, next, path, maxConvertNow };
+  let floor = Infinity;
+  for (let i = path.length - 1; i >= 0; i--) {
+    floor = Math.min(floor, path[i].surplus);
+    path[i].convertibleBefore = Math.max(0, floor);
+  }
+
+  const next = {
+    month: f0.month, date: f0.date, required, todayAmount, hapoalim, other, liquid, maturing, backup,
+    needLiquid, needLiquidWithBackup,
+    // On today's balances only: what is held now, less what the reserve still needs from it.
+    freeNow: Math.max(0, liquid - needLiquid),
+    freeNowWithBackup: Math.max(0, liquid - needLiquidWithBackup),
+    shortfall: Math.max(0, needLiquid - liquid),
+    inflowUntil,
+    // With typical inflows: what can be converted before the fixing, in total, as the euros come in.
+    freeByFixing: inflowPerDay == null ? null : path[0].convertibleBefore,
+    // The euros have to be in the Hapoalim account on the day.
+    moveToHapoalim: Math.min(other, Math.max(0, required - maturing - hapoalim)),
+  };
+  return { policy, next, path: inflowPerDay == null ? path.slice(0, 1) : path };
 }
 
 // ── past fixings ──
