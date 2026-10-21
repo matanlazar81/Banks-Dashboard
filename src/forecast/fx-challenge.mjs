@@ -270,20 +270,29 @@ export function planReserve({ upcoming, policy = 'p95', eur, inflowPerDay = null
   let from = today;
   const path = fx.map((f) => {
     const req = requirementOf(policy, f.conv, f.risk);
-    const available = liquid + inflowTo(f) + maturingBy(f.date) - before;
+    // Its parts, kept so the page can show the sum: inflow up to the day before, deposits matured by the day,
+    // and what the earlier conversions take.
+    const inflow = inflowTo(f);
+    const depositsBy = maturingBy(f.date);
+    const earlier = before;
+    const available = liquid + inflow + depositsBy - earlier;
     const releasedDeposits = releasedBetween(from, f.date);
     before += req;
     from = f.date;
     return {
       month: f.month, date: f.date, required: req, expected: f.risk.expectedEur,
       released: releasedDeposits.reduce((s, d) => s + d.amount, 0), releasedDeposits,
-      available, surplus: available - req, convertibleBefore: 0,
+      inflow, inflowDays: inflowPerDay == null ? 0 : Math.max(0, f.days - 1), depositsBy, earlier,
+      available, surplus: available - req, convertibleBefore: 0, limitedBy: f.month,
     };
   });
+  // limitedBy: the conversion whose spare sets the figure (the row itself unless a later one is tighter).
   let floor = Infinity;
+  let floorMonth = null;
   for (let i = path.length - 1; i >= 0; i--) {
-    floor = Math.min(floor, path[i].surplus);
+    if (path[i].surplus <= floor) { floor = path[i].surplus; floorMonth = path[i].month; }
     path[i].convertibleBefore = Math.max(0, floor);
+    path[i].limitedBy = floorMonth;
   }
   const shown = inflowPerDay == null ? path.slice(0, 1) : path;
 

@@ -183,6 +183,14 @@ async function testPlan(fx) {
   let held = r.next.liquid;
   const consistent = r.path.every((p) => { held += p.released; const ok = near(p.available, held); held -= p.required; return ok; });
   check(consistent, 'euros by each fixing = today\'s liquid euros + the deposits released by then − the earlier fixings (no inflow here)');
+  // The parts the page shows add up to each figure, and the tightest later conversion is named.
+  const parts = fx.planReserve({ upcoming, policy: 'p95', eur: dated, today: TODAY, inflowPerDay: 100000 });
+  check(parts.path.every((p) => near(p.available, parts.next.liquid + p.inflow + p.depositsBy - p.earlier) && near(p.inflow, 100000 * p.inflowDays))
+    && parts.path[0].earlier === 0 && near(parts.path[1].earlier, parts.path[0].required) && parts.path[0].inflowDays === 16 && parts.path[0].depositsBy === 800000,
+  'euros by then = cash today + inflow (100K a day × days to the day before) + deposits by then − the earlier conversions');
+  check(c.path.every((p) => p.limitedBy === p.month), 'with money coming in, each day is limited by its own spare');
+  check(dry.path[0].limitedBy === dry.path[5].month && near(dry.path[0].convertibleBefore, Math.max(0, dry.path[5].surplus)),
+    'with nothing coming in, the last conversion is the tight one, and it is named');
   const one = fx.planReserve({ upcoming, policy: 'today', eur: dated, today: TODAY });
   check(one.path.length === 1 && one.later.reduce((s, d) => s + d.amount, 0) === 1100000, 'without the inflow, the deposits after the next fixing are all "later"');
 
