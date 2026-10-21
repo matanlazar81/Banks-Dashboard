@@ -55,7 +55,13 @@ briefly a tab of the Metrics page before it got its own sidebar item.
   3 days (Hapoalim EUR 11001 → ILS 10002), the shekels gained against that day's rate, and the month's other
   conversions.
 - **LSports euros**: the accounts, then each EUR deposit by the day it matures.
-- Every column header explains itself on hover (the dotted underline marks it).
+- Every column header explains itself on hover (the dotted underline marks it), and so does every figure in the plan
+  (its sum, or its chances).
+- **How are these figures worked out?** (under the plan, or click a conversion day): the workings with today's
+  numbers, step by step with where each comes from: free to convert now (for the next conversion), and for the day
+  clicked the euros by then (cash today + typical inflow + deposits matured − earlier conversions) and what can be
+  converted before it (the spare, and the tightest later day). `planReserve` returns each row's parts for it
+  (`inflow`, `inflowDays`, `depositsBy`, `earlier`, `limitedBy`).
 
 ## Sources
 

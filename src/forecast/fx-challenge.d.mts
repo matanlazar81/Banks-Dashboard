@@ -92,10 +92,18 @@ export interface PathPoint {
   /** EUR deposits maturing after the previous fixing (after today, for the first) and by this one. */
   released: number;
   releasedDeposits: DepositRelease[];
+  /** The parts of available: typical inflow up to the day before (inflowDays days), deposits matured by the day,
+   * and what the earlier conversions take. available = today's liquid euros + inflow + depositsBy − earlier. */
+  inflow: number;
+  inflowDays: number;
+  depositsBy: number;
+  earlier: number;
   available: number;
   surplus: number;
   /** What can be converted before this fixing, in total, and still cover it and every later one. */
   convertibleBefore: number;
+  /** The month whose spare sets convertibleBefore: this one, unless a later one is tighter. */
+  limitedBy: string;
 }
 export interface ReservePlan {
   policy: Policy;
