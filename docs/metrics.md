@@ -12,7 +12,8 @@ figures follow the Plan.
 | `metrics.html` | the page (a small bundle, never loads the old dashboard) |
 | `GET /api/metrics` | the pack (`server/metrics.cjs`); `?refresh=true` reads ARR, NRR, churn and employees again |
 | `GET /api/metrics?detail=<item>` | what one figure is made of: `nrr`, `churn-quarter`, `churn-ytd`, `churn-forecast` |
-| `GET/PUT /api/metrics/settings` | the cloud cap (`server/metrics-settings.cjs`) |
+| `GET /api/metrics?view=fx` | the FX Challenge tab (`server/fx-challenge.cjs`); `&refresh=true` reads NetSuite again |
+| `GET/PUT /api/metrics/settings` | the cloud cap and the FX Challenge's conversion table (`server/metrics-settings.cjs`) |
 | `GET/PUT /api/metrics/deposits` | the old deposit tracker: no longer on the page, kept mounted for finance-it's route file |
 | finance-it | sidebar item → iframe of `<bank-dashboard static base>/metrics.html` (see Deploying) |
 
@@ -115,9 +116,49 @@ to the figure in the cell.
 
 The breakdown reads only when clicked, and is cached like the pack's reads.
 
+## FX Challenge (second tab)
+
+**Metrics | FX Challenge** in the header (`?tab=fx`). Finance's monthly EUR→ILS conversion program at
+Bank Hapoalim (583400): on each fixing (the 7th) that day's EUR/ILS picks a band of the conversion
+table, and the cell is the euros sold (€ thousands) and the deals' blended rate. October 2026 checks
+out: EUR/ILS 3.425 → band 3.4–3.49 → €800K at 3.67, booked on 6 October as three "Conversion" journals
+(€200K @4.10, €300K @3.56, €300K @3.49 = ₪2,935,000). The logic is `src/forecast/fx-challenge.mjs`,
+shared by the server, the page and the tests.
+
+- **The table** is the one received in October 2026 (fixings October 2026 to December 2027) until
+  someone saves another: Edit table → paste the range from Excel (the header row of bands, then
+  `10/2026` and `-500 / 3.62` per band) → it is checked → Save for everyone (Metrics settings,
+  `fxChallenge`, with history). "Back to the table received in October 2026" removes the saved one.
+  Bands are lower-inclusive (a rate on an edge counts in the band above); the deals decide the edges.
+- **Simulate**: type a rate or use the slider or presets. The schedule shows each remaining fixing at
+  that rate (euros, rate, shekels, shekels against that rate) beside its risk from today's rate.
+- **Risk of a fixing**: EUR/ILS on the day is lognormal around today's rate (no drift), with the
+  annual volatility of NetSuite's daily HSBC rate over 400 days (7.5% assumed when there is too little
+  history). That gives each band's chance, the expected euros, the 95% amount (enough for 19 fixings
+  in 20) and the table's worst case.
+- **What to keep, what is free** (`planReserve`), for the next fixing:
+  - Keep: today's band, the 95% amount (default) or the worst case (`?reserve=today|worst`).
+  - It is paid from Hapoalim EUR (583400); the other EUR accounts can be moved there before the day.
+  - EUR deposits that mature before the fixing count for it; later ones are the backup (broken early
+    only if needed). Without the mail's balances there are no dates, so every deposit is backup.
+  - Free to convert now = liquid euros less what the reserve still needs; also shown if the backup
+    covers a jump above today's band, and by the fixing with the typical inflow (customers less EUR
+    payments, before conversions, deposits and transfers, last 3 closed months). The path shows the
+    next 6 fixings if nothing else is converted.
+- **Past fixings**: the table at that day's rate against the "Conversion" / המרה journals booked within
+  3 days (Hapoalim EUR 11001 → ILS 10002), the shekels gained against that day's rate, and the month's
+  other conversions.
+- **Sources** (cached `METRICS_TTL_MIN`, a failed read is a warning): EUR/ILS from `currencyrate`
+  (HSBC); balances from the daily balances mail's RESTlet (`payhound_api` `ph_rl_balances.js`) when
+  `NS_BALANCES_RESTLET=<script>:<deploy>` is set, else NetSuite's books (EUR bank accounts in the
+  primary book, exact in euros, no deposit dates); monthly EUR flows and the conversions from the
+  books. It answers without waiting for the projections.
+
 ## Saving
 
-- Settings (the cloud cap) are shared by everyone who can open the page. They are stored in
+- Settings (the cloud cap and the FX Challenge's table) are shared by everyone who can open the page.
+  Both tabs save by reading the saved settings, merging their change and writing it back, so neither
+  overwrites the other's latest save. They are stored in
   `data/metrics-settings.json` (git-ignored).
 - Every save is appended to a `-history.jsonl` file next to them, with who and when.
 - Saves are validated (ranges, known fields only), JSON only, same-origin, and carry finance-it's CSRF
@@ -153,4 +194,5 @@ there adds its sidebar item, checkbox and hub entry.
 
 ```bash
 node scripts/test-metrics.cjs   # synthetic: every pack item, NRR, cloud cap, targets, payroll ratios, breakdowns, handlers, export rows
+node scripts/test-fx-challenge.cjs   # the FX Challenge: bands, risk, the reserve plan, past fixings, the pasted table, its validation, ?view=fx, the NetSuite reads
 ```
