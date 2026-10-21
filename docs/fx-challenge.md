@@ -52,30 +52,55 @@ briefly a tab of the Metrics page before it got its own sidebar item.
     deposits maturing after the previous fixing (after today, for the first) and by that one; hover a figure for
     each deposit's date and value. Deposits maturing after the last fixing shown are listed under the table.
     They count only if the bank pays them out rather than rolling them over.
+- **What to do today** (`todayActions`, the first lines of the recommendation and of the daily mail): from today's
+  balances and rate, urgent ones first (in red):
+  - **Convert** for a payment in shekels that the shekels on hand (and the conversions before it) don't cover, by the
+    business day it has to be ready. Urgent in the last 5 business days (Sunday to Thursday) up to it; before that it
+    is announced ahead.
+  - **Convert early**, instead, for a payment due before the next conversion day while EUR/ILS is high against the
+    last 90 days: as much now as today's euros above the EUR floor allow.
+  - **Short**: the euros held and expected fall short of a due (urgent in its last 5 business days).
+  - **Move** euros to Hapoalim EUR in the last 3 business days before a conversion, when it holds less than to keep
+    there.
+  - **Spare** euros: convert them on a high rate, else **put them in a new deposit** (the terms that hold at least
+    €50K, as one line when every term holds the same).
+  - Amounts under €50K are left out. With nothing to do, the page says so.
+- **Payments in shekels ahead** (`duesAhead`, `describeDue`): each payment day up to the first month with salaries
+  (its 5th, 10th and 14th, and any before): when (a Friday or Saturday one is ready by the Thursday) and in how many
+  days, what it pays, how much, and what to convert for it, or what covers it (the shekels on hand, or a conversion).
 - **Salaries, vendors and new deposits**: once the payroll is known (it nearly always is), the plan also covers the
-  shekels each month needs. The headline then reads "Keep … for 7 Nov. For the salaries and vendors due by 15 Nov,
-  convert at least … by 5 Nov. Spare now: …", and **New deposits** says how much can go into a new deposit for 1, 3
-  or 6 months.
+  shekels each month needs. The KPI **Convert for salaries & vendors** is the euros to convert for the payments
+  ahead, in all, with each amount by its day; **New deposits** says how much can go into a new deposit for 1, 3 or 6
+  months.
   - **Payroll**: the Salary Projection's Total payroll by month (`totalPayrollByMonth`, the same figure as its
     page), from the figures that page saved on the server (`data/salary-projection-cache.json`; open the Salary
     Projection once if there are none). It is split as NetSuite's payroll journals of the last 3 closed months
     (`fetchPayrollLiabilities`, `payrollSplit`). Credits to the employees (200000/200001) are the **net salaries,
     paid by the 5th** of the next month. The rest (withholding tax 180013, pension 180069, social security 180012)
-    is **paid by the 15th**. In 2026 the net salaries were about 48–51%. A month the projection lacks carries the
-    last journal's total.
-  - **Vendors**: the average of the last 3 closed months. ILS vendor payments (vendor payments and checks out of
-    the ILS accounts, `fetchIlsVendorPayments`; the payroll is paid by journal, so it is not in them) are a monthly
-    need in shekels. EUR vendor payments (the flows' vendor kind) are **kept in the euro accounts at all times**
-    (the EUR floor); the typical inflow already nets them.
-  - **The shekels** (`shekelNeeds`), from the ILS on hand (the mail's balances; an overdraft counts against them; 0 when
-    not known):
-    - today, the rest of this month's vendor payments;
-    - on the 5th, the previous month's net salaries and the month's vendor payments;
+    is **paid by the 14th** (`PAYROLL_DUE`). In 2026 the net salaries were about 48–51%. A month the projection lacks
+    carries the last journal's total.
+  - **Vendors**: the average of the last 3 closed months (`fetchIlsVendorPayments`: vendor payments and checks out of
+    the ILS accounts; the payroll is paid by journal, so it is not in them), in two parts:
+    - **the credit cards** (AMEX, Isracard, MasterCard): the bank pays their bill **on the 10th** (`CARD_BILL_DAY`)
+      for the month before's spending (`cardBills`). A month that is over is billed what was spent; this month's
+      spending at least the average (it is still going); later months the average.
+    - **bank transfers and Masav batches** (the batches clear through the credit card type account 17036 MASAV IL): a
+      monthly need in shekels from the 5th.
+
+    EUR vendor payments (the flows' vendor kind) are **kept in the euro accounts at all times** (the EUR floor); the
+    typical inflow already nets them.
+  - **The shekels on hand** (`ilsOnHand`): LSports' ILS current accounts (an overdraft counts against them) and its
+    **ILS deposits**, which finance releases the day a payment goes out (a blocked deposit is left out); 0 when not
+    known (NetSuite's books).
+  - **The shekels** (`shekelNeeds`):
+    - today, the rest of this month's transfers and Masav;
+    - on the 5th, the previous month's net salaries and the month's transfers and Masav;
     - on the 7th, the table's shekels, for the amount kept at its cell's rate (consistent with what the plan
       keeps);
-    - on the 15th, pension, tax and social security.
+    - on the 10th, the credit card bills;
+    - on the 14th, pension, tax and social security.
 
-    Each gap is converted by its day at today's rate ("now" for the rest of this month's vendors). The card **Salaries and vendors: the shekels each month
+    Each gap is converted by its day at today's rate. The card **Salaries and vendors: the shekels each month
     needs** shows it month by month.
   - **The euros** (`planReserve`): the conversions for shekels come out of the euros by each conversion (the
     plan's **Salaries & vendors** column), and the EUR floor is kept. At every due (each conversion at the amount
@@ -122,7 +147,7 @@ a warning, and the rest still shows.
 | Monthly EUR flows | NetSuite's books, four months back |
 | Conversions | the Hapoalim "Conversion" / המרה journals (EUR 11001 ↔ ILS 10002, euros bought back included), from 20 December 2025, or before the table's first month if it is earlier |
 | Payroll | NetSuite's payroll journals (what each owes: net salaries, tax, pension, social security), four months back; the Salary Projection's Total payroll by month, from the figures its page saved (`data/salary-projection-cache.json`) |
-| ILS vendor payments | NetSuite's books: vendor payments and checks out of the ILS accounts (book 2), four months back |
+| ILS vendor payments | NetSuite's books: vendor payments and checks out of the ILS accounts (book 2; bank and credit card type, so the Masav batches count), four months back, the credit cards' apart |
 
 The RESTlet gives what the bank imports last fetched: Bank Hapoalim and its deposits (several times a day),
 PKO (each morning's statement), PayPal (01:00 and 13:00) and Payhound (about every 20 minutes). Leumi and
@@ -130,22 +155,37 @@ MoneyNet carry no balance in their files, so they are not in it. Only LSports' e
 
 ## The daily mail
 
-`scripts/fx-challenge-mail.cjs` sends the recommendation every day. It reads NetSuite fresh (no cache) and computes
-the same figures as the page (`planFromPayload`).
+`scripts/fx-challenge-mail.cjs` checks every working day and mails the recommendation **only when there is
+something to do**. It reads NetSuite and the bank balances fresh (no cache) and computes the same figures as the page
+(`planFromPayload`, `todayActions`).
+
+**When it goes** (`mailDecision`), at 10:00 Israel time, Sunday to Thursday:
+- an **urgent** action: a payment in shekels that the balances don't cover within 5 business days, a shortfall in its
+  last 5 business days, or euros to move to Hapoalim before a conversion: every working day until it is done (the next
+  day's balances show it);
+- anything else (a conversion further ahead, a high rate to convert early or convert the spare, a new deposit):
+  when it is **new** since the last mail, when its amount has moved by a fifth (and at least €50K), or a week after
+  the last mail if still open.
+
+So a conversion for the salaries is announced as soon as the balances show the gap, then reminded every working day
+of its last week. Nothing goes on Fridays and Saturdays or on days with nothing new. `FX_MAIL_ALWAYS=1` sends every
+day.
 
 **Who gets it** is kept on the page, in the **Daily mail** card at the bottom:
 - Add or remove lsports.eu addresses, then **Save for everyone**.
 - The list is saved in `data/fx-challenge-mail.json`, with a history line per save (who and when), as the table is.
 - Until a list is saved there, the mail goes to `FX_MAIL_TO` in the checkout's `.env`.
 - An empty list sends to nobody.
-- The card also shows the sender, the hour, and when the mail last went.
+- The card also shows the sender, the hour, when the mail last went, and the last check that sent nothing (and why).
 
 The mail is HTML with a plain-text part:
-- the subject: what is free to convert (or short), the rate verdict, and what to keep for the next conversion;
-- what to keep, what to convert for the salaries and vendors and by when, what is spare (or short), new deposits for
-  1, 3 and 6 months, and the rate check;
-- the shekels each month needs (net salaries by the 5th; tax, pension and social security by the 15th; ILS vendors;
-  the 7th's conversion; what to convert);
+- the subject: the first two things to do (or "nothing to do today") and today's EUR/ILS;
+- what to do today, each with the balances behind it ("Convert €1.48M by Thu 5 Nov. October's net salaries and
+  November's ILS vendor payments: ₪5.76M goes out on Thu 5 Nov, with ₪611K on hand by then.");
+- the payments in shekels ahead, with how many days to each and what covers it;
+- what to keep for the next conversion, what is spare, new deposits for 1, 3 and 6 months, and the rate check;
+- the shekels each month needs (net salaries by the 5th; credit cards on the 10th; tax, pension and social security
+  by the 14th; transfers and Masav; the 7th's conversion; what to convert), and the shekels on hand by kind;
 - what the next conversion can sell, range by range (today's range highlighted);
 - your euros, with how "free to convert now" adds up and the typical inflow;
 - the next six conversions, and each deposit on the conversion it counts for;
@@ -159,6 +199,7 @@ FX_MAIL_FROM=matan.l@lsports.eu
 # FX_MAIL_HOUR=10                 # Israel time (default 10)
 # FX_MAIL_POLICY=p95              # today | p95 | worst, as the page's "What to keep"
 # FX_MAIL_LINK=https://<finance-it>/business-tools/fx-challenge
+# FX_MAIL_ALWAYS=1                # send every day, with or without something to do
 # The mail server: FX_MAIL_SMTP_URL, else NET_CASH_SMTP_URL, else SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASS (the
 # backend's mailer, as the net-cash mail). FX_MAIL_SMTP_HELO (else NET_CASH_SMTP_HELO, else the sender's domain).
 ```
@@ -171,20 +212,22 @@ The mail server decides whether the mail can go out as `FX_MAIL_FROM`:
 Then:
 
 ```bash
-node scripts/fx-challenge-mail.cjs --dry-run --html=/tmp/fx-mail.html   # print it (and the HTML); sends nothing
+node scripts/fx-challenge-mail.cjs --dry-run --html=/tmp/fx-mail.html   # print it (and the HTML), and whether today's check sends it; sends nothing
 node scripts/fx-challenge-mail.cjs                                     # send one now (a test)
-# crontab -e: every hour; it sends once a day from 10:00 Israel time, so summer time needs no change
+# crontab -e: every hour; it checks once a day from 10:00 Israel time, so summer time needs no change
 0 * * * * cd /home/ubuntu/finance-it/extra-apps/bank-dashboard && /usr/bin/node scripts/fx-challenge-mail.cjs --scheduled >> /var/log/fx-challenge-mail.log 2>&1
 ```
 
 The scheduled run behaves like this:
-- It sends once a day and records the day (and to how many) in `data/fx-challenge-mail-last.json`. A run by hand
-  doesn't record it, so the daily mail still goes.
+- It checks once a day and records it in `data/fx-challenge-mail-last.json`: the day, and either the mail that went
+  (to how many, its subject and its actions, which the next days compare with) or why none went. A run by hand
+  doesn't record anything, so the daily check still runs.
 - With an empty list on the page it sends nothing, and says so once, at the hour.
 - If the balances or the rate could not be read, it tries again the next two hours, then sends what it has, with
   the reason.
 - If the mail server refuses, it tries again every hour that day.
-- The log has one line per send or retry: `[fx-mail] 2026-10-22: sent to 2 recipient(s) from … via …`.
+- The log has one line per check: `[fx-mail] 2026-10-22: sent to 2 recipient(s) from … via …: <subject>`, or
+  `[fx-mail] 2026-10-22: no mail (nothing new since the last mail)`.
 
 ## Saving
 
@@ -235,7 +278,7 @@ pm2 logs finance-it-backend --lines 200 --nostream | grep fx-challenge   # [fx-c
 ## Checking it
 
 ```bash
-node scripts/test-fx-challenge.cjs   # bands, risk, the reserve plan, salaries, vendors and new deposits, past conversions, the rate check, the pasted table, its validation, the routes, the daily mail, the NetSuite reads
+node scripts/test-fx-challenge.cjs   # bands, risk, the reserve plan, salaries, cards, vendors and new deposits, what to do today and when the mail goes, past conversions, the rate check, the pasted table, its validation, the routes, the daily mail, the NetSuite reads
 ```
 
 On the server, `pm2 logs finance-it-backend --lines 300 --nostream | grep fx-challenge` shows

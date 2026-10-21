@@ -1,15 +1,26 @@
 // Pure: what the FX Challenge page shows, from GET /api/fx-challenge and the rate being simulated. No React.
-// The recommendation itself (planFromPayload) is shared with the daily mail.
+// The recommendation itself (planFromPayload, todayActions and their words) is shared with the daily mail.
 import {
-  bandIndex, bandLabels, conversionAt, pastConversions, planFromPayload,
+  bandIndex, bandLabels, conversionAt, describeAction, describeDue, nothingToday, pastConversions, planFromPayload, todayActions,
   type CashPlan, type Conversion, type EurPosition, type PastMonth, type PastTotals, type Policy, type RateCheck, type ReservePlan, type ScheduleItem,
+  type ShekelDue, type TodayAction,
 } from '../forecast/fx-challenge.mjs';
+import { formatEur } from '../metrics/model.ts';
 import type { FxPayload } from './types.ts';
 
 export interface ScheduleRow extends ScheduleItem {
   atSim: Conversion | null;
 }
 export interface YearTotal { year: string; eur: number; ils: number; vsSpotIls: number; expectedEur: number; count: number }
+/** What to do today, as the daily mail says it: each action in words, the payments in shekels ahead, and what comes next
+ * when there is nothing to do. */
+export interface TodayView {
+  actions: (TodayAction & { head: string; body: string })[];
+  dues: (ShekelDue & { text: string })[];
+  /** The euros to convert for the payments ahead, in all. */
+  eur: number;
+  nothing: string;
+}
 
 export interface FxModel {
   /** Today in Israel (YYYY-MM-DD). */
@@ -32,6 +43,8 @@ export interface FxModel {
   /** Shekels for the payroll and the vendors; null without a payroll figure. */
   cash: CashPlan | null;
   plan: ReservePlan | null;
+  /** What to do today (at today's rate, whatever rate is simulated). */
+  todo: TodayView;
   /** Every month since January 2026 whose conversion day has passed, and the totals. */
   past: PastMonth[];
   pastFrom: string;
@@ -56,6 +69,8 @@ export function buildFxModel(data: FxPayload, simRate: number | null, policy: Po
   }
 
   const past = pastConversions({ table, today: data.today, series: data.rates.series, conversions: data.conversions });
+  const fmt = { eur: (n: number) => (Math.abs(n) < 0.5 ? '€0' : formatEur(n)), ils: formatIls, day: (iso: string) => formatDay(iso), rate: formatRate };
+  const todo = todayActions(base, data.today);
 
   return {
     today: data.today,
@@ -74,6 +89,12 @@ export function buildFxModel(data: FxPayload, simRate: number | null, policy: Po
     inflow: base.inflow,
     cash: base.cash,
     plan: base.plan,
+    todo: {
+      actions: todo.actions.map((a) => ({ ...a, ...describeAction(a, base, data.today, fmt) })),
+      dues: todo.ahead.dues.map((d) => ({ ...d, text: describeDue(d, data.today, fmt) })),
+      eur: todo.ahead.eur,
+      nothing: nothingToday(todo.ahead, data.today, fmt),
+    },
     past: past.months,
     pastFrom: past.from,
     pastTotal: past.total,

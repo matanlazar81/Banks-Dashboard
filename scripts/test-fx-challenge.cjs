@@ -313,28 +313,52 @@ async function testCash(fx) {
   'nothing to go on → no payroll; no journals → all of it by the 5th');
   const flows = [{ month: '2026-07', kind: 'vendor', eur: -300000 }, { month: '2026-08', kind: 'vendor', eur: -900000 }, { month: '2026-09', kind: 'customer', eur: 5e6 }];
   const v3 = fx.vendorAverages(flows, [{ month: '2026-07', ils: 3e6 }, { month: '2026-09', ils: 6e6 }, { month: '2026-05', ils: 99e6 }], ['2026-07', '2026-08', '2026-09']);
-  check(near(v3.eur, 400000) && near(v3.ils, 3e6) && fx.vendorAverages(flows, null, ['2026-07']).ils === null, 'vendors: the 3 months\' averages, EUR from the flows and ILS from the ILS accounts (a month without is 0)');
+  check(near(v3.eur, 400000) && near(v3.ils, 3e6) && v3.cards === 0 && near(v3.other, 3e6) && fx.vendorAverages(flows, null, ['2026-07']).ils === null,
+    'vendors: the 3 months\' averages, EUR from the flows and ILS from the ILS accounts (a month without is 0; a month without the split counts as transfers)');
+  const split3 = fx.vendorAverages(flows, [{ month: '2026-07', ils: 4e6, cards: 3e6, other: 1e6 }, { month: '2026-08', ils: 5e6, cards: 3.3e6, other: 1.7e6 }, { month: '2026-09', ils: 6e6, cards: 3.6e6, other: 2.4e6 }], ['2026-07', '2026-08', '2026-09']);
+  check(near(split3.cards, 3.3e6) && near(split3.other, 1.7e6) && near(split3.ils, 5e6), 'ILS vendors split: the credit cards apart from bank transfers and Masav');
   const rows = [
     { company: 'LSports', bank: 'Bank Hapoalim', kind: 'current', currency: 'ILS', amount: 2000000 },
     { company: 'LSports', bank: 'Bank Hapoalim', kind: 'deposit', currency: 'ILS', amount: 5000000 },
+    { company: 'LSports', bank: 'Bank Hapoalim', kind: 'deposit', currency: 'ILS', amount: 160000, blocked: true },
     { company: 'Bringits', bank: 'Bank Hapoalim', kind: 'current', currency: 'ILS', amount: 900000 },
   ];
-  check(fx.ilsBalance(rows) === 2000000 && fx.ilsBalance([{ bank: 'Bank Hapoalim', kind: 'current', currency: 'EUR', amount: 1 }]) === null, 'shekels on hand: LSports\' ILS accounts (not deposits, not Bringits); none in the balances → not known');
+  check(same(fx.ilsOnHand(rows), { current: 2e6, deposits: 5e6, total: 7e6 }) && fx.ilsOnHand([{ bank: 'Bank Hapoalim', kind: 'current', currency: 'EUR', amount: 1 }]) === null,
+    'shekels on hand: LSports\' ILS current accounts and ILS deposits (released the day a payment goes out; not a blocked one, not Bringits); none in the balances → not known');
+  check(fx.businessDayOnOrBefore('2026-11-14') === '2026-11-12' && fx.businessDayOnOrBefore('2026-11-05') === '2026-11-05'
+    && fx.businessDaysBetween('2026-10-29', '2026-11-05') === 5 && fx.businessDaysBetween('2026-11-01', '2026-11-05') === 4 && fx.businessDaysBetween('2026-11-05', '2026-11-05') === 0,
+  'business days: Sunday to Thursday; a payment due on Saturday 14 Nov is ready on Thursday 12 Nov');
+  const bills = fx.cardBills({ ilsVendors: [{ month: '2026-09', cards: 4.7e6 }, { month: '2026-10', cards: 2.69e6 }], average: 3.32e6, today: TODAY, until: '2026-12-31' });
+  const billsNov = fx.cardBills({ ilsVendors: [{ month: '2026-10', cards: 3.5e6 }, { month: '2026-11', cards: 4e6 }], average: 3.32e6, today: '2026-11-03', until: '2026-12-31' });
+  check(same(bills.map((b) => [b.date, b.ils, b.spendMonth]), [['2026-11-10', 3.32e6, '2026-10'], ['2026-12-10', 3.32e6, '2026-11']])
+    && same(billsNov.map((b) => [b.date, b.ils]), [['2026-11-10', 3.5e6], ['2026-12-10', 4e6]]),
+  'card bills on the 10th: this month\'s spending at least the average, a month that is over what was spent, later months the average');
 
-  // The shekels: ₪1M on hand on 21 Oct, ₪3.1M of vendors a month (₪1M for the rest of October), ₪4M net and ₪4M more
-  // each month, ₪3M from each conversion.
+  // The shekels: ₪1M on hand on 21 Oct, ₪3.1M of ILS vendor payments a month (₪1M for the rest of October), ₪4M net and
+  // ₪4M more each month, ₪2M of card bills on each 10th, ₪3M from each conversion.
   const needs = fx.shekelNeeds({
     today: TODAY, ilsNow: 1e6, vendorsIls: 3.1e6, spot: 3.5, until: '2026-12-31',
     payroll: [{ month: '2026-10', net: 4e6, later: 4e6 }, { month: '2026-11', net: 4e6, later: 4e6 }],
     conversions: [{ date: '2026-11-07', ils: 3e6 }, { date: '2026-12-07', ils: 3e6 }],
+    cardBills: [{ date: '2026-11-10', ils: 2e6, spendMonth: '2026-10' }, { date: '2026-12-10', ils: 2e6, spendMonth: '2026-11' }],
   });
-  check(same(needs.needs.map((x) => [x.date, Math.round(x.ils)]), [['2026-11-05', 7100000], ['2026-11-15', 1000000], ['2026-12-05', 7100000], ['2026-12-15', 1000000]])
+  check(same(needs.needs.map((x) => [x.date, Math.round(x.ils)]), [['2026-11-05', 7100000], ['2026-11-14', 3000000], ['2026-12-05', 7100000], ['2026-12-14', 3000000]])
     && near(needs.needs[0].eur, 7100000 / 3.5) && same(needs.needs[0].why, ['net', 'vendors']) && same(needs.needs[1].why, ['later']),
-  'by the 5th: net salaries and the month\'s vendors less the shekels on hand (the rest of October\'s vendors first); by the 15th: what the 7th\'s conversion leaves short', JSON.stringify(needs.needs.map((x) => [x.date, x.ils, x.why])));
+  'by the 5th: net salaries and the month\'s vendors less the shekels on hand (the rest of October\'s vendors first); the cards on the 10th from the 7th\'s shekels; by the 14th: what is left short', JSON.stringify(needs.needs.map((x) => [x.date, x.ils, x.why])));
   const nov = needs.months.find((m) => m.month === '2026-11');
-  check(same(needs.months.map((m) => m.month), ['2026-10', '2026-11', '2026-12']) && nov.payrollMonth === '2026-10' && nov.net === 4e6 && nov.later === 4e6
-    && near(nov.vendors, 3.1e6) && nov.tableIls === 3e6 && near(nov.convertIls, 8.1e6) && near(needs.months[0].vendors, 1e6),
-  'by month paid: October (the rest of its vendors), then each month\'s payroll, vendors, the table\'s shekels and what is converted');
+  check(same(needs.months.map((m) => m.month), ['2026-10', '2026-11', '2026-12']) && nov.payrollMonth === '2026-10' && nov.net === 4e6 && nov.later === 4e6 && nov.cards === 2e6
+    && near(nov.vendors, 3.1e6) && nov.tableIls === 3e6 && near(nov.convertIls, 10.1e6) && near(needs.months[0].vendors, 1e6),
+  'by month paid: October (the rest of its vendors), then each month\'s payroll, cards, vendors, the table\'s shekels and what is converted');
+  const d = needs.dues;
+  check(same(d.slice(0, 4).map((x) => [x.date, x.by, Math.round(x.ils), Math.round(x.before), Math.round(x.convertIls), x.after]), [
+    ['2026-10-21', '2026-10-21', 1e6, 1e6, 0, null], ['2026-11-05', '2026-11-05', 7.1e6, 0, 7.1e6, null],
+    ['2026-11-10', '2026-11-10', 2e6, 3e6, 0, '2026-11-07'], ['2026-11-14', '2026-11-12', 4e6, 1e6, 3e6, null],
+  ]) && fx.dueWhat(d[0]) === 'the rest of October\'s ILS vendor payments' && fx.dueWhat(d[1]) === 'October\'s net salaries and November\'s ILS vendor payments'
+    && fx.dueWhat(d[2]) === 'the credit card bills for October' && fx.dueWhat(d[3]) === 'October\'s pension, tax and social security',
+  'each payment day: what it pays, when it has to be ready (Sat 14 Nov → Thu 12 Nov), the shekels on hand before it, what to convert, and the conversion that covers it', JSON.stringify(d.slice(0, 4)));
+  const ahead = fx.duesAhead(needs);
+  check(same(ahead.dues.map((x) => x.date), ['2026-10-21', '2026-11-05', '2026-11-10', '2026-11-14']) && near(ahead.eur, 10.1e6 / 3.5),
+    'the payments ahead: to the first month with salaries (its 5th, 10th and 14th), and the euros for them in all');
   const rich = fx.shekelNeeds({ today: TODAY, ilsNow: 50e6, vendorsIls: 3.1e6, spot: 3.5, until: '2026-12-31', payroll: [{ month: '2026-10', net: 4e6, later: 4e6 }], conversions: [] });
   check(rich.needs.length === 0 && near(rich.ilsAfter, 50e6 - 1e6 - 4e6 - 3.1e6 - 4e6), 'enough shekels on hand → nothing to convert');
   const over = fx.shekelNeeds({ today: TODAY, ilsNow: -151457, vendorsIls: 0, spot: 3.5, until: '2026-11-30', payroll: [{ month: '2026-10', net: 1e6, later: 0 }], conversions: [] });
@@ -384,6 +408,84 @@ async function testCash(fx) {
   const books = fx.planFromPayload({ ...data, balances: { rows: [{ bank: 'Bank Hapoalim', kind: 'current', currency: 'EUR', amount: 3e6 }] }, ilsVendors: null, payroll: { journals: [], projection: data.payroll.projection } }, 'p95');
   check(books.cash.ilsNow === null && books.cash.notes.length === 3 && books.cash.share === null, 'unknown shekels on hand, ILS vendors or split → said, and counted conservatively');
   check(fx.planFromPayload({ ...data, payroll: null }).cash === null && fx.planFromPayload({ ...data, payroll: null }).plan.next.eurFloor === 0, 'no payroll → the plan without salaries, as before');
+}
+
+async function testToday(fx) {
+  console.log('\nTODAY: what to do today, from the day\'s balances, and when the mail goes');
+  const { mailDecision } = require(path.join(ROOT, 'scripts', 'fx-challenge-mail.cjs'));
+  // As in CASH: ₪1M on hand, ₪3.1M of ILS vendor payments a month, ₪4M net and ₪4M more, ₪2M of card bills, ₪3M from
+  // each conversion; €1.31M of euros, €683K kept for EUR vendors.
+  const cashOn = (day) => fx.shekelNeeds({
+    today: day, ilsNow: 1e6, vendorsIls: 3.1e6, spot: 3.5, until: '2026-12-31',
+    payroll: [{ month: '2026-10', net: 4e6, later: 4e6 }, { month: '2026-11', net: 4e6, later: 4e6 }],
+    conversions: [{ date: '2026-11-07', ils: 3e6 }, { date: '2026-12-07', ils: 3e6 }],
+    cardBills: [{ date: '2026-11-10', ils: 2e6, spendMonth: '2026-10' }, { date: '2026-12-10', ils: 2e6, spendMonth: '2026-11' }],
+  });
+  const NEXT = { date: '2026-11-07', liquid: 1.31e6, eurFloor: 683000, short: null, moveToHapoalim: 0, spare: 0, freeNow: 0, shortfall: 0, hapoalim: 981000, required: 1.4e6, backup: 4.2e6 };
+  const view = (day, { next = {}, level = 'middle', deposits = [] } = {}) => ({
+    plan: { next: { ...NEXT, ...next }, deposits }, cash: cashOn(day), rateCheck: { level, rate: 3.48, days: 90, share: 0.5, average: 3.45, low: 3.4, high: 3.55, n: 64 },
+  });
+  const kinds = (r) => r.actions.map((a) => `${a.kind}${a.urgent ? '!' : ''}:${a.key.split(':')[1] || ''}`);
+
+  const ahead21 = fx.todayActions(view(TODAY), TODAY);
+  check(same(kinds(ahead21), ['convert:2026-11-05', 'convert:2026-11-14']),
+    'on 21 Oct: the shekels on hand cover October; 5 Nov and 14 Nov need conversions, announced ahead (not urgent yet)', JSON.stringify(kinds(ahead21)));
+  const week = fx.todayActions(view('2026-11-01'), '2026-11-01');
+  check(same(kinds(week), ['convert!:2026-11-01', 'convert!:2026-11-05', 'convert:2026-11-14']),
+    'on Sun 1 Nov: convert today for the rest of November\'s vendors and by Thu 5 Nov for the net salaries (urgent, first); 14 Nov (ready Thu 12 Nov) not yet', JSON.stringify(kinds(week)));
+  const high = fx.todayActions(view(TODAY, { level: 'high' }), TODAY);
+  check(same(kinds(high), ['convert-early:2026-11-05', 'convert:2026-11-14']) && near(high.actions[0].eur, 1.31e6 - 683000),
+    'a high EUR/ILS: convert early for 5 Nov (before the conversion day), as far as the euros above the EUR vendors\' floor go', JSON.stringify(high.actions.map((a) => [a.kind, a.eur])));
+  const small = fx.todayActions({ ...view('2026-11-01'), cash: fx.shekelNeeds({ today: '2026-11-01', ilsNow: 2.99e6, vendorsIls: 3.1e6, spot: 3.5, until: '2026-11-30', payroll: [], conversions: [] }) }, '2026-11-01');
+  check(small.actions.length === 0, 'a gap under €50K is no action (here €2K for the rest of November\'s vendors)', JSON.stringify(kinds(small)));
+  const short = { first: { eur: 776000, date: '2026-11-07', shekels: false }, eur: 776000, date: '2026-11-07' };
+  check(kinds(fx.todayActions(view(TODAY, { next: { short } }), TODAY)).includes('short:2026-11-07')
+    && kinds(fx.todayActions(view('2026-11-01', { next: { short } }), '2026-11-01')).includes('short!:2026-11-07')
+    && !kinds(fx.todayActions(view(TODAY, { next: { short: { ...short, first: { ...short.first, eur: 13000 } } } }), TODAY)).some((k) => k.startsWith('short')),
+  'a shortfall: said when it opens, urgent in its last week; under €50K not at all');
+  check(same(kinds(fx.todayActions(view('2026-11-04', { next: { moveToHapoalim: 300000 } }), '2026-11-04')).filter((k) => k.startsWith('move')), ['move!:2026-11-07'])
+    && !kinds(fx.todayActions(view(TODAY, { next: { moveToHapoalim: 300000 } }), TODAY)).some((k) => k.startsWith('move')),
+  'euros to move to Hapoalim EUR: urgent in the last business days before the conversion (a Saturday one counts from the Thursday), not before');
+  const deps = [{ months: 1, until: '2026-11-21', eur: 500000 }, { months: 3, until: '2027-01-21', eur: 0 }];
+  const depo = fx.todayActions(view(TODAY, { next: { spare: 500000 }, deposits: deps }), TODAY);
+  check(same(kinds(fx.todayActions(view(TODAY, { next: { spare: 500000 }, level: 'high' }), TODAY)), ['convert-early:2026-11-05', 'convert:2026-11-14', 'convert-spare:'])
+    && same(kinds(depo), ['convert:2026-11-05', 'convert:2026-11-14', 'deposit:']) && depo.actions[2].options.length === 1,
+  'spare euros: convert on a high rate, else a new deposit (the terms that hold at least €50K)');
+  const fmt0 = { eur: (n) => `€${Math.round(n / 1000)}K`, ils: (n) => `₪${Math.round(n / 1000)}K`, day: (iso) => iso, rate: (r) => r.toFixed(3) };
+  const allSame = { kind: 'deposit', key: 'deposit', urgent: false, eur: 430000, options: [{ months: 1, until: '2026-11-21', eur: 430000 }, { months: 3, until: '2027-01-21', eur: 430000 }, { months: 6, until: '2027-04-21', eur: 430000 }] };
+  check(fx.describeAction(allSame, view(TODAY), TODAY, fmt0).body.startsWith('€430K for 1, 3 or 6 months (the longest until 2027-04-21)')
+    && fx.describeAction(depo.actions[2], view(TODAY), TODAY, fmt0).body.startsWith('€500K for 1 month (until 2026-11-21)'),
+  'a deposit in words: one line when every term holds the same');
+
+  const fmt = { eur: (n) => `€${Math.round(n)}`, ils: (n) => `₪${Math.round(n)}`, day: (iso) => iso, rate: (r) => r.toFixed(3) };
+  const v1 = view('2026-11-01');
+  const said = week.actions.map((a) => fx.describeAction(a, v1, '2026-11-01', fmt));
+  check(said[0].head.startsWith('Convert €') && said[0].head.endsWith(' today') && said[0].body.startsWith('The rest of November\'s ILS vendor payments: ₪2996667 goes out this month, with ₪1000000 on hand')
+    && said[1].head === `Convert €${Math.round(4e6 / 3.5)} by 2026-11-05` && said[1].body === 'October\'s net salaries: ₪4000000 goes out on 2026-11-05, with ₪0 on hand by then.',
+  'each action in words, with the balances behind it', JSON.stringify(said));
+  const lowSaid = fx.describeAction(week.actions[1], view('2026-11-01', { level: 'low' }), '2026-11-01', fmt).body;
+  check(/is low against the last 90 days: if it can wait, wait, but no later than 2026-11-05\.$/.test(lowSaid), 'a low EUR/ILS: wait if it can, with the deadline', lowSaid);
+  const due = cashOn(TODAY).dues;
+  check(fx.describeDue(due[0], TODAY, fmt) === 'Now: the rest of October\'s ILS vendor payments, ₪1000000: covered by the shekels on hand'
+    && fx.describeDue(due[2], TODAY, fmt) === '2026-11-10, in 20 days: the credit card bills for October, ₪2000000: covered by the 2026-11-07 conversion'
+    && fx.describeDue(due[3], TODAY, fmt) === `2026-11-14 (ready by 2026-11-12), in 22 days: October's pension, tax and social security, ₪4000000: convert €${Math.round(3e6 / 3.5)}`,
+  'the payments ahead in words: when, what, how much, and what covers it or what to convert');
+  check(fx.nothingToday(fx.duesAhead(cashOn(TODAY)), TODAY, fmt) === `Nothing to do today. Next: convert €${Math.round(7.1e6 / 3.5)} by 2026-11-05 (in 15 days) for October's net salaries and November's ILS vendor payments.`,
+    'nothing to do: what comes next, and when');
+
+  // When the mail goes.
+  const u = [{ kind: 'convert', key: 'convert:2026-11-05', urgent: true, eur: 1e6 }];
+  const n1 = [{ kind: 'deposit', key: 'deposit', urgent: false, eur: 500000 }];
+  const marker = (day, actions) => ({ day, at: `${day}T07:00:00Z`, quiet: false, why: null, lastSent: { day, at: `${day}T07:00:00Z`, recipients: 2, subject: 's', actions } });
+  check(mailDecision(u, null, { today: '2026-10-23' }).why === 'Friday or Saturday' && mailDecision(u, null, { today: '2026-10-24' }).send === false
+    && mailDecision([], null, { today: TODAY }).why === 'nothing to do' && mailDecision(u, marker(TODAY, [{ key: 'convert:2026-11-05', eur: 1e6 }]), { today: '2026-10-22' }).send,
+  'no mail on Fridays and Saturdays or with nothing to do; an urgent action goes every working day');
+  check(mailDecision(n1, null, { today: TODAY }).send && !mailDecision(n1, marker('2026-10-20', [{ key: 'deposit', eur: 480000 }]), { today: TODAY }).send
+    && mailDecision(n1, marker('2026-10-20', [{ key: 'deposit', eur: 300000 }]), { today: TODAY }).send
+    && mailDecision(n1, marker('2026-10-14', [{ key: 'deposit', eur: 500000 }]), { today: TODAY }).send
+    && mailDecision(n1, marker('2026-10-20', [{ key: 'spare', eur: 500000 }]), { today: TODAY }).send,
+  'a non-urgent action: mailed when new or changed (a fifth and €50K), again a week later if still open, not every day');
+  check(mailDecision([], null, { today: '2026-10-23', always: true }).send, 'FX_MAIL_ALWAYS=1: every day');
 }
 
 async function testParse(fx) {
@@ -603,10 +705,12 @@ async function testMail(fx) {
   });
   const mc = mail.renderMail(fx, withCash, { policy: 'p95' });
   const vc = fx.planFromPayload(withCash, 'p95');
-  check(/^FX Challenge Wed 21 Oct: (convert €[\d.,]+[KM] for salaries by \w{3} \d+ \w{3}|salaries covered) · (spare|short) /.test(mc.subject) && clean(mc.html) && clean(mc.text)
-    && mc.text.includes('SALARIES AND VENDORS: THE SHEKELS EACH MONTH NEEDS') && /New deposits: /.test(mc.text) && mc.text.includes('Spare before')
-    && mc.text.includes('50% net salaries') && vc.cash && vc.cash.months.length >= 6 && mc.text.includes("now, for the rest of this month's ILS vendors"),
-  'with the payroll: what to convert for salaries and by when, spare or short, new deposits, the months\' shekels and the plan with them', mc.subject);
+  check(/^FX Challenge Wed 21 Oct: convert €[\d.,]+[KM] today\b.* · EUR\/ILS 3\.478 (high|mid-range|low)$/.test(mc.subject) && clean(mc.html) && clean(mc.text)
+    && mc.actions[0].kind === 'convert' && mc.actions[0].urgent && mc.text.includes("Convert €") && mc.text.includes("The rest of October's ILS vendor payments: ")
+    && mc.text.includes('PAYMENTS IN SHEKELS AHEAD') && mc.text.includes('SALARIES AND VENDORS: THE SHEKELS EACH MONTH NEEDS') && mc.text.includes('Cards (10th)')
+    && mc.text.includes('(by the 14th)') && /New deposits: |Put €/.test(mc.text) && mc.text.includes('Spare before')
+    && mc.text.includes('50% net salaries') && vc.cash && vc.cash.months.length >= 6,
+  'with the payroll: today\'s actions lead (subject and body), then the payments in shekels ahead, the months\' shekels and the plan with them', mc.subject);
   const none = mail.renderMail(fx, { ...data, balances: null }, {});
   check(/no recommendation today$/.test(none.subject) && clean(none.html) && none.text.includes('balances'), 'without balances: no recommendation, and why');
   const failed = mail.failureMail(TODAY, new Error('NetSuite down'));
@@ -646,11 +750,25 @@ async function testMail(fx) {
   const s0 = sent[0];
   check(ten === 0 && sent.length === 1 && s0.msg.from === 'matan.l@lsports.eu' && s0.msg.to === 'matan.l@lsports.eu, dotan@lsports.eu' && s0.msg.html.startsWith('<!doctype html>')
     && s0.msg.text.includes('Free to convert now') && s0.t.name === 'lsports.eu' && JSON.parse(fs.readFileSync(markerFile, 'utf8')).day === TODAY
-    && JSON.parse(fs.readFileSync(markerFile, 'utf8')).recipients === 2 && /sent to 2 recipient/.test(tenLog.join(' ')),
-  'scheduled at 10:00: sent from the sender set, to both (FX_MAIL_TO), HTML and text, and marked as sent today to 2'); 
+    && JSON.parse(fs.readFileSync(markerFile, 'utf8')).lastSent.recipients === 2 && JSON.parse(fs.readFileSync(markerFile, 'utf8')).lastSent.actions.length > 0
+    && /sent to 2 recipient/.test(tenLog.join(' ')),
+  'scheduled at 10:00 with something to do: sent from the sender set, to both (FX_MAIL_TO), HTML and text, and marked as sent today to 2 with its actions');
   await quietly(() => mail.main(['--scheduled'], deps(at('11:00'))));
   const [manual] = await quietly(() => mail.main([], deps(at('15:00'))));
   check(sent.length === 2 && manual === 0 && JSON.parse(fs.readFileSync(markerFile, 'utf8')).at === new Date(at('10:00')()).toISOString(), 'sent once a day; a run by hand sends a test and leaves the daily one alone');
+  // Thursday 22 Oct: the same thing to do as yesterday → no mail; Friday 23 Oct → no mail. Both keep the last mail.
+  const [thu, thuLog] = await quietly(() => mail.main(['--scheduled'], deps(() => Date.parse('2026-10-22T10:00:00+03:00'))));
+  const m22 = JSON.parse(fs.readFileSync(markerFile, 'utf8'));
+  check(thu === 0 && sent.length === 2 && m22.day === '2026-10-22' && m22.quiet === true && m22.why === 'nothing new since the last mail' && m22.lastSent.day === TODAY
+    && /no mail \(nothing new since the last mail\)/.test(thuLog.join(' ')),
+  'the next day, nothing new to decide: no mail, the check is kept with why', JSON.stringify(m22));
+  const [fri, friLog] = await quietly(() => mail.main(['--scheduled'], deps(() => Date.parse('2026-10-23T10:00:00+03:00'))));
+  const m23 = JSON.parse(fs.readFileSync(markerFile, 'utf8'));
+  check(fri === 0 && sent.length === 2 && m23.day === '2026-10-23' && m23.why === 'Friday or Saturday' && m23.lastSent.day === TODAY && /no mail on Fridays and Saturdays/.test(friLog.join(' ')),
+    'a Friday: no mail');
+  const [always] = await quietly(() => mail.main(['--scheduled'], deps(() => Date.parse('2026-10-24T10:00:00+03:00'), { env: { ...env, FX_MAIL_ALWAYS: '1' } })));
+  check(always === 0 && sent.length === 3 && JSON.parse(fs.readFileSync(markerFile, 'utf8')).lastSent.day === '2026-10-24', 'FX_MAIL_ALWAYS=1: sent even on a Saturday');
+  sent.pop();
   const partial = { ...reads, mail: null, books: async () => { throw new Error('NetSuite down'); } };
   const marker2 = path.join(tmp, 'last2.json');
   const [retry, retryLog] = await quietly(() => mail.main(['--scheduled'], deps(at('10:00'), { reads: partial, markerFile: marker2 })));
@@ -709,8 +827,13 @@ async function testMailSettings() {
   const after = (await call(router, { url: '/api/fx-challenge/mail' })).body;
   const history = fs.readFileSync(path.join(tmp, 'mail-history.jsonl'), 'utf8').trim().split('\n');
   check(put.status === 200 && same(after.value, { to: ['matan.l@lsports.eu', 'dotan@lsports.eu', 'finance@lsports.eu'] }) && after.updatedAt === new Date(NOW).toISOString()
-    && same(after.lastSent, { day: TODAY, at: '2026-10-21T07:00:03.000Z', recipients: 3 }) && history.length === 1 && same(fxs.savedRecipients(file), after.value.to),
-  'PUT saves the list for everyone, with a history line; GET shows it and when the mail last went');
+    && same(after.lastSent, { day: TODAY, at: '2026-10-21T07:00:03.000Z', recipients: 3 }) && after.lastCheck === null && history.length === 1 && same(fxs.savedRecipients(file), after.value.to),
+  'PUT saves the list for everyone, with a history line; GET shows it and when the mail last went (a marker from before the checks)');
+  fs.writeFileSync(sentFile, JSON.stringify({ day: '2026-10-22', at: '2026-10-22T07:00:05.000Z', quiet: true, why: 'nothing new since the last mail',
+    lastSent: { day: TODAY, at: '2026-10-21T07:00:03.000Z', recipients: 3, subject: 'x', actions: [{ key: 'deposit', eur: 500000 }] } }));
+  const quietDay = (await call(router, { url: '/api/fx-challenge/mail' })).body;
+  check(same(quietDay.lastSent, { day: TODAY, at: '2026-10-21T07:00:03.000Z', recipients: 3 }) && same(quietDay.lastCheck, { day: '2026-10-22', at: '2026-10-22T07:00:05.000Z', why: 'nothing new since the last mail' }),
+    'a day with no mail: GET shows the last check and why, and still the last mail that went');
   const outside = await call(router, { method: 'PUT', url: '/api/fx-challenge/mail', body: { value: { to: ['someone@gmail.com'] } }, headers: json });
   const cross = await call(router, { method: 'PUT', url: '/api/fx-challenge/mail', body: { value: { to: [] } }, headers: { ...json, origin: 'https://evil.example' } });
   check(outside.status === 400 && cross.status === 403 && same(fxs.savedRecipients(file), after.value.to), 'an address outside lsports.eu, or a save from another site, changes nothing');
@@ -795,7 +918,13 @@ async function testNetSuiteReads() {
       { id: 354114, m: '2026-09', num: '180013', name: '180013 Withholdind tax - Payroll', ils: '-1741757.41' },
       { id: 5, m: '2026-09', num: '2500', name: '2500 Something debited', ils: '20' },
     ]);
-    if (/'VendPymt', 'Check'/.test(q)) return reply([{ m: '2026-09', ils: '-7311841.17' }, { m: '2026-08', ils: '-3729465.18' }]);
+    if (/'VendPymt', 'Check'/.test(q)) {
+      return /'Bank', 'CredCard'/.test(q) ? reply([
+        { m: '2026-09', name: '17005 6364 - AMEX - NIS', ils: '-2496282.81' }, { m: '2026-09', name: '17018 4491 - Isracard - NIS', ils: '-33666.12' },
+        { m: '2026-09', name: '10002 Bank Poalim IL 583400', ils: '-2615679.48' }, { m: '2026-09', name: '17036 MASAV IL', ils: '-1842852.14' },
+        { m: '2026-08', name: '17039 4409- AMEX - NIS', ils: '-1475947.66' }, { m: '2026-08', name: '17036 MASAV IL', ils: '-388880.74' },
+      ]) : reply([]);
+    }
     if (/acctnumber IN/.test(q)) return reply([
       { id: 168931, tranid: 'TRN328', d: '2026-01-02', num: '10002', book: 1, amt: -1750000 }, { id: 168931, tranid: 'TRN328', d: '2026-01-02', num: '11001', book: 1, amt: 1750000 },
       { id: 168931, tranid: 'TRN328', d: '2026-01-02', num: '10002', book: 2, amt: -6593475 }, { id: 168931, tranid: 'TRN328', d: '2026-01-02', num: '11001', book: 2, amt: 6593475 },
@@ -822,8 +951,9 @@ async function testNetSuiteReads() {
     const paid = await ns.fetchIlsVendorPayments({ from: '2026-06' });
     let badMonth = false;
     try { await ns.fetchPayrollLiabilities({ from: "2026-06' OR 1=1" }); } catch { badMonth = true; }
-    check(same(owed.map((r) => [r.id, r.account, r.ils]), [[354114, '200000', 4066621.1], [354114, '180013', 1741757.41]]) && same(paid, [{ month: '2026-09', ils: 7311841.17 }, { month: '2026-08', ils: 3729465.18 }]) && badMonth,
-      'payroll journals: what they owe (credits, positive; a debit left out); ILS vendor payments as paid; the month is checked');
+    check(same(owed.map((r) => [r.id, r.account, r.ils]), [[354114, '200000', 4066621.1], [354114, '180013', 1741757.41]])
+      && same(paid, [{ month: '2026-08', ils: 1864828.4, cards: 1475947.66, other: 388880.74 }, { month: '2026-09', ils: 6988480.55, cards: 2529948.93, other: 4458531.62 }]) && badMonth,
+    'payroll journals: what they owe (credits, positive; a debit left out); ILS vendor payments as paid, the credit cards apart from transfers and Masav (a credit card account that clears the batches); the month is checked', JSON.stringify(paid));
     const books = await ns.fetchEurBalancesBooks();
     check(books[0].eur === 979709.61 && books[0].number === '11001', 'books: the EUR balance per account');
     await ns.restletGet('customscript_ph_rl_balances', 'customdeploy_ph_rl_balances');
@@ -852,6 +982,7 @@ async function main() {
   await testRateCheck(fx);
   await testPlanFromPayload(fx);
   await testCash(fx);
+  await testToday(fx);
   await testParse(fx);
   await testValidation(fx);
   await testHandler(fx);

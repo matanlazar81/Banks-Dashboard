@@ -2838,22 +2838,37 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
       .filter((r) => r.ils > 0);
   }
 
-  // Vendor payments (vendor payments and checks) out of the ILS bank accounts by month, in shekels (book 2), from
-  // `from` (YYYY-MM). The payroll is paid by journal, so it is not in them. Returns [{ month, ils }] (ils: paid).
+  // Vendor payments (vendor payments and checks) out of the ILS accounts by month, in shekels (book 2), from `from`
+  // (YYYY-MM): the credit cards' (AMEX, Isracard, MasterCard…: the bank pays their bill on the 10th of the next month)
+  // apart from the rest (bank transfers, and the Masav batches, whose clearing account is a credit card account). The
+  // payroll is paid by journal, so it is not in them. Returns [{ month, ils, cards, other }] (paid).
   async function fetchIlsVendorPayments({ from } = {}) {
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(String(from || ''))) throw new Error(`fetchIlsVendorPayments: bad month ${from}`);
     const rows = await suiteqlAll(`
-      SELECT TO_CHAR(t.trandate, 'YYYY-MM') AS m, SUM(tal.amount) AS ils
+      SELECT TO_CHAR(t.trandate, 'YYYY-MM') AS m, BUILTIN.DF(a.id) AS name, SUM(tal.amount) AS ils
       FROM transactionaccountingline tal
       JOIN transaction t ON t.id = tal.transaction
       JOIN account a ON a.id = tal.account
       JOIN currency c ON c.id = a.currency
       WHERE tal.posting = 'T' AND tal.accountingbook = 2 AND t.subsidiary = ${subsidiaryId}
-        AND a.accttype = 'Bank' AND c.symbol = 'ILS' AND t.type IN ('VendPymt', 'Check')
+        AND a.accttype IN ('Bank', 'CredCard') AND c.symbol = 'ILS' AND t.type IN ('VendPymt', 'Check')
         AND t.trandate >= TO_DATE('${from}-01', 'YYYY-MM-DD')
-      GROUP BY TO_CHAR(t.trandate, 'YYYY-MM')
+      GROUP BY TO_CHAR(t.trandate, 'YYYY-MM'), BUILTIN.DF(a.id)
     `);
-    return rows.map((r) => ({ month: String(r.m || ''), ils: Math.round(-(parseFloat(r.ils) || 0) * 100) / 100 }));
+    const CARD = /amex|american express|isracard|mastercard|visa|diners/i;
+    const byMonth = new Map();
+    for (const r of rows) {
+      const month = String(r.m || '');
+      const paid = -(parseFloat(r.ils) || 0);
+      const v = byMonth.get(month) || { month, ils: 0, cards: 0, other: 0 };
+      v.ils += paid;
+      if (CARD.test(String(r.name || ''))) v.cards += paid;
+      else v.other += paid;
+      byMonth.set(month, v);
+    }
+    const cents = (n) => Math.round(n * 100) / 100;
+    return [...byMonth.values()].sort((a, b) => a.month.localeCompare(b.month))
+      .map((v) => ({ month: v.month, ils: cents(v.ils), cards: cents(v.cards), other: cents(v.other) }));
   }
 
   // GET a RESTlet with the same token (TBA). `script` / `deploy`: the script and deployment ids (numbers, or

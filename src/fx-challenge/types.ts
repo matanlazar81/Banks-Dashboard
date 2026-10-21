@@ -1,5 +1,5 @@
 // Response shapes of GET /api/fx-challenge and GET/PUT /api/fx-challenge/table (server/fx-challenge.cjs).
-import type { BalanceRow, BookedConversion, FlowRow, FxTable, PayrollCredit, PayrollProjection, RatePoint } from '../forecast/fx-challenge.mjs';
+import type { BalanceRow, BookedConversion, FlowRow, FxTable, IlsVendorMonth, PayrollCredit, PayrollProjection, RatePoint } from '../forecast/fx-challenge.mjs';
 
 /** GET /api/fx-challenge: what the page simulates on. */
 export interface FxPayload {
@@ -20,8 +20,8 @@ export interface FxPayload {
   conversions: (BookedConversion & { id: number; tranid: string })[];
   /** What the payroll journals owe and the Salary Projection's Total payroll; null when neither was read. */
   payroll: { journals: PayrollCredit[]; projection: PayrollProjection | null } | null;
-  /** Vendor payments out of the ILS accounts by month; null when not read. */
-  ilsVendors: { month: string; ils: number }[] | null;
+  /** Vendor payments out of the ILS accounts by month (the credit cards' apart); null when not read. */
+  ilsVendors: IlsVendorMonth[] | null;
   warnings: string[];
 }
 export type FxResponse = FxPayload | { ok: false; status: 'error'; error: string };
@@ -43,4 +43,6 @@ export interface MailSettings {
   /** The hour it is sent, Israel time. */
   hour: number;
   lastSent: { day: string | null; at: string; recipients: number | null } | null;
+  /** The daily check, when no mail went (nothing to do, or a Friday or Saturday): when, and why. */
+  lastCheck: { day: string; at: string; why: string } | null;
 }
