@@ -9,7 +9,8 @@ On each fixing (the 7th), that day's EUR/ILS picks a band of the conversion tabl
 - It was booked on 6 October as three "Conversion" journals: €200K @4.10, €300K @3.56 and €300K @3.49, which
   is ₪2,935,000.
 
-The logic is `src/forecast/fx-challenge.mjs`, shared by the server, the page and the tests. The page was
+The page calls each fixing a **conversion**, and its day (the 7th) the **conversion day**. The logic is
+`src/forecast/fx-challenge.mjs`, shared by the server, the page and the tests. The page was
 briefly a tab of the Metrics page before it got its own sidebar item.
 
 ## URLs
@@ -35,6 +36,9 @@ briefly a tab of the Metrics page before it got its own sidebar item.
   volatility of NetSuite's daily HSBC rate over 400 days (7.5% assumed when there is too little history).
   That gives each band's chance, the expected euros, the 95% amount (enough for 19 fixings in 20) and the
   table's worst case.
+- **What the next conversion can sell** (`outcomeRanges`): a table of the EUR/ILS ranges on its day (neighbouring
+  bands that sell the same amount merged), each with its chance, the euros sold, the rate and the shekels; today's
+  range is highlighted. Hovering an expected figure anywhere on the page shows the same chances for that month.
 - **What to keep, what is free** (`planReserve`), for the next fixing:
   - Keep: today's band, the 95% amount (the default) or the worst case (`?reserve=today|worst`).
   - It is paid from Hapoalim EUR (583400); the other EUR accounts can be moved there before the day.
@@ -47,7 +51,7 @@ briefly a tab of the Metrics page before it got its own sidebar item.
     deposits maturing after the previous fixing (after today, for the first) and by that one; hover a figure for
     each deposit's date and value. Deposits maturing after the last fixing shown are listed under the table.
     They count only if the bank pays them out rather than rolling them over.
-- **Past fixings**: the table at that day's rate against the "Conversion" / המרה journals booked within
+- **Past conversions**: the table at that day's rate against the "Conversion" / המרה journals booked within
   3 days (Hapoalim EUR 11001 → ILS 10002), the shekels gained against that day's rate, and the month's other
   conversions.
 - **LSports euros**: the accounts, then each EUR deposit by the day it matures.

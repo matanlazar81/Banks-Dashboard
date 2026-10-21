@@ -106,6 +106,19 @@ async function testLogic(fx) {
   check(fx.requirementOf('today', conv, r6) === 800000 && fx.requirementOf('p95', conv, r6) === 1100000 && fx.requirementOf('worst', conv, r6) === 2400000, 'what to keep: today\'s band / 95% / worst case');
 }
 
+async function testOutcomes(fx) {
+  console.log('\nOUTCOMES: what a conversion can sell, by EUR/ILS range');
+  const t = fx.cloneTable(fx.DEFAULT_TABLE);
+  const nov = t.rows.find((r) => r.month === '2026-11');
+  const risk = fx.fixingRisk(nov, t.bounds, 3.469, 0.086, 17 / 365);
+  const o = fx.outcomeRanges(nov, t.bounds, risk.probs);
+  check(same(o.map((x) => [x.lo, x.hi, x.eur]), [[null, 3.3, 500000], [3.3, 3.49, 800000], [3.49, 3.56, 1100000], [3.56, 3.6, 1400000], [3.6, 3.7, 1600000], [3.7, 3.93, 1800000], [3.93, 4.1, 2000000], [4.1, 4.295, 2200000], [4.295, null, 2400000]]),
+    'neighbouring bands that sell the same are merged: 14 bands, 9 ranges', JSON.stringify(o.map((x) => [x.lo, x.hi, x.eur])));
+  check(near(o.reduce((s, x) => s + x.p, 0), 1, 1e-9) && near(o.reduce((s, x) => s + x.p * x.eur, 0), risk.expectedEur, 1e-6), 'the chances add up to 1, and to the expected amount');
+  check(o[1].p > 0.55 && o[1].p < 0.7 && o[2].p > 0.2 && o[2].p < 0.35 && same(o[1].bands, [1, 2]) && near(o[1].ils, 800000 * 3.67),
+    'on 7 Nov from 3.469: about 6 in 10 for €800K at 3.67, about 3 in 10 for €1.1M', `${o[1].p.toFixed(3)} / ${o[2].p.toFixed(3)}`);
+}
+
 async function testPlan(fx) {
   console.log('\nPLAN: what to keep and what is free');
   const t = fx.cloneTable(fx.DEFAULT_TABLE);
@@ -415,6 +428,7 @@ async function main() {
   const fx = await import(pathToFileURL(path.join(ROOT, 'src', 'forecast', 'fx-challenge.mjs')).href);
   console.log('=== FX Challenge checks (synthetic data, the October 2026 fixing) ===');
   await testLogic(fx);
+  await testOutcomes(fx);
   await testPlan(fx);
   await testPast(fx);
   await testParse(fx);

@@ -34,6 +34,10 @@ export declare function bandProbabilities(bounds: number[], spot: number, sigma:
 export interface FixingRisk { probs: number[]; expectedEur: number; expectedIls: number; p95Eur: number; worstEur: number }
 export declare function fixingRisk(row: FxRow, bounds: number[], spot: number, sigma: number, years: number, quantile?: number): FixingRisk;
 
+/** EUR/ILS from lo (included) to hi; null where open-ended. Neighbouring bands that sell the same are merged. */
+export interface OutcomeRange { lo: number | null; hi: number | null; eur: number; rate: number; ils: number; p: number; bands: number[] }
+export declare function outcomeRanges(row: FxRow, bounds: number[], probs: number[]): OutcomeRange[];
+
 export type Policy = 'today' | 'p95' | 'worst';
 export declare const POLICIES: Policy[];
 export declare const POLICY_LABEL: Record<Policy, string>;
