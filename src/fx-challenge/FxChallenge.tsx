@@ -6,7 +6,10 @@ import { Loader2, RefreshCw } from 'lucide-react';
 import { ErrorCard, Segmented, Skeleton, Warnings } from '../new-dashboard/PageParts.tsx';
 import { KpiCard } from '../new-dashboard/KpiStrip.tsx';
 import { readParam, writeParam } from '../new-dashboard/urlParams.ts';
-import { parseTable, POLICIES, POLICY_LABEL, tableToText, type DepositRelease, type FxTable, type OutcomeRange, type PathPoint, type Policy, type ReservePlan } from '../forecast/fx-challenge.mjs';
+import {
+  parseTable, POLICIES, POLICY_LABEL, tableToText,
+  type DepositRelease, type FxTable, type OtherConversion, type OutcomeRange, type PathPoint, type Policy, type RateCheck, type ReservePlan,
+} from '../forecast/fx-challenge.mjs';
 import { formatEur, monthName } from '../metrics/model.ts';
 import { fetchFx, saveTable } from './api.ts';
 import { buildFxModel, formatDay, formatIls, formatPct0, formatRate, type FxModel, type ScheduleRow } from './fxModel.ts';
@@ -208,6 +211,7 @@ function Recommendation({ model, policy, onPolicy, inflowMonths }: { model: FxMo
           {' '}Free to convert now: <strong>{formatEur(n.freeNow)}</strong>
           {n.freeNowWithBackup > n.freeNow ? <>, or <strong>{formatEur(n.freeNowWithBackup)}</strong> if the backup deposits cover a rate jump</> : null}.
         </p>
+        {model.rateCheck && <RateLine rc={model.rateCheck} free={n.freeNow} />}
         <div className="space-y-1.5">
           <p className="text-[13px]">
             What the {formatDay(n.date)} conversion sells depends on EUR/ILS that day. At today&apos;s {formatRate(model.spot)}: {formatEur(n.todayAmount)} at
@@ -292,6 +296,22 @@ function Recommendation({ model, policy, onPolicy, inflowMonths }: { model: FxMo
         {showWorkings && <Workings model={model} plan={plan} month={chosen} inflowMonths={inflowMonths} onClose={() => setShowWorkings(false)} />}
       </div>
     </Card>
+  );
+}
+
+const RATE_WORD = { high: 'high', middle: 'mid-range', low: 'low' } as const;
+const RATE_VERDICT = { high: 'a good day to convert', middle: 'an average day to convert', low: 'a weak day to convert' } as const;
+const RATE_TONE = { high: 'text-emerald-700', middle: 'text-slate-900', low: 'text-amber-700' } as const;
+
+/** Today's EUR/ILS against the last 90 days, and what the euros free now bring at it against the average. */
+function RateLine({ rc, free }: { rc: RateCheck; free: number }) {
+  const diff = free * (rc.rate - rc.average);
+  return (
+    <p className="text-[13px]" title={`Today's EUR/ILS against NetSuite's HSBC rates on the ${rc.n} business days of the last ${rc.days} days. High: above 3 days in 4 or more; low: above 1 in 4 or fewer. It only looks back: where EUR/ILS goes next is not known. Whatever you convert yourself, the conversion on the 7th still follows the table.`}>
+      <span className={HINT}>EUR/ILS {formatRate(rc.rate)}</span> is {RATE_WORD[rc.level]} for the last {rc.days} days: above {formatPct0(rc.share)} of them
+      {' '}(average {formatRate(rc.average)}, from {formatRate(rc.low)} to {formatRate(rc.high)}), so <strong className={RATE_TONE[rc.level]}>{RATE_VERDICT[rc.level]}</strong>
+      {free > 0 ? <>: the {formatEur(free)} free now brings {formatIls(free * rc.rate)}, {formatIls(Math.abs(diff))} {diff >= 0 ? 'more' : 'less'} than at the average.</> : '. Nothing is free to convert today.'}
+    </p>
   );
 }
 
@@ -675,41 +695,69 @@ function Balances({ data, model }: { data: FxPayload; model: FxModel }) {
   );
 }
 
-// ── past fixings ──
+// ── past conversions ──
+/** A day's other conversions: "Mon 12 Oct €800K @ 3.435", or "bought €1.75M @ 3.768" for euros bought back. */
+const otherLine = (o: OtherConversion) => `${formatDay(o.date)} ${o.eur < 0 ? 'bought ' : ''}${formatEur(Math.abs(o.eur))} @ ${o.rate.toFixed(3)}`;
+const gainTone = (v: number | null) => ((v ?? 0) < 0 ? 'text-rose-700' : 'text-emerald-700');
+
 function PastFixings({ model }: { model: FxModel }) {
   if (!model.past.length) return null;
+  const t = model.pastTotal;
+  const since = monthName(model.pastFrom);
+  const all = { eur: t.booked.eur + t.others.eur, ils: t.booked.ils + t.others.ils, vs: t.booked.vsRateIls + t.others.vsRateIls };
+  const firstInTable = model.past.find((p) => p.inTable);
   return (
-    <Card title="Past conversions: the table against what was booked">
+    <Card title={`Past conversions since ${since}: the table against what was booked`}>
       <div className="overflow-x-auto">
         <table className="min-w-full text-xs">
           <thead>
             <tr className="border-b border-slate-200">
-              <Th left tip="A monthly conversion already past: its month and day.">Conversion day</Th>
+              <Th left tip="Each month whose conversion day (the 7th) has passed.">Conversion day</Th>
               <Th tip="NetSuite's HSBC EUR/ILS on the conversion day.">EUR/ILS that day</Th>
-              <Th tip="What the table says at that day's rate: the euros sold and the deals' blended rate.">The table</Th>
-              <Th tip={'The "Conversion" / המרה journals from Hapoalim EUR (11001) to ILS (10002) within 3 days of the conversion day; ✓ when they match the table.'}>Booked (Hapoalim, &quot;Conversion&quot;)</Th>
-              <Th tip="Shekels received against selling the same euros at that day's rate.">₪ vs that day&apos;s rate</Th>
-              <Th left tip="Your other conversions booked the same month, apart from the monthly one.">Other conversions that month</Th>
+              <Th tip={`What the table says at that day's rate: the euros sold and the deals' blended rate. The table starts with ${firstInTable ? monthName(firstInTable.month) : 'its first month'}; earlier months show what was booked only.`}>The table</Th>
+              <Th tip={'The "Conversion" / המרה journals selling Hapoalim EUR (11001) for ILS (10002) on one day within 3 days of the conversion day: the day closest to the table (✓ when they match it), or before the table, the day with the best rate (the monthly deals beat the market\'s).'}>Booked (Hapoalim, &quot;Conversion&quot;)</Th>
+              <Th tip="Shekels received against selling the same euros at the rate of the day they were booked (NetSuite's HSBC rate).">₪ vs that day&apos;s rate</Th>
+              <Th left tip="The month's other Hapoalim conversions, by day: euros sold, or bought back with shekels (bought). Hover a figure for its gain against that day's rate.">Other conversions that month</Th>
             </tr>
           </thead>
           <tbody>
             {model.past.map((p) => (
               <tr key={p.month} className="border-b border-slate-100 align-top">
-                <td className="px-2 py-1.5 text-left text-slate-700">{monthName(p.month)} · {formatDay(p.date)}</td>
+                <td className="whitespace-nowrap px-2 py-1.5 text-left text-slate-700">{monthName(p.month)} · {formatDay(p.date)}</td>
                 <td className={TD}>{p.spot ? formatRate(p.spot.rate) : '–'}</td>
-                <td className={TD}>{p.conv ? `${formatEur(p.conv.eur)} @ ${p.conv.rate}` : '–'}</td>
-                <td className={`${TD} ${p.booked ? (p.match ? 'text-emerald-700' : 'text-amber-700') : 'text-slate-400'}`}>
-                  {p.booked ? `${formatDay(p.booked.date)}: ${formatEur(p.booked.eur)} → ${formatIls(p.booked.ils)} @ ${p.booked.rate ? p.booked.rate.toFixed(3) : '–'}${p.match ? ' ✓' : ' (differs)'}` : 'Nothing booked near it'}
+                <td className={`${TD} whitespace-nowrap ${p.inTable ? '' : 'text-slate-400'}`}>{p.conv ? `${formatEur(p.conv.eur)} @ ${p.conv.rate}` : p.inTable ? '–' : 'not in the table'}</td>
+                <td className={`${TD} whitespace-nowrap ${!p.booked ? 'text-slate-400' : !p.inTable ? 'text-slate-700' : p.match ? 'text-emerald-700' : 'text-amber-700'}`}>
+                  {p.booked ? `${formatDay(p.booked.date)}: ${formatEur(p.booked.eur)} → ${formatIls(p.booked.ils)} @ ${p.booked.rate ? p.booked.rate.toFixed(3) : '–'}${p.inTable ? (p.match ? ' ✓' : ' (differs)') : ''}` : 'Nothing booked near it'}
                 </td>
-                <td className={`${TD} ${(p.gainVsSpotIls ?? 0) < 0 ? 'text-rose-700' : 'text-emerald-700'}`}>{p.gainVsSpotIls === null ? '–' : formatIls(p.gainVsSpotIls)}</td>
+                <td className={`${TD} ${gainTone(p.gainVsSpotIls)}`}>{p.gainVsSpotIls === null ? '–' : formatIls(p.gainVsSpotIls)}</td>
                 <td className="px-2 py-1.5 text-left text-slate-500">
-                  {p.others.length ? p.others.map((o) => `${formatDay(o.date)} ${formatEur(o.eur)} @ ${(o.ils / o.eur).toFixed(3)}`).join(' · ') : '–'}
+                  {p.others.length ? p.others.map((o, i) => (
+                    <span key={`${o.date}${o.eur}`} title={o.vsRateIls === null ? undefined : `${formatIls(o.vsRateIls)} against that day's rate (${o.n} journal${o.n === 1 ? '' : 's'})`}>
+                      {i ? ' · ' : ''}<span className={o.eur < 0 ? 'text-slate-700' : ''}>{otherLine(o)}</span>
+                    </span>
+                  )) : '–'}
                 </td>
               </tr>
             ))}
+            <tr className="bg-slate-50 align-top font-semibold text-slate-900">
+              <td className="px-2 py-1.5 text-left">Since {since}</td>
+              <td className={TD} />
+              <td className={TD} />
+              <td className={`${TD} whitespace-nowrap`}>{t.booked.eur ? `${formatEur(t.booked.eur)} → ${formatIls(t.booked.ils)} @ ${(t.booked.ils / t.booked.eur).toFixed(3)}` : '–'}</td>
+              <td className={`${TD} ${gainTone(t.booked.vsRateIls)}`}>{formatIls(t.booked.vsRateIls)}</td>
+              <td className="px-2 py-1.5 text-left font-normal text-slate-600">
+                {t.others.sold || t.others.bought
+                  ? <>{formatEur(t.others.sold)} sold{t.others.bought ? `, ${formatEur(t.others.bought)} bought back` : ''}: <span className={gainTone(t.others.vsRateIls)}>{formatIls(t.others.vsRateIls)}</span> against each day&apos;s rate</>
+                  : '–'}
+              </td>
+            </tr>
           </tbody>
         </table>
       </div>
+      <p className="mt-1.5 text-[11px] text-slate-500">
+        All Hapoalim conversions since {since}: {formatEur(all.eur)} net → {formatIls(all.ils)}, {formatIls(all.vs)} against each day&apos;s rate.
+        {model.past.some((p) => !p.inTable) && ' Before the table, the booked figure is the best-rate day near the 7th; the rest of the month is under other conversions.'}
+      </p>
     </Card>
   );
 }

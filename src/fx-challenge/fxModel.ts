@@ -1,23 +1,15 @@
 // Pure: what the FX Challenge page shows, from GET /api/fx-challenge and the rate being simulated. No React.
+// The recommendation itself (planFromPayload) is shared with the daily mail.
 import {
-  bandIndex, bandLabels, checkPast, conversionAt, eurPosition, fixingRisk, fixings, outcomeRanges, planReserve, typicalInflow,
-  type Conversion, type EurPosition, type Fixing, type FixingRisk, type OutcomeRange, type PastCheck, type Policy, type ReservePlan,
+  bandIndex, bandLabels, conversionAt, pastConversions, planFromPayload,
+  type Conversion, type EurPosition, type PastMonth, type PastTotals, type Policy, type RateCheck, type ReservePlan, type ScheduleItem,
 } from '../forecast/fx-challenge.mjs';
 import type { FxPayload } from './types.ts';
 
-/** The volatility used when NetSuite's history is too short: about EUR/ILS's over the last two years. */
-export const FALLBACK_SIGMA = 0.075;
-
-export interface ScheduleRow {
-  fixing: Fixing;
-  atSpot: Conversion | null;
+export interface ScheduleRow extends ScheduleItem {
   atSim: Conversion | null;
-  risk: FixingRisk | null;
-  /** What it can sell, by EUR/ILS range, with each range's chance (from today's rate). */
-  outcomes: OutcomeRange[] | null;
 }
 export interface YearTotal { year: string; eur: number; ils: number; vsSpotIls: number; expectedEur: number; count: number }
-export interface PastRow extends PastCheck { others: { date: string; eur: number; ils: number }[] }
 
 export interface FxModel {
   labels: string[];
@@ -29,33 +21,25 @@ export interface FxModel {
   simBand: number | null;
   sigma: number;
   sigmaFromHistory: boolean;
+  /** Today's rate against the last 90 days. */
+  rateCheck: RateCheck | null;
   schedule: ScheduleRow[];
   totals: YearTotal[];
   position: EurPosition | null;
-  inflow: ReturnType<typeof typicalInflow>;
+  inflow: ReturnType<typeof planFromPayload>['inflow'];
   plan: ReservePlan | null;
-  past: PastRow[];
+  /** Every month since January 2026 whose conversion day has passed, and the totals. */
+  past: PastMonth[];
+  pastFrom: string;
+  pastTotal: PastTotals;
 }
 
 export function buildFxModel(data: FxPayload, simRate: number | null, policy: Policy): FxModel {
-  const { table, today } = data;
+  const { table } = data;
   const bounds = table.bounds;
-  const spot = data.rates.spot ? data.rates.spot.rate : null;
-  const sim = simRate && simRate > 0 ? simRate : spot;
-  const sigmaFromHistory = !!(data.rates.sigma && data.rates.sigma > 0);
-  const sigma = sigmaFromHistory ? (data.rates.sigma as number) : FALLBACK_SIGMA;
-  const all = fixings(table, today);
-
-  const schedule: ScheduleRow[] = all.filter((f) => f.status !== 'past').map((f) => {
-    const risk = spot ? fixingRisk(f.row, bounds, spot, sigma, f.days / 365) : null;
-    return {
-      fixing: f,
-      atSpot: spot ? conversionAt(f.row, bounds, spot) : null,
-      atSim: sim ? conversionAt(f.row, bounds, sim) : null,
-      risk,
-      outcomes: risk ? outcomeRanges(f.row, bounds, risk.probs) : null,
-    };
-  });
+  const base = planFromPayload(data, policy);
+  const sim = simRate && simRate > 0 ? simRate : base.spot;
+  const schedule: ScheduleRow[] = base.schedule.map((s) => ({ ...s, atSim: sim ? conversionAt(s.fixing.row, bounds, sim) : null }));
 
   const byYear = new Map<string, YearTotal>();
   for (const s of schedule) {
@@ -67,37 +51,26 @@ export function buildFxModel(data: FxPayload, simRate: number | null, policy: Po
     byYear.set(year, t);
   }
 
-  const position = data.balances ? eurPosition(data.balances.rows) : null;
-  const inflow = typicalInflow(data.flows, data.inflowMonths);
-  const upcoming = schedule.flatMap((s) => (s.atSpot && s.risk
-    ? [{ month: s.fixing.month, date: s.fixing.date, days: s.fixing.days, conv: s.atSpot, risk: s.risk }] : []));
-  const plan = position && upcoming.length
-    ? planReserve({ upcoming, policy, eur: position, inflowPerDay: inflow ? inflow.perDay : null, today })
-    : null;
-
-  const past = all.filter((f) => f.status === 'past').map((f) => {
-    const check = checkPast({ fixing: f, bounds, series: data.rates.series, conversions: data.conversions });
-    const others = data.conversions
-      .filter((c) => c.date.slice(0, 7) === f.month && (!check.booked || c.date !== check.booked.date))
-      .map((c) => ({ date: c.date, eur: c.eur, ils: c.ils }));
-    return { ...check, others };
-  });
+  const past = pastConversions({ table, today: data.today, series: data.rates.series, conversions: data.conversions });
 
   return {
     labels: bandLabels(bounds),
-    spot,
-    spotDate: data.rates.spot ? data.rates.spot.date : null,
+    spot: base.spot,
+    spotDate: base.spotDate,
     simRate: sim,
-    spotBand: spot ? bandIndex(bounds, spot) : null,
+    spotBand: base.spotBand,
     simBand: sim ? bandIndex(bounds, sim) : null,
-    sigma,
-    sigmaFromHistory,
+    sigma: base.sigma,
+    sigmaFromHistory: base.sigmaFromHistory,
+    rateCheck: base.rateCheck,
     schedule,
     totals: [...byYear.values()],
-    position,
-    inflow,
-    plan,
-    past,
+    position: base.position,
+    inflow: base.inflow,
+    plan: base.plan,
+    past: past.months,
+    pastFrom: past.from,
+    pastTotal: past.total,
   };
 }
 

@@ -2783,8 +2783,9 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
     return rows.map((r) => ({ month: String(r.m || ''), kind: KIND[String(r.k)] || 'other', eur: Math.round((parseFloat(r.eur) || 0) * 100) / 100 }));
   }
 
-  // "Conversion" journals between two bank accounts (by default Hapoalim 583400: EUR 11001 → ILS 10002), from
+  // "Conversion" journals between two bank accounts (by default Hapoalim 583400: EUR 11001 ↔ ILS 10002), from
   // `from` (YYYY-MM-DD): euros sold from the primary book, shekels received from the ILS book (book 2), by journal.
+  // Euros bought back with shekels come with both negative; a journal touching only one of the two is left out.
   // Returns [{ id, tranid, date, eur, ils }].
   async function fetchHapoalimConversions({ from, eurAccount = '11001', ilsAccount = '10002' } = {}) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(from || ''))) throw new Error(`fetchHapoalimConversions: bad date ${from}`);
@@ -2809,7 +2810,7 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
       if (String(r.num) === String(eurAccount) && Number(r.book) === 1) t.eur -= amt;
       if (String(r.num) === String(ilsAccount) && Number(r.book) === 2) t.ils += amt;
     }
-    return [...byId.values()].filter((t) => t.eur > 0 && t.ils > 0)
+    return [...byId.values()].filter((t) => (t.eur > 0 && t.ils > 0) || (t.eur < 0 && t.ils < 0))
       .map((t) => ({ ...t, eur: Math.round(t.eur * 100) / 100, ils: Math.round(t.ils * 100) / 100 }));
   }
 

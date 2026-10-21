@@ -39,6 +39,11 @@ export function cloneTable(t) {
   return JSON.parse(JSON.stringify(t));
 }
 
+/** The volatility used when NetSuite's history is too short: about EUR/ILS's over the last two years. */
+export const FALLBACK_SIGMA = 0.075;
+/** The past conversions are listed from this month (before the table, what was booked only). */
+export const HISTORY_FROM = '2026-01';
+
 // ── bands ──
 export function bandLabels(bounds) {
   const out = [`<${bounds[0]}`];
@@ -68,6 +73,10 @@ const DAY_MS = 86400000;
 const WEEKDAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const isIso = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
 const utc = (iso) => Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10));
+const nextMonth = (mKey) => {
+  const [y, m] = mKey.split('-').map(Number);
+  return m === 12 ? `${y + 1}-01` : `${y}-${pad2(m + 1)}`;
+};
 
 export function fixingDate(month, day) {
   const [y, m] = month.split('-').map(Number);
@@ -121,6 +130,26 @@ export function rateOn(series, date) {
     if (p && isIso(p.date) && p.date <= date && Number(p.rate) > 0 && (!best || p.date >= best.date)) best = p;
   }
   return best ? { date: best.date, rate: Number(best.rate) } : null;
+}
+
+/**
+ * Today's rate against the `days` (calendar) days before it, for selling euros: the share of those business days with
+ * a lower rate, their average and range, and a verdict: 'high' when the rate beats 3 days in 4 or more, 'low' when it
+ * beats 1 in 4 or fewer, else 'middle'. It only looks back; where EUR/ILS goes next is not known. null with fewer
+ * than `minDays` days.
+ */
+export function rateCheck(series, today, { days = 90, minDays = 20 } = {}) {
+  const spot = rateOn(series, today);
+  if (!spot) return null;
+  const from = new Date(utc(spot.date) - days * DAY_MS).toISOString().slice(0, 10);
+  const rates = businessDays(series).filter((p) => p.date >= from && p.date < spot.date).map((p) => p.rate);
+  if (rates.length < minDays) return null;
+  const share = rates.filter((r) => r < spot.rate).length / rates.length;
+  return {
+    date: spot.date, rate: spot.rate, days, n: rates.length,
+    average: rates.reduce((s, r) => s + r, 0) / rates.length, low: Math.min(...rates), high: Math.max(...rates),
+    share, level: share >= 0.75 ? 'high' : share <= 0.25 ? 'low' : 'middle',
+  };
 }
 
 // Standard normal CDF (Abramowitz & Stegun 7.1.26, error below 1.5e-7).
@@ -313,14 +342,48 @@ export function planReserve({ upcoming, policy = 'p95', eur, inflowPerDay = null
   return { policy, next, path: shown, later: releasedBetween(shown[shown.length - 1].date, null) };
 }
 
+/**
+ * The recommendation at today's rate from GET /api/fx-challenge's answer: the conversions left (each at today's rate,
+ * with its risk and what it can sell by range), LSports' euros, the typical inflow and the plan. The page adds the
+ * simulated rate on top of it (src/fx-challenge/fxModel.ts); the daily mail sends it (scripts/fx-challenge-mail.cjs).
+ */
+export function planFromPayload(data, policy = 'p95') {
+  const { table, today } = data;
+  const bounds = table.bounds;
+  const spot = data.rates.spot ? data.rates.spot.rate : null;
+  const sigmaFromHistory = !!(data.rates.sigma && data.rates.sigma > 0);
+  const sigma = sigmaFromHistory ? data.rates.sigma : FALLBACK_SIGMA;
+  const all = fixings(table, today);
+  const schedule = all.filter((f) => f.status !== 'past').map((f) => {
+    const risk = spot ? fixingRisk(f.row, bounds, spot, sigma, f.days / 365) : null;
+    return { fixing: f, atSpot: spot ? conversionAt(f.row, bounds, spot) : null, risk, outcomes: risk ? outcomeRanges(f.row, bounds, risk.probs) : null };
+  });
+  const position = data.balances ? eurPosition(data.balances.rows) : null;
+  const inflow = typicalInflow(data.flows, data.inflowMonths);
+  const upcoming = schedule.flatMap((s) => (s.atSpot && s.risk
+    ? [{ month: s.fixing.month, date: s.fixing.date, days: s.fixing.days, conv: s.atSpot, risk: s.risk }] : []));
+  const plan = position && upcoming.length
+    ? planReserve({ upcoming, policy, eur: position, inflowPerDay: inflow ? inflow.perDay : null, today })
+    : null;
+  return {
+    all, spot, spotDate: data.rates.spot ? data.rates.spot.date : null, spotBand: spot ? bandIndex(bounds, spot) : null,
+    sigma, sigmaFromHistory, rateCheck: rateCheck(data.rates.series, today), schedule, position, inflow, plan,
+  };
+}
+
 // ── past fixings ──
-/** A past fixing against the "Conversion" journals booked near it: the table at that day's rate, what was booked
- * (the day whose total is closest to the table's euros), and the shekels gained against that day's rate. */
+/**
+ * A past fixing against the "Conversion" journals booked near it: the table at that day's rate, what was booked, and
+ * the shekels gained against that day's rate. What was booked is the day of euros sold within `windowDays` whose
+ * total is closest to the table's euros; for a month the table doesn't have (fixing.row null), the day with the best
+ * rate, as the monthly deals beat the market's.
+ */
 export function checkPast({ fixing, bounds, series, conversions, windowDays = 3 }) {
   const t = utc(fixing.date);
   const byDate = new Map();
   for (const c of conversions || []) {
-    if (!c || !isIso(c.date) || Math.abs(utc(c.date) - t) > windowDays * DAY_MS) continue;
+    // Euros bought back (negative) are not the monthly conversion.
+    if (!c || !isIso(c.date) || !(Number(c.eur) > 0) || Math.abs(utc(c.date) - t) > windowDays * DAY_MS) continue;
     const g = byDate.get(c.date) || { date: c.date, eur: 0, ils: 0, n: 0 };
     g.eur += Number(c.eur) || 0;
     g.ils += Number(c.ils) || 0;
@@ -328,9 +391,11 @@ export function checkPast({ fixing, bounds, series, conversions, windowDays = 3 
     byDate.set(c.date, g);
   }
   const spotPt = rateOn(series, fixing.date);
-  const conv = spotPt ? conversionAt(fixing.row, bounds, spotPt.rate) : null;
-  const target = conv ? conv.eur : 0;
-  const booked = [...byDate.values()].sort((a, b) => Math.abs(a.eur - target) - Math.abs(b.eur - target))[0] || null;
+  const conv = spotPt && fixing.row ? conversionAt(fixing.row, bounds, spotPt.rate) : null;
+  const days = [...byDate.values()];
+  const booked = (fixing.row
+    ? days.sort((a, b) => Math.abs(a.eur - (conv ? conv.eur : 0)) - Math.abs(b.eur - (conv ? conv.eur : 0)))
+    : days.sort((a, b) => b.ils / b.eur - a.ils / a.eur))[0] || null;
   const bookedSpot = booked ? rateOn(series, booked.date) : null;
   const bookedRate = booked && booked.eur ? booked.ils / booked.eur : null;
   return {
@@ -341,6 +406,48 @@ export function checkPast({ fixing, bounds, series, conversions, windowDays = 3 
     booked: booked ? { ...booked, rate: bookedRate } : null,
     match: !!(booked && conv && Math.abs(booked.eur - conv.eur) <= 0.01 * Math.abs(conv.eur) && Math.abs(bookedRate - conv.rate) <= 0.01),
     gainVsSpotIls: booked && bookedSpot ? booked.ils - booked.eur * bookedSpot.rate : null,
+  };
+}
+
+/**
+ * The conversions month by month from `from` (YYYY-MM, or the table's first month if earlier) to the last conversion
+ * day passed: each month's check (checkPast; inTable when the table has the month), and its other conversions by day,
+ * euros sold or bought back (negative), each against its day's rate. Then the totals.
+ */
+export function pastConversions({ table, today, series, conversions, from = HISTORY_FROM, windowDays = 3 }) {
+  const rows = new Map(table.rows.map((r) => [r.month, r]));
+  const first = [from, ...table.rows.map((r) => r.month)].sort()[0];
+  const months = [];
+  for (let m = first; fixingDate(m, table.fixingDay) < today; m = nextMonth(m)) {
+    const fixing = { month: m, date: fixingDate(m, table.fixingDay), row: rows.get(m) || null };
+    const check = checkPast({ fixing, bounds: table.bounds, series, conversions, windowDays });
+    const byDay = new Map();
+    for (const c of conversions || []) {
+      const eur = Number(c && c.eur) || 0;
+      if (!eur || !isIso(c.date) || c.date.slice(0, 7) !== m || (eur > 0 && check.booked && c.date === check.booked.date)) continue;
+      const key = `${c.date}${eur > 0 ? '+' : '-'}`;
+      const o = byDay.get(key) || { date: c.date, eur: 0, ils: 0, n: 0 };
+      o.eur += eur;
+      o.ils += Number(c.ils) || 0;
+      o.n += 1;
+      byDay.set(key, o);
+    }
+    const others = [...byDay.values()].sort((a, b) => a.date.localeCompare(b.date) || b.eur - a.eur).map((o) => {
+      const r = rateOn(series, o.date);
+      return { ...o, rate: o.ils / o.eur, vsRateIls: r ? o.ils - o.eur * r.rate : null };
+    });
+    months.push({ ...check, inTable: !!fixing.row, others });
+  }
+  const sum = (xs, f) => xs.reduce((s, x) => s + (f(x) || 0), 0);
+  const booked = months.filter((p) => p.booked);
+  const others = months.flatMap((p) => p.others);
+  return {
+    from: first,
+    months,
+    total: {
+      booked: { eur: sum(booked, (p) => p.booked.eur), ils: sum(booked, (p) => p.booked.ils), vsRateIls: sum(booked, (p) => p.gainVsSpotIls), months: booked.length },
+      others: { sold: sum(others, (o) => Math.max(0, o.eur)), bought: sum(others, (o) => Math.max(0, -o.eur)), eur: sum(others, (o) => o.eur), ils: sum(others, (o) => o.ils), vsRateIls: sum(others, (o) => o.vsRateIls) },
+    },
   };
 }
 
