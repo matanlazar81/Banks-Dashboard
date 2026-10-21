@@ -152,6 +152,27 @@ async function testPlan(fx) {
   check(none.path.length === 1 && none.next.freeByFixing === null && none.next.inflowUntil === null, 'without the inflow, only the next fixing is planned');
   check(fx.planReserve({ upcoming: [], eur: pos, today: TODAY }) === null, 'no fixings left → no plan');
 
+  // Which deposits each fixing gains: those maturing after the previous fixing (after today for the first) and by it.
+  const dated = { ...pos, deposits: [
+    { amount: 500000, valueDate: '2026-11-07', blocked: false, label: 'on the day' },
+    { amount: 300000, valueDate: '2026-10-25', blocked: false, label: 'October' },
+    { amount: 200000, valueDate: '2026-11-08', blocked: false, label: 'the day after' },
+    { amount: 400000, valueDate: '2026-12-01', blocked: true, label: 'blocked' },
+    { amount: 900000, valueDate: '2027-06-01', blocked: false, label: 'after April' },
+    { amount: 100000, valueDate: TODAY, blocked: false, label: 'today' },
+  ] };
+  const r = fx.planReserve({ upcoming, policy: 'today', eur: dated, today: TODAY, inflowPerDay: 0 });
+  check(r.path[0].released === 800000 && same(r.path[0].releasedDeposits.map((x) => x.label), ['October', 'on the day']) && r.path[0].released === r.next.maturing,
+    'the first fixing gains the deposits maturing by its day, earliest first (the same as "maturing by then")');
+  check(r.path[1].released === 200000 && r.path[1].releasedDeposits[0].valueDate === '2026-11-08' && r.path.slice(2).every((p) => p.released === 0 && !p.releasedDeposits.length),
+    'a deposit maturing the day after a fixing counts for the next one; a blocked one never does');
+  check(r.later.length === 1 && r.later[0].label === 'after April' && r.later[0].amount === 900000, 'deposits maturing after the last fixing shown are listed apart');
+  let held = r.next.liquid;
+  const consistent = r.path.every((p) => { held += p.released; const ok = near(p.available, held); held -= p.required; return ok; });
+  check(consistent, 'euros by each fixing = today\'s liquid euros + the deposits released by then − the earlier fixings (no inflow here)');
+  const one = fx.planReserve({ upcoming, policy: 'today', eur: dated, today: TODAY });
+  check(one.path.length === 1 && one.later.reduce((s, d) => s + d.amount, 0) === 1100000, 'without the inflow, the deposits after the next fixing are all "later"');
+
   const flows = [
     { month: '2026-07', kind: 'customer', eur: 4969632 }, { month: '2026-07', kind: 'vendor', eur: -389321 }, { month: '2026-07', kind: 'other', eur: 58695 },
     { month: '2026-07', kind: 'conversion', eur: -2646789 }, { month: '2026-07', kind: 'deposit', eur: -1400000 }, { month: '2026-07', kind: 'transfer', eur: -210194 },

@@ -78,17 +78,28 @@ export interface NextFixingPlan {
   freeByFixing: number | null;
   moveToHapoalim: number;
 }
+/** A deposit maturing on valueDate: the bank's value then, interest included. */
+export interface DepositRelease { amount: number; valueDate: string; label: string }
 export interface PathPoint {
   month: string;
   date: string;
   required: number;
   expected: number;
+  /** EUR deposits maturing after the previous fixing (after today, for the first) and by this one. */
+  released: number;
+  releasedDeposits: DepositRelease[];
   available: number;
   surplus: number;
   /** What can be converted before this fixing, in total, and still cover it and every later one. */
   convertibleBefore: number;
 }
-export interface ReservePlan { policy: Policy; next: NextFixingPlan; path: PathPoint[] }
+export interface ReservePlan {
+  policy: Policy;
+  next: NextFixingPlan;
+  path: PathPoint[];
+  /** Deposits maturing after the last fixing in the path. */
+  later: DepositRelease[];
+}
 export declare function planReserve(input: {
   upcoming: Upcoming[];
   policy?: Policy;

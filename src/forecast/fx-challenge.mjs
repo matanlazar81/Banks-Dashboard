@@ -234,22 +234,36 @@ export function planReserve({ upcoming, policy = 'p95', eur, inflowPerDay = null
   const needLiquidWithBackup = Math.max(0, todayAmount - maturing, required - maturing - backup);
   const inflowUntil = inflowPerDay == null ? null : inflowTo(f0);
 
+  // The deposits that mature after `from` and by `to`, earliest first: what each fixing gains from them.
+  const releasedBetween = (from, to) => usable
+    .filter((d) => d.valueDate && d.valueDate > from && (to === null || d.valueDate <= to))
+    .sort((x, y) => x.valueDate.localeCompare(y.valueDate) || y.amount - x.amount)
+    .map((d) => ({ amount: d.amount, valueDate: d.valueDate, label: d.label }));
+
   // Euros at each fixing, if nothing else is converted: today's liquid euros, plus typical inflows and deposits
   // maturing by then, less the earlier fixings at the policy amount. Euros converted before a fixing are gone at
   // it and at every later one, so what can be converted before a fixing, in total, is the smallest spare from
   // that fixing on.
   let before = 0;
+  let from = today;
   const path = fx.map((f) => {
     const req = requirementOf(policy, f.conv, f.risk);
     const available = liquid + inflowTo(f) + maturingBy(f.date) - before;
+    const releasedDeposits = releasedBetween(from, f.date);
     before += req;
-    return { month: f.month, date: f.date, required: req, expected: f.risk.expectedEur, available, surplus: available - req, convertibleBefore: 0 };
+    from = f.date;
+    return {
+      month: f.month, date: f.date, required: req, expected: f.risk.expectedEur,
+      released: releasedDeposits.reduce((s, d) => s + d.amount, 0), releasedDeposits,
+      available, surplus: available - req, convertibleBefore: 0,
+    };
   });
   let floor = Infinity;
   for (let i = path.length - 1; i >= 0; i--) {
     floor = Math.min(floor, path[i].surplus);
     path[i].convertibleBefore = Math.max(0, floor);
   }
+  const shown = inflowPerDay == null ? path.slice(0, 1) : path;
 
   const next = {
     month: f0.month, date: f0.date, required, todayAmount, hapoalim, other, liquid, maturing, backup,
@@ -264,7 +278,8 @@ export function planReserve({ upcoming, policy = 'p95', eur, inflowPerDay = null
     // The euros have to be in the Hapoalim account on the day.
     moveToHapoalim: Math.min(other, Math.max(0, required - maturing - hapoalim)),
   };
-  return { policy, next, path: inflowPerDay == null ? path.slice(0, 1) : path };
+  // Deposits maturing after the last fixing shown: not needed for any of them.
+  return { policy, next, path: shown, later: releasedBetween(shown[shown.length - 1].date, null) };
 }
 
 // ── past fixings ──
