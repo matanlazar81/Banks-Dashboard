@@ -3,7 +3,8 @@
 //   GET /api/fx-challenge          what the page simulates on; ?refresh=true reads NetSuite again
 //   GET/PUT /api/fx-challenge/table  the conversion table, saved for everyone (none saved = the default)
 //   GET/PUT /api/fx-challenge/mail   who gets the daily mail, saved for everyone (none saved = FX_MAIL_TO)
-// createFxChallengeRouter serves all three behind the one prefix.
+//   POST /api/fx-challenge/mail/send the page's Send now: the daily mail, at once
+// createFxChallengeRouter serves them all behind the one prefix.
 //
 // The page simulates the monthly EUR→ILS conversions on the table (src/forecast/fx-challenge.mjs) and says how
 // much EUR to keep for them. This module gathers what it needs; each read is cached, and a failed read becomes a
@@ -27,7 +28,7 @@
 const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
-const { readDoc, createDocHandler, send } = require('./json-store.cjs');
+const { readDoc, createDocHandler, readWriteBody, send, userOf } = require('./json-store.cjs');
 const { keysOnly, numIn, textIn } = require('./metrics-settings.cjs');
 
 const ROOT = path.join(__dirname, '..');
@@ -209,7 +210,10 @@ function readMailMarker(file) {
   const m = readDoc(file || MAIL_SENT_FILE);
   if (!m || typeof m !== 'object' || typeof m.at !== 'string') return null;
   const sentOf = (s) => (s && typeof s.at === 'string'
-    ? { day: s.day || null, at: s.at, recipients: Number.isInteger(s.recipients) ? s.recipients : null, subject: typeof s.subject === 'string' ? s.subject : null, actions: Array.isArray(s.actions) ? s.actions : null }
+    ? {
+      day: s.day || null, at: s.at, recipients: Number.isInteger(s.recipients) ? s.recipients : null, subject: typeof s.subject === 'string' ? s.subject : null,
+      actions: Array.isArray(s.actions) ? s.actions : null, manual: s.manual === true, by: typeof s.by === 'string' ? s.by : null,
+    }
     : null);
   const lastSent = 'lastSent' in m ? sentOf(m.lastSent) : sentOf(m);
   return { day: m.day || null, at: m.at, quiet: m.quiet === true, why: typeof m.why === 'string' ? m.why : null, lastSent };
@@ -240,9 +244,55 @@ function createFxMailHandler(deps = {}) {
       envTo: splitAddresses(e.FX_MAIL_TO),
       from: e.FX_MAIL_FROM || null,
       hour: mailHourOf(e.FX_MAIL_HOUR),
-      lastSent: sent ? { day: sent.day, at: sent.at, recipients: sent.recipients } : null,
+      lastSent: sent ? { day: sent.day, at: sent.at, recipients: sent.recipients, manual: sent.manual } : null,
       lastCheck: marker && marker.quiet && marker.day ? { day: marker.day, at: marker.at, why: marker.why || 'nothing to do' } : null,
     });
+  };
+}
+
+/**
+ * POST /api/fx-challenge/mail/send: the page's Send now. The daily mail, read fresh, goes at once to the list as saved
+ * (or FX_MAIL_TO), whatever there is to do (sendNow in scripts/fx-challenge-mail.cjs); it counts as the last mail
+ * sent. JSON and same-origin, as a save; one at a time, and once a minute at most.
+ *   deps: reads (the page's NetSuite reads), tableFile, file (the list), sentFile, env() (default: this process's
+ *   environment with the checkout's .env over it, as the cron has), clock(), nodemailer (tests)
+ */
+function createFxMailSendHandler(deps = {}) {
+  const clock = deps.clock || Date.now;
+  const env = deps.env || (() => ({ ...process.env, ...checkoutEnv() }));
+  let last = -Infinity;
+  let busy = false;
+  return async function fxMailSendHandler(req, res) {
+    if ((req.method || 'GET').toUpperCase() !== 'POST') {
+      send(res, 405, { ok: false, error: 'Method not allowed' }, { Allow: 'POST' });
+      return;
+    }
+    const body = await readWriteBody(req, res, 1024);
+    if (body === null) return;
+    if (busy || clock() - last < 60 * 1000) {
+      send(res, 429, { ok: false, error: 'The mail was sent less than a minute ago. Try again in a minute.' });
+      return;
+    }
+    busy = true;
+    try {
+      // Required here: the mail script requires this module.
+      const { sendNow } = require(path.join(ROOT, 'scripts', 'fx-challenge-mail.cjs'));
+      const r = await sendNow({
+        env: env(), reads: deps.reads, tableFile: deps.tableFile || TABLE_FILE, mailFile: deps.file || MAIL_FILE, markerFile: deps.sentFile || MAIL_SENT_FILE,
+        clock, nodemailer: deps.nodemailer, by: userOf(req),
+      });
+      if (!r.ok) {
+        send(res, r.status || 400, { ok: false, error: r.error });
+        return;
+      }
+      last = clock();
+      send(res, 200, { ok: true, recipients: r.recipients, subject: r.subject, at: r.at });
+    } catch (e) {
+      console.error(`[fx-challenge] send now failed: ${e && e.message}`);
+      send(res, 500, { ok: false, error: 'The mail could not be sent. The server log has the details.' });
+    } finally {
+      busy = false;
+    }
   };
 }
 
@@ -426,16 +476,18 @@ function createFxTableHandler(deps = {}) {
 
 /**
  * Every FX Challenge route behind one handler, by the path after /api/fx-challenge: '' the page's data, /table the
- * table, /mail the daily mail's recipients; anything else 404. finance-it mounts the prefix once
- * (app.use('/api/fx-challenge', role, …)), so a route added here needs no change there. The path is read from
- * req.originalUrl when the mount strips it from req.url.
- *   deps: as createFxChallengeHandler, plus tableFile, mail (createFxMailHandler's deps)
+ * table, /mail the daily mail's recipients, /mail/send the page's Send now; anything else 404. finance-it mounts the
+ * prefix once (app.use('/api/fx-challenge', role, …)), so a route added here needs no change there. The path is read
+ * from req.originalUrl when the mount strips it from req.url.
+ *   deps: as createFxChallengeHandler, plus tableFile, mail (createFxMailHandler's deps; with nodemailer for tests)
  */
 function createFxChallengeRouter(deps = {}) {
+  const reads = deps.reads || defaultNsReads(deps);
   const routes = {
-    '': createFxChallengeHandler(deps),
+    '': createFxChallengeHandler({ ...deps, reads }),
     '/table': createFxTableHandler({ file: deps.tableFile, clock: deps.clock }),
     '/mail': createFxMailHandler({ clock: deps.clock, ...deps.mail }),
+    '/mail/send': createFxMailSendHandler({ clock: deps.clock, reads, tableFile: deps.tableFile, ...deps.mail }),
   };
   return function fxChallengeRouter(req, res) {
     let p = '';
@@ -447,7 +499,7 @@ function createFxChallengeRouter(deps = {}) {
 }
 
 module.exports = {
-  createFxChallengeRouter, createFxChallengeHandler, createFxTableHandler, createFxMailHandler, readMailMarker, validateTable, validateMailSettings,
+  createFxChallengeRouter, createFxChallengeHandler, createFxTableHandler, createFxMailHandler, createFxMailSendHandler, readMailMarker, validateTable, validateMailSettings,
   readFxChallenge, readSalaryProjection, nsReads, defaultNsReads, restletIds, bookRow, mailRows, israelDay, loadFxModule,
   splitAddresses, mailHourOf, savedRecipients, checkoutEnv, LSPORTS_ADDRESS, TABLE_FILE, MAIL_FILE, MAIL_SENT_FILE,
 };

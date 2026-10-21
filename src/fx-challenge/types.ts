@@ -42,7 +42,8 @@ export interface MailSettings {
   from: string | null;
   /** The hour it is sent, Israel time. */
   hour: number;
-  lastSent: { day: string | null; at: string; recipients: number | null } | null;
+  /** The last mail that went; manual: sent with the page's Send now. */
+  lastSent: { day: string | null; at: string; recipients: number | null; manual?: boolean } | null;
   /** The daily check, when no mail went (nothing to do, or a Friday or Saturday): when, and why. */
   lastCheck: { day: string; at: string; why: string } | null;
 }

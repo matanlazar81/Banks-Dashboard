@@ -2841,7 +2841,9 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
   // Vendor payments (vendor payments and checks) out of the ILS accounts by month, in shekels (book 2), from `from`
   // (YYYY-MM): the credit cards' (AMEX, Isracard, MasterCard…: the bank pays their bill on the 10th of the next month)
   // apart from the rest (bank transfers, and the Masav batches, whose clearing account is a credit card account). The
-  // payroll is paid by journal, so it is not in them. Returns [{ month, ils, cards, other }] (paid).
+  // payroll is paid by journal, so it is not in them. Neither is a dividend: a payment of something booked to equity
+  // (the 3 September 2026 distribution was paid as vendor payments against a journal on 300029 Dividend Distribution).
+  // Returns [{ month, ils, cards, other }] (paid).
   async function fetchIlsVendorPayments({ from } = {}) {
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(String(from || ''))) throw new Error(`fetchIlsVendorPayments: bad month ${from}`);
     const rows = await suiteqlAll(`
@@ -2853,6 +2855,15 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
       WHERE tal.posting = 'T' AND tal.accountingbook = 2 AND t.subsidiary = ${subsidiaryId}
         AND a.accttype IN ('Bank', 'CredCard') AND c.symbol = 'ILS' AND t.type IN ('VendPymt', 'Check')
         AND t.trandate >= TO_DATE('${from}-01', 'YYYY-MM-DD')
+        AND NOT EXISTS (
+          SELECT 1 FROM PreviousTransactionLineLink ptl
+          JOIN transactionaccountingline e ON e.transaction = ptl.previousdoc AND e.posting = 'T'
+          JOIN account ea ON ea.id = e.account
+          WHERE ptl.nextdoc = t.id AND ea.accttype = 'Equity')
+        AND NOT EXISTS (
+          SELECT 1 FROM transactionaccountingline e2
+          JOIN account ea2 ON ea2.id = e2.account
+          WHERE e2.transaction = t.id AND e2.posting = 'T' AND ea2.accttype = 'Equity')
       GROUP BY TO_CHAR(t.trandate, 'YYYY-MM'), BUILTIN.DF(a.id)
     `);
     const CARD = /amex|american express|isracard|mastercard|visa|diners/i;

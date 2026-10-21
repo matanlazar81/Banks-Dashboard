@@ -11,7 +11,7 @@ import {
   type CashPlan, type DepositRelease, type FxTable, type OtherConversion, type OutcomeRange, type PathPoint, type Policy, type RateCheck, type ReservePlan,
 } from '../forecast/fx-challenge.mjs';
 import { formatEur, monthName } from '../metrics/model.ts';
-import { fetchFx, fetchMail, saveMail, saveTable } from './api.ts';
+import { fetchFx, fetchMail, saveMail, saveTable, sendMailNow } from './api.ts';
 import { buildFxModel, formatDay, formatIls, formatPct0, formatRate, type FxModel, type ScheduleRow } from './fxModel.ts';
 import type { FxPayload, MailSettings } from './types.ts';
 
@@ -950,6 +950,8 @@ function DailyMail() {
   const [draft, setDraft] = useState('');
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
+  const [sentNote, setSentNote] = useState<string | null>(null);
   const load = useCallback(async () => {
     try {
       setData(await fetchMail());
@@ -997,6 +999,21 @@ function DailyMail() {
       setSaving(false);
     }
   }
+  async function sendNow() {
+    if (!window.confirm(`Send today's FX Challenge mail now to ${current.length} address${current.length === 1 ? '' : 'es'}?`)) return;
+    setSending(true);
+    setErr(null);
+    setSentNote(null);
+    try {
+      const r = await sendMailNow();
+      setSentNote(`Sent to ${r.recipients} address${r.recipients === 1 ? '' : 'es'}: ${r.subject}`);
+      await load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSending(false);
+    }
+  }
   const sent = data.lastSent;
   const check = data.lastCheck;
   return (
@@ -1006,7 +1023,7 @@ function DailyMail() {
         <p>
           Checked every working day (Sunday to Thursday) at {String(data.hour).padStart(2, '0')}:00 Israel time, and sent{data.from ? ` from ${data.from}` : ''} to the addresses below
           {' '}only when there is something to do: a payment in shekels the balances don&apos;t cover within a week, a shortfall, euros to move to Hapoalim, or something new to decide.
-          {' '}{sent ? `Last sent ${atIsrael(sent.at)}${sent.recipients ? `, to ${sent.recipients} address${sent.recipients === 1 ? '' : 'es'}` : ''}.` : 'Not sent by the daily job yet.'}
+          {' '}{sent ? `Last sent ${atIsrael(sent.at)}${sent.manual ? ' (Send now)' : ''}${sent.recipients ? `, to ${sent.recipients} address${sent.recipients === 1 ? '' : 'es'}` : ''}.` : 'Not sent by the daily job yet.'}
           {check ? ` Last check ${atIsrael(check.at)}: no mail (${check.why}).` : ''}
         </p>
         <ul className="flex flex-wrap gap-1.5">
@@ -1027,8 +1044,13 @@ function DailyMail() {
             {saving && <Loader2 size={12} className="animate-spin" />}Save for everyone
           </button>
           {edited !== null && <button type="button" className={BUTTON} disabled={saving} onClick={() => { setEdited(null); setErr(null); }}>Undo changes</button>}
+          <button type="button" className={BUTTON} disabled={sending || saving || changed || !current.length} onClick={() => void sendNow()}
+            title={changed ? 'Save the list first: Send now goes to the saved list.' : !current.length ? 'Nobody is on the list.' : "Read today's figures and send the mail now, whether or not there is something to do. It counts as the day's mail."}>
+            {sending && <Loader2 size={12} className="animate-spin" />}Send now
+          </button>
         </form>
         {err && <p className="text-rose-700">{err}</p>}
+        {sentNote && !err && <p className="text-emerald-700">{sentNote}</p>}
         {changed && !err && <p className="text-amber-700">Not saved yet: until you save, the mail goes to the list as it was.</p>}
         <p className="text-[11px] text-slate-500">lsports.eu addresses only, as the mail carries LSports&apos; balances. Each save is kept in the history with who made it.</p>
       </div>

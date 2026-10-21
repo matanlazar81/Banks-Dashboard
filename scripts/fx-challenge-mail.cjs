@@ -33,9 +33,12 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
-// dotenv 17 prints a line each time a .env is loaded; the NetSuite reads load it again, so quiet for the whole run.
-process.env.DOTENV_CONFIG_QUIET = process.env.DOTENV_CONFIG_QUIET || 'true';
-try { require('dotenv').config({ path: path.join(ROOT, '.env'), quiet: true }); } catch { /* the environment may be set already */ }
+if (require.main === module) {
+  // Run from the cron or by hand: the checkout's .env. (The page's Send now, in the server, passes its env instead.)
+  // dotenv 17 prints a line each time a .env is loaded; the NetSuite reads load it again, so quiet for the whole run.
+  process.env.DOTENV_CONFIG_QUIET = process.env.DOTENV_CONFIG_QUIET || 'true';
+  try { require('dotenv').config({ path: path.join(ROOT, '.env'), quiet: true }); } catch { /* the environment may be set already */ }
+}
 
 const fxs = require(path.join(ROOT, 'server', 'fx-challenge.cjs'));
 const { readDoc } = require(path.join(ROOT, 'server', 'json-store.cjs'));
@@ -432,6 +435,42 @@ function writeMarker(file, marker) {
 /** Friday or Saturday in Israel: the bank's working days are Sunday to Thursday. */
 const offDay = (today) => [5, 6].includes(new Date(`${today}T12:00:00Z`).getUTCDay());
 
+const actionsOf = (mail) => mail.actions.map((a) => ({ key: a.key, eur: Math.round(a.eur) }));
+
+/**
+ * The page's Send now: today's mail, read fresh, sent at once whatever there is to do, to the page's list (or
+ * FX_MAIL_TO). It counts as the last mail sent, so the daily check doesn't repeat what it said; the daily check itself
+ * still runs. deps: env, reads, tableFile, mailFile, markerFile, clock(), nodemailer, by (who asked).
+ * Returns { ok: true, recipients, subject, at } or { ok: false, status, error }.
+ */
+async function sendNow(deps = {}) {
+  const env = deps.env || process.env;
+  const now = (deps.clock || Date.now)();
+  const today = fxs.israelDay(now);
+  const at = new Date(now).toISOString();
+  const cfg = mailConfig(env, fxs.savedRecipients(deps.mailFile || fxs.MAIL_FILE));
+  if (cfg.nobody) return { ok: false, status: 400, error: 'Nobody is on the list, so there is no one to send it to.' };
+  if (cfg.errors.length) return { ok: false, status: 400, error: `Not sent: ${cfg.errors.join('; ')}.` };
+  const fx = await fxs.loadFxModule();
+  let data;
+  try {
+    data = await fxs.readFxChallenge({ reads: deps.reads || fxs.defaultNsReads(), tableDoc: readDoc(deps.tableFile || fxs.TABLE_FILE), clock: () => now });
+  } catch (e) {
+    return { ok: false, status: 502, error: `NetSuite could not be read (${String((e && e.message) || e).slice(0, 200)}).` };
+  }
+  const mail = renderMail(fx, data, { policy: cfg.policy, link: cfg.link });
+  const nodemailer = deps.nodemailer || require('nodemailer');
+  await nodemailer.createTransport(cfg.smtp.transport).sendMail({ from: cfg.from, to: cfg.to.join(', '), subject: mail.subject, text: mail.text, html: mail.html });
+  const markerFile = deps.markerFile || MARKER_FILE;
+  const marker = fxs.readMailMarker(markerFile);
+  writeMarker(markerFile, {
+    day: marker ? marker.day : null, at: marker ? marker.at : at, quiet: marker ? marker.quiet : false, why: marker ? marker.why : null,
+    lastSent: { day: today, at, recipients: cfg.to.length, subject: mail.subject, actions: actionsOf(mail), manual: true, by: deps.by || null },
+  });
+  console.log(`${TAG} ${today}: sent by hand${deps.by ? ` by ${deps.by}` : ''} to ${cfg.to.length} recipient(s) from ${cfg.from} via ${cfg.smtp.host}: ${mail.subject}`);
+  return { ok: true, recipients: cfg.to.length, subject: mail.subject, at };
+}
+
 /**
  * Reads, writes and sends (or prints) the mail; returns the exit code. deps (tests): env, clock(), reads (the
  * NetSuite reads, as readFxChallenge takes them), tableFile, mailFile (the page's list), markerFile, nodemailer.
@@ -501,8 +540,7 @@ async function main(argv = process.argv.slice(2), deps = {}) {
   await nodemailer.createTransport(cfg.smtp.transport).sendMail({ from: cfg.from, to: cfg.to.join(', '), subject: mail.subject, text: mail.text, html: mail.html });
   console.log(`${TAG} ${today}: sent to ${cfg.to.length} recipient(s) from ${cfg.from} via ${cfg.smtp.host}: ${mail.subject}`);
   if (args.scheduled) {
-    const actions = mail.actions.map((a) => ({ key: a.key, eur: Math.round(a.eur) }));
-    writeMarker(markerFile, { day: today, at, quiet: false, why: null, lastSent: { day: today, at, recipients: cfg.to.length, subject: mail.subject, actions } });
+    writeMarker(markerFile, { day: today, at, quiet: false, why: null, lastSent: { day: today, at, recipients: cfg.to.length, subject: mail.subject, actions: actionsOf(mail) } });
   }
   return 0;
 }
@@ -514,4 +552,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { main, renderMail, failureMail, mailDecision, parseArgs, parseRecipients, smtpFrom, mailConfig, scheduleState, israelHour, formatDay: day, MARKER_FILE };
+module.exports = { main, sendNow, renderMail, failureMail, mailDecision, parseArgs, parseRecipients, smtpFrom, mailConfig, scheduleState, israelHour, formatDay: day, MARKER_FILE };
