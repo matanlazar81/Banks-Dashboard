@@ -11,6 +11,8 @@
 //   GET/PUT /api/salary-projection/classification  which accounts are permanent or temporary (saved for everyone)
 //   GET /api/fx-challenge                the FX Challenge (the 7th-of-month EUR→ILS conversions, NetSuite)
 //   GET/PUT /api/fx-challenge/table      its conversion table (saved for everyone)
+//   GET/PUT /api/fx-challenge/mail       who gets its daily mail (saved for everyone)
+//   (every /api/fx-challenge route is mounted once, by prefix: routes added in the checkout need no change here)
 //
 // ONLY NEEDED IF the shared bank-dashboard API mount (docs/backend-bank-dashboard-api.ts →
 // mountBankDashboardApi) is NOT installed. That mount registers every route of
@@ -160,16 +162,23 @@ export function mountCashProjection(app: express.Express): void {
     console.error(`[salary-projection] FAILED to mount from ${BANK_DASHBOARD_DIR}: ${e instanceof Error ? e.message : String(e)}.`);
   }
   // FX Challenge: the monthly EUR→ILS conversions and what to keep for them (NetSuite, and the daily balances
-  // mail's RESTlet when NS_BALANCES_RESTLET is set). Its table is read and saved by anyone with the page's role
-  // (JSON, same origin). Separately guarded, so a checkout from before it keeps the other routes working.
+  // mail's RESTlet when NS_BALANCES_RESTLET is set). Its table and the daily mail's recipients are read and saved by
+  // anyone with the page's role (JSON, same origin). Every route sits behind one prefix (createFxChallengeRouter),
+  // so a route added in the checkout needs no change here; a checkout from before the router gets the explicit
+  // routes. Separately guarded, so a checkout from before it keeps the other routes working.
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { createFxChallengeHandler, createFxTableHandler } = require(`${BANK_DASHBOARD_DIR}/server/fx-challenge.cjs`);
-    const fx = createFxChallengeHandler();
-    const table = createFxTableHandler();
-    app.get('/api/fx-challenge/table', fxRole, (req, res) => table(req, res));
-    app.put('/api/fx-challenge/table', fxRole, (req, res) => table(req, res));
-    app.get('/api/fx-challenge', fxRole, (req, res) => fx(req, res));
+    const fxs = require(`${BANK_DASHBOARD_DIR}/server/fx-challenge.cjs`);
+    if (fxs.createFxChallengeRouter) {
+      const fx = fxs.createFxChallengeRouter();
+      app.use('/api/fx-challenge', fxRole, (req, res) => fx(req, res));
+    } else {
+      const fx = fxs.createFxChallengeHandler();
+      const table = fxs.createFxTableHandler();
+      app.get('/api/fx-challenge/table', fxRole, (req, res) => table(req, res));
+      app.put('/api/fx-challenge/table', fxRole, (req, res) => table(req, res));
+      app.get('/api/fx-challenge', fxRole, (req, res) => fx(req, res));
+    }
     console.log(`[fx-challenge] mounted from ${BANK_DASHBOARD_DIR}`);
   } catch (e) {
     console.error(`[fx-challenge] FAILED to mount from ${BANK_DASHBOARD_DIR}: ${e instanceof Error ? e.message : String(e)}.`);

@@ -339,11 +339,11 @@ async function testValidation(fx) {
   check(legacy.ok && !('fxChallenge' in legacy.value) && legacy.value.cloudCapPct === 8, 'Metrics settings saved while the table was kept there still save, without it');
 }
 
-function call(handler, { method = 'GET', url = '/api/fx-challenge', body, headers = {} } = {}) {
+function call(handler, { method = 'GET', url = '/api/fx-challenge', originalUrl, body, headers = {} } = {}) {
   return new Promise((resolve) => {
     const raw = body === undefined ? '' : JSON.stringify(body);
     const req = Readable.from(raw ? [Buffer.from(raw)] : []);
-    Object.assign(req, { method, url, headers: { host: 'finance.example', ...headers } });
+    Object.assign(req, { method, url, headers: { host: 'finance.example', ...headers }, ...(originalUrl ? { originalUrl } : {}) });
     const res = {
       statusCode: 200, headers: {},
       setHeader(k, v) { this.headers[k.toLowerCase()] = v; },
@@ -521,14 +521,16 @@ async function testMail(fx) {
   const env = { FX_MAIL_TO: 'matan.l@lsports.eu,dotan@lsports.eu', FX_MAIL_FROM: 'matan.l@lsports.eu', FX_MAIL_SMTP_URL: 'smtp://smtp-relay.gmail.com:587' };
   const markerFile = path.join(tmp, 'last.json');
   const at = (hhmm) => () => Date.parse(`${TODAY}T${hhmm}:00+03:00`);
-  const deps = (clock, extra = {}) => ({ env, clock, reads, nodemailer, markerFile, tableFile: path.join(tmp, 'none.json'), ...extra });
+  const mailFile = path.join(tmp, 'mail.json');
+  const deps = (clock, extra = {}) => ({ env, clock, reads, nodemailer, markerFile, mailFile, tableFile: path.join(tmp, 'none.json'), ...extra });
   const [early] = await quietly(() => mail.main(['--scheduled'], deps(at('09:00'))));
   check(early === 0 && sent.length === 0 && !fs.existsSync(markerFile), 'scheduled at 09:00: nothing yet');
   const [ten, tenLog] = await quietly(() => mail.main(['--scheduled'], deps(at('10:00'))));
   const s0 = sent[0];
   check(ten === 0 && sent.length === 1 && s0.msg.from === 'matan.l@lsports.eu' && s0.msg.to === 'matan.l@lsports.eu, dotan@lsports.eu' && s0.msg.html.startsWith('<!doctype html>')
-    && s0.msg.text.includes('Free to convert now') && s0.t.name === 'lsports.eu' && JSON.parse(fs.readFileSync(markerFile, 'utf8')).day === TODAY && /sent to 2 recipient/.test(tenLog.join(' ')),
-  'scheduled at 10:00: sent from the sender set, to both, HTML and text, and marked as sent today');
+    && s0.msg.text.includes('Free to convert now') && s0.t.name === 'lsports.eu' && JSON.parse(fs.readFileSync(markerFile, 'utf8')).day === TODAY
+    && JSON.parse(fs.readFileSync(markerFile, 'utf8')).recipients === 2 && /sent to 2 recipient/.test(tenLog.join(' ')),
+  'scheduled at 10:00: sent from the sender set, to both (FX_MAIL_TO), HTML and text, and marked as sent today to 2'); 
   await quietly(() => mail.main(['--scheduled'], deps(at('11:00'))));
   const [manual] = await quietly(() => mail.main([], deps(at('15:00'))));
   check(sent.length === 2 && manual === 0 && JSON.parse(fs.readFileSync(markerFile, 'utf8')).at === new Date(at('10:00')()).toISOString(), 'sent once a day; a run by hand sends a test and leaves the daily one alone');
@@ -544,6 +546,64 @@ async function testMail(fx) {
   const [dry, dryLog] = await quietly(() => mail.main(['--dry-run', `--html=${htmlFile}`], deps(at('08:00'), { env: {} })));
   check(dry === 0 && sent.length === 3 && /^Subject: FX Challenge/.test(dryLog[0]) && fs.readFileSync(htmlFile, 'utf8').startsWith('<!doctype html>') && /a real send would stop/.test(dryLog.join(' ')),
     '--dry-run prints it and writes the HTML, sends nothing, says what a real send lacks');
+
+  // The page's list, once saved, is the one used; an empty one sends to nobody.
+  fs.writeFileSync(mailFile, JSON.stringify({ value: { to: ['finance@lsports.eu'] }, updatedAt: '2026-10-21T08:00:00Z', updatedBy: 'matan.l@lsports.eu' }));
+  const [, pageLog] = await quietly(() => mail.main(['--dry-run'], deps(at('10:00'))));
+  await quietly(() => mail.main([], deps(at('10:00'))));
+  check(sent.length === 4 && sent[3].msg.to === 'finance@lsports.eu' && /goes to 1 recipient\(s\) \(the page's list\)/.test(pageLog.join(' ')), 'a list saved on the page replaces FX_MAIL_TO');
+  fs.writeFileSync(mailFile, JSON.stringify({ value: { to: [] } }));
+  const marker3 = path.join(tmp, 'last3.json');
+  const [quiet, quietLog] = await quietly(() => mail.main(['--scheduled'], deps(at('10:00'), { markerFile: marker3 })));
+  const [byHand, byHandLog] = await quietly(() => mail.main([], deps(at('10:00'))));
+  check(quiet === 0 && byHand === 1 && sent.length === 4 && !fs.existsSync(marker3) && /nobody is on the page's list/.test(quietLog.join(' ')) && /nobody is on the page's list/.test(byHandLog.join(' ')),
+    'an empty list on the page: no daily mail (said once at the hour), and a send by hand stops'); 
+  fs.rmSync(tmp, { recursive: true, force: true });
+}
+
+async function testMailSettings() {
+  console.log('\nRECIPIENTS: who gets the daily mail (GET/PUT /api/fx-challenge/mail) and the one FX router');
+  const ok = fxs.validateMailSettings({ value: { to: [' Matan.L@lsports.eu', 'dotan@lsports.eu', 'matan.l@LSPORTS.eu'] } });
+  check(ok.ok && same(ok.value, { to: ['matan.l@lsports.eu', 'dotan@lsports.eu'] }), 'addresses trimmed, lower-cased and kept once', JSON.stringify(ok));
+  const refused = [
+    { value: { to: ['someone@gmail.com'] } }, { value: { to: ['matan'] } }, { value: { to: 'matan.l@lsports.eu' } }, { value: { to: [], cc: [] } },
+    { value: null, extra: 1 }, {}, { value: { to: Array.from({ length: 31 }, (_, i) => `p${i}@lsports.eu`) } }, { value: { to: [42] } },
+  ].map((b) => fxs.validateMailSettings(b).ok);
+  check(refused.every((r) => !r), 'refused: outside lsports.eu, not an address, not a list, unknown fields, more than 30', JSON.stringify(refused));
+  check(fxs.validateMailSettings({ value: null }).ok && same(fxs.validateMailSettings({ value: { to: [] } }).value, { to: [] }), 'null goes back to FX_MAIL_TO; an empty list is allowed (nobody gets it)');
+  check(same(fxs.splitAddresses('a@lsports.eu, b@lsports.eu;a@lsports.eu  c@lsports.eu'), ['a@lsports.eu', 'b@lsports.eu', 'c@lsports.eu']) && fxs.mailHourOf('7') === 7 && fxs.mailHourOf('24') === 10 && fxs.mailHourOf('') === 10,
+    'FX_MAIL_TO split on commas, semicolons or spaces; FX_MAIL_HOUR 0–23, else 10');
+
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-rcpt-'));
+  const file = path.join(tmp, 'mail.json');
+  const sentFile = path.join(tmp, 'sent.json');
+  const env = () => ({ FX_MAIL_TO: 'matan.l@lsports.eu,dotan@lsports.eu', FX_MAIL_FROM: 'matan.l@lsports.eu', FX_MAIL_HOUR: '9', SMTP_PASS: 'pw-secret' });
+  const router = fxs.createFxChallengeRouter({
+    reads: { rates: async () => series(400), books: async () => [], mail: null, flows: async () => [], conversions: async () => OCT_CONVERSIONS },
+    tableFile: path.join(tmp, 'table.json'), clock: () => NOW, mail: { file, sentFile, env },
+  });
+  const json = { 'content-type': 'application/json', origin: 'https://finance.example' };
+  // finance-it mounts the router with app.use('/api/fx-challenge', …): req.url loses the prefix, req.originalUrl keeps it.
+  const first = (await call(router, { url: '/mail', originalUrl: '/api/fx-challenge/mail' })).body;
+  check(first.ok && first.value === null && same(first.envTo, ['matan.l@lsports.eu', 'dotan@lsports.eu']) && first.from === 'matan.l@lsports.eu' && first.hour === 9 && first.lastSent === null
+    && !JSON.stringify(first).includes('pw-secret'), 'GET before any save: FX_MAIL_TO, the sender and the hour (nothing else from .env)');
+  const put = await call(router, { method: 'PUT', url: '/mail', originalUrl: '/api/fx-challenge/mail', body: { value: { to: ['matan.l@lsports.eu', 'dotan@lsports.eu', 'finance@lsports.eu'] } }, headers: json });
+  fs.writeFileSync(sentFile, JSON.stringify({ day: TODAY, at: '2026-10-21T07:00:03.000Z', recipients: 3, subject: 'x' }));
+  const after = (await call(router, { url: '/api/fx-challenge/mail' })).body;
+  const history = fs.readFileSync(path.join(tmp, 'mail-history.jsonl'), 'utf8').trim().split('\n');
+  check(put.status === 200 && same(after.value, { to: ['matan.l@lsports.eu', 'dotan@lsports.eu', 'finance@lsports.eu'] }) && after.updatedAt === new Date(NOW).toISOString()
+    && same(after.lastSent, { day: TODAY, at: '2026-10-21T07:00:03.000Z', recipients: 3 }) && history.length === 1 && same(fxs.savedRecipients(file), after.value.to),
+  'PUT saves the list for everyone, with a history line; GET shows it and when the mail last went');
+  const outside = await call(router, { method: 'PUT', url: '/api/fx-challenge/mail', body: { value: { to: ['someone@gmail.com'] } }, headers: json });
+  const cross = await call(router, { method: 'PUT', url: '/api/fx-challenge/mail', body: { value: { to: [] } }, headers: { ...json, origin: 'https://evil.example' } });
+  check(outside.status === 400 && cross.status === 403 && same(fxs.savedRecipients(file), after.value.to), 'an address outside lsports.eu, or a save from another site, changes nothing');
+  const data = (await call(router, { url: '/?refresh=true', originalUrl: '/api/fx-challenge?refresh=true' })).body;
+  const direct = (await call(router, { url: '/api/fx-challenge' })).body;
+  const table = (await call(router, { url: '/table', originalUrl: '/api/fx-challenge/table' })).body;
+  const missing = await call(router, { url: '/nope', originalUrl: '/api/fx-challenge/nope' });
+  const post = await call(router, { method: 'POST', url: '/api/fx-challenge' });
+  check(data.status === 'ready' && direct.status === 'ready' && table.ok && table.value === null && missing.status === 404 && post.status === 405,
+    'one router: the page\'s data (mounted or not), the table, the recipients; anything else 404');
   fs.rmSync(tmp, { recursive: true, force: true });
 }
 
@@ -627,6 +687,7 @@ async function main() {
   await testValidation(fx);
   await testHandler(fx);
   await testMail(fx);
+  await testMailSettings();
   testServerParts();
   await testNetSuiteReads();
   console.log(failures ? `\n❌ FAIL — ${failures} check(s) failed.` : '\n✅ PASS — all checks green.');

@@ -2,6 +2,8 @@
 // The FX Challenge page (Business Tools → FX Challenge, fx-challenge.html):
 //   GET /api/fx-challenge          what the page simulates on; ?refresh=true reads NetSuite again
 //   GET/PUT /api/fx-challenge/table  the conversion table, saved for everyone (none saved = the default)
+//   GET/PUT /api/fx-challenge/mail   who gets the daily mail, saved for everyone (none saved = FX_MAIL_TO)
+// createFxChallengeRouter serves all three behind the one prefix.
 //
 // The page simulates the monthly EUR→ILS conversions on the table (src/forecast/fx-challenge.mjs) and says how
 // much EUR to keep for them. This module gathers what it needs; each read is cached, and a failed read becomes a
@@ -18,6 +20,7 @@
 // (scripts/fx-challenge-mail.cjs) reads the same, uncached.
 // ─────────────────────────────────────────────────────────────────────────────
 
+const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
 const { readDoc, createDocHandler, send } = require('./json-store.cjs');
@@ -25,6 +28,9 @@ const { keysOnly, numIn, textIn } = require('./metrics-settings.cjs');
 
 const ROOT = path.join(__dirname, '..');
 const TABLE_FILE = path.join(ROOT, 'data', 'fx-challenge-table.json');
+/** The daily mail's recipients as saved on the page, and when it last went (scripts/fx-challenge-mail.cjs). */
+const MAIL_FILE = path.join(ROOT, 'data', 'fx-challenge-mail.json');
+const MAIL_SENT_FILE = path.join(ROOT, 'data', 'fx-challenge-mail-last.json');
 let moduleP = null;
 function loadFxModule() {
   if (!moduleP) {
@@ -128,6 +134,78 @@ function validateTable(body) {
   if (body.value === null) return { ok: true, value: null, errors: [] };
   const value = tableIn(body.value, errors);
   return errors.length || !value ? { ok: false, value: null, errors } : { ok: true, value, errors: [] };
+}
+
+// ── the daily mail's recipients ─────────────────────────────────────────────
+// Kept on the page and saved for everyone; until a list is saved, the checkout's FX_MAIL_TO. lsports.eu addresses only:
+// the mail carries LSports' balances. An empty list sends to nobody.
+const LSPORTS_ADDRESS = /^[^\s@<>"',;]+@lsports\.eu$/i;
+const MAX_RECIPIENTS = 30;
+
+/** A list of addresses as written in FX_MAIL_TO (commas, semicolons or spaces), each once. */
+const splitAddresses = (value) => [...new Set(String(value || '').split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean))];
+
+/** FX_MAIL_HOUR (Israel time) as an hour, 10 when unset or not an hour. */
+const mailHourOf = (value) => (/^\d{1,2}$/.test(String(value || '').trim()) && +value <= 23 ? +value : 10);
+
+/** PUT body { value: { to: [addresses] } } → { ok, value, errors }; { value: null } goes back to FX_MAIL_TO. */
+function validateMailSettings(body) {
+  const errors = [];
+  if (!keysOnly(body, ['value'], 'body', errors) || errors.length) return { ok: false, value: null, errors };
+  if (body.value === null) return { ok: true, value: null, errors: [] };
+  if (!keysOnly(body.value, ['to'], 'value', errors) || errors.length) return { ok: false, value: null, errors };
+  const { to } = body.value;
+  if (!Array.isArray(to) || to.length > MAX_RECIPIENTS) return { ok: false, value: null, errors: [`value.to: a list of up to ${MAX_RECIPIENTS} addresses`] };
+  const out = [];
+  to.forEach((a, i) => {
+    const s = typeof a === 'string' ? a.trim().toLowerCase() : '';
+    if (!LSPORTS_ADDRESS.test(s)) errors.push(`value.to[${i + 1}]: ${s ? `${s} is not an lsports.eu address` : 'not an address'}`);
+    else if (!out.includes(s)) out.push(s);
+  });
+  return errors.length ? { ok: false, value: null, errors } : { ok: true, value: { to: out }, errors: [] };
+}
+
+/** The saved list (an array, maybe empty) or null when none is saved: the mail then uses FX_MAIL_TO. */
+function savedRecipients(file = MAIL_FILE) {
+  const doc = readDoc(file);
+  return doc && doc.value && Array.isArray(doc.value.to) ? doc.value.to.filter((a) => typeof a === 'string') : null;
+}
+
+/** The checkout's .env as the mail script reads it (finance-it's backend runs with its own environment). */
+function checkoutEnv(file = path.join(ROOT, '.env')) {
+  try {
+    return require('dotenv').parse(fs.readFileSync(file));
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * GET/PUT /api/fx-challenge/mail: who gets the daily mail, saved for everyone (with history). GET adds what the mail
+ * uses while no list is saved (the checkout's FX_MAIL_TO), its sender and hour, and when it last went.
+ *   deps: file, sentFile, env() (default: the checkout's .env), clock()
+ */
+function createFxMailHandler(deps = {}) {
+  const file = deps.file || MAIL_FILE;
+  const sentFile = deps.sentFile || MAIL_SENT_FILE;
+  const env = deps.env || (() => checkoutEnv());
+  const save = createDocHandler({ file, label: 'fx-challenge-mail', maxBytes: 8 * 1024, validate: validateMailSettings, empty: () => null, clock: deps.clock });
+  return async function fxMailHandler(req, res) {
+    if ((req.method || 'GET').toUpperCase() !== 'GET') return save(req, res);
+    const doc = readDoc(file);
+    const e = env();
+    const sent = readDoc(sentFile);
+    send(res, 200, {
+      ok: true,
+      value: doc && doc.value && Array.isArray(doc.value.to) ? { to: doc.value.to } : null,
+      updatedAt: (doc && doc.updatedAt) || null,
+      updatedBy: (doc && doc.updatedBy) || null,
+      envTo: splitAddresses(e.FX_MAIL_TO),
+      from: e.FX_MAIL_FROM || null,
+      hour: mailHourOf(e.FX_MAIL_HOUR),
+      lastSent: sent && typeof sent.at === 'string' ? { day: sent.day || null, at: sent.at, recipients: Number.isInteger(sent.recipients) ? sent.recipients : null } : null,
+    });
+  };
 }
 
 /**
@@ -293,7 +371,30 @@ function createFxTableHandler(deps = {}) {
   return createDocHandler({ file: deps.file || TABLE_FILE, label: 'fx-challenge-table', maxBytes: 64 * 1024, validate: validateTable, empty: () => null, clock: deps.clock });
 }
 
+/**
+ * Every FX Challenge route behind one handler, by the path after /api/fx-challenge: '' the page's data, /table the
+ * table, /mail the daily mail's recipients; anything else 404. finance-it mounts the prefix once
+ * (app.use('/api/fx-challenge', role, …)), so a route added here needs no change there. The path is read from
+ * req.originalUrl when the mount strips it from req.url.
+ *   deps: as createFxChallengeHandler, plus tableFile, mail (createFxMailHandler's deps)
+ */
+function createFxChallengeRouter(deps = {}) {
+  const routes = {
+    '': createFxChallengeHandler(deps),
+    '/table': createFxTableHandler({ file: deps.tableFile, clock: deps.clock }),
+    '/mail': createFxMailHandler({ clock: deps.clock, ...deps.mail }),
+  };
+  return function fxChallengeRouter(req, res) {
+    let p = '';
+    try { p = new URL(req.originalUrl || req.url || '/', 'http://localhost').pathname; } catch { /* the page's data */ }
+    const route = routes[p.replace(/^\/api\/fx-challenge/, '').replace(/\/+$/, '')];
+    if (!route) { send(res, 404, { ok: false, error: 'Not found' }); return undefined; }
+    return route(req, res);
+  };
+}
+
 module.exports = {
-  createFxChallengeHandler, createFxTableHandler, validateTable, readFxChallenge, nsReads, defaultNsReads, restletIds, bookRow, mailRows, israelDay,
-  loadFxModule, TABLE_FILE,
+  createFxChallengeRouter, createFxChallengeHandler, createFxTableHandler, createFxMailHandler, validateTable, validateMailSettings,
+  readFxChallenge, nsReads, defaultNsReads, restletIds, bookRow, mailRows, israelDay, loadFxModule,
+  splitAddresses, mailHourOf, savedRecipients, checkoutEnv, LSPORTS_ADDRESS, TABLE_FILE, MAIL_FILE, MAIL_SENT_FILE,
 };
