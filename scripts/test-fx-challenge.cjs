@@ -540,11 +540,11 @@ async function testValidation(fx) {
   check(legacy.ok && !('fxChallenge' in legacy.value) && legacy.value.cloudCapPct === 8, 'Metrics settings saved while the table was kept there still save, without it');
 }
 
-function call(handler, { method = 'GET', url = '/api/fx-challenge', originalUrl, body, headers = {} } = {}) {
+function call(handler, { method = 'GET', url = '/api/fx-challenge', originalUrl, body, headers = {}, user } = {}) {
   return new Promise((resolve) => {
     const raw = body === undefined ? '' : JSON.stringify(body);
     const req = Readable.from(raw ? [Buffer.from(raw)] : []);
-    Object.assign(req, { method, url, headers: { host: 'finance.example', ...headers }, ...(originalUrl ? { originalUrl } : {}) });
+    Object.assign(req, { method, url, headers: { host: 'finance.example', ...headers }, ...(originalUrl ? { originalUrl } : {}), ...(user ? { user } : {}) });
     const res = {
       statusCode: 200, headers: {},
       setHeader(k, v) { this.headers[k.toLowerCase()] = v; },
@@ -827,13 +827,54 @@ async function testMailSettings() {
   const after = (await call(router, { url: '/api/fx-challenge/mail' })).body;
   const history = fs.readFileSync(path.join(tmp, 'mail-history.jsonl'), 'utf8').trim().split('\n');
   check(put.status === 200 && same(after.value, { to: ['matan.l@lsports.eu', 'dotan@lsports.eu', 'finance@lsports.eu'] }) && after.updatedAt === new Date(NOW).toISOString()
-    && same(after.lastSent, { day: TODAY, at: '2026-10-21T07:00:03.000Z', recipients: 3 }) && after.lastCheck === null && history.length === 1 && same(fxs.savedRecipients(file), after.value.to),
+    && same(after.lastSent, { day: TODAY, at: '2026-10-21T07:00:03.000Z', recipients: 3, manual: false }) && after.lastCheck === null && history.length === 1 && same(fxs.savedRecipients(file), after.value.to),
   'PUT saves the list for everyone, with a history line; GET shows it and when the mail last went (a marker from before the checks)');
   fs.writeFileSync(sentFile, JSON.stringify({ day: '2026-10-22', at: '2026-10-22T07:00:05.000Z', quiet: true, why: 'nothing new since the last mail',
     lastSent: { day: TODAY, at: '2026-10-21T07:00:03.000Z', recipients: 3, subject: 'x', actions: [{ key: 'deposit', eur: 500000 }] } }));
   const quietDay = (await call(router, { url: '/api/fx-challenge/mail' })).body;
-  check(same(quietDay.lastSent, { day: TODAY, at: '2026-10-21T07:00:03.000Z', recipients: 3 }) && same(quietDay.lastCheck, { day: '2026-10-22', at: '2026-10-22T07:00:05.000Z', why: 'nothing new since the last mail' }),
+  check(same(quietDay.lastSent, { day: TODAY, at: '2026-10-21T07:00:03.000Z', recipients: 3, manual: false }) && same(quietDay.lastCheck, { day: '2026-10-22', at: '2026-10-22T07:00:05.000Z', why: 'nothing new since the last mail' }),
     'a day with no mail: GET shows the last check and why, and still the last mail that went');
+
+  // Send now (POST /mail/send): the mail at once, to the saved list, as the last mail sent; the daily check doesn't repeat it.
+  const outbox = [];
+  const nodemailer = { createTransport: () => ({ sendMail: async (msg) => { outbox.push(msg); return { messageId: 'x' }; } }) };
+  let now = NOW;
+  const sendEnv = () => ({ FX_MAIL_TO: 'matan.l@lsports.eu', FX_MAIL_FROM: 'matan.l@lsports.eu', FX_MAIL_SMTP_URL: 'smtp://smtp-relay.gmail.com:587' });
+  const sendReads = { rates: async () => series(400), books: async () => [{ number: '11001', name: '11001 Bank HPoalim Euro - 583400', eur: 2e6 }], mail: null, flows: async () => [{ month: '2026-09', kind: 'customer', eur: 3e6 }], conversions: async () => OCT_CONVERSIONS };
+  const sendRouter = fxs.createFxChallengeRouter({
+    reads: sendReads, tableFile: path.join(tmp, 'table.json'), clock: () => now, mail: { file, sentFile, env: sendEnv, nodemailer },
+  });
+  const postSend = (extra = {}) => call(sendRouter, { method: 'POST', url: '/mail/send', originalUrl: '/api/fx-challenge/mail/send', body: {}, headers: json, user: { email: 'matan.l@lsports.eu' }, ...extra });
+  const getSend = await call(sendRouter, { url: '/mail/send', originalUrl: '/api/fx-challenge/mail/send' });
+  const notJson = await postSend({ headers: { origin: 'https://finance.example' } });
+  const crossSend = await postSend({ headers: { ...json, origin: 'https://evil.example' } });
+  check(getSend.status === 405 && notJson.status === 415 && crossSend.status === 403 && outbox.length === 0, 'Send now: POST only, JSON, from the dashboard itself');
+  const sentNow = await postSend();
+  const mk = fxs.readMailMarker(sentFile);
+  check(sentNow.status === 200 && sentNow.body.recipients === 3 && /^FX Challenge Wed 21 Oct: /.test(sentNow.body.subject) && outbox.length === 1
+    && outbox[0].to === 'matan.l@lsports.eu, dotan@lsports.eu, finance@lsports.eu' && mk.lastSent.manual && mk.lastSent.by === 'matan.l@lsports.eu'
+    && mk.lastSent.at === new Date(NOW).toISOString() && mk.lastSent.actions.length > 0 && mk.day === '2026-10-22' && mk.quiet,
+  'Send now: read fresh and sent to the saved list; recorded as the last mail (by whom, with its actions), the daily check left as it was', JSON.stringify(sentNow.body));
+  const again = await postSend();
+  now += 61 * 1000;
+  const later = await postSend();
+  check(again.status === 429 && later.status === 200 && outbox.length === 2, 'Send now: once a minute at most');
+  const card = (await call(sendRouter, { url: '/api/fx-challenge/mail' })).body;
+  check(card.lastSent.manual === true && card.lastSent.recipients === 3, 'the card shows the last mail as sent with Send now');
+  // The 10:00 check that day (the last check was the day before): what Send now said is not new.
+  fs.writeFileSync(sentFile, JSON.stringify({ ...JSON.parse(fs.readFileSync(sentFile, 'utf8')), day: '2026-10-20' }));
+  const { main: mailMain } = require(path.join(ROOT, 'scripts', 'fx-challenge-mail.cjs'));
+  const [daily] = await quietly(() => mailMain(['--scheduled'], {
+    env: sendEnv(), clock: () => Date.parse('2026-10-21T10:00:00+03:00') + 60 * 1000, reads: sendReads, nodemailer, markerFile: sentFile, mailFile: file, tableFile: path.join(tmp, 'table.json'),
+  }));
+  const after10 = fxs.readMailMarker(sentFile);
+  check(daily === 0 && outbox.length === 2 && after10.day === TODAY && after10.why === 'nothing new since the last mail' && after10.lastSent.manual,
+    'after Send now, the daily check sends nothing new', JSON.stringify(after10));
+  fs.writeFileSync(file, JSON.stringify({ value: { to: [] } }));
+  now += 61 * 1000;
+  const nobody = await postSend();
+  check(nobody.status === 400 && /Nobody is on the list/.test(nobody.body.error) && outbox.length === 2, 'Send now with nobody on the list: nothing sent, and why');
+  fs.writeFileSync(file, JSON.stringify({ value: { to: ['matan.l@lsports.eu', 'dotan@lsports.eu', 'finance@lsports.eu'] } }));
   const outside = await call(router, { method: 'PUT', url: '/api/fx-challenge/mail', body: { value: { to: ['someone@gmail.com'] } }, headers: json });
   const cross = await call(router, { method: 'PUT', url: '/api/fx-challenge/mail', body: { value: { to: [] } }, headers: { ...json, origin: 'https://evil.example' } });
   check(outside.status === 400 && cross.status === 403 && same(fxs.savedRecipients(file), after.value.to), 'an address outside lsports.eu, or a save from another site, changes nothing');
@@ -919,7 +960,7 @@ async function testNetSuiteReads() {
       { id: 5, m: '2026-09', num: '2500', name: '2500 Something debited', ils: '20' },
     ]);
     if (/'VendPymt', 'Check'/.test(q)) {
-      return /'Bank', 'CredCard'/.test(q) ? reply([
+      return /'Bank', 'CredCard'/.test(q) && /PreviousTransactionLineLink[\s\S]*accttype = 'Equity'/.test(q) ? reply([
         { m: '2026-09', name: '17005 6364 - AMEX - NIS', ils: '-2496282.81' }, { m: '2026-09', name: '17018 4491 - Isracard - NIS', ils: '-33666.12' },
         { m: '2026-09', name: '10002 Bank Poalim IL 583400', ils: '-2615679.48' }, { m: '2026-09', name: '17036 MASAV IL', ils: '-1842852.14' },
         { m: '2026-08', name: '17039 4409- AMEX - NIS', ils: '-1475947.66' }, { m: '2026-08', name: '17036 MASAV IL', ils: '-388880.74' },
@@ -953,7 +994,7 @@ async function testNetSuiteReads() {
     try { await ns.fetchPayrollLiabilities({ from: "2026-06' OR 1=1" }); } catch { badMonth = true; }
     check(same(owed.map((r) => [r.id, r.account, r.ils]), [[354114, '200000', 4066621.1], [354114, '180013', 1741757.41]])
       && same(paid, [{ month: '2026-08', ils: 1864828.4, cards: 1475947.66, other: 388880.74 }, { month: '2026-09', ils: 6988480.55, cards: 2529948.93, other: 4458531.62 }]) && badMonth,
-    'payroll journals: what they owe (credits, positive; a debit left out); ILS vendor payments as paid, the credit cards apart from transfers and Masav (a credit card account that clears the batches); the month is checked', JSON.stringify(paid));
+    'payroll journals: what they owe (credits, positive; a debit left out); ILS vendor payments as paid, the credit cards apart from transfers and Masav (a credit card account that clears the batches), payments of equity (dividends) left out; the month is checked', JSON.stringify(paid));
     const books = await ns.fetchEurBalancesBooks();
     check(books[0].eur === 979709.61 && books[0].number === '11001', 'books: the EUR balance per account');
     await ns.restletGet('customscript_ph_rl_balances', 'customdeploy_ph_rl_balances');

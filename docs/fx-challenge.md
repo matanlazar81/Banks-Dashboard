@@ -21,6 +21,7 @@ briefly a tab of the Metrics page before it got its own sidebar item.
 | `GET /api/fx-challenge` | what the page shows (`server/fx-challenge.cjs`); `?refresh=true` reads NetSuite again |
 | `GET/PUT /api/fx-challenge/table` | the conversion table, saved for everyone (`null` = the default) |
 | `GET/PUT /api/fx-challenge/mail` | who gets the daily mail, saved for everyone (`null` = the server's `FX_MAIL_TO`) |
+| `POST /api/fx-challenge/mail/send` | the page's **Send now**: the daily mail at once, to the saved list |
 | finance-it | sidebar item → iframe of `<bank-dashboard static base>/fx-challenge.html`; every `/api/fx-challenge` route is mounted once, by prefix (`createFxChallengeRouter`), so new ones need no finance-it change (see Deploying) |
 
 ## The page
@@ -80,7 +81,8 @@ briefly a tab of the Metrics page before it got its own sidebar item.
     is **paid by the 14th** (`PAYROLL_DUE`). In 2026 the net salaries were about 48–51%. A month the projection lacks
     carries the last journal's total.
   - **Vendors**: the average of the last 3 closed months (`fetchIlsVendorPayments`: vendor payments and checks out of
-    the ILS accounts; the payroll is paid by journal, so it is not in them), in two parts:
+    the ILS accounts; the payroll is paid by journal, so it is not in them; nor are dividends, paid as vendor payments
+    against an equity journal, as on 3 September 2026 and in June), in two parts:
     - **the credit cards** (AMEX, Isracard, MasterCard): the bank pays their bill **on the 10th** (`CARD_BILL_DAY`)
       for the month before's spending (`cardBills`). A month that is over is billed what was spent; this month's
       spending at least the average (it is still going); later months the average.
@@ -177,6 +179,10 @@ day.
 - Until a list is saved there, the mail goes to `FX_MAIL_TO` in the checkout's `.env`.
 - An empty list sends to nobody.
 - The card also shows the sender, the hour, when the mail last went, and the last check that sent nothing (and why).
+- **Send now** (`POST /api/fx-challenge/mail/send`, `sendNow`) reads today's figures fresh and sends the mail at once to
+  the saved list, whether or not there is something to do (save a changed list first). It counts as the last mail
+  sent, so the next daily check doesn't repeat what it said; the daily check itself still runs. JSON and same-origin
+  as a save, one at a time and once a minute at most; the log names who sent it.
 
 The mail is HTML with a plain-text part:
 - the subject: the first two things to do (or "nothing to do today") and today's EUR/ILS;

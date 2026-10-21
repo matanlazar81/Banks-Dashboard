@@ -61,3 +61,21 @@ export async function fetchMail(): Promise<MailSettings | null> {
 
 /** Saves who gets the daily mail, for everyone; null goes back to the server's FX_MAIL_TO. */
 export const saveMail = (to: string[] | null) => putValue<unknown>('/api/fx-challenge/mail', to === null ? null : { to });
+
+/** Sends the daily mail now, to the saved list: how many it went to and its subject, or an error saying why not. */
+export async function sendMailNow(): Promise<{ recipients: number; subject: string; at: string }> {
+  const csrf = await csrfToken();
+  const res = await fetch('/api/fx-challenge/mail/send', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...(csrf ? { 'x-csrf-token': csrf } : {}) },
+    body: '{}',
+  });
+  let body: unknown = null;
+  try { body = await res.json(); } catch { /* not JSON */ }
+  const b = body as { ok?: boolean; error?: string; recipients?: number; subject?: string; at?: string } | null;
+  if (res.status === 401) throw new Error(SESSION);
+  if (res.status === 404) throw new Error(NOT_INSTALLED);
+  if (!b || b.ok !== true) throw new Error(b && b.error ? b.error : `Sending failed (HTTP ${res.status}).`);
+  return { recipients: b.recipients ?? 0, subject: b.subject ?? '', at: b.at ?? '' };
+}
