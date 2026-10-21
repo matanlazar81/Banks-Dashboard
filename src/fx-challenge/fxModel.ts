@@ -12,6 +12,8 @@ export interface ScheduleRow extends ScheduleItem {
 export interface YearTotal { year: string; eur: number; ils: number; vsSpotIls: number; expectedEur: number; count: number }
 
 export interface FxModel {
+  /** Today in Israel (YYYY-MM-DD). */
+  today: string;
   labels: string[];
   /** Today's EUR/ILS (NetSuite), and the rate being simulated (today's unless one is typed). */
   spot: number | null;
@@ -56,6 +58,7 @@ export function buildFxModel(data: FxPayload, simRate: number | null, policy: Po
   const past = pastConversions({ table, today: data.today, series: data.rates.series, conversions: data.conversions });
 
   return {
+    today: data.today,
     labels: bandLabels(bounds),
     spot: base.spot,
     spotDate: base.spotDate,
