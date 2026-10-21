@@ -166,6 +166,28 @@ export function fixingRisk(row, bounds, spot, sigma, years, quantile = 0.95) {
   return { probs, expectedEur, expectedIls, p95Eur: quantileEur, worstEur: Math.max(...amounts) };
 }
 
+/**
+ * A conversion's outcomes by EUR/ILS range: neighbouring bands that sell the same euros at the same rate are merged,
+ * with their chances added (probs from fixingRisk). lo and hi are the range's edges, null where it is open-ended; a
+ * rate on an edge belongs to the range above it.
+ */
+export function outcomeRanges(row, bounds, probs) {
+  const out = [];
+  row.cells.forEach((c, i) => {
+    const eur = -c.eurK * 1000;
+    const hi = i < bounds.length ? bounds[i] : null;
+    const last = out[out.length - 1];
+    if (last && last.eur === eur && last.rate === c.rate) {
+      last.hi = hi;
+      last.p += probs[i] || 0;
+      last.bands.push(i);
+      return;
+    }
+    out.push({ lo: i ? bounds[i - 1] : null, hi, eur, rate: c.rate, ils: eur * c.rate, p: probs[i] || 0, bands: [i] });
+  });
+  return out;
+}
+
 // ── what to keep, what is free ──
 export const POLICIES = ['today', 'p95', 'worst'];
 export const POLICY_LABEL = { today: "Today's band", p95: '95% of rate moves', worst: "The table's worst case" };
@@ -324,7 +346,7 @@ const number = (s) => {
 export function tableProblems(t) {
   const out = [];
   if (!t || !Array.isArray(t.bounds) || !Array.isArray(t.rows)) return ['The table needs bands and months.'];
-  if (!(Number.isInteger(t.fixingDay) && t.fixingDay >= 1 && t.fixingDay <= 28)) out.push('The fixing day is a day from 1 to 28.');
+  if (!(Number.isInteger(t.fixingDay) && t.fixingDay >= 1 && t.fixingDay <= 28)) out.push('The conversion day is a day from 1 to 28.');
   if (t.bounds.length < 1 || t.bounds.length > 30) out.push('Between 1 and 30 band bounds.');
   t.bounds.forEach((b, i) => {
     if (!(typeof b === 'number' && b > 0 && b < LIMITS.rate)) out.push(`Bound ${i + 1} is not a rate.`);

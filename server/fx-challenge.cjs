@@ -186,7 +186,7 @@ async function readFxChallenge({ reads, cached = (k, fn) => fn(), tableDoc = nul
   const flows = val(3, 'flows');
   if (!flows) warnings.push('The monthly EUR flows could not be read, so the typical inflow is left out.');
   const conversions = val(4, 'conversions');
-  if (!conversions) warnings.push('The booked conversions could not be read, so past fixings are not checked.');
+  if (!conversions) warnings.push('The booked conversions could not be read, so past conversions are not checked.');
 
   return {
     ok: true,

@@ -1,14 +1,21 @@
 // Pure: what the FX Challenge page shows, from GET /api/fx-challenge and the rate being simulated. No React.
 import {
-  bandIndex, bandLabels, checkPast, conversionAt, eurPosition, fixingRisk, fixings, planReserve, typicalInflow,
-  type Conversion, type EurPosition, type Fixing, type FixingRisk, type PastCheck, type Policy, type ReservePlan,
+  bandIndex, bandLabels, checkPast, conversionAt, eurPosition, fixingRisk, fixings, outcomeRanges, planReserve, typicalInflow,
+  type Conversion, type EurPosition, type Fixing, type FixingRisk, type OutcomeRange, type PastCheck, type Policy, type ReservePlan,
 } from '../forecast/fx-challenge.mjs';
 import type { FxPayload } from './types.ts';
 
 /** The volatility used when NetSuite's history is too short: about EUR/ILS's over the last two years. */
 export const FALLBACK_SIGMA = 0.075;
 
-export interface ScheduleRow { fixing: Fixing; atSpot: Conversion | null; atSim: Conversion | null; risk: FixingRisk | null }
+export interface ScheduleRow {
+  fixing: Fixing;
+  atSpot: Conversion | null;
+  atSim: Conversion | null;
+  risk: FixingRisk | null;
+  /** What it can sell, by EUR/ILS range, with each range's chance (from today's rate). */
+  outcomes: OutcomeRange[] | null;
+}
 export interface YearTotal { year: string; eur: number; ils: number; vsSpotIls: number; expectedEur: number; count: number }
 export interface PastRow extends PastCheck { others: { date: string; eur: number; ils: number }[] }
 
@@ -39,12 +46,16 @@ export function buildFxModel(data: FxPayload, simRate: number | null, policy: Po
   const sigma = sigmaFromHistory ? (data.rates.sigma as number) : FALLBACK_SIGMA;
   const all = fixings(table, today);
 
-  const schedule: ScheduleRow[] = all.filter((f) => f.status !== 'past').map((f) => ({
-    fixing: f,
-    atSpot: spot ? conversionAt(f.row, bounds, spot) : null,
-    atSim: sim ? conversionAt(f.row, bounds, sim) : null,
-    risk: spot ? fixingRisk(f.row, bounds, spot, sigma, f.days / 365) : null,
-  }));
+  const schedule: ScheduleRow[] = all.filter((f) => f.status !== 'past').map((f) => {
+    const risk = spot ? fixingRisk(f.row, bounds, spot, sigma, f.days / 365) : null;
+    return {
+      fixing: f,
+      atSpot: spot ? conversionAt(f.row, bounds, spot) : null,
+      atSim: sim ? conversionAt(f.row, bounds, sim) : null,
+      risk,
+      outcomes: risk ? outcomeRanges(f.row, bounds, risk.probs) : null,
+    };
+  });
 
   const byYear = new Map<string, YearTotal>();
   for (const s of schedule) {
