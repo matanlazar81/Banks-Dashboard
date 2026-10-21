@@ -141,6 +141,31 @@ export function projectedMonths(blocks) {
   return months;
 }
 
+const CHANGE_SOURCES = new Set(['Open position', 'Terminated', 'Leave end']);
+
+/**
+ * Total payroll by month, as the Salary Projection page shows it: every payroll account (blocks, with the payload's
+ * classification), plus the planned hires, leavers and returns from leave marked TRUE and the override file's
+ * increments in the months the projection makes. Overrides are for reference and Deel sits below Total payroll, so
+ * neither is in it. payload: GET /api/salary-projection's answer. Returns { [mKey]: { eur, ils, status } }.
+ */
+export function totalPayrollByMonth(payload) {
+  const accounts = (payload.accounts || []).map((a) => a.acct);
+  const sum = (fig) => accounts.reduce((s, a) => s + (Number(fig && fig[a]) || 0), 0);
+  const out = {};
+  for (const b of payload.blocks || []) for (const r of b.rows || []) out[r.mKey] = { eur: sum(r.eur), ils: sum(r.ils), status: r.status };
+  const add = (rows) => {
+    for (const r of rows) {
+      if (!out[r.month]) continue;
+      out[r.month].eur += Number(r.eur) || 0;
+      out[r.month].ils += Number(r.ils) || 0;
+    }
+  };
+  add(countedChangeRows(payload.blocks, payload.changes ? payload.changes.rows : []).filter((r) => CHANGE_SOURCES.has(r.source)));
+  add(countedIncrementRows(payload.blocks, payload.overrides ? payload.overrides.rows : []));
+  return out;
+}
+
 // ── Deel ─────────────────────────────────────────────────────────────────────
 /** The months Deel's run-rate averages: the last six up to the run-rate month. */
 export const DEEL_RUN_RATE_MONTHS = 6;

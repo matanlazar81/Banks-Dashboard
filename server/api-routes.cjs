@@ -50,7 +50,7 @@ function getNsClient(subsidiaryId         = 3) {
   // the running Node process is holding an old require()'d copy from before the most
   // recent deploy. Evict the require cache and rebuild so the new methods become visible
   // without a full process restart.
-  const expected           = ['fetchBankClassifiedYearly', 'fetchPaidVendorsYearly', 'fetchVendorSpend', 'fetchEurIlsRates', 'restletGet'];
+  const expected           = ['fetchBankClassifiedYearly', 'fetchPaidVendorsYearly', 'fetchVendorSpend', 'fetchEurIlsRates', 'restletGet', 'fetchPayrollLiabilities'];
   const cached = nsClients[subsidiaryId];
   const isStale = cached && expected.some(m => typeof cached[m] !== 'function');
   if (!cached || isStale) {

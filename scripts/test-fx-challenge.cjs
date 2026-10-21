@@ -287,6 +287,103 @@ async function testPlanFromPayload(fx) {
     'no balances or no rate → no plan');
 }
 
+async function testCash(fx) {
+  console.log('\nCASH: salaries, vendors and new deposits');
+  // NetSuite's payroll journals (September's real split), and an accrual journal in the same month that must not count.
+  const journals = [
+    { id: 354114, month: '2026-09', account: '200000', name: '200000 Accounts Payable - Employees', ils: 4066621.1 },
+    { id: 354114, month: '2026-09', account: '200001', name: '200001 Employees reimbursments', ils: 4600 },
+    { id: 354114, month: '2026-09', account: '180013', name: '180013 Withholdind tax - Payroll', ils: 1741757.41 },
+    { id: 354114, month: '2026-09', account: '180069', name: '180069 Mivtach Simon - pension', ils: 1553803.51 },
+    { id: 354114, month: '2026-09', account: '180012', name: '180012 Social Insurance - Social Security - debt', ils: 1082073.04 },
+    { id: 999, month: '2026-09', account: '2500', name: '2500 Accrued vacation', ils: 300000 },
+    { id: 327842, month: '2026-08', account: '200000', name: '200000 Accounts Payable - Employees', ils: 3679346.39 },
+    { id: 327842, month: '2026-08', account: '180013', name: '180013 Withholdind tax - Payroll', ils: 3890000 },
+  ];
+  const split = fx.payrollSplit(journals);
+  check(split.length === 2 && near(split[1].net, 4071221.1) && near(split[1].later, 4377634) && near(split[0].later, 3890000),
+    'payroll journals: net salaries (the employees) vs pension, tax and social security; an accrual journal in the same month is left out', JSON.stringify(split));
+  const pay = fx.payrollToPay({ projection: { asOf: null, months: [{ month: '2026-10', ils: 9000000 }] }, split, months: ['2026-08', '2026-09'], from: '2026-09', count: 3 });
+  const share = (split[0].net + split[1].net) / (split[0].total + split[1].total);
+  check(near(pay.share, share, 1e-9) && same(pay.rows.map((r) => [r.month, r.source]), [['2026-09', 'journal'], ['2026-10', 'projection'], ['2026-11', 'journal']])
+    && near(pay.rows[1].net, 9000000 * share) && near(pay.rows[1].later, 9000000 * (1 - share)) && near(pay.rows[0].total, split[1].total),
+  'payroll to pay: the Salary Projection when it has the month, else the last journal; split as the journals of the months asked');
+  check(fx.payrollToPay({ projection: null, split: [], months: [], from: '2026-09', count: 2 }).rows.length === 0
+    && fx.payrollToPay({ projection: { months: [{ month: '2026-10', ils: 100 }] }, split: [], months: ['2026-09'], from: '2026-10', count: 1 }).rows[0].net === 100,
+  'nothing to go on → no payroll; no journals → all of it by the 5th');
+  const flows = [{ month: '2026-07', kind: 'vendor', eur: -300000 }, { month: '2026-08', kind: 'vendor', eur: -900000 }, { month: '2026-09', kind: 'customer', eur: 5e6 }];
+  const v3 = fx.vendorAverages(flows, [{ month: '2026-07', ils: 3e6 }, { month: '2026-09', ils: 6e6 }, { month: '2026-05', ils: 99e6 }], ['2026-07', '2026-08', '2026-09']);
+  check(near(v3.eur, 400000) && near(v3.ils, 3e6) && fx.vendorAverages(flows, null, ['2026-07']).ils === null, 'vendors: the 3 months\' averages, EUR from the flows and ILS from the ILS accounts (a month without is 0)');
+  const rows = [
+    { company: 'LSports', bank: 'Bank Hapoalim', kind: 'current', currency: 'ILS', amount: 2000000 },
+    { company: 'LSports', bank: 'Bank Hapoalim', kind: 'deposit', currency: 'ILS', amount: 5000000 },
+    { company: 'Bringits', bank: 'Bank Hapoalim', kind: 'current', currency: 'ILS', amount: 900000 },
+  ];
+  check(fx.ilsBalance(rows) === 2000000 && fx.ilsBalance([{ bank: 'Bank Hapoalim', kind: 'current', currency: 'EUR', amount: 1 }]) === null, 'shekels on hand: LSports\' ILS accounts (not deposits, not Bringits); none in the balances → not known');
+
+  // The shekels: ₪1M on hand on 21 Oct, ₪3.1M of vendors a month (₪1M for the rest of October), ₪4M net and ₪4M more
+  // each month, ₪3M from each conversion.
+  const needs = fx.shekelNeeds({
+    today: TODAY, ilsNow: 1e6, vendorsIls: 3.1e6, spot: 3.5, until: '2026-12-31',
+    payroll: [{ month: '2026-10', net: 4e6, later: 4e6 }, { month: '2026-11', net: 4e6, later: 4e6 }],
+    conversions: [{ date: '2026-11-07', ils: 3e6 }, { date: '2026-12-07', ils: 3e6 }],
+  });
+  check(same(needs.needs.map((x) => [x.date, Math.round(x.ils)]), [['2026-11-05', 7100000], ['2026-11-15', 1000000], ['2026-12-05', 7100000], ['2026-12-15', 1000000]])
+    && near(needs.needs[0].eur, 7100000 / 3.5) && same(needs.needs[0].why, ['net', 'vendors']) && same(needs.needs[1].why, ['later']),
+  'by the 5th: net salaries and the month\'s vendors less the shekels on hand (the rest of October\'s vendors first); by the 15th: what the 7th\'s conversion leaves short', JSON.stringify(needs.needs.map((x) => [x.date, x.ils, x.why])));
+  const nov = needs.months.find((m) => m.month === '2026-11');
+  check(same(needs.months.map((m) => m.month), ['2026-10', '2026-11', '2026-12']) && nov.payrollMonth === '2026-10' && nov.net === 4e6 && nov.later === 4e6
+    && near(nov.vendors, 3.1e6) && nov.tableIls === 3e6 && near(nov.convertIls, 8.1e6) && near(needs.months[0].vendors, 1e6),
+  'by month paid: October (the rest of its vendors), then each month\'s payroll, vendors, the table\'s shekels and what is converted');
+  const rich = fx.shekelNeeds({ today: TODAY, ilsNow: 50e6, vendorsIls: 3.1e6, spot: 3.5, until: '2026-12-31', payroll: [{ month: '2026-10', net: 4e6, later: 4e6 }], conversions: [] });
+  check(rich.needs.length === 0 && near(rich.ilsAfter, 50e6 - 1e6 - 4e6 - 3.1e6 - 4e6), 'enough shekels on hand → nothing to convert');
+
+  // The euros: two conversions at today's band (€800K each), €3M today, nothing coming in, €500K converted for
+  // shekels on each 5th, €200K kept for EUR vendors.
+  const t = fx.cloneTable(fx.DEFAULT_TABLE);
+  const two = fx.fixings(t, TODAY).filter((f) => f.status !== 'past').slice(0, 2)
+    .map((f) => ({ month: f.month, date: f.date, days: f.days, conv: fx.conversionAt(f.row, t.bounds, 3.45), risk: fx.fixingRisk(f.row, t.bounds, 3.45, 0.08, f.days / 365) }));
+  const shekels = [{ date: '2026-11-05', eur: 500000 }, { date: '2026-12-05', eur: 500000 }];
+  const plan = fx.planReserve({ upcoming: two, policy: 'today', eur: { hapoalim: 3e6, other: 0, deposits: [] }, inflowPerDay: 0, today: TODAY, shekels, eurFloor: 200000 });
+  check(near(plan.path[0].available, 2.5e6) && near(plan.path[0].surplus, 1.5e6) && near(plan.path[1].forShekels, 1e6) && near(plan.path[1].shekels, 500000)
+    && near(plan.path[1].available, 1.2e6) && near(plan.path[1].surplus, 0.2e6) && near(plan.path[0].convertibleBefore, 0.2e6),
+  'the plan takes the conversions for shekels and keeps the EUR floor: euros by then and the spare before each conversion');
+  check(near(plan.next.shekelsBefore, 500000) && plan.next.eurFloor === 200000 && near(plan.next.spare, 0.2e6) && plan.next.short === null
+    && plan.next.tightest.date === '2026-12-07' && plan.next.freeNow === 3e6 - 800000,
+  'spare now: the smallest spare of all the dues (7 Dec), not more than today\'s euros above the floor');
+  check(same(plan.deposits.map((d) => [d.months, d.until, d.eur]), [[1, '2026-11-21', 1500000], [3, '2027-01-21', 200000], [6, '2027-04-21', 200000]]),
+    'new deposits: a month can hold what the dues before it leave (€1.5M), longer ones only what every due leaves', JSON.stringify(plan.deposits));
+  const tight = fx.planReserve({ upcoming: two, policy: 'today', eur: { hapoalim: 1e6, other: 0, deposits: [] }, inflowPerDay: 0, today: TODAY, shekels, eurFloor: 200000 });
+  check(tight.next.spare === 0 && near(tight.next.short.first.eur, 500000) && tight.next.short.first.date === '2026-11-07'
+    && near(tight.next.short.eur, 1.8e6) && tight.next.short.date === '2026-12-07' && tight.deposits.every((d) => d.eur === 0),
+  'short: a gap opens on 7 Nov (€500K) and grows to €1.8M by 7 Dec without inflows, so nothing is spare and no deposit');
+  const plain = fx.planReserve({ upcoming: two, policy: 'today', eur: { hapoalim: 3e6, other: 0, deposits: [] }, inflowPerDay: 0, today: TODAY });
+  check(plain.path[1].forShekels === 0 && near(plain.path[1].available, 3e6 - 800000) && near(plain.next.spare, 3e6 - 1.6e6), 'without shekels or a floor, the plan is as before');
+
+  // From the payload, as the page and the mail see it.
+  const data = {
+    today: TODAY, table: t, rates: { series: series(400), spot: { date: TODAY, rate: 3.4778 }, sigma: 0.08 },
+    balances: { rows: [{ bank: 'Bank Hapoalim', kind: 'current', currency: 'EUR', amount: 3e6 }, { bank: 'Bank Hapoalim', kind: 'current', currency: 'ILS', amount: 2e6 }] },
+    flows: [...flows, { month: '2026-09', kind: 'vendor', eur: -300000 }], inflowMonths: ['2026-07', '2026-08', '2026-09'],
+    payroll: { journals, projection: { asOf: '2026-10-20T08:00:00Z', months: ['2026-09', '2026-10', '2026-11', '2026-12', '2027-01', '2027-02', '2027-03', '2027-04'].map((m) => ({ month: m, ils: 8e6 })) } },
+    ilsVendors: [{ month: '2026-07', ils: 3e6 }, { month: '2026-08', ils: 3e6 }, { month: '2026-09', ils: 3e6 }],
+  };
+  const v = fx.planFromPayload(data, 'p95');
+  const nov7 = v.schedule[0];
+  const kept = fx.requirementOf('p95', nov7.atSpot, nov7.risk);
+  const keptRate = Math.min(...nov7.outcomes.filter((o) => o.eur === kept).map((o) => o.rate));
+  const novRow = v.cash.months.find((m) => m.month === '2026-11');
+  check(v.cash && v.cash.ilsNow === 2e6 && near(v.cash.vendors.ils, 3e6) && near(v.cash.vendors.eur, 500000) && v.cash.until === '2027-04-30'
+    && near(novRow.tableIls, kept * keptRate) && near(novRow.net + novRow.later, 8e6) && v.cash.notes.length === 0,
+  'from the payload: the shekels on hand, the vendors, and the 7th bringing the shekels of the amount kept (95%: €1.1M at its rate)');
+  check(near(v.plan.next.shekelsBefore, v.cash.needs.filter((x) => x.date <= nov7.fixing.date).reduce((a, x) => a + x.eur, 0)) && v.plan.next.eurFloor === v.cash.vendors.eur
+    && v.plan.deposits.length === 3 && v.plan.deposits.every((d, i, all) => i === 0 || d.eur <= all[i - 1].eur),
+  'the plan carries the shekels\' conversions and the floor; longer deposits never hold more');
+  const books = fx.planFromPayload({ ...data, balances: { rows: [{ bank: 'Bank Hapoalim', kind: 'current', currency: 'EUR', amount: 3e6 }] }, ilsVendors: null, payroll: { journals: [], projection: data.payroll.projection } }, 'p95');
+  check(books.cash.ilsNow === null && books.cash.notes.length === 3 && books.cash.share === null, 'unknown shekels on hand, ILS vendors or split → said, and counted conservatively');
+  check(fx.planFromPayload({ ...data, payroll: null }).cash === null && fx.planFromPayload({ ...data, payroll: null }).plan.next.eurFloor === 0, 'no payroll → the plan without salaries, as before');
+}
+
 async function testParse(fx) {
   console.log('\nPASTE: the table from Excel');
   const p = fx.parseTable(PASTE);
@@ -490,6 +587,24 @@ async function testMail(fx) {
   check(m.text.includes('By Sat 7 Nov: Tue 3 Nov €1.50M') && m.text.includes('By Sun 7 Mar: Mon 15 Feb €2.00M') && /a further €700K in 1 deposit\./.test(m.text),
     'each deposit on the conversion it counts for, and the ones after the last conversion shown', m.text.split('\n').filter((l) => /By |further/.test(l)).join(' | '));
   check(m.html.includes('href="https://finance.example/business-tools/fx-challenge"') && m.text.includes('95% of rate moves'), 'the page\'s link and the setting used');
+  const withCash = await fxs.readFxChallenge({
+    reads: {
+      ...reads,
+      payroll: async () => [
+        { id: 1, month: '2026-09', account: '200000', name: '200000 Accounts Payable - Employees', ils: 4e6 },
+        { id: 1, month: '2026-09', account: '180013', name: '180013 Withholdind tax - Payroll', ils: 4e6 },
+      ],
+      ilsVendors: async () => [{ month: '2026-07', ils: 3e6 }, { month: '2026-08', ils: 3e6 }, { month: '2026-09', ils: 3e6 }],
+      salary: async () => ({ asOf: '2026-10-20T08:00:00Z', months: ['2026-09', '2026-10', '2026-11', '2026-12', '2027-01', '2027-02', '2027-03', '2027-04'].map((m) => ({ month: m, ils: 8e6 })) }),
+    },
+    clock: () => NOW,
+  });
+  const mc = mail.renderMail(fx, withCash, { policy: 'p95' });
+  const vc = fx.planFromPayload(withCash, 'p95');
+  check(/^FX Challenge Wed 21 Oct: (convert €[\d.,]+[KM] for salaries by \w{3} \d+ \w{3}|salaries covered) · (spare|short) /.test(mc.subject) && clean(mc.html) && clean(mc.text)
+    && mc.text.includes('SALARIES AND VENDORS: THE SHEKELS EACH MONTH NEEDS') && /New deposits: /.test(mc.text) && mc.text.includes('Spare before')
+    && mc.text.includes('50% net salaries') && vc.cash && vc.cash.months.length >= 6,
+  'with the payroll: what to convert for salaries and by when, spare or short, new deposits, the months\' shekels and the plan with them', mc.subject);
   const none = mail.renderMail(fx, { ...data, balances: null }, {});
   check(/no recommendation today$/.test(none.subject) && clean(none.html) && none.text.includes('balances'), 'without balances: no recommendation, and why');
   const failed = mail.failureMail(TODAY, new Error('NetSuite down'));
@@ -607,6 +722,45 @@ async function testMailSettings() {
   fs.rmSync(tmp, { recursive: true, force: true });
 }
 
+async function testServerCash(fx) {
+  console.log('\nSERVER: the payroll, the ILS vendors and the Salary Projection\'s saved figures');
+  const sp = require(path.join(ROOT, 'server', 'salary-projection.cjs'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-cash-'));
+  const cacheFile = path.join(tmp, 'salary-projection-cache.json');
+  const payload = {
+    generatedAt: '2026-10-20T08:00:00.000Z', accounts: [{ acct: '760001' }, { acct: '760017' }],
+    blocks: [{ year: 2026, kind: 'current', rows: [
+      { mKey: '2026-09', status: 'actual', eur: {}, ils: { 760001: 7e6, 760017: 1e6 } },
+      { mKey: '2026-10', status: 'current', eur: {}, ils: { 760001: 7.2e6, 760017: 0.8e6 } },
+      { mKey: '2026-11', status: 'forecast', eur: {}, ils: { 760001: 7.2e6, 999999: 5e6 } },
+    ] }],
+    changes: { rows: [{ month: '2026-11', source: 'Open position', actual: true, eur: 0, ils: 100000 }, { month: '2026-11', source: 'Terminated', actual: false, eur: 0, ils: -50000 }] },
+    overrides: { rows: [{ month: '2026-10', mode: 'Increment', eur: 0, ils: 20000 }, { month: '2026-10', mode: 'Override', eur: 0, ils: 9e6 }] },
+  };
+  fs.writeFileSync(cacheFile, JSON.stringify({ schemaVersion: sp.SCHEMA_VERSION, entry: { payload, generatedAtMs: NOW } }));
+  const proj = await fxs.readSalaryProjection(cacheFile);
+  check(proj && proj.asOf === '2026-10-20T08:00:00.000Z' && same(proj.months.map((m) => [m.month, m.ils]), [['2026-09', 8e6], ['2026-10', 8020000], ['2026-11', 7300000]]),
+    'the Salary Projection\'s saved figures: Total payroll by month (accounts, increments and changes marked TRUE; not overrides, not other accounts)', JSON.stringify(proj && proj.months));
+  fs.writeFileSync(cacheFile, JSON.stringify({ schemaVersion: sp.SCHEMA_VERSION - 1, entry: { payload } }));
+  check((await fxs.readSalaryProjection(cacheFile)) === null && (await fxs.readSalaryProjection(path.join(tmp, 'none.json'))) === null, 'none saved, or from an older version → none');
+
+  const asked = {};
+  const reads = {
+    rates: async () => series(400), books: async () => [], mail: null, flows: async () => [], conversions: async () => [],
+    payroll: async (from) => { asked.payroll = from; return [{ id: 1, month: '2026-09', account: '200000', name: '200000 Accounts Payable - Employees', ils: 4e6 }]; },
+    ilsVendors: async (from) => { asked.vendors = from; return [{ month: '2026-09', ils: 3e6 }]; },
+    salary: async () => proj,
+  };
+  const d = await fxs.readFxChallenge({ reads, clock: () => NOW });
+  check(d.payroll && d.payroll.journals.length === 1 && d.payroll.projection === proj && same(d.ilsVendors, [{ month: '2026-09', ils: 3e6 }])
+    && asked.payroll === '2026-06' && asked.vendors === '2026-06' && !d.warnings.some((w) => /Salary Projection/.test(w)),
+  'the payload carries the payroll journals (four months back), the Salary Projection and the ILS vendor payments');
+  const none = await quietly(() => fxs.readFxChallenge({ reads: { ...reads, payroll: async () => { throw new Error('NetSuite down'); }, salary: async () => null, ilsVendors: async () => { throw new Error('down'); } }, clock: () => NOW }));
+  check(none[0].payroll === null && none[0].ilsVendors === null && none[0].warnings.some((w) => /Neither the Salary Projection/.test(w)),
+    'neither the payroll nor the Salary Projection → no payroll, said once');
+  fs.rmSync(tmp, { recursive: true, force: true });
+}
+
 function testServerParts() {
   console.log('\nSERVER: settings and rows');
   check(same(fxs.restletIds('customscript_ph_rl_balances:customdeploy_ph_rl_balances'), { script: 'customscript_ph_rl_balances', deploy: 'customdeploy_ph_rl_balances' })
@@ -634,6 +788,12 @@ async function testNetSuiteReads() {
     const q = JSON.parse(opts.body).q;
     if (/FROM currencyrate/.test(q)) return reply([{ d: '2026-10-19', rate: '3.482737' }, { d: '2026-10-20', rate: '3.47' }, { d: '2026-10-20', rate: '3.4778365' }, { d: '2026-10-21', rate: null }]);
     if (/'conversion'/.test(q) && /GROUP BY/.test(q)) return reply([{ m: '2026-09', k: 'CustPymt', eur: '4424436.19' }, { m: '2026-09', k: 'VendPymt', eur: '-846093.1' }, { m: '2026-09', k: 'conversion', eur: '-2646867.75' }, { m: '2026-09', k: 'Journal', eur: '-132903.93' }, { m: '2026-09', k: 'Transfer', eur: '-47842.06' }, { m: '2026-09', k: 'CardChrg', eur: '-1' }]);
+    if (/'OthCurrLiab'/.test(q)) return reply([
+      { id: 354114, m: '2026-09', num: '200000', name: '200000 Accounts Payable - Employees', ils: '-4066621.1' },
+      { id: 354114, m: '2026-09', num: '180013', name: '180013 Withholdind tax - Payroll', ils: '-1741757.41' },
+      { id: 5, m: '2026-09', num: '2500', name: '2500 Something debited', ils: '20' },
+    ]);
+    if (/'VendPymt', 'Check'/.test(q)) return reply([{ m: '2026-09', ils: '-7311841.17' }, { m: '2026-08', ils: '-3729465.18' }]);
     if (/acctnumber IN/.test(q)) return reply([
       { id: 168931, tranid: 'TRN328', d: '2026-01-02', num: '10002', book: 1, amt: -1750000 }, { id: 168931, tranid: 'TRN328', d: '2026-01-02', num: '11001', book: 1, amt: 1750000 },
       { id: 168931, tranid: 'TRN328', d: '2026-01-02', num: '10002', book: 2, amt: -6593475 }, { id: 168931, tranid: 'TRN328', d: '2026-01-02', num: '11001', book: 2, amt: 6593475 },
@@ -656,6 +816,12 @@ async function testNetSuiteReads() {
     const conv = await ns.fetchHapoalimConversions({ from: '2025-12-20' });
     check(same(conv, [{ id: 168931, tranid: 'TRN328', date: '2026-01-02', eur: -1750000, ils: -6593475 }, { id: 360134, tranid: 'JE10953', date: '2026-10-06', eur: 200000, ils: 820000 }]),
       'conversions: € from the primary book, ₪ from the ILS book; euros bought back come negative; a one-sided journal is left out', JSON.stringify(conv));
+    const owed = await ns.fetchPayrollLiabilities({ from: '2026-06' });
+    const paid = await ns.fetchIlsVendorPayments({ from: '2026-06' });
+    let badMonth = false;
+    try { await ns.fetchPayrollLiabilities({ from: "2026-06' OR 1=1" }); } catch { badMonth = true; }
+    check(same(owed.map((r) => [r.id, r.account, r.ils]), [[354114, '200000', 4066621.1], [354114, '180013', 1741757.41]]) && same(paid, [{ month: '2026-09', ils: 7311841.17 }, { month: '2026-08', ils: 3729465.18 }]) && badMonth,
+      'payroll journals: what they owe (credits, positive; a debit left out); ILS vendor payments as paid; the month is checked');
     const books = await ns.fetchEurBalancesBooks();
     check(books[0].eur === 979709.61 && books[0].number === '11001', 'books: the EUR balance per account');
     await ns.restletGet('customscript_ph_rl_balances', 'customdeploy_ph_rl_balances');
@@ -683,11 +849,13 @@ async function main() {
   await testPast(fx);
   await testRateCheck(fx);
   await testPlanFromPayload(fx);
+  await testCash(fx);
   await testParse(fx);
   await testValidation(fx);
   await testHandler(fx);
   await testMail(fx);
   await testMailSettings();
+  await testServerCash(fx);
   testServerParts();
   await testNetSuiteReads();
   console.log(failures ? `\n❌ FAIL — ${failures} check(s) failed.` : '\n✅ PASS — all checks green.');

@@ -308,6 +308,16 @@ async function testOverrides(payload) {
       && rows[1].mode === 'Increment' && near(rows[1].ils, 20_000 * p.basis.ilsPerEur) && rows[1].ilsEstimated && rows[1].memo === 'Two hires',
       'type, amounts and comment kept; ₪ at the forecast rate when the file has € only');
     check(JSON.stringify(p.blocks) === JSON.stringify(payload.blocks), 'the account projection (blocks) is unchanged: the page adds the planned changes');
+    // The FX Challenge reads the same Total payroll from the cached payload (totalPayrollByMonth).
+    const shared = await import(pathToFileURL(path.join(ROOT, 'src', 'forecast', 'salary-projection.mjs')).href);
+    const pageModel = await import(pathToFileURL(path.join(ROOT, 'src', 'salary-projection', 'model.ts')).href);
+    const byMonth = shared.totalPayrollByMonth(p);
+    const both = pageModel.buildSalaryTable(p, 'ils', 'both');
+    const totalLine = both.lines.find((l) => l.key === 'total');
+    const monthCols = both.columns.map((c, i) => [c.id, i]).filter(([id]) => /^\d{4}-\d{2}$/.test(id));
+    const diffs = monthCols.filter(([id, i]) => !byMonth[id] || Math.abs(byMonth[id].ils - totalLine.values[i]) > 0.01);
+    check(monthCols.length >= 24 && !diffs.length && byMonth[mk(Y, 11)].ils !== payload.blocks[0].rows.find((r) => r.mKey === mk(Y, 11)).ils['760001'],
+      'totalPayrollByMonth matches the page\'s Total payroll in every month (₪), planned changes and increments included', diffs.slice(0, 3).map(([id]) => id).join(','));
 
     const ch = p.changes.rows;
     check(askedChanges && askedChanges.from === Y && askedChanges.accounts === undefined && p.changes.error === null,

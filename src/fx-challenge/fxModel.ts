@@ -2,7 +2,7 @@
 // The recommendation itself (planFromPayload) is shared with the daily mail.
 import {
   bandIndex, bandLabels, conversionAt, pastConversions, planFromPayload,
-  type Conversion, type EurPosition, type PastMonth, type PastTotals, type Policy, type RateCheck, type ReservePlan, type ScheduleItem,
+  type CashPlan, type Conversion, type EurPosition, type PastMonth, type PastTotals, type Policy, type RateCheck, type ReservePlan, type ScheduleItem,
 } from '../forecast/fx-challenge.mjs';
 import type { FxPayload } from './types.ts';
 
@@ -27,6 +27,8 @@ export interface FxModel {
   totals: YearTotal[];
   position: EurPosition | null;
   inflow: ReturnType<typeof planFromPayload>['inflow'];
+  /** Shekels for the payroll and the vendors; null without a payroll figure. */
+  cash: CashPlan | null;
   plan: ReservePlan | null;
   /** Every month since January 2026 whose conversion day has passed, and the totals. */
   past: PastMonth[];
@@ -67,6 +69,7 @@ export function buildFxModel(data: FxPayload, simRate: number | null, policy: Po
     totals: [...byYear.values()],
     position: base.position,
     inflow: base.inflow,
+    cash: base.cash,
     plan: base.plan,
     past: past.months,
     pastFrom: past.from,

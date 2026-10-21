@@ -77,11 +77,14 @@ const para = (html, text, style = '') => ({ html: `<p style="margin:0 0 10px;fon
 const strong = (s, color = '#0f172a') => `<strong style="color:${color};">${esc(s)}</strong>`;
 const heading = (s) => ({ html: `<p style="margin:18px 0 6px;font-size:13px;font-weight:bold;color:#0f172a;">${esc(s)}</p>`, text: `\n${s.toUpperCase()}` });
 
-/** A table: head and rows of plain strings (left-aligned first column); `mark(i)` highlights a row, `dim(i)` greys it. */
-function table(head, rows, { mark = () => false, dim = () => false } = {}) {
-  const cell = (c, i, style) => `<td style="padding:5px 6px;text-align:${i ? 'right' : 'left'};border-bottom:1px solid #f1f5f9;font-size:13px;white-space:nowrap;${style}">${esc(c)}</td>`;
+/** A table: head and rows of plain strings (left-aligned first column); `mark(i)` highlights a row, `dim(i)` greys it;
+ * `compact` for six columns on a phone. */
+function table(head, rows, { mark = () => false, dim = () => false, compact = false } = {}) {
+  const pad = compact ? '4px 4px' : '5px 6px';
+  const size = compact ? 12 : 13;
+  const cell = (c, i, style) => `<td style="padding:${pad};text-align:${i ? 'right' : 'left'};border-bottom:1px solid #f1f5f9;font-size:${size}px;white-space:nowrap;${style}">${esc(c)}</td>`;
   const html = `<table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:2px 0 12px;">`
-    + `<tr>${head.map((h, i) => `<th style="padding:5px 6px;text-align:${i ? 'right' : 'left'};font-weight:normal;font-size:12px;color:#64748b;border-bottom:1px solid #e2e8f0;">${esc(h)}</th>`).join('')}</tr>`
+    + `<tr>${head.map((h, i) => `<th style="padding:${pad};text-align:${i ? 'right' : 'left'};font-weight:normal;font-size:${size - 1}px;color:#64748b;border-bottom:1px solid #e2e8f0;">${esc(h)}</th>`).join('')}</tr>`
     + rows.map((r, n) => {
       const style = mark(n) ? 'background:#e0f2fe;font-weight:bold;color:#0f172a;' : dim(n) ? 'color:#94a3b8;' : 'color:#334155;';
       return `<tr>${r.map((c, i) => cell(c, i, style)).join('')}</tr>`;
@@ -101,11 +104,11 @@ const list = (items) => ({
 function page(title, subtitle, parts, footer) {
   const html = '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>'
     + '<body style="margin:0;padding:0;background:#f1f5f9;">'
-    + '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;"><tr><td align="center" style="padding:12px 4px;">'
+    + '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;"><tr><td align="center" style="padding:12px 2px;">'
     + '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:720px;background:#ffffff;border:1px solid #e2e8f0;border-radius:8px;font-family:Arial,Helvetica,sans-serif;color:#334155;">'
     + `<tr><td style="padding:14px 20px;border-bottom:1px solid #e2e8f0;"><div style="font-size:12px;color:#64748b;">${esc(subtitle)}</div>`
     + `<div style="font-size:18px;font-weight:bold;color:#0f172a;margin-top:2px;">${esc(title)}</div></td></tr>`
-    + `<tr><td style="padding:16px 14px;">${parts.map((p) => p.html).join('')}</td></tr>`
+    + `<tr><td style="padding:16px 10px;">${parts.map((p) => p.html).join('')}</td></tr>`
     + `<tr><td style="padding:12px 20px;border-top:1px solid #e2e8f0;font-size:11px;line-height:1.5;color:#64748b;">${footer.map((f) => f.html).join('<br>')}</td></tr>`
     + '</table></td></tr></table></body></html>';
   const text = [title, subtitle, '', ...parts.map((p) => p.text), '', '--', ...footer.map((f) => f.text)].join('\n');
@@ -128,26 +131,75 @@ function renderMail(fx, data, { policy = 'p95', link = null } = {}) {
 
   if (plan && first && first.atSpot && first.risk) {
     const n = plan.next;
-    title = n.shortfall > 0
-      ? `Keep ${eur(n.required)} for ${day(n.date)}: today's euros are ${eur(n.shortfall)} short`
-      : `Keep ${eur(n.required)} for ${day(n.date)} · free to convert now ${eur(n.freeNow)}`;
-    subject = `FX Challenge ${day(today)}: ${n.shortfall > 0 ? `${eur(n.shortfall)} short for ${day(n.date)}` : `${eur(n.freeNow)} free to convert`}`
-      + `${rc ? `, ${RATE_SUBJECT[rc.level]} (EUR/ILS ${rate(rc.rate)})` : ''} · keep ${eur(n.required)} for ${day(n.date)}`;
-    const backup = n.freeNowWithBackup > n.freeNow;
-    parts.push(para(
-      `Keep ${strong(eur(n.required))} in Hapoalim EUR (583400) for ${esc(day(n.date))}${first.fixing.weekend ? ' (a weekend: the deal sets the day)' : ''}. `
-      + `Free to convert now: ${strong(eur(n.freeNow))}${backup ? `, or ${strong(eur(n.freeNowWithBackup))} if the backup deposits cover a rate jump` : ''}.`,
-      `Keep ${eur(n.required)} in Hapoalim EUR (583400) for ${day(n.date)}${first.fixing.weekend ? ' (a weekend: the deal sets the day)' : ''}. `
-      + `Free to convert now: ${eur(n.freeNow)}${backup ? `, or ${eur(n.freeNowWithBackup)} if the backup deposits cover a rate jump` : ''}.`,
-      'font-size:15px;',
-    ));
+    const cash = v.cash;
+    const months = (data.inflowMonths || []).map(monthShort).join('–');
+    const weekend = first.fixing.weekend ? ' (a weekend: the deal sets the day)' : '';
+    // What can go: with the salaries known, the spare (every due met); without them, the reserve's free euros.
+    const spare = cash ? n.spare : n.freeNow;
+    if (cash) {
+      const firstMonth = cash.months.find((m) => m.net > 0 || m.later > 0);
+      const needs = firstMonth ? cash.needs.filter((x) => x.month <= firstMonth.month) : [];
+      const must = needs.reduce((s2, x) => s2 + x.eur, 0);
+      const dueBy = firstMonth ? `${firstMonth.month}-15` : null;
+      const by = needs.length ? needs[needs.length - 1].date : null;
+      title = must > 0.5 ? `Convert ${eur(must)} for salaries by ${day(by)} · keep ${eur(n.required)} for ${day(n.date)}` : `Keep ${eur(n.required)} for ${day(n.date)} · salaries covered`;
+      subject = `FX Challenge ${day(today)}: ${must > 0.5 ? `convert ${eur(must)} for salaries by ${day(by)}` : 'salaries covered'}`
+        + ` · ${n.short ? `short ${eur(n.short.first.eur)} by ${day(n.short.first.date)}` : `spare ${eur(spare)}`}`
+        + ` · keep ${eur(n.required)} for ${day(n.date)}${rc ? ` · ${RATE_SUBJECT[rc.level]} (${rate(rc.rate)})` : ''}`;
+      parts.push(para(`Keep ${strong(eur(n.required))} in Hapoalim EUR (583400) for ${esc(day(n.date))}${weekend}.`,
+        `Keep ${eur(n.required)} in Hapoalim EUR (583400) for ${day(n.date)}${weekend}.`, 'font-size:15px;'));
+      const convertText = needs.length
+        ? `For the salaries and vendors due by ${day(dueBy)}, convert at least ${eur(must)}${needs.length > 1 ? `: ${needs.map((x) => `${eur(x.eur)} by ${day(x.date)}`).join(' and ')}` : ` by ${day(needs[0].date)}`}.`
+        : `The shekels on hand and the ${day(n.date)} conversion cover the salaries and vendors due by ${day(dueBy)}.`;
+      const spareText = n.short
+        ? `Nothing is spare: on ${day(n.short.first.date)} the needs exceed the euros held and expected by ${eur(n.short.first.eur)}`
+          + `${n.short.date !== n.short.first.date ? `, and by ${eur(n.short.eur)} on ${day(n.short.date)}` : ''}${n.backup > 0 ? ', so a backup deposit may be needed' : ''}.`
+        : `Spare now: ${eur(spare)}${spare > 0 ? ', for a new deposit or to convert on a good day' : ''}.`;
+      parts.push(para(`${esc(convertText).replace(esc(eur(must)), strong(eur(must)))} <span style="color:${n.short ? '#be123c' : '#0f172a'};">${esc(spareText)}</span>`,
+        `${convertText} ${spareText}`, 'font-size:15px;'));
+      const ok = plan.deposits.filter((d) => d.eur > 0);
+      const dep = ok.length
+        ? `New deposits: ${ok.map((d) => `${eur(d.eur)} for ${d.months} month${d.months === 1 ? '' : 's'} (until ${day(d.until)})`).join(', ')}, with everything before then still covered as the typical inflow comes in.`
+        : `New deposits: none now. The coming weeks need the euros held${n.short ? '' : ' and expected'}.`;
+      parts.push(para(esc(dep), dep, 'font-size:13px;'));
+    } else {
+      title = n.shortfall > 0
+        ? `Keep ${eur(n.required)} for ${day(n.date)}: today's euros are ${eur(n.shortfall)} short`
+        : `Keep ${eur(n.required)} for ${day(n.date)} · free to convert now ${eur(n.freeNow)}`;
+      subject = `FX Challenge ${day(today)}: ${n.shortfall > 0 ? `${eur(n.shortfall)} short for ${day(n.date)}` : `${eur(n.freeNow)} free to convert`}`
+        + `${rc ? `, ${RATE_SUBJECT[rc.level]} (EUR/ILS ${rate(rc.rate)})` : ''} · keep ${eur(n.required)} for ${day(n.date)}`;
+      const backup = n.freeNowWithBackup > n.freeNow;
+      parts.push(para(
+        `Keep ${strong(eur(n.required))} in Hapoalim EUR (583400) for ${esc(day(n.date))}${weekend}. `
+        + `Free to convert now: ${strong(eur(n.freeNow))}${backup ? `, or ${strong(eur(n.freeNowWithBackup))} if the backup deposits cover a rate jump` : ''}.`,
+        `Keep ${eur(n.required)} in Hapoalim EUR (583400) for ${day(n.date)}${weekend}. `
+        + `Free to convert now: ${eur(n.freeNow)}${backup ? `, or ${eur(n.freeNowWithBackup)} if the backup deposits cover a rate jump` : ''}.`,
+        'font-size:15px;',
+      ));
+    }
     if (rc) {
-      const diff = n.freeNow * (rc.rate - rc.average);
+      const diff = spare * (rc.rate - rc.average);
       const lead = `EUR/ILS ${rate(rc.rate)} is ${RATE_WORD[rc.level]} for the last ${rc.days} days: above ${pct(rc.share)} of them (average ${rate(rc.average)}, from ${rate(rc.low)} to ${rate(rc.high)}), so `;
-      const tail = n.freeNow > 0
-        ? `: the ${eur(n.freeNow)} free now brings ${ils(n.freeNow * rc.rate)}, ${ils(Math.abs(diff))} ${diff >= 0 ? 'more' : 'less'} than at the average.`
-        : '. Nothing is free to convert today.';
+      const tail = spare > 0
+        ? `: the ${eur(spare)} ${cash ? 'spare' : 'free'} now brings ${ils(spare * rc.rate)}, ${ils(Math.abs(diff))} ${diff >= 0 ? 'more' : 'less'} than at the average.`
+        : '. Nothing is spare to convert today.';
       parts.push(para(`${esc(lead)}${strong(RATE_VERDICT[rc.level], RATE_COLOR[rc.level])}${esc(tail)}`, `${lead}${RATE_VERDICT[rc.level].toUpperCase()}${tail}`));
+    }
+
+    if (cash) {
+      parts.push(heading('Salaries and vendors: the shekels each month needs'));
+      parts.push(table(['Paid in', 'Net (5th)', 'Tax, pension, SS (15th)', 'ILS vendors', 'The 7th brings', 'Convert'],
+        cash.months.map((m) => [
+          `${monthShort(m.month)} ${m.month.slice(2, 4)}`, m.net > 0.5 ? ils(m.net) : '–', m.later > 0.5 ? ils(m.later) : '–', m.vendors > 0.5 ? ils(m.vendors) : '–',
+          m.tableIls > 0.5 ? `+${ils(m.tableIls)}` : '–', m.convertIls > 0.5 ? `${eur(m.convertEur)}` : '–',
+        ]), { compact: true }));
+      const notes = [
+        `Shekels on hand today: ${cash.ilsNow === null ? 'not known' : ils(cash.ilsNow)}. Converted at today's rate (${rate(v.spot)}); each month's euros by the day they are due: ${cash.needs.slice(0, 4).map((x) => `${day(x.date)} ${eur(x.eur)}`).join(', ')}${cash.needs.length > 4 ? ', …' : ''}.`,
+        `Payroll: the Salary Projection's Total payroll${cash.projectionAsOf ? ` (saved ${day(cash.projectionAsOf.slice(0, 10))})` : ''}${cash.share !== null ? `, ${pct(cash.share)} net salaries (by the 5th of the next month) and ${pct(1 - cash.share)} pension, withholding tax and social security (by the 15th), as NetSuite's payroll journals of ${months}` : ''}.`,
+        `Vendors: ${cash.vendors.ils === null ? 'ILS not known' : `${ils(cash.vendors.ils)} a month from the ILS accounts`}, and ${eur(cash.vendors.eur)} a month kept in euros at all times (the averages of ${months}). The 7th brings the shekels of the amount kept.`,
+        ...cash.notes,
+      ];
+      parts.push(list(notes.map((x) => ({ html: esc(x), text: x, style: 'font-size:12px;color:#64748b;' }))));
     }
 
     parts.push(heading(`What the ${day(n.date)} conversion sells`));
@@ -164,14 +216,23 @@ function renderMail(fx, data, { policy = 'p95', link = null } = {}) {
       + `${n.moveToHapoalim > 0 ? ` (move ${eur(n.moveToHapoalim)} to Hapoalim before the conversion)` : ''}`
       + `${n.maturing > 0 ? `, deposits maturing by then ${eur(n.maturing)}` : ''}${n.backup > 0 ? `, backup deposits after it ${eur(n.backup)}` : ''}.`;
     items.push({ html: esc(euros), text: euros });
-    const adds = n.shortfall > 0
-      ? `How it adds up: keep ${eur(n.required)} − deposits maturing before it ${eur(n.maturing)} = ${eur(n.needLiquid)} needed from today's cash of ${eur(n.liquid)}: short ${eur(n.shortfall)}. It needs inflows before the conversion${n.backup > 0 ? ', or a backup deposit' : ''}.`
-      : `How it adds up: keep ${eur(n.required)} − deposits maturing before it ${eur(n.maturing)} = ${eur(n.needLiquid)} needed from today's cash; ${eur(n.liquid)} − ${eur(n.needLiquid)} = ${eur(n.freeNow)} free.`;
-    items.push({ html: esc(adds), text: adds, style: n.shortfall > 0 ? 'color:#be123c;' : '' });
+    let adds;
+    if (cash) {
+      const t = n.tightest;
+      adds = `How the spare adds up: euro cash ${eur(n.liquid)} − ${eur(n.eurFloor)} kept for EUR vendors = ${eur(n.liquid - n.eurFloor)} at most today`
+        + `${t ? `; the tightest due, ${day(t.date)} (${t.shekels ? 'salaries and vendors' : 'the conversion'}), ${t.spare < 0 ? `is short ${eur(-t.spare)}` : `leaves ${eur(t.spare)} after it`}` : ''}; so ${eur(n.spare)}.`;
+    } else {
+      adds = n.shortfall > 0
+        ? `How it adds up: keep ${eur(n.required)} − deposits maturing before it ${eur(n.maturing)} = ${eur(n.needLiquid)} needed from today's cash of ${eur(n.liquid)}: short ${eur(n.shortfall)}. It needs inflows before the conversion${n.backup > 0 ? ', or a backup deposit' : ''}.`
+        : `How it adds up: keep ${eur(n.required)} − deposits maturing before it ${eur(n.maturing)} = ${eur(n.needLiquid)} needed from today's cash; ${eur(n.liquid)} − ${eur(n.needLiquid)} = ${eur(n.freeNow)} free.`;
+    }
+    items.push({ html: esc(adds), text: adds, style: (cash ? n.short : n.shortfall > 0) ? 'color:#be123c;' : '' });
     if (n.freeByFixing !== null && v.inflow) {
-      const months = data.inflowMonths.map(monthShort).join('–');
-      const s = `With the typical inflow (${eur(v.inflow.perMonth)} a month, ${months}), about ${eur(n.inflowUntil)} comes in before the conversion, so ${eur(n.freeByFixing)} can be converted before it, in total, as the euros come in, with the next ${plan.path.length} conversions still covered.`;
-      items.push({ html: esc(s), text: s });
+      const s2 = `With the typical inflow (${eur(v.inflow.perMonth)} a month, ${months}), about ${eur(n.inflowUntil)} comes in before the conversion`
+        + (n.freeByFixing > 0.5
+          ? `, so ${eur(n.freeByFixing)} can be converted before it, in total, as the euros come in, with the next ${plan.path.length} conversions${cash ? ', the salaries and vendors' : ''} still covered.`
+          : `: ${cash ? 'the salaries, vendors and this conversion need all of it' : 'this conversion needs all of it'}.`);
+      items.push({ html: esc(s2), text: s2 });
     }
     parts.push(list(items));
 
@@ -179,23 +240,28 @@ function renderMail(fx, data, { policy = 'p95', link = null } = {}) {
       const year0 = plan.path[0].month.slice(0, 4);
       parts.push(heading(`The next ${plan.path.length} conversions, if nothing else is converted`));
       parts.push(table(
-        ['Conversion day', `Keep (${fx.POLICY_LABEL[plan.policy].toLowerCase()})`, 'Deposits released', 'Euros by then', 'Can be converted before it'],
+        cash
+          ? ['Conversion day', 'Keep', 'Deposits', 'Salaries', 'Euros by then', 'Spare before']
+          : ['Conversion day', `Keep (${fx.POLICY_LABEL[plan.policy].toLowerCase()})`, 'Deposits released', 'Euros by then', 'Can be converted before it'],
         plan.path.map((p) => [
           `${day(p.date)}${p.month.slice(0, 4) !== year0 ? ` ${p.month.slice(0, 4)}` : ''}`, eur(p.required),
-          p.released > 0 ? eur(p.released) : '–', eur(p.available), p.surplus < 0 ? `short ${eur(-p.surplus)}` : eur(p.convertibleBefore),
+          p.released > 0 ? eur(p.released) : '–', ...(cash ? [p.shekels > 0.5 ? eur(p.shekels) : '–'] : []),
+          eur(p.available), p.surplus < 0 ? `short ${eur(-p.surplus)}` : eur(p.convertibleBefore),
         ]),
+        { compact: !!cash },
       ));
       const dated = plan.path.filter((p) => p.releasedDeposits.length);
       const lines = dated.map((p) => `By ${day(p.date)}: ${p.releasedDeposits.map((d) => `${day(d.valueDate)} ${eur(d.amount)}`).join(' · ')}`);
-      const later = plan.later.reduce((s, d) => s + d.amount, 0);
+      const later = plan.later.reduce((s2, d) => s2 + d.amount, 0);
       if (later > 0) lines.push(`After ${day(plan.path[plan.path.length - 1].date, true)}: a further ${eur(later)} in ${plan.later.length} deposit${plan.later.length === 1 ? '' : 's'}.`);
       if (lines.length) {
         parts.push(para(esc('Deposits released, each on the day it matures (if the bank pays it out rather than rolling it over):'), 'Deposits released, each on the day it matures (if the bank pays it out rather than rolling it over):', 'font-size:13px;margin-bottom:4px;'));
         parts.push(list(lines.map((l) => ({ html: esc(l), text: l }))));
       }
-      parts.push(para(esc('Euros by then: cash today, plus the typical inflow and the deposits released by then, less the earlier conversions at the amount kept. Can be converted before it: the smallest spare from that day on, so every later conversion is still covered.'),
-        'Euros by then: cash today, plus the typical inflow and the deposits released by then, less the earlier conversions at the amount kept. Can be converted before it: the smallest spare from that day on, so every later conversion is still covered.',
-        'font-size:12px;color:#64748b;'));
+      const explain = cash
+        ? `Keep: ${fx.POLICY_LABEL[plan.policy].toLowerCase()}. Salaries: the euros converted for salaries and ILS vendors since the conversion before. Euros by then: cash today, plus the typical inflow and the deposits released by then, less the earlier conversions at the amount kept and the salaries. Spare before it: what can be converted before it, in total, with every later conversion, the salaries and vendors still covered and ${eur(n.eurFloor)} kept for EUR vendors.`
+        : 'Euros by then: cash today, plus the typical inflow and the deposits released by then, less the earlier conversions at the amount kept. Can be converted before it: the smallest spare from that day on, so every later conversion is still covered.';
+      parts.push(para(esc(explain), explain, 'font-size:12px;color:#64748b;'));
     }
   } else {
     title = 'No recommendation today';
