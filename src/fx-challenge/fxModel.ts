@@ -1,4 +1,4 @@
-// Pure: what the FX Challenge tab shows, from GET /api/metrics?view=fx and the rate being simulated. No React.
+// Pure: what the FX Challenge page shows, from GET /api/fx-challenge and the rate being simulated. No React.
 import {
   bandIndex, bandLabels, checkPast, conversionAt, eurPosition, fixingRisk, fixings, planReserve, typicalInflow,
   type Conversion, type EurPosition, type Fixing, type FixingRisk, type PastCheck, type Policy, type ReservePlan,

@@ -9,6 +9,8 @@
 //   GET /api/metrics (+ GET/PUT /api/metrics/settings, /api/metrics/deposits)  the Metrics page
 //   GET /api/salary-projection           the Salary Projection (payroll by GL account, NetSuite)
 //   GET/PUT /api/salary-projection/classification  which accounts are permanent or temporary (saved for everyone)
+//   GET /api/fx-challenge                the FX Challenge (the 7th-of-month EUR→ILS conversions, NetSuite)
+//   GET/PUT /api/fx-challenge/table      its conversion table (saved for everyone)
 //
 // ONLY NEEDED IF the shared bank-dashboard API mount (docs/backend-bank-dashboard-api.ts →
 // mountBankDashboardApi) is NOT installed. That mount registers every route of
@@ -26,8 +28,8 @@
 //
 // AUTH: finance-it-backend has no global /api auth gate (routes guard themselves), and the shared
 // handlers do no identity check of their own, so every route is gated here with its page's own role:
-// new_bank_dashboard, pnl_projection, metrics, salary_projection (finance-it's shared/src/types BUSINESS_TOOLS list, where
-// each Business Tools tab has its own checkbox in Users Management). Admins always pass.
+// new_bank_dashboard, pnl_projection, metrics, salary_projection, fx_challenge (finance-it's shared/src/types BUSINESS_TOOLS
+// list, where each Business Tools tab has its own checkbox in Users Management). Admins always pass.
 //
 // HOW TO ADD:
 //   1. Copy this file to src/routes/cash-projection.ts
@@ -41,7 +43,7 @@
 // /api/cash-projection → {"status":"computing",…} on the first call, then {"status":"ready",…};
 // /api/cash-projection/breakdown?line=salary&period=2026-06 → {"status":"ready",…}; the same for
 // /api/pnl-projection and /api/pnl-projection/breakdown?line=payroll&period=2026-06; "[salary-projection]
-// mounted" and /api/salary-projection the same way.
+// mounted" and /api/salary-projection the same way; "[fx-challenge] mounted" and /api/fx-challenge → {"status":"ready",…}.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type express from 'express';
@@ -59,6 +61,7 @@ export function mountCashProjection(app: express.Express): void {
   const targetsRole = requireRole(UserRole.ADMIN, UserRole.NEW_BANK_DASHBOARD, UserRole.PNL_PROJECTION) as any;
   const metricsRole = requireRole(UserRole.ADMIN, UserRole.METRICS) as any;
   const salaryRole = requireRole(UserRole.ADMIN, UserRole.SALARY_PROJECTION) as any;
+  const fxRole = requireRole(UserRole.ADMIN, UserRole.FX_CHALLENGE) as any;
   try {
     // Runtime require: CommonJS module inside the checkout, resolving its own node_modules.
     // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -155,5 +158,20 @@ export function mountCashProjection(app: express.Express): void {
     console.log(`[salary-projection] mounted from ${BANK_DASHBOARD_DIR}`);
   } catch (e) {
     console.error(`[salary-projection] FAILED to mount from ${BANK_DASHBOARD_DIR}: ${e instanceof Error ? e.message : String(e)}.`);
+  }
+  // FX Challenge: the monthly EUR→ILS conversions and what to keep for them (NetSuite, and the daily balances
+  // mail's RESTlet when NS_BALANCES_RESTLET is set). Its table is read and saved by anyone with the page's role
+  // (JSON, same origin). Separately guarded, so a checkout from before it keeps the other routes working.
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { createFxChallengeHandler, createFxTableHandler } = require(`${BANK_DASHBOARD_DIR}/server/fx-challenge.cjs`);
+    const fx = createFxChallengeHandler();
+    const table = createFxTableHandler();
+    app.get('/api/fx-challenge/table', fxRole, (req, res) => table(req, res));
+    app.put('/api/fx-challenge/table', fxRole, (req, res) => table(req, res));
+    app.get('/api/fx-challenge', fxRole, (req, res) => fx(req, res));
+    console.log(`[fx-challenge] mounted from ${BANK_DASHBOARD_DIR}`);
+  } catch (e) {
+    console.error(`[fx-challenge] FAILED to mount from ${BANK_DASHBOARD_DIR}: ${e instanceof Error ? e.message : String(e)}.`);
   }
 }

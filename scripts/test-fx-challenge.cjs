@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // ─────────────────────────────────────────────────────────────────────────────
-// Checks for the Metrics page's FX Challenge tab: the shared logic (src/forecast/fx-challenge.mjs), the saved
-// table's validation (server/metrics-settings.cjs), GET /api/metrics?view=fx (server/metrics.cjs,
-// server/fx-challenge.cjs) and the NetSuite reads' mapping (netsuite-api.cjs, fetch stubbed). No network.
+// Checks for the FX Challenge page: the shared logic (src/forecast/fx-challenge.mjs), the saved table's
+// validation, GET /api/fx-challenge and GET/PUT /api/fx-challenge/table (server/fx-challenge.cjs), and the
+// NetSuite reads' mapping (netsuite-api.cjs, fetch stubbed). No network.
 //   node scripts/test-fx-challenge.cjs
 // ─────────────────────────────────────────────────────────────────────────────
 const fs = require('fs');
@@ -198,12 +198,13 @@ async function testParse(fx) {
 }
 
 async function testValidation(fx) {
-  console.log('\nSETTINGS: the saved table');
+  console.log('\nTABLE: what may be saved');
   const t = fx.cloneTable(fx.DEFAULT_TABLE);
-  const ok = ms.validateSettings({ value: { cloudCapPct: 8, cloudCategory: 'Cloud', fxChallenge: t } });
-  check(ok.ok && same(ok.value.fxChallenge, t) && ok.value.cloudCapPct === 8, 'a table saves with the cloud cap');
-  const reset = ms.validateSettings({ value: { cloudCapPct: 8, fxChallenge: null } });
-  check(reset.ok && !('fxChallenge' in reset.value), 'null puts the default table back');
+  const ok = fxs.validateTable({ value: t });
+  check(ok.ok && same(ok.value, t), 'the table received in October 2026 saves as it is');
+  const reset = fxs.validateTable({ value: null });
+  check(reset.ok && reset.value === null, 'null puts the default table back');
+  check(!fxs.validateTable({}).ok && !fxs.validateTable({ value: t, extra: 1 }).ok, 'a body without the table, or with more, is refused');
   const variants = [
     (x) => { x.bounds[3] = 3.4; },
     (x) => { x.rows[0].cells.pop(); },
@@ -214,17 +215,19 @@ async function testValidation(fx) {
     (x) => { x.rows[0].month = '2026-13'; },
     (x) => { x.rows = []; },
   ];
-  const verdicts = variants.map((f) => { const x = fx.cloneTable(t); f(x); return { server: ms.validateSettings({ value: { fxChallenge: x } }).ok, page: fx.tableProblems(x).length === 0 }; });
+  const verdicts = variants.map((f) => { const x = fx.cloneTable(t); f(x); return { server: fxs.validateTable({ value: x }).ok, page: fx.tableProblems(x).length === 0 }; });
   check(verdicts.every((v) => !v.server && !v.page), `${variants.length} kinds of bad table are refused by the server and flagged by the page alike`, JSON.stringify(verdicts));
   const extra = fx.cloneTable(t);
   extra.rows[0].note = 'x';
-  check(!ms.validateSettings({ value: { fxChallenge: extra } }).ok, 'an unknown field is refused');
+  check(!fxs.validateTable({ value: extra }).ok, 'an unknown field is refused');
   const big = fx.cloneTable(t);
   big.rows = Array.from({ length: 60 }, (_, i) => ({ month: `${2026 + Math.floor(i / 12)}-${String((i % 12) + 1).padStart(2, '0')}`, cells: t.rows[3].cells }));
-  check(ms.validateSettings({ value: { fxChallenge: big } }).ok && JSON.stringify({ value: { fxChallenge: big } }).length < 64 * 1024, 'five years of months fit the 64KB settings limit');
+  check(fxs.validateTable({ value: big }).ok && JSON.stringify({ value: big }).length < 64 * 1024, 'five years of months fit the 64KB limit');
+  const legacy = ms.validateSettings({ value: { cloudCapPct: 8, cloudCategory: 'Cloud', fxChallenge: t } });
+  check(legacy.ok && !('fxChallenge' in legacy.value) && legacy.value.cloudCapPct === 8, 'Metrics settings saved while the table was kept there still save, without it');
 }
 
-function call(handler, { method = 'GET', url = '/api/metrics', body, headers = {} } = {}) {
+function call(handler, { method = 'GET', url = '/api/fx-challenge', body, headers = {} } = {}) {
   return new Promise((resolve) => {
     const raw = body === undefined ? '' : JSON.stringify(body);
     const req = Readable.from(raw ? [Buffer.from(raw)] : []);
@@ -239,9 +242,9 @@ function call(handler, { method = 'GET', url = '/api/metrics', body, headers = {
 }
 
 async function testHandler(fx) {
-  console.log('\nHANDLER: GET /api/metrics?view=fx');
+  console.log('\nHANDLERS: GET /api/fx-challenge, GET/PUT /api/fx-challenge/table');
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-'));
-  const settingsFile = path.join(tmp, 's.json');
+  const tableFile = path.join(tmp, 'table.json');
   const counts = { rates: 0, books: 0, mail: 0, flows: 0, conversions: 0 };
   let mailMode = 'off';
   const fxReads = {
@@ -263,14 +266,10 @@ async function testHandler(fx) {
     flows: async (from) => { counts.flows++; return from === '2026-06' ? [{ month: '2026-09', kind: 'customer', eur: 4424436 }] : []; },
     conversions: async (from) => { counts.conversions++; return from === '2026-09-20' ? OCT_CONVERSIONS : []; },
   };
-  let cashState = { computing: true, startedMs: NOW - 5000 };
-  const h = m.createMetricsHandler({
-    cash: { current: () => cashState }, pnl: { current: () => cashState },
-    reads: { fx: fxReads }, settingsFile, targetsFile: path.join(tmp, 't.json'), clock: () => NOW,
-  });
+  const h = fxs.createFxChallengeHandler({ reads: fxReads, tableFile, clock: () => NOW });
 
-  const a = (await call(h, { url: '/api/metrics?view=fx' })).body;
-  check(a.ok && a.status === 'ready' && a.view === 'fx' && a.today === TODAY, 'answers while the projections are still computing (it needs neither), marked as the FX view');
+  const a = (await call(h)).body;
+  check(a.ok && a.status === 'ready' && a.today === TODAY, 'answers on its own route');
   check(same(a.table, fx.cloneTable(fx.DEFAULT_TABLE)) && a.tableSaved === null, 'no saved table → the default');
   check(a.rates.spot.date === TODAY && near(a.rates.spot.rate, 3.4778, 1e-9) && a.rates.sigma > 0.05 && a.rates.series.length === 400, 'today\'s rate and the volatility from 400 days');
   check(a.balances.source === 'books' && a.balances.rows.length === 3 && a.balances.rows.find((r) => r.kind === 'deposit').bank === 'Bank Hapoalim'
@@ -278,34 +277,52 @@ async function testHandler(fx) {
   'without the RESTlet: the books (deposit and card told apart, zero balances dropped) and a note on how to set it up');
   check(a.conversions.length === 6 && a.flows.length === 1 && same(a.inflowMonths, ['2026-07', '2026-08', '2026-09']), 'flows from four months back, conversions from before the first fixing, the inflow months');
 
-  await call(h, { url: '/api/metrics?view=fx' });
+  await call(h);
   check(counts.rates === 1 && counts.books === 1 && counts.flows === 1 && counts.conversions === 1, 'a second read is cached');
 
   mailMode = 'on';
-  const b = (await call(h, { url: '/api/metrics?view=fx&refresh=true' })).body;
+  const b = (await call(h, { url: '/api/fx-challenge?refresh=true' })).body;
   check(counts.rates === 2 && b.balances.source === 'mail' && b.balances.rows.length === 3 && b.balances.asOf === '2026-10-21T05:00:00Z'
     && b.balances.rows.find((r) => r.kind === 'deposit').valueDate === '2026-11-03' && b.warnings.some((w) => /1 balance row/.test(w)) && b.balances.notes.length === 1,
   'with the RESTlet: the mail\'s rows, deposits with their dates; a row that doesn\'t fit is left out and said');
 
   mailMode = 'fail';
-  const c = (await call(h, { url: '/api/metrics?view=fx&refresh=true' })).body;
+  const c = (await call(h, { url: '/api/fx-challenge?refresh=true' })).body;
   check(c.ok && c.balances.source === 'books' && c.warnings.some((w) => /could not be read/.test(w)), 'the RESTlet fails → the books, with a warning');
 
-  fs.writeFileSync(settingsFile, JSON.stringify({ value: { cloudCapPct: 8, fxChallenge: { ...fx.cloneTable(fx.DEFAULT_TABLE), fixingDay: 6 } }, updatedAt: '2026-10-21T08:00:00Z', updatedBy: 'finance@example.com' }));
-  const d = (await call(h, { url: '/api/metrics?view=fx' })).body;
-  check(d.table.fixingDay === 6 && d.tableSaved.by === 'finance@example.com', 'a saved table is used at once (no cache), with who saved it');
-
-  const bogus = await call(h, { url: '/api/metrics?view=nope' });
-  check(bogus.status === 404, 'an unknown view → 404');
+  const wrong = await call(h, { method: 'PUT', body: {} });
+  check(wrong.status === 405, 'the page\'s data is read-only (PUT → 405)');
   const down = async () => { throw new Error('NetSuite down'); };
-  const broken = m.createMetricsHandler({ cash: { current: () => cashState }, pnl: { current: () => cashState }, reads: { fx: { rates: down, books: down, mail: null, flows: down, conversions: down } }, settingsFile, clock: () => NOW });
-  const e = (await call(broken, { url: '/api/metrics?view=fx' })).body;
+  const broken = fxs.createFxChallengeHandler({ reads: { rates: down, books: down, mail: null, flows: down, conversions: down }, tableFile, clock: () => NOW });
+  const e = (await call(broken)).body;
   check(e.ok && e.rates.spot === null && e.balances === null && e.warnings.length === 4, 'every read failing → still an answer, with four warnings');
 
-  const settings = m.createMetricsSettingsHandler({ file: path.join(tmp, 'saved.json'), clock: () => NOW });
-  const put = await call(settings, { method: 'PUT', url: '/api/metrics/settings', body: { value: { cloudCapPct: 8, cloudCategory: '', fxChallenge: fx.cloneTable(fx.DEFAULT_TABLE) } }, headers: { 'content-type': 'application/json', origin: 'https://finance.example' } });
-  const history = fs.existsSync(path.join(tmp, 'saved-history.jsonl')) ? fs.readFileSync(path.join(tmp, 'saved-history.jsonl'), 'utf8').trim().split('\n') : [];
-  check(put.status === 200 && put.body.ok && put.body.value.fxChallenge.rows.length === 15 && history.length === 1, 'PUT /api/metrics/settings saves the table, with a history line', JSON.stringify(put.body).slice(0, 200));
+  const table = fxs.createFxTableHandler({ file: tableFile, clock: () => NOW });
+  const json = { 'content-type': 'application/json', origin: 'https://finance.example' };
+  const before = (await call(table, { url: '/api/fx-challenge/table' })).body;
+  check(before.ok && before.value === null && before.updatedBy === null, 'GET the table before any save → null (the default)');
+  const saved = fx.cloneTable(fx.DEFAULT_TABLE);
+  saved.fixingDay = 6;
+  const put = await call(table, { method: 'PUT', url: '/api/fx-challenge/table', body: { value: saved }, headers: json });
+  const historyFile = path.join(tmp, 'table-history.jsonl');
+  const history = () => (fs.existsSync(historyFile) ? fs.readFileSync(historyFile, 'utf8').trim().split('\n') : []);
+  check(put.status === 200 && put.body.ok && put.body.value.fixingDay === 6 && history().length === 1, 'PUT saves the table, with a history line', JSON.stringify(put.body).slice(0, 200));
+  const d = (await call(h)).body;
+  check(d.table.fixingDay === 6 && d.tableSaved && d.tableSaved.at === new Date(NOW).toISOString(), 'a saved table is used at once (no cache), with when it was saved');
+  const bad = fx.cloneTable(fx.DEFAULT_TABLE);
+  bad.bounds[3] = 3.4;
+  const refused = await call(table, { method: 'PUT', url: '/api/fx-challenge/table', body: { value: bad }, headers: json });
+  check(refused.status === 400 && history().length === 1, 'a bad table is refused and nothing is written');
+  const back = await call(table, { method: 'PUT', url: '/api/fx-challenge/table', body: { value: null }, headers: json });
+  const f = (await call(h)).body;
+  check(back.status === 200 && back.body.value === null && same(f.table, fx.cloneTable(fx.DEFAULT_TABLE)) && f.tableSaved === null && history().length === 2,
+    'PUT null puts the default back (also in the history)');
+
+  // The Metrics page no longer serves the FX Challenge: ?view=fx is the pack, as before the tab was added.
+  const computing = { computing: true, startedMs: NOW - 5000 };
+  const metrics = m.createMetricsHandler({ cash: { current: () => computing }, pnl: { current: () => computing }, reads: {}, settingsFile: path.join(tmp, 's.json'), targetsFile: path.join(tmp, 't.json'), clock: () => NOW });
+  const old = await call(metrics, { url: '/api/metrics?view=fx' });
+  check(old.status === 202 && old.body.status === 'computing' && !('rates' in old.body), 'GET /api/metrics?view=fx answers with the Metrics pack, not the FX data');
   fs.rmSync(tmp, { recursive: true, force: true });
 }
 

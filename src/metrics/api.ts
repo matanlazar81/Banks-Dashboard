@@ -1,6 +1,6 @@
 // GET /api/metrics, the breakdown of one figure (?detail=), and the settings the page saves
 // (server/metrics.cjs). Relative paths: the page is served next to the dashboard API.
-import type { Explain, FxResponse, MetricsResponse, MetricsSettings, SavedDoc } from './types.ts';
+import type { Explain, MetricsResponse, MetricsSettings, SavedDoc } from './types.ts';
 
 const SESSION = 'Your session has expired. Reload the page to sign in again.';
 
@@ -44,8 +44,8 @@ async function put<T>(url: string, value: T): Promise<SavedDoc<T>> {
 
 export const saveSettings = (s: MetricsSettings) => put('/api/metrics/settings', s);
 
-/** Saves part of the settings on top of what is saved now (read, merge, write), so the pack's cloud cap and the
- * FX Challenge's table never overwrite each other's latest save. */
+/** Saves part of the settings on top of what is saved now (read, merge, write), so a save never undoes another
+ * one made since the page loaded. */
 export async function patchSettings(patch: Partial<MetricsSettings>): Promise<SavedDoc<MetricsSettings>> {
   const res = await fetch('/api/metrics/settings', { credentials: 'include', headers: { Accept: 'application/json' } });
   if (res.status === 401 || res.status === 403) throw new Error(SESSION);
@@ -54,21 +54,6 @@ export async function patchSettings(patch: Partial<MetricsSettings>): Promise<Sa
   const doc = body as { ok?: boolean; value?: MetricsSettings } | null;
   if (!doc || doc.ok !== true || !doc.value) throw new Error(`The saved settings could not be read (HTTP ${res.status}).`);
   return put('/api/metrics/settings', { ...doc.value, ...patch });
-}
-
-/** GET /api/metrics?view=fx: the FX Challenge tab. */
-export async function fetchFx(refresh: boolean): Promise<FxResponse> {
-  const res = await fetch(`/api/metrics?view=fx${refresh ? '&refresh=true' : ''}`, { credentials: 'include', headers: { Accept: 'application/json' } });
-  if (res.status === 401 || res.status === 403) throw new Error(SESSION);
-  let body: unknown = null;
-  try { body = await res.json(); } catch { /* not JSON */ }
-  if (!body || typeof body !== 'object' || !('status' in body)) {
-    throw new Error(res.status === 404 ? 'The FX Challenge is not installed on this server yet.' : `The server returned an unexpected response (HTTP ${res.status}).`);
-  }
-  // A server not restarted since the deploy answers ?view=fx with the pack (or "computing"): say so.
-  const b = body as { status: string; view?: string };
-  if (b.status !== 'error' && b.view !== 'fx') throw new Error('This server does not have the FX Challenge yet: run Pull & Build and restart it.');
-  return body as FxResponse;
 }
 
 /** What one pack figure is made of (GET /api/metrics?detail=…). */

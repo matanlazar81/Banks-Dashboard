@@ -1,5 +1,4 @@
 // Response shapes of GET /api/metrics (server/metrics.cjs) and what the page saves.
-import type { BalanceRow, BookedConversion, FlowRow, FxTable, RatePoint } from '../forecast/fx-challenge.mjs';
 
 export type FigureStatus = 'actual' | 'forecast' | 'actual+forecast';
 
@@ -70,31 +69,7 @@ export interface People {
 export interface MetricsSettings {
   cloudCapPct: number;
   cloudCategory: string;
-  /** The FX Challenge's conversion table; absent = the default (src/forecast/fx-challenge.mjs), null on save = back to it. */
-  fxChallenge?: FxTable | null;
 }
-
-/** GET /api/metrics?view=fx (server/fx-challenge.cjs): what the FX Challenge tab simulates on. */
-export interface FxPayload {
-  ok: true;
-  status: 'ready';
-  view: 'fx';
-  computedAt: string;
-  /** Today in Israel (YYYY-MM-DD). */
-  today: string;
-  table: FxTable;
-  /** Who saved the table and when; null while it is the default. */
-  tableSaved: { at: string | null; by: string | null } | null;
-  rates: { provider: string; series: RatePoint[]; spot: RatePoint | null; sigma: number | null };
-  /** 'mail': the daily balances mail's figures (the RESTlet); 'books': NetSuite's books, EUR only. */
-  balances: { source: 'mail' | 'books'; asOf: string | null; rows: BalanceRow[]; notes: string[] } | null;
-  flows: FlowRow[];
-  /** The closed months the typical inflow averages. */
-  inflowMonths: string[];
-  conversions: (BookedConversion & { id: number; tranid: string })[];
-  warnings: string[];
-}
-export type FxResponse = FxPayload | { ok: false; status: 'error'; error: string };
 
 export interface MetricsPayload {
   ok: true;
