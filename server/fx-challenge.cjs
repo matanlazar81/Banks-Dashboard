@@ -18,7 +18,8 @@
 //                table's first month if earlier: what each past month booked, euros bought back included
 //   payroll      what each month's payroll journal owes (net salaries, withholding tax, pension, social security),
 //                four months back, and the Salary Projection's Total payroll by month (the figures its page saved)
-//   ilsVendors   vendor payments out of the ILS accounts by month, four months back: the shekels kept for vendors
+//   ilsVendors   vendor payments out of the ILS accounts by month, four months back, the credit cards' (billed on
+//                the 10th of the next month) apart from the rest: the shekels kept for vendors
 // The table is the saved one (data/fx-challenge-table.json) or the default. The daily mail
 // (scripts/fx-challenge-mail.cjs) reads the same, uncached.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -199,8 +200,25 @@ function checkoutEnv(file = path.join(ROOT, '.env')) {
 }
 
 /**
+ * The daily mail's marker (scripts/fx-challenge-mail.cjs --scheduled): the day it last checked, whether a mail went
+ * that day or why not (quiet), and the last mail that went, with the actions it carried (so an action already mailed
+ * is not mailed again unless it is urgent or has changed). A marker from before the checks counts as a mail sent.
+ * Returns { day, at, quiet, why, lastSent: { day, at, recipients, subject, actions } | null } or null.
+ */
+function readMailMarker(file) {
+  const m = readDoc(file || MAIL_SENT_FILE);
+  if (!m || typeof m !== 'object' || typeof m.at !== 'string') return null;
+  const sentOf = (s) => (s && typeof s.at === 'string'
+    ? { day: s.day || null, at: s.at, recipients: Number.isInteger(s.recipients) ? s.recipients : null, subject: typeof s.subject === 'string' ? s.subject : null, actions: Array.isArray(s.actions) ? s.actions : null }
+    : null);
+  const lastSent = 'lastSent' in m ? sentOf(m.lastSent) : sentOf(m);
+  return { day: m.day || null, at: m.at, quiet: m.quiet === true, why: typeof m.why === 'string' ? m.why : null, lastSent };
+}
+
+/**
  * GET/PUT /api/fx-challenge/mail: who gets the daily mail, saved for everyone (with history). GET adds what the mail
- * uses while no list is saved (the checkout's FX_MAIL_TO), its sender and hour, and when it last went.
+ * uses while no list is saved (the checkout's FX_MAIL_TO), its sender and hour, when it last went, and the last daily
+ * check that sent nothing (and why).
  *   deps: file, sentFile, env() (default: the checkout's .env), clock()
  */
 function createFxMailHandler(deps = {}) {
@@ -212,7 +230,8 @@ function createFxMailHandler(deps = {}) {
     if ((req.method || 'GET').toUpperCase() !== 'GET') return save(req, res);
     const doc = readDoc(file);
     const e = env();
-    const sent = readDoc(sentFile);
+    const marker = readMailMarker(sentFile);
+    const sent = marker && marker.lastSent;
     send(res, 200, {
       ok: true,
       value: doc && doc.value && Array.isArray(doc.value.to) ? { to: doc.value.to } : null,
@@ -221,7 +240,8 @@ function createFxMailHandler(deps = {}) {
       envTo: splitAddresses(e.FX_MAIL_TO),
       from: e.FX_MAIL_FROM || null,
       hour: mailHourOf(e.FX_MAIL_HOUR),
-      lastSent: sent && typeof sent.at === 'string' ? { day: sent.day || null, at: sent.at, recipients: Number.isInteger(sent.recipients) ? sent.recipients : null } : null,
+      lastSent: sent ? { day: sent.day, at: sent.at, recipients: sent.recipients } : null,
+      lastCheck: marker && marker.quiet && marker.day ? { day: marker.day, at: marker.at, why: marker.why || 'nothing to do' } : null,
     });
   };
 }
@@ -427,7 +447,7 @@ function createFxChallengeRouter(deps = {}) {
 }
 
 module.exports = {
-  createFxChallengeRouter, createFxChallengeHandler, createFxTableHandler, createFxMailHandler, validateTable, validateMailSettings,
+  createFxChallengeRouter, createFxChallengeHandler, createFxTableHandler, createFxMailHandler, readMailMarker, validateTable, validateMailSettings,
   readFxChallenge, readSalaryProjection, nsReads, defaultNsReads, restletIds, bookRow, mailRows, israelDay, loadFxModule,
   splitAddresses, mailHourOf, savedRecipients, checkoutEnv, LSPORTS_ADDRESS, TABLE_FILE, MAIL_FILE, MAIL_SENT_FILE,
 };

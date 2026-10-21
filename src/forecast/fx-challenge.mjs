@@ -43,6 +43,10 @@ export function cloneTable(t) {
 export const FALLBACK_SIGMA = 0.075;
 /** The past conversions are listed from this month (before the table, what was booked only). */
 export const HISTORY_FROM = '2026-01';
+/** When the shekels go out, in the month after the payroll: the net salaries by the 5th; withholding tax, pension and
+ * social security by the 14th. The credit cards' bills (the month before's card spending) are paid on the 10th. */
+export const PAYROLL_DUE = Object.freeze({ net: 5, later: 14 });
+export const CARD_BILL_DAY = 10;
 
 // ── bands ──
 export function bandLabels(bounds) {
@@ -83,6 +87,26 @@ export function fixingDate(month, day) {
   const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
   return `${y}-${pad2(m)}-${pad2(Math.min(day, last))}`;
 }
+
+// ── business days: Sunday to Thursday in Israel (holidays are not known) ──
+const offDay = (t) => { const dow = new Date(t).getUTCDay(); return dow === 5 || dow === 6; };
+
+/** The last business day on or before a date: a payment due on a Friday or a Saturday has to be ready on the Thursday. */
+export function businessDayOnOrBefore(iso) {
+  let t = utc(iso);
+  while (offDay(t)) t -= DAY_MS;
+  return new Date(t).toISOString().slice(0, 10);
+}
+
+/** Business days after `from`, up to and including `to` (0 when `to` is not after `from`). */
+export function businessDaysBetween(from, to) {
+  let n = 0;
+  for (let t = utc(from) + DAY_MS; t <= utc(to); t += DAY_MS) if (!offDay(t)) n += 1;
+  return n;
+}
+
+/** Calendar days from `from` to `to`. */
+export const daysUntil = (from, to) => Math.round((utc(to) - utc(from)) / DAY_MS);
 
 /** Every row's fixing: date, weekday (a weekend fixing may move to a business day), days from today, and
  * whether it is past, the next one, or later. */
@@ -263,7 +287,7 @@ const EMPLOYEES = /employee/i;
 
 /**
  * Each month's payroll journal, as owed: the employees' net salaries (paid by the 5th of the next month) and the rest
- * (withholding tax, pension, social security: by the 15th). rows: the journals' credits to payables and current
+ * (withholding tax, pension, social security: by the 14th). rows: the journals' credits to payables and current
  * accounts, [{ id, month, account, name, ils }] (fetchPayrollLiabilities). A month's payroll journal is the one owing
  * the employees the most, so accrual journals in the same month don't count. Returns [{ month, net, later, total }].
  */
@@ -305,51 +329,91 @@ export function payrollToPay({ projection, split, months, from, count }) {
   return { share, rows: out };
 }
 
-/** Average monthly vendor payments over `months`: EUR from the flows (kind vendor), ILS from the ILS accounts'. */
+/**
+ * Average monthly vendor payments over `months`: EUR from the flows (kind vendor); ILS from the ILS accounts', split
+ * into the credit cards' (billed on the 10th of the next month) and the rest (bank transfers and Masav batches). A row
+ * without the split (an older payload) counts as the rest. ils: both; null when they were not read.
+ */
 export function vendorAverages(flows, ilsVendors, months) {
   const n = (months || []).length;
-  if (!n) return { eur: 0, ils: null };
+  if (!n) return { eur: 0, ils: null, cards: null, other: null };
   const eur = (flows || []).filter((f) => f.kind === 'vendor' && months.includes(f.month)).reduce((s, f) => s - (Number(f.eur) || 0), 0) / n;
-  const ils = Array.isArray(ilsVendors)
-    ? ilsVendors.filter((v) => months.includes(v.month)).reduce((s, v) => s + (Number(v.ils) || 0), 0) / n
-    : null;
-  return { eur: Math.max(0, eur), ils: ils === null ? null : Math.max(0, ils) };
+  if (!Array.isArray(ilsVendors)) return { eur: Math.max(0, eur), ils: null, cards: null, other: null };
+  const rows = ilsVendors.filter((v) => months.includes(v.month));
+  const avg = (of) => Math.max(0, rows.reduce((s, v) => s + of(v), 0) / n);
+  const cards = avg(cardsOf);
+  const other = avg(otherOf);
+  return { eur: Math.max(0, eur), ils: cards + other, cards, other };
 }
+const cardsOf = (v) => (v.cards !== undefined ? Number(v.cards) || 0 : 0);
+const otherOf = (v) => (v.other !== undefined ? Number(v.other) || 0 : Number(v.ils) || 0);
 
-/** LSports' shekels in its current accounts (the mail's balances), or null when the balances have none (the books). */
-export function ilsBalance(rows) {
-  const ils = (rows || []).filter((r) => r && r.currency === 'ILS' && r.kind === 'current' && (!r.company || /lsports/i.test(r.company)));
-  return ils.length ? ils.reduce((s, r) => s + (Number(r.amount) || 0), 0) : null;
+/**
+ * The credit cards' bills from `from` (YYYY-MM, the month paid in) to `until`: on the 10th, the month before's card
+ * spending. A month whose spending is over is billed what was spent; the current month at least the average (it is
+ * still going), and later months the average. ilsVendors: [{ month, cards }]. Returns [{ date, ils, spendMonth }].
+ */
+export function cardBills({ ilsVendors, average, today, until }) {
+  const spent = new Map((ilsVendors || []).map((v) => [v.month, cardsOf(v)]));
+  const thisMonth = today.slice(0, 7);
+  const out = [];
+  for (let m = thisMonth; fixingDate(m, CARD_BILL_DAY) <= until; m = nextMonth(m)) {
+    const date = fixingDate(m, CARD_BILL_DAY);
+    if (date < today) continue;
+    const spendMonth = prevMonth(m);
+    const ils = spendMonth < thisMonth && spent.has(spendMonth) ? spent.get(spendMonth)
+      : spendMonth === thisMonth ? Math.max(average || 0, spent.get(spendMonth) || 0) : average || 0;
+    if (ils > 0.5) out.push({ date, ils, spendMonth });
+  }
+  return out;
 }
 
 /**
- * The shekels the payroll and the vendors need from today to `until`, and the euros to convert for them at today's
- * rate. From the shekels on hand (an overdraft counts against them), as events: today, the rest of this month's vendor
- * payments; on the 5th, the previous month's net salaries and
- * (after this month) the month's vendor payments; on the conversion day, the table's shekels (at today's rate); on
- * the 15th, pension, withholding tax and social security. Whenever the shekels on hand fall short, the gap is
- * converted by that day.
- *   payroll      [{ month (payroll month), net, later }]; conversions: the table's [{ date, ils }]
- * Returns { needs: [{ date, ils, eur, why: [...] }], months: [{ month (paid in), payrollMonth, net, later, vendors,
- * tableIls, convertIls, convertEur }], ilsNow, ilsAfter }.
+ * LSports' shekels: the current accounts (an overdraft counts) and the ILS deposits, which finance releases on the day a
+ * payment goes out (a blocked deposit is left out). null when the balances have no shekels (NetSuite's books).
  */
-export function shekelNeeds({ today, ilsNow, payroll, conversions, vendorsIls, spot, until }) {
+export function ilsOnHand(rows) {
+  const ils = (rows || []).filter((r) => r && r.currency === 'ILS' && (!r.company || /lsports/i.test(r.company)));
+  const current = ils.filter((r) => r.kind === 'current');
+  const deposits = ils.filter((r) => r.kind === 'deposit' && !r.blocked && Number(r.amount) > 0);
+  if (!current.length && !deposits.length) return null;
+  const sum = (xs) => xs.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+  return { current: sum(current), deposits: sum(deposits), total: sum(current) + sum(deposits) };
+}
+
+const PAY_ORDER = { net: 0, later: 1, cards: 2, vendors: 3 };
+
+/**
+ * The shekels the payroll and the vendors need from today to `until`, and the euros to convert for them at today's
+ * rate. From the shekels on hand (an overdraft counts against them), as events:
+ *   today      the rest of this month's ILS vendor payments (bank transfers and Masav batches, at the month's average);
+ *   the 5th    the previous month's net salaries and (after this month) the month's ILS vendor payments;
+ *   the 10th   the credit cards' bills (cardBills);
+ *   the 14th   pension, withholding tax and social security;
+ *   the 7th    the table's conversion brings its shekels (conversions).
+ * Whenever the shekels on hand fall short, the gap is converted by that day.
+ *   payroll    [{ month (payroll month), net, later }]; conversions: the table's [{ date, ils }]
+ *   vendorsIls the ILS vendor payments a month, not the cards; cardBills: [{ date, ils, spendMonth }]
+ * Returns { needs: [{ date, ils, eur, why: [...], month }], dues, months: [{ month (paid in), payrollMonth, net, later,
+ * cards, vendors, tableIls, convertIls, convertEur }], ilsNow, ilsAfter }. dues: each day something is paid, with what
+ * (items), when it has to be ready (by: the business day on or before), the shekels on hand just before, what to
+ * convert for it (convertIls, eur; 0 when covered) and the table's conversion since the payment day before (after).
+ */
+export function shekelNeeds({ today, ilsNow, payroll, conversions, vendorsIls, cardBills: bills = [], spot, until }) {
   const thisMonth = today.slice(0, 7);
   const dim = new Date(Date.UTC(+today.slice(0, 4), +today.slice(5, 7), 0)).getUTCDate();
   const vendors = Math.max(0, Number(vendorsIls) || 0);
   const events = [];
-  const restOfMonth = (vendors * (dim - Number(today.slice(8, 10)))) / dim;
-  if (restOfMonth > 0) events.push({ date: today, ils: -restOfMonth, why: 'vendors', month: thisMonth });
+  const pay = (e) => { if (e.ils < -0.5 && e.date >= today && e.date <= until) events.push(e); };
+  pay({ date: today, ils: -(vendors * (dim - Number(today.slice(8, 10)))) / dim, why: 'vendors', month: thisMonth, rest: true });
   for (const p of payroll || []) {
     const paid = nextMonth(p.month);
-    const d5 = `${paid}-05`;
-    const d15 = `${paid}-15`;
-    if (d5 >= today && d5 <= until) {
-      events.push({ date: d5, ils: -p.net, why: 'net', month: paid, payrollMonth: p.month });
-      if (paid !== thisMonth) events.push({ date: d5, ils: -vendors, why: 'vendors', month: paid });
-    }
-    if (d15 >= today && d15 <= until) events.push({ date: d15, ils: -p.later, why: 'later', month: paid, payrollMonth: p.month });
+    const dNet = fixingDate(paid, PAYROLL_DUE.net);
+    pay({ date: dNet, ils: -p.net, why: 'net', month: paid, payrollMonth: p.month });
+    if (paid !== thisMonth) pay({ date: dNet, ils: -vendors, why: 'vendors', month: paid });
+    pay({ date: fixingDate(paid, PAYROLL_DUE.later), ils: -p.later, why: 'later', month: paid, payrollMonth: p.month });
   }
+  for (const b of bills || []) pay({ date: b.date, ils: -b.ils, why: 'cards', month: b.date.slice(0, 7), spendMonth: b.spendMonth });
   for (const c of conversions || []) {
     if (c.date >= today && c.date <= until) events.push({ date: c.date, ils: c.ils, why: 'conversion', month: c.date.slice(0, 7) });
   }
@@ -357,7 +421,16 @@ export function shekelNeeds({ today, ilsNow, payroll, conversions, vendorsIls, s
   events.sort((a, b) => a.date.localeCompare(b.date) || a.ils - b.ils);
   let cash = Number(ilsNow) || 0;
   const byDate = new Map();
+  const dues = new Map();
+  let since = null;
   for (const e of events) {
+    if (e.why === 'conversion') since = e.date;
+    else {
+      let d = dues.get(e.date);
+      if (!d) { d = { date: e.date, month: e.month, ils: 0, before: cash, items: [], after: since }; dues.set(e.date, d); since = null; }
+      d.ils -= e.ils;
+      d.items.push({ why: e.why, month: e.month, payrollMonth: e.payrollMonth || null, spendMonth: e.spendMonth || null, rest: !!e.rest, ils: -e.ils });
+    }
     cash += e.ils;
     if (cash < -0.5) {
       const n = byDate.get(e.date) || { date: e.date, ils: 0, why: [], month: e.month };
@@ -368,17 +441,48 @@ export function shekelNeeds({ today, ilsNow, payroll, conversions, vendorsIls, s
     }
   }
   const needs = [...byDate.values()].map((n) => ({ ...n, eur: spot > 0 ? n.ils / spot : 0 }));
+  const needOn = new Map(needs.map((n) => [n.date, n]));
+  const dueList = [...dues.values()].map((d) => {
+    const n = needOn.get(d.date);
+    return {
+      ...d, items: d.items.sort((a, b) => PAY_ORDER[a.why] - PAY_ORDER[b.why]), by: businessDayOnOrBefore(d.date),
+      convertIls: n ? n.ils : 0, eur: n ? n.eur : 0,
+    };
+  });
   const paidMonths = [...new Set(events.filter((e) => e.why !== 'conversion').map((e) => e.month))].sort();
   const months = paidMonths.map((m) => {
     const of = (why) => events.filter((e) => e.month === m && e.why === why).reduce((s, e) => s - e.ils, 0);
     const conv = needs.filter((n) => n.month === m);
-    const pay = (payroll || []).find((p) => nextMonth(p.month) === m);
+    const pr = (payroll || []).find((p) => nextMonth(p.month) === m);
     return {
-      month: m, payrollMonth: pay ? pay.month : null, net: of('net'), later: of('later'), vendors: of('vendors'), tableIls: -of('conversion'),
+      month: m, payrollMonth: pr ? pr.month : null, net: of('net'), later: of('later'), cards: of('cards'), vendors: of('vendors'), tableIls: -of('conversion'),
       convertIls: conv.reduce((s, n) => s + n.ils, 0), convertEur: conv.reduce((s, n) => s + n.eur, 0),
     };
   });
-  return { needs, months, ilsNow: ilsNow == null ? null : Number(ilsNow), ilsAfter: cash };
+  return { needs, dues: dueList, months, ilsNow: ilsNow == null ? null : Number(ilsNow), ilsAfter: cash };
+}
+
+/** The payments in shekels up to the first month with salaries (its 5th, 10th and 14th, and any before), and the euros
+ * to convert for them in all. */
+export function duesAhead(cash) {
+  const first = cash ? cash.months.find((m) => m.net > 0 || m.later > 0) : null;
+  const dues = first ? cash.dues.filter((d) => d.month <= first.month) : [];
+  return { dues, eur: dues.reduce((s, d) => s + d.eur, 0) };
+}
+
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const monthNameOf = (mKey) => MONTH_NAMES[Number(String(mKey).slice(5, 7)) - 1] || mKey;
+const ITEM_TEXT = {
+  net: (i) => `${monthNameOf(i.payrollMonth)}'s net salaries`,
+  later: (i) => `${monthNameOf(i.payrollMonth)}'s pension, tax and social security`,
+  cards: (i) => `the credit card bills for ${monthNameOf(i.spendMonth)}`,
+  vendors: (i) => `${i.rest ? 'the rest of ' : ''}${monthNameOf(i.month)}'s ILS vendor payments`,
+};
+
+/** What a payment day pays, in words: "October's net salaries and November's ILS vendor payments". */
+export function dueWhat(due) {
+  const parts = (due.items || []).map((i) => (ITEM_TEXT[i.why] ? ITEM_TEXT[i.why](i) : i.why));
+  return parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0] || '';
 }
 
 const addMonthsIso = (iso, n) => {
@@ -580,13 +684,15 @@ function cashPlanOf(data, today, spot, upcoming, schedule, policy) {
   const pay = payrollToPay({ projection: pr.projection, split, months: data.inflowMonths, from, count });
   if (!pay.rows.length) return null;
   const vendors = vendorAverages(data.flows, data.ilsVendors, data.inflowMonths);
-  const ilsNow = data.balances ? ilsBalance(data.balances.rows) : null;
+  const onHand = data.balances ? ilsOnHand(data.balances.rows) : null;
+  const ilsNow = onHand ? onHand.total : null;
+  const bills = cardBills({ ilsVendors: data.ilsVendors, average: vendors.cards, today, until });
   // If a fixing sells the amount kept, it also brings that amount's shekels.
   const conversions = schedule.filter((s) => s.atSpot && s.risk).slice(0, 6).map((s) => ({ date: s.fixing.date, ils: ilsKept(policy, s) }));
-  const needs = shekelNeeds({ today, ilsNow, payroll: pay.rows, conversions, vendorsIls: vendors.ils ?? 0, spot, until });
+  const needs = shekelNeeds({ today, ilsNow, payroll: pay.rows, conversions, vendorsIls: vendors.other ?? 0, cardBills: bills, spot, until });
   const notes = [];
   if (ilsNow === null) notes.push("The shekels on hand are not known (NetSuite's books are EUR only), so they count as 0.");
-  if (vendors.ils === null) notes.push('The ILS vendor payments could not be read, so no shekels are kept for vendors.');
+  if (vendors.ils === null) notes.push('The ILS vendor payments could not be read, so no shekels are kept for vendors or the credit cards.');
   if (pay.share === null) notes.push("NetSuite's payroll journals could not be read, so the whole payroll counts by the 5th.");
   if (pay.rows.some((r) => r.source === 'journal')) {
     notes.push(pr.projection
@@ -594,9 +700,131 @@ function cashPlanOf(data, today, spot, upcoming, schedule, policy) {
       : "The Salary Projection's figures are not saved on the server (open it once), so the payroll is the last payroll journal's total.");
   }
   return {
-    ...needs, payroll: pay.rows, share: pay.share, split, vendors, until,
+    ...needs, onHand, payroll: pay.rows, share: pay.share, split, vendors, cardBills: bills, until,
     projectionAsOf: pr.projection ? pr.projection.asOf || null : null, notes,
   };
+}
+
+// ── what to do today ──
+/**
+ * What to do today, from today's balances and rate (view: planFromPayload's), urgent first. urgent: a mail goes for it
+ * every working day; the others are worth a mail when they are new (or have changed, or a week on), so a conversion is
+ * announced ahead and reminded in its last week.
+ *   convert        a payment in shekels that the shekels on hand (and the conversions before it) don't cover: urgent
+ *                  within `lead` business days of when it has to be ready
+ *   convert-early  instead, for one due before the next conversion day, while EUR/ILS is high against the last 90
+ *                  days: as much now as today's euros above the EUR vendors' floor allow
+ *   short          the euros held and expected fall short of a due: urgent within `lead` business days
+ *   move           the conversion day is within `moveLead` business days and Hapoalim EUR holds less than to keep there
+ *   convert-spare  euros spare while EUR/ILS is high
+ *   deposit        euros spare for a new deposit
+ * Amounts under `minEur` are left out. Returns { actions: [{ kind, key (the same on another day), urgent, eur, ... }],
+ * ahead (duesAhead) }.
+ */
+export function todayActions(view, today, { lead = 5, moveLead = 3, minEur = 50000 } = {}) {
+  const plan = view ? view.plan : null;
+  const n = plan ? plan.next : null;
+  const ahead = duesAhead(view ? view.cash : null);
+  const actions = [];
+  if (!n) return { actions, ahead };
+  const high = !!view.rateCheck && view.rateCheck.level === 'high';
+  let room = Math.max(0, n.liquid - n.eurFloor);
+  for (const d of ahead.dues) {
+    if (!(d.eur >= minEur)) continue;
+    const left = businessDaysBetween(today, d.by);
+    if (left >= lead && high && d.date <= n.date && room >= minEur) {
+      const eur = Math.min(d.eur, room);
+      actions.push({ kind: 'convert-early', key: `early:${d.date}`, urgent: false, eur, by: d.by, left, due: d });
+      room -= eur;
+    } else {
+      actions.push({ kind: 'convert', key: `convert:${d.date}`, urgent: left < lead, eur: d.eur, by: d.by, left, due: d });
+      if (left < lead) room -= d.eur;
+    }
+  }
+  if (n.short && n.short.first.eur >= minEur) {
+    const by = businessDayOnOrBefore(n.short.first.date);
+    const left = businessDaysBetween(today, by);
+    actions.push({ kind: 'short', key: `short:${n.short.first.date}`, urgent: left < lead, eur: n.short.first.eur, date: n.short.first.date, by, left, shekels: n.short.first.shekels });
+  }
+  const fixingBy = businessDayOnOrBefore(n.date);
+  const fixLeft = businessDaysBetween(today, fixingBy);
+  if (fixLeft < moveLead && n.moveToHapoalim >= 10000) {
+    actions.push({ kind: 'move', key: `move:${n.date}`, urgent: true, eur: n.moveToHapoalim, date: n.date, by: fixingBy, left: fixLeft });
+  }
+  const spare = view.cash ? n.spare : n.freeNow;
+  const shortNow = view.cash ? !!n.short : n.shortfall > 0;
+  if (!shortNow && spare >= minEur) {
+    if (high) actions.push({ kind: 'convert-spare', key: 'spare', urgent: false, eur: spare });
+    else {
+      const options = (plan.deposits || []).filter((x) => x.eur >= minEur);
+      if (options.length) actions.push({ kind: 'deposit', key: 'deposit', urgent: false, eur: options[0].eur, options });
+    }
+  }
+  return { actions: [...actions.filter((a) => a.urgent), ...actions.filter((a) => !a.urgent)], ahead };
+}
+
+const LEVEL_WORD = { high: 'high', middle: 'mid-range', low: 'low' };
+const capital = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
+const inDays = (from, to) => { const n = daysUntil(from, to); return n <= 0 ? 'today' : n === 1 ? 'tomorrow' : `in ${n} days`; };
+
+/**
+ * An action in words, with the page's or the mail's formats (fmt: { eur, ils, day, rate }): { head, body }. head is
+ * what to do ("Convert €1.10M by Thu 5 Nov"), body why, from the balances.
+ */
+export function describeAction(a, view, today, fmt) {
+  const { eur, ils, day } = fmt;
+  const n = view.plan.next;
+  const rc = view.rateCheck;
+  const rateIs = rc ? `EUR/ILS ${fmt.rate(rc.rate)} is ${LEVEL_WORD[rc.level]} against the last ${rc.days} days` : '';
+  if (a.kind === 'convert') {
+    const d = a.due;
+    const now = a.by <= today;
+    const when = d.date <= today ? 'this month' : `on ${day(d.date)}${d.by !== d.date ? ` (ready by ${day(d.by)})` : ''}`;
+    const held = d.before < -0.5 ? `an overdraft of ${ils(-d.before)}` : `${ils(Math.max(0, d.before))} on hand`;
+    let body = `${capital(dueWhat(d))}: ${ils(d.ils)} goes out ${when}, with ${held} by then.`;
+    if (rc && !now) {
+      if (rc.level === 'high') body += ` ${rateIs}: a good day to do it.`;
+      else if (rc.level === 'low') body += ` ${rateIs}: if it can wait, wait, but no later than ${day(a.by)}.`;
+    }
+    return { head: `Convert ${eur(a.eur)} ${now ? 'today' : `by ${day(a.by)}`}`, body };
+  }
+  if (a.kind === 'convert-early') {
+    const part = a.eur < a.due.eur - 0.5 ? ` (${eur(a.due.eur)} in all: today's euros above the ${eur(n.eurFloor)} kept for EUR vendors allow ${eur(a.eur)} now)` : '';
+    return { head: `Convert ${eur(a.eur)} today`, body: `${rateIs}: a good day to convert early for ${dueWhat(a.due)}, due by ${day(a.by)}${part}.` };
+  }
+  if (a.kind === 'short') {
+    const what = a.shekels ? 'the conversion for shekels due then' : `the ${day(a.date)} conversion`;
+    const fix = n.backup > 0 ? ` Be ready to break up to ${eur(Math.min(a.eur, n.backup))} of the deposits maturing later.` : ' Keep every spare euro until then.';
+    return { head: `Short ${eur(a.eur)} by ${day(a.date)}`, body: `The euros held and expected by then don't cover ${what} and the ${eur(n.eurFloor)} kept for EUR vendors.${fix}` };
+  }
+  if (a.kind === 'move') {
+    return { head: `Move ${eur(a.eur)} to Hapoalim EUR by ${day(a.by)}`, body: `The ${day(a.date)} conversion takes its euros from Hapoalim EUR (583400), which holds ${eur(n.hapoalim)}; keep ${eur(n.required)} there.` };
+  }
+  if (a.kind === 'convert-spare') {
+    return { head: `Convert the ${eur(a.eur)} spare today`, body: `${rateIs}. It brings ${ils(a.eur * rc.rate)}, with every conversion, salary and vendor payment ahead still covered.` };
+  }
+  // The same amount for every term: one line ("€430K for 1, 3 or 6 months").
+  const last = a.options[a.options.length - 1];
+  const options = a.options.length > 1 && a.options.every((o) => Math.abs(o.eur - a.eur) < 0.5)
+    ? `${eur(a.eur)} for ${a.options.map((o) => o.months).join(', ').replace(/, (\d+)$/, ' or $1')} month${last.months === 1 ? '' : 's'} (the longest until ${day(last.until)})`
+    : a.options.map((o) => `${eur(o.eur)} for ${o.months} month${o.months === 1 ? '' : 's'} (until ${day(o.until)})`).join(', or ');
+  return { head: `Put ${eur(a.eur)} in a new deposit`, body: `${options}, with every payment before then still covered as the typical inflow comes in.` };
+}
+
+/** A payment day in words, for the list of what is ahead: "Thu 5 Nov, in 15 days: October's net salaries…, ₪4.80M:
+ * convert €1.10M". */
+export function describeDue(d, today, fmt) {
+  const when = d.date <= today ? 'Now' : `${fmt.day(d.date)}${d.by !== d.date ? ` (ready by ${fmt.day(d.by)})` : ''}, ${inDays(today, d.by)}`;
+  const action = d.eur > 0.5 ? `convert ${fmt.eur(d.eur)}` : d.after ? `covered by the ${fmt.day(d.after)} conversion` : 'covered by the shekels on hand';
+  return `${when}: ${dueWhat(d)}, ${fmt.ils(d.ils)}: ${action}`;
+}
+
+/** When there is nothing to do today: what comes next, in words. */
+export function nothingToday(ahead, today, fmt, { minEur = 50000 } = {}) {
+  const next = ahead.dues.find((d) => d.eur >= minEur);
+  if (next) return `Nothing to do today. Next: convert ${fmt.eur(next.eur)} by ${fmt.day(next.by)} (${inDays(today, next.by)}) for ${dueWhat(next)}.`;
+  const last = ahead.dues[ahead.dues.length - 1];
+  return last ? `Nothing to do today: the shekels on hand and the conversions cover the payments to ${fmt.day(last.date)}.` : 'Nothing to do today.';
 }
 
 // ── past fixings ──

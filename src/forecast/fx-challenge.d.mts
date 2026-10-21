@@ -73,43 +73,80 @@ export declare function typicalInflow(flows: FlowRow[], months: string[]): { per
 // ── shekels for the payroll and the vendors ──
 /** A payroll journal's credit to a payable or current account, in shekels (fetchPayrollLiabilities). */
 export interface PayrollCredit { id: number; month: string; account: string; name: string; ils: number }
-/** A month's payroll journal: net salaries (by the 5th of the next month) and the rest (by the 15th). */
+/** A month's payroll journal: net salaries (by the 5th of the next month) and the rest (by the 14th). */
 export interface PayrollMonthSplit { month: string; net: number; later: number; total: number }
 export declare function payrollSplit(rows: PayrollCredit[]): PayrollMonthSplit[];
 /** The Salary Projection's Total payroll by month (₪), as its page saved it. */
 export interface PayrollProjection { asOf: string | null; months: { month: string; ils: number; status?: string }[] }
 export interface PayrollToPay { month: string; total: number; net: number; later: number; source: 'projection' | 'journal' }
 export declare function payrollToPay(input: { projection: PayrollProjection | null; split: PayrollMonthSplit[]; months: string[]; from: string; count: number }): { share: number | null; rows: PayrollToPay[] };
-export declare function vendorAverages(flows: FlowRow[], ilsVendors: { month: string; ils: number }[] | null | undefined, months: string[]): { eur: number; ils: number | null };
-export declare function ilsBalance(rows: BalanceRow[]): number | null;
-export type ShekelNeedWhy = 'vendors' | 'net' | 'later';
+/** ILS vendor payments in a month: the credit cards' (billed on the 10th of the next month) and the rest (bank
+ * transfers and Masav batches); ils is both. */
+export interface IlsVendorMonth { month: string; ils: number; cards?: number; other?: number }
+/** Average monthly vendor payments: EUR (kept at all times) and ILS, split into the cards and the rest (null when not
+ * read). */
+export interface VendorAverages { eur: number; ils: number | null; cards: number | null; other: number | null }
+export declare function vendorAverages(flows: FlowRow[], ilsVendors: IlsVendorMonth[] | null | undefined, months: string[]): VendorAverages;
+/** A credit card bill: on the 10th, the month before's card spending. */
+export interface CardBill { date: string; ils: number; spendMonth: string }
+export declare function cardBills(input: { ilsVendors: IlsVendorMonth[] | null | undefined; average: number | null; today: string; until: string }): CardBill[];
+/** LSports' shekels: the current accounts and the ILS deposits (released the day a payment goes out). */
+export interface IlsOnHand { current: number; deposits: number; total: number }
+export declare function ilsOnHand(rows: BalanceRow[]): IlsOnHand | null;
+export type ShekelNeedWhy = 'vendors' | 'net' | 'later' | 'cards';
 /** Shekels to convert by `date` (eur: at today's rate), and what they pay. */
 export interface ShekelNeed { date: string; ils: number; eur: number; why: ShekelNeedWhy[]; month: string }
-/** A month paid in: the previous month's payroll (net by the 5th, the rest by the 15th), the vendors, the table's
- * shekels that month (at today's rate), and what has to be converted for it. */
-export interface ShekelMonth { month: string; payrollMonth: string | null; net: number; later: number; vendors: number; tableIls: number; convertIls: number; convertEur: number }
-export interface ShekelNeeds { needs: ShekelNeed[]; months: ShekelMonth[]; ilsNow: number | null; ilsAfter: number }
+/** One payment on a payment day. */
+export interface ShekelDueItem { why: ShekelNeedWhy; month: string; payrollMonth: string | null; spendMonth: string | null; rest: boolean; ils: number }
+/** A day something is paid in shekels: what (items), when it has to be ready (by: the business day on or before), the
+ * shekels on hand just before, what to convert for it (0 when covered) and the table's conversion since the payment
+ * day before (after). */
+export interface ShekelDue {
+  date: string;
+  by: string;
+  month: string;
+  ils: number;
+  before: number;
+  items: ShekelDueItem[];
+  after: string | null;
+  convertIls: number;
+  eur: number;
+}
+/** A month paid in: the previous month's payroll (net by the 5th, the rest by the 14th), the credit cards (the 10th),
+ * the vendors, the table's shekels that month (at today's rate), and what has to be converted for it. */
+export interface ShekelMonth { month: string; payrollMonth: string | null; net: number; later: number; cards: number; vendors: number; tableIls: number; convertIls: number; convertEur: number }
+export interface ShekelNeeds { needs: ShekelNeed[]; dues: ShekelDue[]; months: ShekelMonth[]; ilsNow: number | null; ilsAfter: number }
 export declare function shekelNeeds(input: {
   today: string;
   ilsNow: number | null;
   payroll: { month: string; net: number; later: number }[];
   conversions: { date: string; ils: number }[];
   vendorsIls: number;
+  cardBills?: CardBill[];
   spot: number;
   until: string;
 }): ShekelNeeds;
 /** The shekels side of the plan (planFromPayload). */
 export interface CashPlan extends ShekelNeeds {
+  /** The shekels on hand today, by kind; null when the balances have none. */
+  onHand: IlsOnHand | null;
   payroll: PayrollToPay[];
   /** The net salaries' share of the payroll journals of the inflow months; null without them (all by the 5th). */
   share: number | null;
   split: PayrollMonthSplit[];
-  /** Average monthly vendor payments: EUR (kept at all times) and ILS (null when not read). */
-  vendors: { eur: number; ils: number | null };
+  vendors: VendorAverages;
+  cardBills: CardBill[];
   until: string;
   projectionAsOf: string | null;
   notes: string[];
 }
+export declare const PAYROLL_DUE: Readonly<{ net: number; later: number }>;
+export declare const CARD_BILL_DAY: number;
+export declare function businessDayOnOrBefore(iso: string): string;
+export declare function businessDaysBetween(from: string, to: string): number;
+export declare function daysUntil(from: string, to: string): number;
+export declare function duesAhead(cash: CashPlan | null): { dues: ShekelDue[]; eur: number };
+export declare function dueWhat(due: Pick<ShekelDue, 'items'>): string;
 
 export interface Upcoming { month: string; date: string; days: number; conv: Conversion; risk: FixingRisk }
 export interface NextFixingPlan {
@@ -198,7 +235,7 @@ export interface PlanInput {
   flows: FlowRow[];
   inflowMonths: string[];
   payroll?: { journals: PayrollCredit[]; projection: PayrollProjection | null } | null;
-  ilsVendors?: { month: string; ils: number }[] | null;
+  ilsVendors?: IlsVendorMonth[] | null;
 }
 export interface ScheduleItem {
   fixing: Fixing;
@@ -223,6 +260,20 @@ export interface PlanView {
   plan: ReservePlan | null;
 }
 export declare function planFromPayload(data: PlanInput, policy?: Policy): PlanView;
+
+/** Something to do today (todayActions). urgent: worth a mail whatever was sent before; key: the same on another day. */
+export type TodayAction =
+  | { kind: 'convert' | 'convert-early'; key: string; urgent: boolean; eur: number; by: string; left: number; due: ShekelDue }
+  | { kind: 'short'; key: string; urgent: boolean; eur: number; date: string; by: string; left: number; shekels: boolean }
+  | { kind: 'move'; key: string; urgent: boolean; eur: number; date: string; by: string; left: number }
+  | { kind: 'convert-spare'; key: string; urgent: boolean; eur: number }
+  | { kind: 'deposit'; key: string; urgent: boolean; eur: number; options: { months: number; until: string; eur: number }[] };
+export declare function todayActions(view: PlanView, today: string, opts?: { lead?: number; moveLead?: number; minEur?: number }): { actions: TodayAction[]; ahead: { dues: ShekelDue[]; eur: number } };
+/** Number and date formats for the texts: the page's or the mail's. */
+export interface TextFormats { eur: (n: number) => string; ils: (n: number) => string; day: (iso: string) => string; rate: (r: number) => string }
+export declare function describeAction(a: TodayAction, view: PlanView, today: string, fmt: TextFormats): { head: string; body: string };
+export declare function describeDue(d: ShekelDue, today: string, fmt: Pick<TextFormats, 'eur' | 'ils' | 'day'>): string;
+export declare function nothingToday(ahead: { dues: ShekelDue[] }, today: string, fmt: Pick<TextFormats, 'eur' | 'day'>, opts?: { minEur?: number }): string;
 
 /** A conversion journal: euros sold (or bought back: negative, with the shekels paid negative too). */
 export interface BookedConversion { date: string; eur: number; ils: number }
