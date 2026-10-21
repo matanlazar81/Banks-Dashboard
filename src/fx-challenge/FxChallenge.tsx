@@ -238,7 +238,7 @@ function Recommendation({ model, policy, onPolicy, inflowMonths }: { model: FxMo
             </>
           )}
         </p>
-        {model.cash && <CashLines cash={model.cash} plan={plan} />}
+        {model.cash && <CashLines cash={model.cash} plan={plan} today={model.today} />}
         {model.rateCheck && <RateLine rc={model.rateCheck} free={model.cash ? n.spare : n.freeNow} />}
         <div className="space-y-1.5">
           <p className="text-[13px]">
@@ -355,8 +355,11 @@ function RateLine({ rc, free }: { rc: RateCheck; free: number }) {
   );
 }
 
+/** When a conversion for shekels is due: "by Thu, 5 Nov", or now for the rest of this month's ILS vendors. */
+const dueWhen = (x: CashPlan['needs'][number], today: string) => (x.date <= today ? "now, for the rest of this month's ILS vendors" : `by ${formatDay(x.date)}`);
+
 /** The salaries and vendors to convert for, and what is spare: the recommendation's second line. */
-function CashLines({ cash, plan }: { cash: CashPlan; plan: ReservePlan }) {
+function CashLines({ cash, plan, today }: { cash: CashPlan; plan: ReservePlan; today: string }) {
   const n = plan.next;
   const needs = firstNeeds(cash);
   const total = needs.reduce((s, x) => s + x.eur, 0);
@@ -369,7 +372,7 @@ function CashLines({ cash, plan }: { cash: CashPlan; plan: ReservePlan }) {
         {needs.length ? (
           <>
             For the salaries and vendors due by {formatDay(by)}, convert at least <strong>{formatEur(total)}</strong>
-            {needs.length > 1 ? <>: {needs.map((x, i) => <span key={x.date}>{i ? (i === needs.length - 1 ? ' and ' : ', ') : ''}{formatEur(x.eur)} by {formatDay(x.date)}</span>)}</> : <> by {formatDay(needs[0].date)}</>}.
+            {needs.length > 1 ? <>: {needs.map((x, i) => <span key={x.date}>{i ? (i === needs.length - 1 ? ' and ' : ', ') : ''}{formatEur(x.eur)} {dueWhen(x, today)}</span>)}</> : <> {dueWhen(needs[0], today)}</>}.
           </>
         ) : (
           <>The shekels on hand and the {formatDay(n.date)} conversion cover the salaries and vendors due by {formatDay(by)}.</>

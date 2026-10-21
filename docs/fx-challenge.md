@@ -67,14 +67,15 @@ briefly a tab of the Metrics page before it got its own sidebar item.
     the ILS accounts, `fetchIlsVendorPayments`; the payroll is paid by journal, so it is not in them) are a monthly
     need in shekels. EUR vendor payments (the flows' vendor kind) are **kept in the euro accounts at all times**
     (the EUR floor); the typical inflow already nets them.
-  - **The shekels** (`shekelNeeds`), from the ILS on hand (the mail's balances; 0 when not known):
+  - **The shekels** (`shekelNeeds`), from the ILS on hand (the mail's balances; an overdraft counts against them; 0 when
+    not known):
     - today, the rest of this month's vendor payments;
     - on the 5th, the previous month's net salaries and the month's vendor payments;
     - on the 7th, the table's shekels, for the amount kept at its cell's rate (consistent with what the plan
       keeps);
     - on the 15th, pension, tax and social security.
 
-    Each gap is converted by its day at today's rate. The card **Salaries and vendors: the shekels each month
+    Each gap is converted by its day at today's rate ("now" for the rest of this month's vendors). The card **Salaries and vendors: the shekels each month
     needs** shows it month by month.
   - **The euros** (`planReserve`): the conversions for shekels come out of the euros by each conversion (the
     plan's **Salaries & vendors** column), and the EUR floor is kept. At every due (each conversion at the amount

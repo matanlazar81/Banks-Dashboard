@@ -324,7 +324,8 @@ export function ilsBalance(rows) {
 
 /**
  * The shekels the payroll and the vendors need from today to `until`, and the euros to convert for them at today's
- * rate. As events: today, the rest of this month's vendor payments; on the 5th, the previous month's net salaries and
+ * rate. From the shekels on hand (an overdraft counts against them), as events: today, the rest of this month's vendor
+ * payments; on the 5th, the previous month's net salaries and
  * (after this month) the month's vendor payments; on the conversion day, the table's shekels (at today's rate); on
  * the 15th, pension, withholding tax and social security. Whenever the shekels on hand fall short, the gap is
  * converted by that day.
@@ -354,7 +355,7 @@ export function shekelNeeds({ today, ilsNow, payroll, conversions, vendorsIls, s
   }
   // By day; on the same day, payments before the shekels coming in.
   events.sort((a, b) => a.date.localeCompare(b.date) || a.ils - b.ils);
-  let cash = Math.max(0, Number(ilsNow) || 0);
+  let cash = Number(ilsNow) || 0;
   const byDate = new Map();
   for (const e of events) {
     cash += e.ils;

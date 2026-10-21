@@ -29,6 +29,8 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
+// dotenv 17 prints a line each time a .env is loaded; the NetSuite reads load it again, so quiet for the whole run.
+process.env.DOTENV_CONFIG_QUIET = process.env.DOTENV_CONFIG_QUIET || 'true';
 try { require('dotenv').config({ path: path.join(ROOT, '.env'), quiet: true }); } catch { /* the environment may be set already */ }
 
 const fxs = require(path.join(ROOT, 'server', 'fx-challenge.cjs'));
@@ -142,6 +144,8 @@ function renderMail(fx, data, { policy = 'p95', link = null } = {}) {
       const must = needs.reduce((s2, x) => s2 + x.eur, 0);
       const dueBy = firstMonth ? `${firstMonth.month}-15` : null;
       const by = needs.length ? needs[needs.length - 1].date : null;
+      // A conversion due today pays the rest of this month's ILS vendors (the shekels on hand don't).
+      const dueWhen = (x) => (x.date <= today ? "now, for the rest of this month's ILS vendors" : `by ${day(x.date)}`);
       title = must > 0.5 ? `Convert ${eur(must)} for salaries by ${day(by)} · keep ${eur(n.required)} for ${day(n.date)}` : `Keep ${eur(n.required)} for ${day(n.date)} · salaries covered`;
       subject = `FX Challenge ${day(today)}: ${must > 0.5 ? `convert ${eur(must)} for salaries by ${day(by)}` : 'salaries covered'}`
         + ` · ${n.short ? `short ${eur(n.short.first.eur)} by ${day(n.short.first.date)}` : `spare ${eur(spare)}`}`
@@ -149,7 +153,7 @@ function renderMail(fx, data, { policy = 'p95', link = null } = {}) {
       parts.push(para(`Keep ${strong(eur(n.required))} in Hapoalim EUR (583400) for ${esc(day(n.date))}${weekend}.`,
         `Keep ${eur(n.required)} in Hapoalim EUR (583400) for ${day(n.date)}${weekend}.`, 'font-size:15px;'));
       const convertText = needs.length
-        ? `For the salaries and vendors due by ${day(dueBy)}, convert at least ${eur(must)}${needs.length > 1 ? `: ${needs.map((x) => `${eur(x.eur)} by ${day(x.date)}`).join(' and ')}` : ` by ${day(needs[0].date)}`}.`
+        ? `For the salaries and vendors due by ${day(dueBy)}, convert at least ${eur(must)}${needs.length > 1 ? `: ${needs.map((x) => `${eur(x.eur)} ${dueWhen(x)}`).join(' and ')}` : ` ${dueWhen(needs[0])}`}.`
         : `The shekels on hand and the ${day(n.date)} conversion cover the salaries and vendors due by ${day(dueBy)}.`;
       const spareText = n.short
         ? `Nothing is spare: on ${day(n.short.first.date)} the needs exceed the euros held and expected by ${eur(n.short.first.eur)}`

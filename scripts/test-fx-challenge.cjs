@@ -337,6 +337,8 @@ async function testCash(fx) {
   'by month paid: October (the rest of its vendors), then each month\'s payroll, vendors, the table\'s shekels and what is converted');
   const rich = fx.shekelNeeds({ today: TODAY, ilsNow: 50e6, vendorsIls: 3.1e6, spot: 3.5, until: '2026-12-31', payroll: [{ month: '2026-10', net: 4e6, later: 4e6 }], conversions: [] });
   check(rich.needs.length === 0 && near(rich.ilsAfter, 50e6 - 1e6 - 4e6 - 3.1e6 - 4e6), 'enough shekels on hand → nothing to convert');
+  const over = fx.shekelNeeds({ today: TODAY, ilsNow: -151457, vendorsIls: 0, spot: 3.5, until: '2026-11-30', payroll: [{ month: '2026-10', net: 1e6, later: 0 }], conversions: [] });
+  check(over.needs.length === 1 && over.needs[0].date === '2026-11-05' && near(over.needs[0].ils, 1151457), 'an overdraft counts against the shekels on hand (as on 21 Oct: -₪151K)');
 
   // The euros: two conversions at today's band (€800K each), €3M today, nothing coming in, €500K converted for
   // shekels on each 5th, €200K kept for EUR vendors.
@@ -603,7 +605,7 @@ async function testMail(fx) {
   const vc = fx.planFromPayload(withCash, 'p95');
   check(/^FX Challenge Wed 21 Oct: (convert €[\d.,]+[KM] for salaries by \w{3} \d+ \w{3}|salaries covered) · (spare|short) /.test(mc.subject) && clean(mc.html) && clean(mc.text)
     && mc.text.includes('SALARIES AND VENDORS: THE SHEKELS EACH MONTH NEEDS') && /New deposits: /.test(mc.text) && mc.text.includes('Spare before')
-    && mc.text.includes('50% net salaries') && vc.cash && vc.cash.months.length >= 6,
+    && mc.text.includes('50% net salaries') && vc.cash && vc.cash.months.length >= 6 && mc.text.includes("now, for the rest of this month's ILS vendors"),
   'with the payroll: what to convert for salaries and by when, spare or short, new deposits, the months\' shekels and the plan with them', mc.subject);
   const none = mail.renderMail(fx, { ...data, balances: null }, {});
   check(/no recommendation today$/.test(none.subject) && clean(none.html) && none.text.includes('balances'), 'without balances: no recommendation, and why');
