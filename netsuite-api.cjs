@@ -2714,6 +2714,129 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
     return out;
   }
 
+  // ── FX Challenge (the Metrics page's FX tab, server/fx-challenge.cjs) ──
+  const isoDaysAgo = (n) => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
+
+  // EUR/ILS by day from currencyrate (₪ per €), one provider, the last `days` days, oldest first.
+  // Returns [{ date, rate }].
+  async function fetchEurIlsRates({ days = 400, provider = 'HSBC' } = {}) {
+    const n = Math.max(1, Math.min(2000, parseInt(days, 10) || 400));
+    if (!/^[A-Za-z0-9 _-]{1,40}$/.test(String(provider))) throw new Error('fetchEurIlsRates: bad provider');
+    const rows = await suiteqlAll(`
+      SELECT TO_CHAR(cr.effectivedate, 'YYYY-MM-DD') AS d, cr.exchangerate AS rate
+      FROM currencyrate cr
+      JOIN currency bc ON bc.id = cr.basecurrency
+      JOIN currency tc ON tc.id = cr.transactioncurrency
+      WHERE bc.symbol = 'ILS' AND tc.symbol = 'EUR' AND cr.rateprovider = '${provider}'
+        AND cr.effectivedate >= TO_DATE('${isoDaysAgo(n)}', 'YYYY-MM-DD')
+      ORDER BY cr.effectivedate
+    `);
+    const byDate = new Map();
+    for (const r of rows) {
+      const rate = parseFloat(r.rate);
+      if (r.d && rate > 0) byDate.set(String(r.d), rate);
+    }
+    return [...byDate.entries()].map(([date, rate]) => ({ date, rate }));
+  }
+
+  // EUR bank accounts as booked: the primary book is in euros, so an EUR account's balance there is its own.
+  // Returns [{ number, name, eur }].
+  async function fetchEurBalancesBooks() {
+    const rows = await suiteqlAll(`
+      SELECT a.acctnumber AS num, BUILTIN.DF(a.id) AS name, SUM(tal.amount) AS eur
+      FROM transactionaccountingline tal
+      JOIN transaction t ON t.id = tal.transaction
+      JOIN account a ON a.id = tal.account
+      JOIN currency c ON c.id = a.currency
+      WHERE tal.posting = 'T' AND tal.accountingbook = 1 AND t.subsidiary = ${subsidiaryId}
+        AND a.accttype = 'Bank' AND c.symbol = 'EUR'
+      GROUP BY a.acctnumber, BUILTIN.DF(a.id)
+    `);
+    return rows.map((r) => ({ number: String(r.num || ''), name: String(r.name || ''), eur: Math.round((parseFloat(r.eur) || 0) * 100) / 100 }));
+  }
+
+  // EUR in and out of the EUR bank accounts by month, from `from` (YYYY-MM), deposit accounts left out, by kind:
+  // customer | vendor | conversion | deposit | transfer | refund | other. Journals are told apart by memo:
+  // "Conversion" (to shekels), deposit / פקדון (into or out of a deposit); the rest are other.
+  // Returns [{ month, kind, eur }].
+  async function fetchEurFlows({ from } = {}) {
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(String(from || ''))) throw new Error(`fetchEurFlows: bad month ${from}`);
+    const rows = await suiteqlAll(`
+      SELECT TO_CHAR(t.trandate, 'YYYY-MM') AS m,
+             CASE WHEN t.type = 'Journal' AND (LOWER(t.memo) LIKE '%conversion%' OR t.memo LIKE '%המרה%') THEN 'conversion'
+                  WHEN t.type = 'Journal' AND (LOWER(t.memo) LIKE '%deposit%' OR t.memo LIKE '%פקדון%') THEN 'deposit'
+                  ELSE t.type END AS k,
+             SUM(tal.amount) AS eur
+      FROM transactionaccountingline tal
+      JOIN transaction t ON t.id = tal.transaction
+      JOIN account a ON a.id = tal.account
+      JOIN currency c ON c.id = a.currency
+      WHERE tal.posting = 'T' AND tal.accountingbook = 1 AND t.subsidiary = ${subsidiaryId}
+        AND a.accttype = 'Bank' AND c.symbol = 'EUR' AND LOWER(BUILTIN.DF(a.id)) NOT LIKE '%deposit%'
+        AND t.trandate >= TO_DATE('${from}-01', 'YYYY-MM-DD')
+      GROUP BY TO_CHAR(t.trandate, 'YYYY-MM'),
+               CASE WHEN t.type = 'Journal' AND (LOWER(t.memo) LIKE '%conversion%' OR t.memo LIKE '%המרה%') THEN 'conversion'
+                    WHEN t.type = 'Journal' AND (LOWER(t.memo) LIKE '%deposit%' OR t.memo LIKE '%פקדון%') THEN 'deposit'
+                    ELSE t.type END
+    `);
+    const KIND = { CustPymt: 'customer', CashSale: 'customer', Deposit: 'customer', CustDep: 'customer', VendPymt: 'vendor', Check: 'vendor', Transfer: 'transfer', CustRfnd: 'refund', conversion: 'conversion', deposit: 'deposit' };
+    return rows.map((r) => ({ month: String(r.m || ''), kind: KIND[String(r.k)] || 'other', eur: Math.round((parseFloat(r.eur) || 0) * 100) / 100 }));
+  }
+
+  // "Conversion" journals between two bank accounts (by default Hapoalim 583400: EUR 11001 → ILS 10002), from
+  // `from` (YYYY-MM-DD): euros sold from the primary book, shekels received from the ILS book (book 2), by journal.
+  // Returns [{ id, tranid, date, eur, ils }].
+  async function fetchHapoalimConversions({ from, eurAccount = '11001', ilsAccount = '10002' } = {}) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(from || ''))) throw new Error(`fetchHapoalimConversions: bad date ${from}`);
+    if (![eurAccount, ilsAccount].every((n) => /^\d{3,10}$/.test(String(n)))) throw new Error('fetchHapoalimConversions: bad account number');
+    const rows = await suiteqlAll(`
+      SELECT t.id AS id, t.tranid AS tranid, TO_CHAR(t.trandate, 'YYYY-MM-DD') AS d, a.acctnumber AS num,
+             tal.accountingbook AS book, tal.amount AS amt
+      FROM transaction t
+      JOIN transactionaccountingline tal ON tal.transaction = t.id
+      JOIN account a ON a.id = tal.account
+      WHERE t.subsidiary = ${subsidiaryId} AND tal.posting = 'T' AND a.acctnumber IN ('${eurAccount}', '${ilsAccount}')
+        AND (LOWER(t.memo) LIKE '%conversion%' OR t.memo LIKE '%המרה%')
+        AND t.trandate >= TO_DATE('${from}', 'YYYY-MM-DD')
+      ORDER BY t.trandate, t.id
+    `);
+    const byId = new Map();
+    for (const r of rows) {
+      const k = String(r.id);
+      if (!byId.has(k)) byId.set(k, { id: Number(r.id), tranid: String(r.tranid || ''), date: String(r.d || ''), eur: 0, ils: 0 });
+      const t = byId.get(k);
+      const amt = parseFloat(r.amt) || 0;
+      if (String(r.num) === String(eurAccount) && Number(r.book) === 1) t.eur -= amt;
+      if (String(r.num) === String(ilsAccount) && Number(r.book) === 2) t.ils += amt;
+    }
+    return [...byId.values()].filter((t) => t.eur > 0 && t.ils > 0)
+      .map((t) => ({ ...t, eur: Math.round(t.eur * 100) / 100, ils: Math.round(t.ils * 100) / 100 }));
+  }
+
+  // GET a RESTlet with the same token (TBA). `script` / `deploy`: the script and deployment ids (numbers, or
+  // customscript_… / customdeploy_…). Returns its JSON.
+  async function restletGet(script, deploy, timeoutMs = 30000) {
+    const ok = (s) => /^[A-Za-z0-9_]{1,80}$/.test(String(s || ''));
+    if (!ok(script) || !ok(deploy)) throw new Error('restletGet: bad script or deployment id');
+    // The host takes the account id in its hostname form (1234567_SB1 → 1234567-sb1); the OAuth realm keeps it as is.
+    const host = String(ACCOUNT_ID).toLowerCase().replace(/_/g, '-');
+    const url = `https://${host}.restlets.api.netsuite.com/app/site/hosting/restlet.nl?script=${script}&deploy=${deploy}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const resp = await fetch(url, {
+        method: 'GET',
+        headers: { Authorization: genAuth('GET', url), 'Content-Type': 'application/json', Accept: 'application/json' },
+        signal: controller.signal,
+      });
+      const text = await resp.text();
+      if (!resp.ok) throw new Error(`RESTlet ${resp.status}: ${text.substring(0, 200)}`);
+      return JSON.parse(text);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   // { [acct number]: NetSuite internal id } of every P&L account, for links to the account's register.
   // An inactive duplicate of an account number never wins over the active one. {} when unavailable.
   async function fetchAccountIds() {
@@ -2874,7 +2997,7 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
     return Number.isFinite(impact) && impact > 0;
   }
 
-  return { suiteql, suiteqlAll, fetchPnlActuals, fetchAccountIds, fetchAccountByDepartment, fetchVendorSpend, fetchFxConversions, fetchAgingData, fetchCollectionData, buildCollectionJson, fetchClientAnomalies, fetchAllSOsByBillingPeriod, fetchRevenueData, fetchMRRData, fetchBankBalance, fetchVendorBills, fetchVendorPaymentHistory, fetchBankAccountList, fetchBankAccountListAsOf, fetchSalaryData, fetchVendorActuals, fetchRevenueActuals, fetchCustomerCashReceipts, fetchCashflowHistory, fetchExpenseCategoryData, fetchPaymentsByCategory, fetchCashflowBreakdown, fetchCashflowTransactions, fetchExpenseTransactions, fetchSalaryBreakdown, fetchInvoiceBasedProjection, fetchMonthlyRevaluation, fetchVendorBillsByAccount, fetchNSBudget, fetchCurrencyDefenseBudget, fetchPaidVendorsYearly, fetchBankClassifiedYearly, fetchDividendDistributions, fetchVendorPaymentsDetail, fetchLatestFxRate, hasPostedMonthEndReval };
+  return { suiteql, suiteqlAll, fetchPnlActuals, fetchAccountIds, fetchAccountByDepartment, fetchVendorSpend, fetchFxConversions, fetchAgingData, fetchCollectionData, buildCollectionJson, fetchClientAnomalies, fetchAllSOsByBillingPeriod, fetchRevenueData, fetchMRRData, fetchBankBalance, fetchVendorBills, fetchVendorPaymentHistory, fetchBankAccountList, fetchBankAccountListAsOf, fetchSalaryData, fetchVendorActuals, fetchRevenueActuals, fetchCustomerCashReceipts, fetchCashflowHistory, fetchExpenseCategoryData, fetchPaymentsByCategory, fetchCashflowBreakdown, fetchCashflowTransactions, fetchExpenseTransactions, fetchSalaryBreakdown, fetchInvoiceBasedProjection, fetchMonthlyRevaluation, fetchVendorBillsByAccount, fetchNSBudget, fetchCurrencyDefenseBudget, fetchPaidVendorsYearly, fetchBankClassifiedYearly, fetchDividendDistributions, fetchVendorPaymentsDetail, fetchLatestFxRate, hasPostedMonthEndReval, fetchEurIlsRates, fetchEurBalancesBooks, fetchEurFlows, fetchHapoalimConversions, restletGet };
 }
 
 
