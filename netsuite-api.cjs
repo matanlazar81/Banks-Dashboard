@@ -2714,7 +2714,7 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
     return out;
   }
 
-  // ── FX Challenge (the Metrics page's FX tab, server/fx-challenge.cjs) ──
+  // ── FX Challenge (Business Tools → FX Challenge, server/fx-challenge.cjs) ──
   const isoDaysAgo = (n) => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
 
   // EUR/ILS by day from currencyrate (₪ per €), one provider, the last `days` days, oldest first.

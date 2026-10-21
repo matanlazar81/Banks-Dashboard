@@ -36,9 +36,9 @@ export default defineConfig({
   resolve: { alias: { 'xlsx': 'xlsx-js-style' } },
   build: {
     chunkSizeWarningLimit: 2000,
-    // Five pages: the Bank Dashboard (index.html), the New Bank Dashboard (new-bank-dashboard.html), the
-    // P&L Projection (pnl-projection.html), the Salary Projection (salary-projection.html) and Metrics
-    // (metrics.html); the last four are small bundles that never load App.tsx.
+    // Six pages: the Bank Dashboard (index.html), the New Bank Dashboard (new-bank-dashboard.html), the
+    // P&L Projection (pnl-projection.html), the Salary Projection (salary-projection.html), Metrics
+    // (metrics.html) and the FX Challenge (fx-challenge.html); the last five are small bundles that never load App.tsx.
     rolldownOptions: {
       input: {
         main: path.resolve(__dirname, 'index.html'),
@@ -46,6 +46,7 @@ export default defineConfig({
         pnlProjection: path.resolve(__dirname, 'pnl-projection.html'),
         salaryProjection: path.resolve(__dirname, 'salary-projection.html'),
         metrics: path.resolve(__dirname, 'metrics.html'),
+        fxChallenge: path.resolve(__dirname, 'fx-challenge.html'),
       },
     },
   },

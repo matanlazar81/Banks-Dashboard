@@ -1,0 +1,11 @@
+/* Scan only this page and the New Bank Dashboard components it reuses (never App.tsx). */
+@import "tailwindcss" source(none);
+@source "./";
+@source "../new-dashboard/";
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  background: #f8fafc;
+  color: #0f172a;
+}

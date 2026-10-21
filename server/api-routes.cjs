@@ -2737,10 +2737,19 @@ If the user asks to modify, adjust, or refine an existing scenario (e.g. "reduce
         use('/api/metrics/settings', m.createMetricsSettingsHandler());
         use('/api/metrics/deposits', m.createMetricsDepositsHandler());
         use('/api/metrics', m.createMetricsHandler({
-          cash: cashProjection || undefined, pnl: pnlProjection || undefined, getSfClient, getNsClient, queueNsCall,
+          cash: cashProjection || undefined, pnl: pnlProjection || undefined, getSfClient,
         }));
       } catch (e     ) {
         console.error('[metrics] route not mounted:', e && e.message);
+      }
+
+      // ── GET /api/fx-challenge — FX Challenge (server/fx-challenge.cjs); its table first (prefix match) ──
+      try {
+        const fx = require('./fx-challenge.cjs');
+        use('/api/fx-challenge/table', fx.createFxTableHandler());
+        use('/api/fx-challenge', fx.createFxChallengeHandler({ getNsClient, queueNsCall }));
+      } catch (e     ) {
+        console.error('[fx-challenge] route not mounted:', e && e.message);
       }
 }
 

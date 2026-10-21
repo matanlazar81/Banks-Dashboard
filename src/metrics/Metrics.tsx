@@ -1,10 +1,8 @@
 // Business Tools → Metrics: one short pack, the same shape every month, computed live from the dashboards'
 // data (GET /api/metrics). Every figure says whether it is actual (A), forecast (F) or both (A+F).
-// A second tab, FX Challenge (FxChallenge.tsx), plans the monthly EUR→ILS conversions; the tab is in the URL.
-import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Download, Loader2, RefreshCw } from 'lucide-react';
-import { ComputingCard, ErrorCard, Segmented, Skeleton, Warnings } from '../new-dashboard/PageParts.tsx';
-import { readParam, writeParam } from '../new-dashboard/urlParams.ts';
+import { ComputingCard, ErrorCard, Skeleton, Warnings } from '../new-dashboard/PageParts.tsx';
 import { fetchMetrics, patchSettings } from './api.ts';
 import { formatCell, formatEur, formatEurFull, formatPct, monthName, STATUS_LONG, STATUS_SHORT } from './model.ts';
 import ExplainWindow from './ExplainWindow.tsx';
@@ -149,27 +147,7 @@ function Meter({ value, cap }: { value: number; cap: number }) {
 }
 
 // ── page ────────────────────────────────────────────────────────────────────
-type Tab = 'pack' | 'fx';
-const FxChallenge = lazy(() => import('./FxChallenge.tsx'));
-
 export default function Metrics() {
-  const [tab, setTab] = useState<Tab>(() => (readParam('tab') === 'fx' ? 'fx' : 'pack'));
-  const chooseTab = (t: Tab) => { setTab(t); writeParam('tab', t === 'fx' ? t : null); };
-  const tabs = (
-    <Segmented label="Tab" value={tab} onChange={chooseTab}
-      options={[{ value: 'pack', label: 'Metrics' }, { value: 'fx', label: 'FX Challenge', title: 'The EUR→ILS conversions fixed on the 7th, and what to keep for them' }]} />
-  );
-  if (tab === 'fx') {
-    return (
-      <Suspense fallback={<div className="min-h-screen bg-slate-50 px-4 py-4 sm:px-6"><Skeleton /></div>}>
-        <FxChallenge tabs={tabs} />
-      </Suspense>
-    );
-  }
-  return <MetricsPack tabs={tabs} />;
-}
-
-function MetricsPack({ tabs }: { tabs: ReactNode }) {
   const { phase, data, error, elapsed, busy, refresh, reload } = useMetrics();
   const [saving, setSaving] = useState<string | null>(null);
   const [explain, setExplain] = useState<string | null>(null);
@@ -208,14 +186,11 @@ function MetricsPack({ tabs }: { tabs: ReactNode }) {
     <div className="min-h-screen bg-slate-50">
       <header className="border-b border-slate-200 bg-white">
         <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
-          <div className="flex flex-wrap items-center gap-3">
-            <div>
-              <h1 className="text-lg font-semibold text-slate-900">Metrics</h1>
-              <p className="text-sm text-slate-500">
-                LSports · monthly pack{data ? `, as of ${monthName(data.asOf.lastClosed)}` : ''} · A = actual, F = forecast
-              </p>
-            </div>
-            {tabs}
+          <div>
+            <h1 className="text-lg font-semibold text-slate-900">Metrics</h1>
+            <p className="text-sm text-slate-500">
+              LSports · monthly pack{data ? `, as of ${monthName(data.asOf.lastClosed)}` : ''} · A = actual, F = forecast
+            </p>
           </div>
           <div className="flex items-center gap-2">
             <button type="button" onClick={refresh} disabled={busy}

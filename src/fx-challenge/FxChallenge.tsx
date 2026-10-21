@@ -1,14 +1,14 @@
-// Business Tools → Metrics → FX Challenge: finance's monthly EUR→ILS conversions at Bank Hapoalim (fixed on the
-// 7th by the conversion table), simulated at any rate, and how much EUR to keep for them (GET /api/metrics?view=fx;
-// the logic is src/forecast/fx-challenge.mjs, the same as the server's tests).
+// Business Tools → FX Challenge: finance's monthly EUR→ILS conversions at Bank Hapoalim (fixed on the 7th by the
+// conversion table), simulated at any rate, and how much EUR to keep for them (GET /api/fx-challenge; the logic is
+// src/forecast/fx-challenge.mjs, the same as the server's tests).
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Loader2, RefreshCw } from 'lucide-react';
 import { ErrorCard, Segmented, Skeleton, Warnings } from '../new-dashboard/PageParts.tsx';
 import { KpiCard } from '../new-dashboard/KpiStrip.tsx';
 import { readParam, writeParam } from '../new-dashboard/urlParams.ts';
 import { parseTable, POLICIES, POLICY_LABEL, tableToText, type FxTable, type Policy } from '../forecast/fx-challenge.mjs';
-import { fetchFx, patchSettings } from './api.ts';
-import { formatEur, monthName } from './model.ts';
+import { formatEur, monthName } from '../metrics/model.ts';
+import { fetchFx, saveTable } from './api.ts';
 import { buildFxModel, formatDay, formatIls, formatPct0, formatRate, type FxModel } from './fxModel.ts';
 import type { FxPayload } from './types.ts';
 
@@ -54,7 +54,7 @@ const TH = 'px-2 py-1.5 text-right font-medium text-slate-500';
 const TD = 'px-2 py-1.5 text-right tabular-nums';
 const SOURCE_LABEL = { mail: "the daily balances mail's sources", books: "NetSuite's books (EUR only)" } as const;
 
-export default function FxChallenge({ tabs }: { tabs: ReactNode }) {
+export default function FxChallenge() {
   const { phase, data, error, busy, refresh, reload } = useFx();
   const [rateText, setRateText] = useState<string | null>(null);
   const [policy, setPolicyState] = useState<Policy>(() => {
@@ -70,12 +70,9 @@ export default function FxChallenge({ tabs }: { tabs: ReactNode }) {
     <div className="min-h-screen bg-slate-50">
       <header className="border-b border-slate-200 bg-white">
         <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
-          <div className="flex flex-wrap items-center gap-3">
-            <div>
-              <h1 className="text-lg font-semibold text-slate-900">Metrics</h1>
-              <p className="text-sm text-slate-500">LSports · FX Challenge: the EUR→ILS conversions fixed on the 7th, and what to keep for them</p>
-            </div>
-            {tabs}
+          <div>
+            <h1 className="text-lg font-semibold text-slate-900">FX Challenge</h1>
+            <p className="text-sm text-slate-500">LSports · the EUR→ILS conversions fixed on the 7th, and what to keep for them</p>
           </div>
           <button type="button" onClick={refresh} disabled={busy} className={BUTTON} title="Read the rates, balances and conversions from NetSuite again">
             <RefreshCw size={14} className={busy ? 'animate-spin' : ''} />{busy ? 'Updating…' : 'Refresh'}
@@ -358,7 +355,7 @@ function EditTable({ table, saved, onSaved, onClose }: { table: FxTable; saved: 
     setSaving(true);
     setErr(null);
     try {
-      await patchSettings({ fxChallenge: value });
+      await saveTable(value);
       await onSaved();
       onClose();
     } catch (e) {

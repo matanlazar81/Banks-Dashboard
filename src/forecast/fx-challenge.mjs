@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // FX Challenge: finance's monthly EUR→ILS conversion program at Bank Hapoalim (583400), and how much EUR to
-// keep for it. Pure — no I/O — shared by the server (server/fx-challenge.cjs), its tests and the Metrics page's
-// FX Challenge tab.
+// keep for it. Pure — no I/O — shared by the server (server/fx-challenge.cjs), its tests and the FX Challenge
+// page (src/fx-challenge/).
 //
 // The table has one row per fixing month and one column per EUR/ILS band. On the fixing day (the 7th) that
 // day's EUR/ILS picks the band, and the cell says how many euros are sold (€ thousands, negative = sold) and at
@@ -305,7 +305,7 @@ const number = (s) => {
   return Number.isFinite(v) ? v : NaN;
 };
 
-/** The same rules as the server (server/metrics-settings.cjs): a list of problems, empty when the table is fine. */
+/** The same rules as the server (server/fx-challenge.cjs): a list of problems, empty when the table is fine. */
 export function tableProblems(t) {
   const out = [];
   if (!t || !Array.isArray(t.bounds) || !Array.isArray(t.rows)) return ['The table needs bands and months.'];
