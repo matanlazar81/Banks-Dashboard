@@ -11,9 +11,9 @@ import {
   type DepositRelease, type FxTable, type OtherConversion, type OutcomeRange, type PathPoint, type Policy, type RateCheck, type ReservePlan,
 } from '../forecast/fx-challenge.mjs';
 import { formatEur, monthName } from '../metrics/model.ts';
-import { fetchFx, saveTable } from './api.ts';
+import { fetchFx, fetchMail, saveMail, saveTable } from './api.ts';
 import { buildFxModel, formatDay, formatIls, formatPct0, formatRate, type FxModel, type ScheduleRow } from './fxModel.ts';
-import type { FxPayload } from './types.ts';
+import type { FxPayload, MailSettings } from './types.ts';
 
 type Phase = 'loading' | 'ready' | 'error';
 
@@ -129,6 +129,7 @@ export default function FxChallenge() {
             <TableCard data={data} model={model} onSaved={reload} />
             <Balances data={data} model={model} />
             <PastFixings model={model} />
+            <DailyMail />
             <p className="max-w-5xl text-xs leading-relaxed text-slate-500">
               On each conversion day (the 7th), that day&apos;s EUR/ILS picks a band of the table, and the cell is the euros sold
               (thousands) and the deals&apos; blended rate. A rate on a band&apos;s edge counts in the band above it; the deals&apos; documents
@@ -758,6 +759,102 @@ function PastFixings({ model }: { model: FxModel }) {
         All Hapoalim conversions since {since}: {formatEur(all.eur)} net → {formatIls(all.ils)}, {formatIls(all.vs)} against each day&apos;s rate.
         {model.past.some((p) => !p.inTable) && ' Before the table, the booked figure is the best-rate day near the 7th; the rest of the month is under other conversions.'}
       </p>
+    </Card>
+  );
+}
+
+// ── the daily mail ──
+const LSPORTS_ADDRESS = /^[^\s@<>"',;]+@lsports\.eu$/i;
+const atIsrael = (iso: string) => new Date(iso).toLocaleString('en-GB', { timeZone: 'Asia/Jerusalem', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+
+/** Who gets the daily mail (scripts/fx-challenge-mail.cjs): kept here and saved for everyone, lsports.eu addresses only. */
+function DailyMail() {
+  // undefined while loading; null when this server has no such route yet (finance-it's route file is older).
+  const [data, setData] = useState<MailSettings | null | undefined>(undefined);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [edited, setEdited] = useState<string[] | null>(null);
+  const [draft, setDraft] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const load = useCallback(async () => {
+    try {
+      setData(await fetchMail());
+      setLoadError(null);
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+
+  if (loadError) return <Card title="Daily mail"><p className="text-xs text-rose-700">{loadError}</p></Card>;
+  if (data === undefined) return null;
+  if (data === null) {
+    return (
+      <Card title="Daily mail">
+        <p className="text-xs text-slate-600">
+          Until finance-it&apos;s FX routes are updated (docs/fx-challenge.md, Deploying), who gets the daily mail is set on the server (FX_MAIL_TO in the
+          dashboard&apos;s .env). After that it is kept here.
+        </p>
+      </Card>
+    );
+  }
+  const saved = data.value ? data.value.to : null;
+  const current = saved ?? data.envTo;
+  const list = edited ?? current;
+  const changed = edited !== null && edited.join(',') !== current.join(',');
+  const add = () => {
+    const a = draft.trim().toLowerCase();
+    if (!LSPORTS_ADDRESS.test(a)) { setErr(`${draft.trim() || 'That'} is not an lsports.eu address.`); return; }
+    if (list.includes(a)) { setErr(`${a} is on the list already.`); return; }
+    setEdited([...list, a]);
+    setDraft('');
+    setErr(null);
+  };
+  async function save() {
+    setSaving(true);
+    setErr(null);
+    try {
+      await saveMail(list);
+      setEdited(null);
+      await load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+  const sent = data.lastSent;
+  return (
+    <Card title="Daily mail"
+      aside={<span className="text-[11px] text-slate-500">{saved ? `Saved${data.updatedAt ? ` ${atIsrael(data.updatedAt)}` : ''}${data.updatedBy ? ` by ${data.updatedBy}` : ''}` : "From the server's settings (FX_MAIL_TO) until saved here"}</span>}>
+      <div className="space-y-2.5 text-xs text-slate-700">
+        <p>
+          What to keep and what is free, every day at {String(data.hour).padStart(2, '0')}:00 Israel time{data.from ? `, from ${data.from}` : ''}, to the addresses below.
+          {' '}{sent ? `Last sent ${atIsrael(sent.at)}${sent.recipients ? `, to ${sent.recipients} address${sent.recipients === 1 ? '' : 'es'}` : ''}.` : 'Not sent by the daily job yet.'}
+        </p>
+        <ul className="flex flex-wrap gap-1.5">
+          {list.map((a) => (
+            <li key={a} className="inline-flex items-center gap-1 rounded-full border border-slate-300 bg-slate-50 py-0.5 pl-2.5 pr-1 text-slate-800">
+              {a}
+              <button type="button" aria-label={`Remove ${a}`} title={`Remove ${a}`} onClick={() => { setEdited(list.filter((x) => x !== a)); setErr(null); }}
+                className="rounded-full px-1.5 leading-4 text-slate-500 hover:bg-slate-200 hover:text-slate-900">×</button>
+            </li>
+          ))}
+          {!list.length && <li className="text-amber-700">Nobody is on the list, so no mail is sent.</li>}
+        </ul>
+        <form noValidate className="flex flex-wrap items-center gap-2" onSubmit={(e: { preventDefault: () => void }) => { e.preventDefault(); add(); }}>
+          <input aria-label="An lsports.eu address to add" type="email" placeholder="name@lsports.eu" value={draft}
+            onChange={(e: { target: { value: string } }) => setDraft(e.target.value)} className={`${INPUT} w-56`} />
+          <button type="submit" className={BUTTON} disabled={!draft.trim()}>Add</button>
+          <button type="button" className={BUTTON} disabled={saving || (!changed && saved !== null)} onClick={() => void save()}>
+            {saving && <Loader2 size={12} className="animate-spin" />}Save for everyone
+          </button>
+          {edited !== null && <button type="button" className={BUTTON} disabled={saving} onClick={() => { setEdited(null); setErr(null); }}>Undo changes</button>}
+        </form>
+        {err && <p className="text-rose-700">{err}</p>}
+        {changed && !err && <p className="text-amber-700">Not saved yet: until you save, the mail goes to the list as it was.</p>}
+        <p className="text-[11px] text-slate-500">lsports.eu addresses only, as the mail carries LSports&apos; balances. Each save is kept in the history with who made it.</p>
+      </div>
     </Card>
   );
 }

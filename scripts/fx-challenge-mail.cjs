@@ -10,9 +10,12 @@
 //                                                   time, so daylight saving needs no change. An incomplete read
 //                                                   (no balances, no rate) is tried again the next two hours.
 //
+// Who gets it is kept on the page ("Daily mail", saved for everyone in data/fx-challenge-mail.json); until a list is
+// saved there, FX_MAIL_TO. lsports.eu addresses only, unless FX_MAIL_ALLOW_EXTERNAL=1 (the mail carries LSports'
+// balances). An empty list on the page sends to nobody.
+//
 // The checkout's .env:
-//   FX_MAIL_TO      recipients, comma-separated; lsports.eu only unless FX_MAIL_ALLOW_EXTERNAL=1 (the mail carries
-//                   LSports' balances)
+//   FX_MAIL_TO      recipients until the page has a list, comma-separated
 //   FX_MAIL_FROM    the sender (default SMTP_USER); the mail server has to allow sending as it
 //   FX_MAIL_HOUR    the hour of the daily mail, Israel time (default 10)
 //   FX_MAIL_POLICY  what to keep: today | p95 (default) | worst, as the page's "What to keep"
@@ -31,7 +34,7 @@ try { require('dotenv').config({ path: path.join(ROOT, '.env'), quiet: true }); 
 const fxs = require(path.join(ROOT, 'server', 'fx-challenge.cjs'));
 const { readDoc } = require(path.join(ROOT, 'server', 'json-store.cjs'));
 
-const MARKER_FILE = path.join(ROOT, 'data', 'fx-challenge-mail-last.json');
+const MARKER_FILE = fxs.MAIL_SENT_FILE;
 const TAG = '[fx-mail]';
 
 // ── formatting (as the page, with fixed day names so every server writes the same) ──
@@ -246,13 +249,14 @@ function parseArgs(argv) {
   return a;
 }
 
-/** FX_MAIL_TO as addresses: lsports.eu ones only, unless allowExternal (the mail carries LSports' balances). */
-function parseRecipients(value, { allowExternal = false } = {}) {
-  const to = [...new Set(String(value || '').split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean))];
+/** The recipients (FX_MAIL_TO as written, or the page's list) as addresses: lsports.eu ones only, unless allowExternal
+ * (the mail carries LSports' balances). `where` names the list in the errors. */
+function parseRecipients(value, { allowExternal = false, where = 'FX_MAIL_TO' } = {}) {
+  const to = Array.isArray(value) ? [...new Set(value.map((s) => String(s).trim()).filter(Boolean))] : fxs.splitAddresses(value);
   const errors = [];
-  if (!to.length) errors.push('FX_MAIL_TO is not set');
+  if (!to.length) errors.push(where === 'FX_MAIL_TO' ? 'FX_MAIL_TO is not set (and no list is saved on the page)' : `nobody is on ${where}`);
   for (const a of to) {
-    if (!/^[^\s@<>"',;]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/.test(a)) errors.push(`"${a}" in FX_MAIL_TO is not an address`);
+    if (!/^[^\s@<>"',;]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/.test(a)) errors.push(`"${a}" in ${where} is not an address`);
     else if (!allowExternal && !/@lsports\.eu$/i.test(a)) errors.push(`${a} is outside lsports.eu (FX_MAIL_ALLOW_EXTERNAL=1 allows it)`);
   }
   return { to, errors };
@@ -283,10 +287,15 @@ function smtpFrom(env) {
   return null;
 }
 
-/** Everything the mail needs from the environment, with what is wrong (a send stops on any of it). */
-function mailConfig(env) {
+/**
+ * Everything the mail needs, with what is wrong (a send stops on any of it). saved: the page's list (an array, maybe
+ * empty) or null when none is saved, and FX_MAIL_TO is used. nobody: the page's list is empty.
+ */
+function mailConfig(env, saved = null) {
   const errors = [];
-  const { to, errors: toErrors } = parseRecipients(env.FX_MAIL_TO, { allowExternal: env.FX_MAIL_ALLOW_EXTERNAL === '1' });
+  const source = Array.isArray(saved) ? 'page' : 'env';
+  const { to, errors: toErrors } = parseRecipients(source === 'page' ? saved : env.FX_MAIL_TO,
+    { allowExternal: env.FX_MAIL_ALLOW_EXTERNAL === '1', where: source === 'page' ? "the page's list" : 'FX_MAIL_TO' });
   errors.push(...toErrors);
   let smtp = null;
   try { smtp = smtpFrom(env); } catch (e) { errors.push(e.message); }
@@ -298,10 +307,10 @@ function mailConfig(env) {
     const helo = env.FX_MAIL_SMTP_HELO || env.NET_CASH_SMTP_HELO || (from.includes('@') ? from.split('@').pop() : null);
     if (helo) smtp.transport.name = helo;
   }
-  const hour = /^\d{1,2}$/.test(String(env.FX_MAIL_HOUR || '').trim()) && +env.FX_MAIL_HOUR <= 23 ? +env.FX_MAIL_HOUR : 10;
+  const hour = fxs.mailHourOf(env.FX_MAIL_HOUR);
   const policy = ['today', 'p95', 'worst'].includes(env.FX_MAIL_POLICY) ? env.FX_MAIL_POLICY : 'p95';
   const link = /^https?:\/\/\S+$/.test(String(env.FX_MAIL_LINK || '').trim()) ? env.FX_MAIL_LINK.trim() : null;
-  return { to, from, smtp, hour, policy, link, errors };
+  return { to, source, nobody: source === 'page' && !to.length, from, smtp, hour, policy, link, errors };
 }
 
 /** The hour in Israel (0–23). */
@@ -321,20 +330,25 @@ function readMarker(file) {
 
 /**
  * Reads, writes and sends (or prints) the mail; returns the exit code. deps (tests): env, clock(), reads (the
- * NetSuite reads, as readFxChallenge takes them), tableFile, markerFile, nodemailer.
+ * NetSuite reads, as readFxChallenge takes them), tableFile, mailFile (the page's list), markerFile, nodemailer.
  */
 async function main(argv = process.argv.slice(2), deps = {}) {
   const env = deps.env || process.env;
   const args = parseArgs(argv);
   const now = (deps.clock || Date.now)();
   const today = fxs.israelDay(now);
-  const cfg = mailConfig(env);
+  const cfg = mailConfig(env, fxs.savedRecipients(deps.mailFile || fxs.MAIL_FILE));
   const markerFile = deps.markerFile || MARKER_FILE;
   let state = 'send';
   if (args.scheduled) {
     const last = readMarker(markerFile);
-    state = scheduleState({ hour: israelHour(now), sendHour: cfg.hour, sentDay: last && last.day, today });
+    const hour = israelHour(now);
+    state = scheduleState({ hour, sendHour: cfg.hour, sentDay: last && last.day, today });
     if (state === 'wait' || state === 'done') return 0;
+    if (cfg.nobody) {
+      if (hour === cfg.hour) console.log(`${TAG} ${today}: nobody is on the page's list, so no mail today`);
+      return 0;
+    }
   }
   if (!args.dryRun && cfg.errors.length) {
     console.error(`${TAG} ${today}: not sent: ${cfg.errors.join('; ')}`);
@@ -359,7 +373,8 @@ async function main(argv = process.argv.slice(2), deps = {}) {
   if (args.dryRun) {
     console.log(`Subject: ${mail.subject}\n\n${mail.text}`);
     if (args.html) { fs.writeFileSync(args.html, mail.html); console.log(`\n${TAG} HTML written to ${args.html}`); }
-    console.log(cfg.errors.length ? `\n${TAG} a real send would stop: ${cfg.errors.join('; ')}` : `\n${TAG} a real send goes to ${cfg.to.length} recipient(s) from ${cfg.from} via ${cfg.smtp.host}`);
+    const list = cfg.source === 'page' ? "the page's list" : 'FX_MAIL_TO';
+    console.log(cfg.errors.length ? `\n${TAG} a real send would stop: ${cfg.errors.join('; ')}` : `\n${TAG} a real send goes to ${cfg.to.length} recipient(s) (${list}) from ${cfg.from} via ${cfg.smtp.host}`);
     return 0;
   }
 
@@ -368,7 +383,7 @@ async function main(argv = process.argv.slice(2), deps = {}) {
   console.log(`${TAG} ${today}: sent to ${cfg.to.length} recipient(s) from ${cfg.from} via ${cfg.smtp.host}: ${mail.subject}`);
   if (args.scheduled) {
     fs.mkdirSync(path.dirname(markerFile), { recursive: true });
-    fs.writeFileSync(markerFile, JSON.stringify({ day: today, at: new Date(now).toISOString(), subject: mail.subject }));
+    fs.writeFileSync(markerFile, JSON.stringify({ day: today, at: new Date(now).toISOString(), recipients: cfg.to.length, subject: mail.subject }));
   }
   return 0;
 }

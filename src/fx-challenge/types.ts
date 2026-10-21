@@ -24,3 +24,19 @@ export type FxResponse = FxPayload | { ok: false; status: 'error'; error: string
 
 /** GET/PUT /api/fx-challenge/table: the saved table, null while it is the default. */
 export interface SavedTable { ok: true; value: FxTable | null; updatedAt: string | null; updatedBy: string | null }
+
+/** GET /api/fx-challenge/mail: who gets the daily mail (scripts/fx-challenge-mail.cjs). */
+export interface MailSettings {
+  ok: true;
+  /** The list saved on the page; null while none is saved and the server's FX_MAIL_TO is used. */
+  value: { to: string[] } | null;
+  updatedAt: string | null;
+  updatedBy: string | null;
+  /** The server's FX_MAIL_TO. */
+  envTo: string[];
+  /** FX_MAIL_FROM; null: the mail server's own account. */
+  from: string | null;
+  /** The hour it is sent, Israel time. */
+  hour: number;
+  lastSent: { day: string | null; at: string; recipients: number | null } | null;
+}

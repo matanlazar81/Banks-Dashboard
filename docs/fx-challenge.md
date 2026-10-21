@@ -20,7 +20,8 @@ briefly a tab of the Metrics page before it got its own sidebar item.
 | `fx-challenge.html` | the page (a small bundle, never loads the old dashboard) |
 | `GET /api/fx-challenge` | what the page shows (`server/fx-challenge.cjs`); `?refresh=true` reads NetSuite again |
 | `GET/PUT /api/fx-challenge/table` | the conversion table, saved for everyone (`null` = the default) |
-| finance-it | sidebar item → iframe of `<bank-dashboard static base>/fx-challenge.html` (see Deploying) |
+| `GET/PUT /api/fx-challenge/mail` | who gets the daily mail, saved for everyone (`null` = the server's `FX_MAIL_TO`) |
+| finance-it | sidebar item → iframe of `<bank-dashboard static base>/fx-challenge.html`; every `/api/fx-challenge` route is mounted once, by prefix (`createFxChallengeRouter`), so new ones need no finance-it change (see Deploying) |
 
 ## The page
 
@@ -93,7 +94,16 @@ MoneyNet carry no balance in their files, so they are not in it. Only LSports' e
 ## The daily mail
 
 `scripts/fx-challenge-mail.cjs` sends the recommendation every day. It reads NetSuite fresh (no cache) and computes
-the same figures as the page (`planFromPayload`). The mail is HTML with a plain-text part:
+the same figures as the page (`planFromPayload`).
+
+**Who gets it** is kept on the page, in the **Daily mail** card at the bottom:
+- Add or remove lsports.eu addresses, then **Save for everyone**.
+- The list is saved in `data/fx-challenge-mail.json`, with a history line per save (who and when), as the table is.
+- Until a list is saved there, the mail goes to `FX_MAIL_TO` in the checkout's `.env`.
+- An empty list sends to nobody.
+- The card also shows the sender, the hour, and when the mail last went.
+
+The mail is HTML with a plain-text part:
 - the subject: what is free to convert (or short), the rate verdict, and what to keep for the next conversion;
 - what to keep and what is free now, and the rate check;
 - what the next conversion can sell, range by range (today's range highlighted);
@@ -104,7 +114,7 @@ the same figures as the page (`planFromPayload`). The mail is HTML with a plain-
 Set it up in the checkout's `.env` (immutable on the server: `sudo chattr -i .env`, edit, `sudo chattr +i .env`):
 
 ```bash
-FX_MAIL_TO=matan.l@lsports.eu,<second address>@lsports.eu   # lsports.eu only, unless FX_MAIL_ALLOW_EXTERNAL=1
+FX_MAIL_TO=matan.l@lsports.eu,dotan@lsports.eu   # until a list is saved on the page; lsports.eu only, unless FX_MAIL_ALLOW_EXTERNAL=1
 FX_MAIL_FROM=matan.l@lsports.eu
 # FX_MAIL_HOUR=10                 # Israel time (default 10)
 # FX_MAIL_POLICY=p95              # today | p95 | worst, as the page's "What to keep"
@@ -128,8 +138,9 @@ node scripts/fx-challenge-mail.cjs                                     # send on
 ```
 
 The scheduled run behaves like this:
-- It sends once a day and records the day in `data/fx-challenge-mail-last.json`. A run by hand doesn't record it, so
-  the daily mail still goes.
+- It sends once a day and records the day (and to how many) in `data/fx-challenge-mail-last.json`. A run by hand
+  doesn't record it, so the daily mail still goes.
+- With an empty list on the page it sends nothing, and says so once, at the hour.
 - If the balances or the rate could not be read, it tries again the next two hours, then sends what it has, with
   the reason.
 - If the mail server refuses, it tries again every hour that day.
@@ -162,12 +173,24 @@ exists, the page opens only at its URL.
         value, like the earlier Business Tools roles.
    2. **Frontend route** `/business-tools/fx-challenge`: the same iframe component as the other pages, with
       `page="fx-challenge.html"`.
-   3. **Backend**: update `src/routes/cash-projection.ts` from `docs/backend-cash-projection-route.ts`. It now
-      also mounts `GET /api/fx-challenge` and `GET/PUT /api/fx-challenge/table` behind the `fx_challenge`
-      role. If finance-it-backend mounts the shared API (`docs/backend-bank-dashboard-api.ts`), the routes are
-      already included.
+   3. **Backend**: update `src/routes/cash-projection.ts` from `docs/backend-cash-projection-route.ts`. It
+      mounts every `/api/fx-challenge` route behind the `fx_challenge` role, by prefix. If finance-it-backend
+      mounts the shared API (`docs/backend-bank-dashboard-api.ts`), the routes are already included.
    4. Build finance-it and `pm2 restart finance-it-backend`.
 3. **Access**: tick **FX Challenge** for the users who need it in Users Management. Admins always see it.
+
+**Since the daily mail's recipients moved to the page** (`GET/PUT /api/fx-challenge/mail`), finance-it's route file
+mounts the whole `/api/fx-challenge` prefix once (`createFxChallengeRouter`). Copy the file once more (step 2.3,
+then 2.4); after that, a new FX route needs no finance-it change. Until then, the page's Daily mail card says the
+list is still `FX_MAIL_TO`, and everything else works as before.
+
+```bash
+cd /home/ubuntu/finance-it
+cp extra-apps/bank-dashboard/docs/backend-cash-projection-route.ts backend/src/routes/cash-projection.ts
+git diff --stat
+cd backend && npm run build && pm2 restart finance-it-backend
+pm2 logs finance-it-backend --lines 200 --nostream | grep fx-challenge   # [fx-challenge] mounted from …
+```
 
 ## Checking it
 

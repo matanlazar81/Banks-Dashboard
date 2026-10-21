@@ -2743,11 +2743,11 @@ If the user asks to modify, adjust, or refine an existing scenario (e.g. "reduce
         console.error('[metrics] route not mounted:', e && e.message);
       }
 
-      // ── GET /api/fx-challenge — FX Challenge (server/fx-challenge.cjs); its table first (prefix match) ──
+      // ── /api/fx-challenge — FX Challenge (server/fx-challenge.cjs): the page's data, its table, the daily mail's
+      //    recipients, all behind the one prefix ──
       try {
         const fx = require('./fx-challenge.cjs');
-        use('/api/fx-challenge/table', fx.createFxTableHandler());
-        use('/api/fx-challenge', fx.createFxChallengeHandler({ getNsClient, queueNsCall }));
+        use('/api/fx-challenge', fx.createFxChallengeRouter({ getNsClient, queueNsCall }));
       } catch (e     ) {
         console.error('[fx-challenge] route not mounted:', e && e.message);
       }
