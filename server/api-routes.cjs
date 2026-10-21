@@ -50,7 +50,7 @@ function getNsClient(subsidiaryId         = 3) {
   // the running Node process is holding an old require()'d copy from before the most
   // recent deploy. Evict the require cache and rebuild so the new methods become visible
   // without a full process restart.
-  const expected           = ['fetchBankClassifiedYearly', 'fetchPaidVendorsYearly', 'fetchVendorSpend'];
+  const expected           = ['fetchBankClassifiedYearly', 'fetchPaidVendorsYearly', 'fetchVendorSpend', 'fetchEurIlsRates', 'restletGet'];
   const cached = nsClients[subsidiaryId];
   const isStale = cached && expected.some(m => typeof cached[m] !== 'function');
   if (!cached || isStale) {
@@ -2737,7 +2737,7 @@ If the user asks to modify, adjust, or refine an existing scenario (e.g. "reduce
         use('/api/metrics/settings', m.createMetricsSettingsHandler());
         use('/api/metrics/deposits', m.createMetricsDepositsHandler());
         use('/api/metrics', m.createMetricsHandler({
-          cash: cashProjection || undefined, pnl: pnlProjection || undefined, getSfClient,
+          cash: cashProjection || undefined, pnl: pnlProjection || undefined, getSfClient, getNsClient, queueNsCall,
         }));
       } catch (e     ) {
         console.error('[metrics] route not mounted:', e && e.message);

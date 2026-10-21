@@ -1,6 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // What the Metrics page saves for everyone, and what may be saved (server/json-store.cjs stores it):
-//   settings  the cloud cap (% of projected revenue, which category is cloud)
+//   settings  the cloud cap (% of projected revenue, which category is cloud) and the FX Challenge's conversion
+//             table (fxChallenge; none saved = the default in src/forecast/fx-challenge.mjs)
 //   deposits  the deposit tracker (no longer on the page; its route stays mounted for finance-it's route file)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -42,16 +43,50 @@ function dateIn(v, where, errors, { optional = false } = {}) {
   return v;
 }
 
-/** PUT body { value: settings } → { ok, value, errors }. */
+// The FX Challenge table: the same rules as tableProblems in src/forecast/fx-challenge.mjs (the page checks
+// a pasted table with it before saving).
+const FX_LIMITS = { rows: 60, bounds: 30, eurK: 100000, rate: 20 };
+function fxTableIn(t, errors) {
+  const where = 'fxChallenge';
+  if (!keysOnly(t, ['pair', 'fixingDay', 'bounds', 'rows'], where, errors)) return null;
+  const pair = textIn(t.pair, 20, `${where}.pair`, errors);
+  let fixingDay = t.fixingDay;
+  if (!(Number.isInteger(fixingDay) && fixingDay >= 1 && fixingDay <= 28)) { errors.push(`${where}.fixingDay: a day from 1 to 28`); fixingDay = 7; }
+  if (!Array.isArray(t.bounds) || !t.bounds.length || t.bounds.length > FX_LIMITS.bounds) { errors.push(`${where}.bounds: 1–${FX_LIMITS.bounds} rates`); return null; }
+  const bounds = t.bounds.map((b, i) => {
+    const v = numIn(b, 0.0001, FX_LIMITS.rate, `${where}.bounds[${i + 1}]`, errors);
+    if (v !== null && i && !(v > t.bounds[i - 1])) errors.push(`${where}.bounds[${i + 1}]: above the bound before`);
+    return v;
+  });
+  if (!Array.isArray(t.rows) || !t.rows.length || t.rows.length > FX_LIMITS.rows) { errors.push(`${where}.rows: 1–${FX_LIMITS.rows} months`); return null; }
+  const months = new Set();
+  const rows = t.rows.map((r, n) => {
+    const at = `${where}.rows[${n + 1}]`;
+    if (!keysOnly(r, ['month', 'cells'], at, errors)) return null;
+    const month = typeof r.month === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(r.month) ? r.month : (errors.push(`${at}.month: YYYY-MM`), '');
+    if (month && months.has(month)) errors.push(`${at}.month: ${month} twice`);
+    months.add(month);
+    if (!Array.isArray(r.cells) || r.cells.length !== bounds.length + 1) { errors.push(`${at}.cells: ${bounds.length + 1} (one per band)`); return null; }
+    const cells = r.cells.map((c, i) => (keysOnly(c, ['eurK', 'rate'], `${at}.cells[${i + 1}]`, errors) ? {
+      eurK: numIn(c.eurK, -FX_LIMITS.eurK, FX_LIMITS.eurK, `${at}.cells[${i + 1}].eurK`, errors),
+      rate: numIn(c.rate, 0.0001, FX_LIMITS.rate, `${at}.cells[${i + 1}].rate`, errors),
+    } : null));
+    return { month, cells };
+  });
+  return { pair, fixingDay, bounds, rows: rows.filter(Boolean).sort((a, b) => a.month.localeCompare(b.month)) };
+}
+
+/** PUT body { value: settings } → { ok, value, errors }. fxChallenge: null puts the default table back. */
 function validateSettings(body) {
   const errors = [];
   const out = emptySettings();
-  if (!keysOnly(body, ['value'], 'body', errors) || !keysOnly(body.value, ['cloudCapPct', 'cloudCategory', ...LEGACY_KEYS], 'settings', errors)) {
+  if (!keysOnly(body, ['value'], 'body', errors) || !keysOnly(body.value, ['cloudCapPct', 'cloudCategory', 'fxChallenge', ...LEGACY_KEYS], 'settings', errors)) {
     return { ok: false, value: null, errors };
   }
   const v = body.value;
   if (v.cloudCapPct !== undefined) out.cloudCapPct = numIn(v.cloudCapPct, 0, 100, 'cloudCapPct', errors);
   if (v.cloudCategory !== undefined) out.cloudCategory = textIn(v.cloudCategory, 120, 'cloudCategory', errors, { optional: true });
+  if (v.fxChallenge !== undefined && v.fxChallenge !== null) out.fxChallenge = fxTableIn(v.fxChallenge, errors);
   return errors.length ? { ok: false, value: null, errors } : { ok: true, value: out, errors: [] };
 }
 

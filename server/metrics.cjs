@@ -31,6 +31,7 @@ const path = require('path');
 const { readDoc, createDocHandler, send } = require('./json-store.cjs');
 const { emptySettings, validateSettings, validateDeposits } = require('./metrics-settings.cjs');
 const projectionTargets = require('./projection-targets.cjs');
+const fxChallenge = require('./fx-challenge.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
 const SETTINGS_FILE = path.join(ROOT, 'data', 'metrics-settings.json');
@@ -723,8 +724,9 @@ function envMinutes(name, fallback) {
 /**
  * Express/connect handler for GET /api/metrics. deps (all optional):
  *   cash, pnl        the projection handlers (their .current()); default: own instances on the same caches
- *   getSfClient()
- *   reads            override every external read (tests): { arr, churnQuarters, customerRevenue(from, to), churnedOpps(from, to), employees(company) }
+ *   getSfClient(), getNsClient(sub), queueNsCall(fn)
+ *   reads            override every external read (tests): { arr, churnQuarters, customerRevenue(from, to), churnedOpps(from, to), employees(company),
+ *                    fx: { rates, books, mail, flows(from), conversions(from) } (the FX Challenge tab, server/fx-challenge.cjs) }
  *   company          the HiBob company of the P&L's subsidiary (default METRICS_HEADCOUNT_COMPANY or 'LSports')
  *   settingsFile, targetsFile (the saved 2027 targets), clock(), ttlMs
  */
@@ -755,7 +757,15 @@ function createMetricsHandler(deps = {}) {
       if (!c) throw new Error('Snowflake is not configured');
       return c;
     };
+    const ns = () => {
+      const sub = cmp().SUBSIDIARY;
+      const c = deps.getNsClient ? deps.getNsClient(sub) : require('./cash-projection.cjs').defaultGetNsClient(sub);
+      if (!c) throw new Error('NetSuite is not configured');
+      return c;
+    };
+    const queue = deps.queueNsCall || require('./cash-projection.cjs').defaultQueueNsCall;
     return {
+      fx: fxChallenge.nsReads({ ns, queue, env: () => { cmp(); return process.env; } }),
       arr: () => sf().fetchCurrentARR(),
       churnQuarters: () => sf().fetchQuarterlyChurnMRR(),
       customerRevenue: (from, to) => sfCustomerRevenue(sf(), from, to),
@@ -781,16 +791,34 @@ function createMetricsHandler(deps = {}) {
     }
     let refresh = false;
     let detail = null;
+    let view = null;
     try {
       const q = new URL(req.url || '', 'http://localhost').searchParams;
       refresh = /^(1|true)$/.test(q.get('refresh') || '');
       detail = q.get('detail');
+      view = q.get('view');
     } catch { /* plain read */ }
     if (detail !== null && !DETAILS.includes(detail)) {
       send(res, 404, { ok: false, status: 'error', error: 'There is no breakdown for that figure.' });
       return;
     }
+    if (view !== null && view !== 'fx') {
+      send(res, 404, { ok: false, status: 'error', error: 'There is no such view.' });
+      return;
+    }
     if (refresh) memo.clear();
+
+    // The FX Challenge tab needs neither projection: it answers before waiting for them.
+    if (view === 'fx') {
+      try {
+        if (!reads.fx) throw new Error('no FX reads');
+        send(res, 200, await fxChallenge.readFxChallenge({ reads: reads.fx, cached, settingsDoc: readDoc(settingsFile), clock }));
+      } catch (e) {
+        console.error(`[metrics] fx failed: ${e && e.stack ? e.stack : e}`);
+        send(res, 200, { ok: false, status: 'error', error: 'The FX Challenge could not be read. The server log has the details.' });
+      }
+      return;
+    }
 
     const { cash, pnl } = projections();
     const c = cash.current({ refreshStale: shared });
@@ -870,7 +898,8 @@ function createMetricsHandler(deps = {}) {
 }
 
 function createMetricsSettingsHandler(deps = {}) {
-  return createDocHandler({ file: deps.file || SETTINGS_FILE, label: 'metrics-settings', validate: validateSettings, empty: emptySettings, clock: deps.clock });
+  // 64KB: the FX Challenge table (15 months ≈ 6KB) is saved here too.
+  return createDocHandler({ file: deps.file || SETTINGS_FILE, label: 'metrics-settings', maxBytes: 64 * 1024, validate: validateSettings, empty: emptySettings, clock: deps.clock });
 }
 function createMetricsDepositsHandler(deps = {}) {
   return createDocHandler({ file: deps.file || DEPOSITS_FILE, label: 'metrics-deposits', maxBytes: 128 * 1024, validate: validateDeposits, empty: () => [], clock: deps.clock });

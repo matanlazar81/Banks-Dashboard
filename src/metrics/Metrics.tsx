@@ -1,9 +1,11 @@
 // Business Tools → Metrics: one short pack, the same shape every month, computed live from the dashboards'
 // data (GET /api/metrics). Every figure says whether it is actual (A), forecast (F) or both (A+F).
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+// A second tab, FX Challenge (FxChallenge.tsx), plans the monthly EUR→ILS conversions; the tab is in the URL.
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Download, Loader2, RefreshCw } from 'lucide-react';
-import { ComputingCard, ErrorCard, Skeleton, Warnings } from '../new-dashboard/PageParts.tsx';
-import { fetchMetrics, saveSettings } from './api.ts';
+import { ComputingCard, ErrorCard, Segmented, Skeleton, Warnings } from '../new-dashboard/PageParts.tsx';
+import { readParam, writeParam } from '../new-dashboard/urlParams.ts';
+import { fetchMetrics, patchSettings } from './api.ts';
 import { formatCell, formatEur, formatEurFull, formatPct, monthName, STATUS_LONG, STATUS_SHORT } from './model.ts';
 import ExplainWindow from './ExplainWindow.tsx';
 import PeopleCharts from './PeopleCharts.tsx';
@@ -147,7 +149,27 @@ function Meter({ value, cap }: { value: number; cap: number }) {
 }
 
 // ── page ────────────────────────────────────────────────────────────────────
+type Tab = 'pack' | 'fx';
+const FxChallenge = lazy(() => import('./FxChallenge.tsx'));
+
 export default function Metrics() {
+  const [tab, setTab] = useState<Tab>(() => (readParam('tab') === 'fx' ? 'fx' : 'pack'));
+  const chooseTab = (t: Tab) => { setTab(t); writeParam('tab', t === 'fx' ? t : null); };
+  const tabs = (
+    <Segmented label="Tab" value={tab} onChange={chooseTab}
+      options={[{ value: 'pack', label: 'Metrics' }, { value: 'fx', label: 'FX Challenge', title: 'The EUR→ILS conversions fixed on the 7th, and what to keep for them' }]} />
+  );
+  if (tab === 'fx') {
+    return (
+      <Suspense fallback={<div className="min-h-screen bg-slate-50 px-4 py-4 sm:px-6"><Skeleton /></div>}>
+        <FxChallenge tabs={tabs} />
+      </Suspense>
+    );
+  }
+  return <MetricsPack tabs={tabs} />;
+}
+
+function MetricsPack({ tabs }: { tabs: ReactNode }) {
   const { phase, data, error, elapsed, busy, refresh, reload } = useMetrics();
   const [saving, setSaving] = useState<string | null>(null);
   const [explain, setExplain] = useState<string | null>(null);
@@ -160,7 +182,7 @@ export default function Metrics() {
     setSaving(what);
     setSaveError(null);
     try {
-      await saveSettings({ ...data.settings, ...patch });
+      await patchSettings(patch);
       await reload();
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : String(e));
@@ -186,16 +208,19 @@ export default function Metrics() {
     <div className="min-h-screen bg-slate-50">
       <header className="border-b border-slate-200 bg-white">
         <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
-          <div>
-            <h1 className="text-lg font-semibold text-slate-900">Metrics</h1>
-            <p className="text-sm text-slate-500">
-              LSports · monthly pack{data ? `, as of ${monthName(data.asOf.lastClosed)}` : ''} · A = actual, F = forecast
-            </p>
+          <div className="flex flex-wrap items-center gap-3">
+            <div>
+              <h1 className="text-lg font-semibold text-slate-900">Metrics</h1>
+              <p className="text-sm text-slate-500">
+                LSports · monthly pack{data ? `, as of ${monthName(data.asOf.lastClosed)}` : ''} · A = actual, F = forecast
+              </p>
+            </div>
+            {tabs}
           </div>
           <div className="flex items-center gap-2">
             <button type="button" onClick={refresh} disabled={busy}
               className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-60"
-              title="Read ARR, NRR, churn, FX conversions and the ECB rate again">
+              title="Read ARR, NRR, churn and the employees again">
               <RefreshCw size={14} className={busy ? 'animate-spin' : ''} />{busy ? 'Updating…' : 'Refresh'}
             </button>
             <button type="button" onClick={onExport} disabled={!data || exporting}
