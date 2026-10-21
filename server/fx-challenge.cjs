@@ -16,6 +16,9 @@
 //   flows        EUR in and out by month, from four months back: the typical net inflow
 //   conversions  "Conversion" / המרה journals Hapoalim EUR ↔ ILS (583400), from January 2026 (HISTORY_FROM) or the
 //                table's first month if earlier: what each past month booked, euros bought back included
+//   payroll      what each month's payroll journal owes (net salaries, withholding tax, pension, social security),
+//                four months back, and the Salary Projection's Total payroll by month (the figures its page saved)
+//   ilsVendors   vendor payments out of the ILS accounts by month, four months back: the shekels kept for vendors
 // The table is the saved one (data/fx-challenge-table.json) or the default. The daily mail
 // (scripts/fx-challenge-mail.cjs) reads the same, uncached.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -49,6 +52,21 @@ const shiftMonth = (mKey, n) => {
 };
 /** Today in Israel, YYYY-MM-DD (the fixings and the bank's dates are Israeli). */
 const israelDay = (ms) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jerusalem', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms));
+/** The Salary Projection's Total payroll by month (₪), from the figures its page saved, or null when there are none
+ * (or they are from an older version of it). */
+async function readSalaryProjection(file) {
+  const { readCacheEntry } = require('./cash-projection.cjs');
+  const sp = require('./salary-projection.cjs');
+  const entry = readCacheEntry(file || sp.DEFAULT_CACHE_FILE, sp.SCHEMA_VERSION);
+  if (!entry || !entry.payload) return null;
+  const mod = await import(pathToFileURL(path.join(ROOT, 'src', 'forecast', 'salary-projection.mjs')).href);
+  const byMonth = mod.totalPayrollByMonth(entry.payload);
+  return {
+    asOf: entry.payload.generatedAt || (entry.generatedAtMs ? new Date(entry.generatedAtMs).toISOString() : null),
+    months: Object.entries(byMonth).sort(([a], [b]) => a.localeCompare(b)).map(([month, v]) => ({ month, ils: Math.round(v.ils), status: v.status })),
+  };
+}
+
 const daysBetween = (from, to) => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000);
 const isoDaysBefore = (iso, n) => new Date(Date.parse(`${iso}T00:00:00Z`) - n * 86400000).toISOString().slice(0, 10);
 
@@ -210,7 +228,8 @@ function createFxMailHandler(deps = {}) {
 
 /**
  * The FX Challenge payload.
- *   reads     { rates(days), books(), mail (null when the RESTlet is not configured), flows(fromMonth), conversions(fromDay) }
+ *   reads     { rates(days), books(), mail (null when the RESTlet is not configured), flows(fromMonth), conversions(fromDay),
+ *               payroll(fromMonth), ilsVendors(fromMonth), salary() } (the last three optional)
  *   cached    (key, fn) → promise, the handler's memo
  *   tableDoc  the saved table document ({ value: table | null, updatedAt, updatedBy }) or null
  */
@@ -234,6 +253,9 @@ async function readFxChallenge({ reads, cached = (k, fn) => fn(), tableDoc = nul
     cached('fx:books', () => reads.books()),
     cached(`fx:flows:${flowsFrom}`, () => reads.flows(flowsFrom)),
     cached(`fx:conversions:${convFrom}`, () => reads.conversions(convFrom)),
+    reads.payroll ? cached(`fx:payroll:${flowsFrom}`, () => reads.payroll(flowsFrom)) : Promise.resolve(null),
+    reads.ilsVendors ? cached(`fx:ils-vendors:${flowsFrom}`, () => reads.ilsVendors(flowsFrom)) : Promise.resolve(null),
+    reads.salary ? Promise.resolve().then(() => reads.salary()) : Promise.resolve(null),
   ]);
   const val = (i, what) => {
     if (settled[i].status === 'fulfilled') return settled[i].value;
@@ -271,6 +293,12 @@ async function readFxChallenge({ reads, cached = (k, fn) => fn(), tableDoc = nul
   if (!flows) warnings.push('The monthly EUR flows could not be read, so the typical inflow is left out.');
   const conversions = val(4, 'conversions');
   if (!conversions) warnings.push('The booked conversions could not be read, so past conversions are not checked.');
+  const journals = val(5, 'payroll journals');
+  const ilsVendors = val(6, 'ILS vendor payments');
+  const projection = val(7, 'the Salary Projection');
+  if ((reads.payroll || reads.salary) && !(journals && journals.length) && !projection) {
+    warnings.push("Neither the Salary Projection's figures nor NetSuite's payroll journals could be read, so salaries and vendors are left out of the plan.");
+  }
 
   return {
     ok: true,
@@ -284,6 +312,8 @@ async function readFxChallenge({ reads, cached = (k, fn) => fn(), tableDoc = nul
     flows: flows || [],
     inflowMonths: [-3, -2, -1].map((n) => shiftMonth(today.slice(0, 7), n)),
     conversions: conversions || [],
+    payroll: (journals && journals.length) || projection ? { journals: journals || [], projection: projection || null } : null,
+    ilsVendors: Array.isArray(ilsVendors) ? ilsVendors : null,
     warnings,
   };
 }
@@ -300,6 +330,9 @@ function nsReads({ ns, queue, env = () => process.env }) {
     },
     flows: (from) => queue(() => ns().fetchEurFlows({ from })),
     conversions: (from) => queue(() => ns().fetchHapoalimConversions({ from })),
+    payroll: (from) => queue(() => ns().fetchPayrollLiabilities({ from })),
+    ilsVendors: (from) => queue(() => ns().fetchIlsVendorPayments({ from })),
+    salary: () => readSalaryProjection(),
   };
 }
 
@@ -395,6 +428,6 @@ function createFxChallengeRouter(deps = {}) {
 
 module.exports = {
   createFxChallengeRouter, createFxChallengeHandler, createFxTableHandler, createFxMailHandler, validateTable, validateMailSettings,
-  readFxChallenge, nsReads, defaultNsReads, restletIds, bookRow, mailRows, israelDay, loadFxModule,
+  readFxChallenge, readSalaryProjection, nsReads, defaultNsReads, restletIds, bookRow, mailRows, israelDay, loadFxModule,
   splitAddresses, mailHourOf, savedRecipients, checkoutEnv, LSPORTS_ADDRESS, TABLE_FILE, MAIL_FILE, MAIL_SENT_FILE,
 };

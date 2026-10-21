@@ -70,6 +70,47 @@ export declare function eurPosition(rows: BalanceRow[]): EurPosition;
 export interface FlowRow { month: string; kind: 'customer' | 'vendor' | 'conversion' | 'deposit' | 'transfer' | 'refund' | 'other'; eur: number }
 export declare function typicalInflow(flows: FlowRow[], months: string[]): { perMonth: number; perDay: number; months: { month: string; net: number }[] } | null;
 
+// ── shekels for the payroll and the vendors ──
+/** A payroll journal's credit to a payable or current account, in shekels (fetchPayrollLiabilities). */
+export interface PayrollCredit { id: number; month: string; account: string; name: string; ils: number }
+/** A month's payroll journal: net salaries (by the 5th of the next month) and the rest (by the 15th). */
+export interface PayrollMonthSplit { month: string; net: number; later: number; total: number }
+export declare function payrollSplit(rows: PayrollCredit[]): PayrollMonthSplit[];
+/** The Salary Projection's Total payroll by month (₪), as its page saved it. */
+export interface PayrollProjection { asOf: string | null; months: { month: string; ils: number; status?: string }[] }
+export interface PayrollToPay { month: string; total: number; net: number; later: number; source: 'projection' | 'journal' }
+export declare function payrollToPay(input: { projection: PayrollProjection | null; split: PayrollMonthSplit[]; months: string[]; from: string; count: number }): { share: number | null; rows: PayrollToPay[] };
+export declare function vendorAverages(flows: FlowRow[], ilsVendors: { month: string; ils: number }[] | null | undefined, months: string[]): { eur: number; ils: number | null };
+export declare function ilsBalance(rows: BalanceRow[]): number | null;
+export type ShekelNeedWhy = 'vendors' | 'net' | 'later';
+/** Shekels to convert by `date` (eur: at today's rate), and what they pay. */
+export interface ShekelNeed { date: string; ils: number; eur: number; why: ShekelNeedWhy[]; month: string }
+/** A month paid in: the previous month's payroll (net by the 5th, the rest by the 15th), the vendors, the table's
+ * shekels that month (at today's rate), and what has to be converted for it. */
+export interface ShekelMonth { month: string; payrollMonth: string | null; net: number; later: number; vendors: number; tableIls: number; convertIls: number; convertEur: number }
+export interface ShekelNeeds { needs: ShekelNeed[]; months: ShekelMonth[]; ilsNow: number | null; ilsAfter: number }
+export declare function shekelNeeds(input: {
+  today: string;
+  ilsNow: number | null;
+  payroll: { month: string; net: number; later: number }[];
+  conversions: { date: string; ils: number }[];
+  vendorsIls: number;
+  spot: number;
+  until: string;
+}): ShekelNeeds;
+/** The shekels side of the plan (planFromPayload). */
+export interface CashPlan extends ShekelNeeds {
+  payroll: PayrollToPay[];
+  /** The net salaries' share of the payroll journals of the inflow months; null without them (all by the 5th). */
+  share: number | null;
+  split: PayrollMonthSplit[];
+  /** Average monthly vendor payments: EUR (kept at all times) and ILS (null when not read). */
+  vendors: { eur: number; ils: number | null };
+  until: string;
+  projectionAsOf: string | null;
+  notes: string[];
+}
+
 export interface Upcoming { month: string; date: string; days: number; conv: Conversion; risk: FixingRisk }
 export interface NextFixingPlan {
   month: string;
@@ -83,6 +124,18 @@ export interface NextFixingPlan {
   backup: number;
   needLiquid: number;
   needLiquidWithBackup: number;
+  /** The conversions for shekels (payroll and vendors) due by the fixing, in euros at today's rate. */
+  shekelsBefore: number;
+  /** The euros kept for the EUR vendors at all times. */
+  eurFloor: number;
+  /** What can leave the euro accounts for good today (converted, say) with every due met as the typical inflow comes
+   * in: the smallest spare of all the dues, never more than today's euros above the floor. */
+  spare: number;
+  /** The due with the smallest spare (euros held then, less what is due and the floor), and whether it is for shekels. */
+  tightest: { date: string; spare: number; shekels: boolean } | null;
+  /** When a due falls short: the largest gap (by how much, on which day, whether it is a conversion for shekels), and
+   * the first day a gap opens. */
+  short: { eur: number; date: string; shekels: boolean; first: { eur: number; date: string; shekels: boolean } } | null;
   freeNow: number;
   freeNowWithBackup: number;
   shortfall: number;
@@ -106,6 +159,9 @@ export interface PathPoint {
   inflowDays: number;
   depositsBy: number;
   earlier: number;
+  /** The conversions for shekels due by this fixing, in total, and this row's (since the previous one). */
+  forShekels: number;
+  shekels: number;
   available: number;
   surplus: number;
   /** What can be converted before this fixing, in total, and still cover it and every later one. */
@@ -119,6 +175,8 @@ export interface ReservePlan {
   path: PathPoint[];
   /** Deposits maturing after the last fixing in the path. */
   later: DepositRelease[];
+  /** How much can go into a new deposit for 1, 3 and 6 months (until that day) with every due still met. */
+  deposits: { months: number; until: string; eur: number }[];
 }
 export declare function planReserve(input: {
   upcoming: Upcoming[];
@@ -127,6 +185,8 @@ export declare function planReserve(input: {
   inflowPerDay?: number | null;
   today: string;
   horizon?: number;
+  shekels?: { date: string; eur: number }[];
+  eurFloor?: number;
 }): ReservePlan | null;
 
 /** What GET /api/fx-challenge answers that the recommendation needs. */
@@ -137,6 +197,8 @@ export interface PlanInput {
   balances: { rows: BalanceRow[] } | null;
   flows: FlowRow[];
   inflowMonths: string[];
+  payroll?: { journals: PayrollCredit[]; projection: PayrollProjection | null } | null;
+  ilsVendors?: { month: string; ils: number }[] | null;
 }
 export interface ScheduleItem {
   fixing: Fixing;
@@ -156,6 +218,8 @@ export interface PlanView {
   schedule: ScheduleItem[];
   position: EurPosition | null;
   inflow: ReturnType<typeof typicalInflow>;
+  /** Shekels for the payroll and the vendors; null without a payroll figure. */
+  cash: CashPlan | null;
   plan: ReservePlan | null;
 }
 export declare function planFromPayload(data: PlanInput, policy?: Policy): PlanView;

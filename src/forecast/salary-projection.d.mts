@@ -49,6 +49,14 @@ export declare function uncountedChangeRows<R extends { month: string; actual: b
 
 export declare function projectedMonths(blocks: { rows: { mKey: string; status: SalaryRow['status'] }[] }[]): Set<string>;
 
+/** Total payroll by month as the Salary Projection page shows it (accounts, plus planned changes marked TRUE and increments). */
+export declare function totalPayrollByMonth(payload: {
+  accounts: { acct: string }[];
+  blocks: { rows: SalaryRow[] }[];
+  changes?: { rows: { month: string; source: string; actual: boolean; eur: number; ils: number }[] };
+  overrides?: { rows: { month: string; mode: 'Override' | 'Increment'; eur: number; ils: number }[] };
+}): Record<string, { eur: number; ils: number; status: SalaryRow['status'] }>;
+
 /** Deel's costs by account (NetSuite, costs positive). */
 export interface DeelAmountRow {
   month: string;

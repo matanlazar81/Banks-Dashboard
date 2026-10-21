@@ -2814,6 +2814,48 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
       .map((t) => ({ ...t, eur: Math.round(t.eur * 100) / 100, ils: Math.round(t.ils * 100) / 100 }));
   }
 
+  // What the payroll journals owe, in shekels (book 2): the journals with a payroll line (76xxxx) from `from`
+  // (YYYY-MM), and their credits to payables and current accounts (the employees' net salaries, withholding tax,
+  // pension, social security), by journal and account. Returns [{ id, month, account, name, ils }] (ils: owed).
+  async function fetchPayrollLiabilities({ from } = {}) {
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(String(from || ''))) throw new Error(`fetchPayrollLiabilities: bad month ${from}`);
+    const rows = await suiteqlAll(`
+      SELECT t.id AS id, TO_CHAR(t.trandate, 'YYYY-MM') AS m, a.acctnumber AS num, BUILTIN.DF(a.id) AS name, SUM(tal.amount) AS ils
+      FROM transaction t
+      JOIN transactionaccountingline tal ON tal.transaction = t.id
+      JOIN account a ON a.id = tal.account
+      WHERE tal.posting = 'T' AND tal.accountingbook = 2 AND t.subsidiary = ${subsidiaryId} AND t.type = 'Journal'
+        AND a.accttype IN ('AcctPay', 'OthCurrLiab', 'OthCurrAsset')
+        AND t.trandate >= TO_DATE('${from}-01', 'YYYY-MM-DD')
+        AND t.id IN (SELECT DISTINCT t2.id FROM transaction t2
+                     JOIN transactionaccountingline l2 ON l2.transaction = t2.id
+                     JOIN account a2 ON a2.id = l2.account
+                     WHERE t2.subsidiary = ${subsidiaryId} AND t2.type = 'Journal' AND a2.acctnumber LIKE '76%'
+                       AND t2.trandate >= TO_DATE('${from}-01', 'YYYY-MM-DD'))
+      GROUP BY t.id, TO_CHAR(t.trandate, 'YYYY-MM'), a.acctnumber, BUILTIN.DF(a.id)
+    `);
+    return rows.map((r) => ({ id: Number(r.id), month: String(r.m || ''), account: String(r.num || ''), name: String(r.name || ''), ils: Math.round(-(parseFloat(r.ils) || 0) * 100) / 100 }))
+      .filter((r) => r.ils > 0);
+  }
+
+  // Vendor payments (vendor payments and checks) out of the ILS bank accounts by month, in shekels (book 2), from
+  // `from` (YYYY-MM). The payroll is paid by journal, so it is not in them. Returns [{ month, ils }] (ils: paid).
+  async function fetchIlsVendorPayments({ from } = {}) {
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(String(from || ''))) throw new Error(`fetchIlsVendorPayments: bad month ${from}`);
+    const rows = await suiteqlAll(`
+      SELECT TO_CHAR(t.trandate, 'YYYY-MM') AS m, SUM(tal.amount) AS ils
+      FROM transactionaccountingline tal
+      JOIN transaction t ON t.id = tal.transaction
+      JOIN account a ON a.id = tal.account
+      JOIN currency c ON c.id = a.currency
+      WHERE tal.posting = 'T' AND tal.accountingbook = 2 AND t.subsidiary = ${subsidiaryId}
+        AND a.accttype = 'Bank' AND c.symbol = 'ILS' AND t.type IN ('VendPymt', 'Check')
+        AND t.trandate >= TO_DATE('${from}-01', 'YYYY-MM-DD')
+      GROUP BY TO_CHAR(t.trandate, 'YYYY-MM')
+    `);
+    return rows.map((r) => ({ month: String(r.m || ''), ils: Math.round(-(parseFloat(r.ils) || 0) * 100) / 100 }));
+  }
+
   // GET a RESTlet with the same token (TBA). `script` / `deploy`: the script and deployment ids (numbers, or
   // customscript_… / customdeploy_…). Returns its JSON.
   async function restletGet(script, deploy, timeoutMs = 30000) {
@@ -2998,7 +3040,7 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
     return Number.isFinite(impact) && impact > 0;
   }
 
-  return { suiteql, suiteqlAll, fetchPnlActuals, fetchAccountIds, fetchAccountByDepartment, fetchVendorSpend, fetchFxConversions, fetchAgingData, fetchCollectionData, buildCollectionJson, fetchClientAnomalies, fetchAllSOsByBillingPeriod, fetchRevenueData, fetchMRRData, fetchBankBalance, fetchVendorBills, fetchVendorPaymentHistory, fetchBankAccountList, fetchBankAccountListAsOf, fetchSalaryData, fetchVendorActuals, fetchRevenueActuals, fetchCustomerCashReceipts, fetchCashflowHistory, fetchExpenseCategoryData, fetchPaymentsByCategory, fetchCashflowBreakdown, fetchCashflowTransactions, fetchExpenseTransactions, fetchSalaryBreakdown, fetchInvoiceBasedProjection, fetchMonthlyRevaluation, fetchVendorBillsByAccount, fetchNSBudget, fetchCurrencyDefenseBudget, fetchPaidVendorsYearly, fetchBankClassifiedYearly, fetchDividendDistributions, fetchVendorPaymentsDetail, fetchLatestFxRate, hasPostedMonthEndReval, fetchEurIlsRates, fetchEurBalancesBooks, fetchEurFlows, fetchHapoalimConversions, restletGet };
+  return { suiteql, suiteqlAll, fetchPnlActuals, fetchAccountIds, fetchAccountByDepartment, fetchVendorSpend, fetchFxConversions, fetchAgingData, fetchCollectionData, buildCollectionJson, fetchClientAnomalies, fetchAllSOsByBillingPeriod, fetchRevenueData, fetchMRRData, fetchBankBalance, fetchVendorBills, fetchVendorPaymentHistory, fetchBankAccountList, fetchBankAccountListAsOf, fetchSalaryData, fetchVendorActuals, fetchRevenueActuals, fetchCustomerCashReceipts, fetchCashflowHistory, fetchExpenseCategoryData, fetchPaymentsByCategory, fetchCashflowBreakdown, fetchCashflowTransactions, fetchExpenseTransactions, fetchSalaryBreakdown, fetchInvoiceBasedProjection, fetchMonthlyRevaluation, fetchVendorBillsByAccount, fetchNSBudget, fetchCurrencyDefenseBudget, fetchPaidVendorsYearly, fetchBankClassifiedYearly, fetchDividendDistributions, fetchVendorPaymentsDetail, fetchLatestFxRate, hasPostedMonthEndReval, fetchEurIlsRates, fetchEurBalancesBooks, fetchEurFlows, fetchHapoalimConversions, fetchPayrollLiabilities, fetchIlsVendorPayments, restletGet };
 }
 
 

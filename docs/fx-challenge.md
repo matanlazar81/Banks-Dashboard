@@ -52,6 +52,40 @@ briefly a tab of the Metrics page before it got its own sidebar item.
     deposits maturing after the previous fixing (after today, for the first) and by that one; hover a figure for
     each deposit's date and value. Deposits maturing after the last fixing shown are listed under the table.
     They count only if the bank pays them out rather than rolling them over.
+- **Salaries, vendors and new deposits**: once the payroll is known (it nearly always is), the plan also covers the
+  shekels each month needs. The headline then reads "Keep … for 7 Nov. For the salaries and vendors due by 15 Nov,
+  convert at least … by 5 Nov. Spare now: …", and **New deposits** says how much can go into a new deposit for 1, 3
+  or 6 months.
+  - **Payroll**: the Salary Projection's Total payroll by month (`totalPayrollByMonth`, the same figure as its
+    page), from the figures that page saved on the server (`data/salary-projection-cache.json`; open the Salary
+    Projection once if there are none). It is split as NetSuite's payroll journals of the last 3 closed months
+    (`fetchPayrollLiabilities`, `payrollSplit`). Credits to the employees (200000/200001) are the **net salaries,
+    paid by the 5th** of the next month. The rest (withholding tax 180013, pension 180069, social security 180012)
+    is **paid by the 15th**. In 2026 the net salaries were about 48–51%. A month the projection lacks carries the
+    last journal's total.
+  - **Vendors**: the average of the last 3 closed months. ILS vendor payments (vendor payments and checks out of
+    the ILS accounts, `fetchIlsVendorPayments`; the payroll is paid by journal, so it is not in them) are a monthly
+    need in shekels. EUR vendor payments (the flows' vendor kind) are **kept in the euro accounts at all times**
+    (the EUR floor); the typical inflow already nets them.
+  - **The shekels** (`shekelNeeds`), from the ILS on hand (the mail's balances; 0 when not known):
+    - today, the rest of this month's vendor payments;
+    - on the 5th, the previous month's net salaries and the month's vendor payments;
+    - on the 7th, the table's shekels, for the amount kept at its cell's rate (consistent with what the plan
+      keeps);
+    - on the 15th, pension, tax and social security.
+
+    Each gap is converted by its day at today's rate. The card **Salaries and vendors: the shekels each month
+    needs** shows it month by month.
+  - **The euros** (`planReserve`): the conversions for shekels come out of the euros by each conversion (the
+    plan's **Salaries & vendors** column), and the EUR floor is kept. At every due (each conversion at the amount
+    kept, each conversion for shekels) the spare is the euros held then (today's, the typical inflow and the
+    deposits maturing by then, less what fell due before), less what is due and the floor.
+    - **Spare now** (converted for good) is the smallest spare of all dues to the end of the 6th conversion's
+      month, never more than today's euros above the floor.
+    - **A new deposit maturing on a day** can hold the smallest spare of the dues before that day (euros in a
+      deposit come back), never more than today's euros above the floor. It is rounded down to €10K.
+    - **Short**: the first day a gap opens, and the largest gap.
+  - The rate check then speaks of the spare instead of the free euros.
 - **Rate check** (under "Keep … Free to convert now"): today's EUR/ILS against the 90 days before it (`rateCheck`,
   NetSuite's HSBC rate, business days): the share of those days it beats, their average and range, and a verdict:
   **a good day to convert** when it beats 3 days in 4 or more, **a weak day** when it beats 1 in 4 or fewer, else an
@@ -86,6 +120,8 @@ a warning, and the rest still shows.
 | Balances | the daily balances mail's RESTlet (`payhound_api` `ph_rl_balances.js`) when `NS_BALANCES_RESTLET=<script>:<deploy>` is set in the checkout's `.env`; else NetSuite's books (EUR bank accounts in the primary book, exact in euros, no deposit dates) |
 | Monthly EUR flows | NetSuite's books, four months back |
 | Conversions | the Hapoalim "Conversion" / המרה journals (EUR 11001 ↔ ILS 10002, euros bought back included), from 20 December 2025, or before the table's first month if it is earlier |
+| Payroll | NetSuite's payroll journals (what each owes: net salaries, tax, pension, social security), four months back; the Salary Projection's Total payroll by month, from the figures its page saved (`data/salary-projection-cache.json`) |
+| ILS vendor payments | NetSuite's books: vendor payments and checks out of the ILS accounts (book 2), four months back |
 
 The RESTlet gives what the bank imports last fetched: Bank Hapoalim and its deposits (several times a day),
 PKO (each morning's statement), PayPal (01:00 and 13:00) and Payhound (about every 20 minutes). Leumi and
@@ -105,7 +141,10 @@ the same figures as the page (`planFromPayload`).
 
 The mail is HTML with a plain-text part:
 - the subject: what is free to convert (or short), the rate verdict, and what to keep for the next conversion;
-- what to keep and what is free now, and the rate check;
+- what to keep, what to convert for the salaries and vendors and by when, what is spare (or short), new deposits for
+  1, 3 and 6 months, and the rate check;
+- the shekels each month needs (net salaries by the 5th; tax, pension and social security by the 15th; ILS vendors;
+  the 7th's conversion; what to convert);
 - what the next conversion can sell, range by range (today's range highlighted);
 - your euros, with how "free to convert now" adds up and the typical inflow;
 - the next six conversions, and each deposit on the conversion it counts for;
@@ -195,7 +234,7 @@ pm2 logs finance-it-backend --lines 200 --nostream | grep fx-challenge   # [fx-c
 ## Checking it
 
 ```bash
-node scripts/test-fx-challenge.cjs   # bands, risk, the reserve plan, past conversions, the rate check, the pasted table, its validation, both routes, the daily mail, the NetSuite reads
+node scripts/test-fx-challenge.cjs   # bands, risk, the reserve plan, salaries, vendors and new deposits, past conversions, the rate check, the pasted table, its validation, the routes, the daily mail, the NetSuite reads
 ```
 
 On the server, `pm2 logs finance-it-backend --lines 300 --nostream | grep fx-challenge` shows
