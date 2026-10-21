@@ -492,9 +492,18 @@ function Balances({ data, model }: { data: FxPayload; model: FxModel }) {
         <div className="space-y-1.5 text-xs text-slate-600">
           {p && (
             <>
-              <div className="flex justify-between"><span>Hapoalim EUR (the fixings' account)</span><strong className="tabular-nums text-slate-900">{formatEur(p.hapoalim)}</strong></div>
-              <div className="flex justify-between"><span>Other EUR accounts (movable)</span><strong className="tabular-nums text-slate-900">{formatEur(p.other)}</strong></div>
-              <div className="flex justify-between"><span>EUR deposits</span><strong className="tabular-nums text-slate-900">{formatEur(p.deposits.reduce((s, d) => s + d.amount, 0))}</strong></div>
+              <div className="flex justify-between">
+                <span className={HINT} title="LSports' euro current account at Bank Hapoalim (583400, NetSuite 11001). The fixings are paid from it, so the amount to keep has to be here on the day.">Hapoalim EUR cash (583400)</span>
+                <strong className="tabular-nums text-slate-900">{formatEur(p.hapoalim)}</strong>
+              </div>
+              <div className="flex justify-between">
+                <span className={HINT} title="Euros in LSports' other accounts (PKO, PayPal, Payhound). They count for a fixing once moved to Hapoalim EUR.">Other EUR accounts (movable)</span>
+                <strong className="tabular-nums text-slate-900">{formatEur(p.other)}</strong>
+              </div>
+              <div className="flex justify-between">
+                <span className={HINT} title="LSports' EUR deposits, each at its value on the day it matures; it counts from that day. They are listed on the left by that day.">EUR deposits</span>
+                <strong className="tabular-nums text-slate-900">{formatEur(p.deposits.reduce((s, d) => s + d.amount, 0))}</strong>
+              </div>
             </>
           )}
           {byCcy.size > 0 && (
