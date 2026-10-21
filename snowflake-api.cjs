@@ -603,6 +603,9 @@ function createSnowflakeClient(env) {
   // FCT_EXPENSE rows loaded from the override file (OVERIDE_TEMP): SOURCE future_cost_override (replaces the
   // budget of that account and month) or future_cost_increment (adds to it), on every payroll account (IS_PAYROLL,
   // i.e. 76xxxx, as the old Bank Dashboard's salary overrides), LSports only, from January fromYear.
+  // The department is the row's department group (DIM_DEPARTMENT.GROUP_NAME): the level of the file's Department
+  // column and of the payroll order (IT, October 2026). DEPARTMENT_NAME is the finance department above the group
+  // (group Data Collection sits under Playmakers), so it is only the fallback for a row with no group.
   // Returns [{ month, acct, name, department, mode, eur, ils, memo }].
   async function fetchPayrollOverrides(fromYear) {
     const from = parseInt(fromYear);
@@ -612,7 +615,7 @@ function createSnowflakeClient(env) {
       SELECT TO_VARCHAR(DATE_TRUNC('month', e.CAL_MONTH_START_DATE), 'YYYY-MM') AS M,
              g.GL_ACCOUNT_NUMBER AS ACCT,
              MAX(g.GL_ACCOUNT_NAME) AS NAME,
-             d.DEPARTMENT_NAME AS DEPT,
+             COALESCE(d.GROUP_NAME, d.DEPARTMENT_NAME) AS DEPT,
              e.SOURCE AS SRC,
              e.MEMO AS MEMO,
              SUM(e.AMOUNT_EUR) AS EUR,
@@ -644,7 +647,7 @@ function createSnowflakeClient(env) {
   // (leavers, negative) and 'Leave end' (returns from leave). Each row is that month's amount on top of the
   // forecast baseline. On every payroll account (IS_PAYROLL, i.e. 76xxxx), LSports only, from January fromYear;
   // summed by month, account, source, department and IS_SOURCE_ACTUAL (TRUE = a change that counts; FALSE ones
-  // do not), with no employee detail.
+  // do not), with no employee detail. The department is the department group, as in fetchPayrollOverrides.
   // Returns [{ month, acct, name, source, department, actual, eur, ils }].
   async function fetchPayrollChanges(fromYear) {
     const from = parseInt(fromYear);
@@ -655,7 +658,7 @@ function createSnowflakeClient(env) {
              g.GL_ACCOUNT_NUMBER AS ACCT,
              MAX(g.GL_ACCOUNT_NAME) AS NAME,
              e.SOURCE AS SRC,
-             d.DEPARTMENT_NAME AS DEPT,
+             COALESCE(d.GROUP_NAME, d.DEPARTMENT_NAME) AS DEPT,
              IFF(e.IS_SOURCE_ACTUAL = TRUE, 1, 0) AS ACT,
              SUM(e.AMOUNT_EUR) AS EUR,
              SUM(e.AMOUNT_ILS) AS ILS

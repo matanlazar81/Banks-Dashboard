@@ -91,9 +91,8 @@ from January of the current year, from two Snowflake sources (`plannedLines` in 
 2. **The override file**: the override sheet's rows (`OVERIDE_TEMP`, loaded into `FCT_EXPENSE` as
    `future_cost_override` / `future_cost_increment`) on the same accounts (the sheet's column A)
    (`fetchPayrollOverrides`). One line per account and type, summing the account's rows of a month across
-   departments; hovering a line shows its departments and comments. The load into `FCT_EXPENSE` currently drops
-   the payroll accounts (checked October 2026: none on 760001 or 760017, while the sheet has rows on both), so
-   these lines appear once the load includes them.
+   departments; hovering a line shows its departments and comments. The load keeps the sheet's rows marked TRUE
+   (Enabled), from the current month on, one row per month, department and account (IT, October 2026).
    - **Increments**, then **Total increments**.
    - **Overrides**, in italics, then **Total overrides (not in total payroll)**: for reference. An override
      replaces one department's budget for the account and month, and this page projects by account, so adding
@@ -122,6 +121,10 @@ How they count:
     month. **Total increments / Total overrides:** by account and department.
   - Each window's first list adds up to the clicked figure. The hires and leavers are read by department for
     this (monthly totals, no employee detail).
+  - **Departments** here and in the file's rows are Snowflake's department groups (`DIM_DEPARTMENT.GROUP_NAME`):
+    the level of the payroll order and of the override file's Department column, where finance makes its changes
+    (IT, October 2026). `DEPARTMENT_NAME` is the finance department above the group (Data Collection's is
+    Playmakers), so it shows only for a row with no group.
 
 **Payroll in the override file**, under the table: the counts, how many increments fall in closed months, and
 the file's rows (collapsed): month, account, department, type (Override replaces the budget of that account and
