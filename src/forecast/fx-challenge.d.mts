@@ -8,6 +8,10 @@ export interface RatePoint { date: string; rate: number }
 export declare const DEFAULT_BOUNDS: number[];
 export declare const DEFAULT_TABLE: Readonly<FxTable>;
 export declare function cloneTable(t: FxTable): FxTable;
+/** The volatility used when NetSuite's history is too short. */
+export declare const FALLBACK_SIGMA: number;
+/** The past conversions are listed from this month (YYYY-MM). */
+export declare const HISTORY_FROM: string;
 
 export declare function bandLabels(bounds: number[]): string[];
 export declare function bandIndex(bounds: number[], rate: number): number;
@@ -29,6 +33,10 @@ export declare function fixings(table: FxTable, today: string): Fixing[];
 
 export declare function annualVol(series: RatePoint[], opts?: { minReturns?: number }): number | null;
 export declare function rateOn(series: RatePoint[], date: string): RatePoint | null;
+
+/** Today's rate against the `days` days before it: share = the part of those business days with a lower rate. */
+export interface RateCheck { date: string; rate: number; days: number; n: number; average: number; low: number; high: number; share: number; level: 'high' | 'middle' | 'low' }
+export declare function rateCheck(series: RatePoint[], today: string, opts?: { days?: number; minDays?: number }): RateCheck | null;
 export declare function bandProbabilities(bounds: number[], spot: number, sigma: number, years: number): number[];
 
 export interface FixingRisk { probs: number[]; expectedEur: number; expectedIls: number; p95Eur: number; worstEur: number }
@@ -121,17 +129,61 @@ export declare function planReserve(input: {
   horizon?: number;
 }): ReservePlan | null;
 
+/** What GET /api/fx-challenge answers that the recommendation needs. */
+export interface PlanInput {
+  today: string;
+  table: FxTable;
+  rates: { series: RatePoint[]; spot: RatePoint | null; sigma: number | null };
+  balances: { rows: BalanceRow[] } | null;
+  flows: FlowRow[];
+  inflowMonths: string[];
+}
+export interface ScheduleItem {
+  fixing: Fixing;
+  atSpot: Conversion | null;
+  risk: FixingRisk | null;
+  /** What it can sell, by EUR/ILS range, with each range's chance (from today's rate). */
+  outcomes: OutcomeRange[] | null;
+}
+export interface PlanView {
+  all: Fixing[];
+  spot: number | null;
+  spotDate: string | null;
+  spotBand: number | null;
+  sigma: number;
+  sigmaFromHistory: boolean;
+  rateCheck: RateCheck | null;
+  schedule: ScheduleItem[];
+  position: EurPosition | null;
+  inflow: ReturnType<typeof typicalInflow>;
+  plan: ReservePlan | null;
+}
+export declare function planFromPayload(data: PlanInput, policy?: Policy): PlanView;
+
+/** A conversion journal: euros sold (or bought back: negative, with the shekels paid negative too). */
 export interface BookedConversion { date: string; eur: number; ils: number }
 export interface PastCheck {
   month: string;
   date: string;
   spot: RatePoint | null;
+  /** The table at that day's rate; null for a month the table doesn't have. */
   conv: Conversion | null;
   booked: (BookedConversion & { n: number; rate: number | null }) | null;
   match: boolean;
   gainVsSpotIls: number | null;
 }
-export declare function checkPast(input: { fixing: Fixing; bounds: number[]; series: RatePoint[]; conversions: BookedConversion[]; windowDays?: number }): PastCheck;
+export declare function checkPast(input: { fixing: { month: string; date: string; row: FxRow | null }; bounds: number[]; series: RatePoint[]; conversions: BookedConversion[]; windowDays?: number }): PastCheck;
+
+/** A day's other conversions in one direction: euros sold, or bought back (negative). */
+export interface OtherConversion { date: string; eur: number; ils: number; n: number; rate: number; vsRateIls: number | null }
+export interface PastMonth extends PastCheck { inTable: boolean; others: OtherConversion[] }
+export interface PastTotals {
+  /** What was booked near the conversion days. */
+  booked: { eur: number; ils: number; vsRateIls: number; months: number };
+  /** Everything else: sold and bought back, net (eur, ils), and against each day's rate. */
+  others: { sold: number; bought: number; eur: number; ils: number; vsRateIls: number };
+}
+export declare function pastConversions(input: { table: FxTable; today: string; series: RatePoint[]; conversions: BookedConversion[]; from?: string; windowDays?: number }): { from: string; months: PastMonth[]; total: PastTotals };
 
 export declare function tableProblems(t: FxTable): string[];
 export declare function tableToText(t: FxTable): string;

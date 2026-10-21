@@ -51,9 +51,20 @@ briefly a tab of the Metrics page before it got its own sidebar item.
     deposits maturing after the previous fixing (after today, for the first) and by that one; hover a figure for
     each deposit's date and value. Deposits maturing after the last fixing shown are listed under the table.
     They count only if the bank pays them out rather than rolling them over.
-- **Past conversions**: the table at that day's rate against the "Conversion" / המרה journals booked within
-  3 days (Hapoalim EUR 11001 → ILS 10002), the shekels gained against that day's rate, and the month's other
-  conversions.
+- **Rate check** (under "Keep … Free to convert now"): today's EUR/ILS against the 90 days before it (`rateCheck`,
+  NetSuite's HSBC rate, business days): the share of those days it beats, their average and range, and a verdict:
+  **a good day to convert** when it beats 3 days in 4 or more, **a weak day** when it beats 1 in 4 or fewer, else an
+  average day. It also says what the euros free now bring at today's rate against the average. It only looks back;
+  the conversion on the 7th follows the table whatever is converted on top.
+- **Past conversions since January 2026** (`pastConversions`, `HISTORY_FROM`): every month whose conversion day has
+  passed, with the "Conversion" / המרה journals (Hapoalim EUR 11001 ↔ ILS 10002):
+  - booked: the day within 3 days of the 7th closest to the table (✓ when it matches it); for a month before the
+    table (January to September 2026), the day with the best rate, since the monthly deals beat the market's;
+  - the shekels gained against that day's rate;
+  - the month's other conversions by day, with euros bought back with shekels listed as "bought" (as on 2 January,
+    2 February and 2 March 2026), each against its day's rate (hover);
+  - a total row, and under the table everything since January: euros sold net, shekels, and the gain against each
+    day's rate.
 - **LSports euros**: the accounts, then each EUR deposit by the day it matures.
 - Every column header explains itself on hover (the dotted underline marks it), and so does every figure in the plan
   (its sum, or its chances).
@@ -70,14 +81,59 @@ a warning, and the rest still shows.
 
 | What | From |
 |---|---|
-| EUR/ILS | NetSuite `currencyrate` (HSBC), the last 400 days |
+| EUR/ILS | NetSuite `currencyrate` (HSBC), back to the first past conversion and at least 400 days (the volatility uses the last 400) |
 | Balances | the daily balances mail's RESTlet (`payhound_api` `ph_rl_balances.js`) when `NS_BALANCES_RESTLET=<script>:<deploy>` is set in the checkout's `.env`; else NetSuite's books (EUR bank accounts in the primary book, exact in euros, no deposit dates) |
 | Monthly EUR flows | NetSuite's books, four months back |
-| Conversions | the Hapoalim "Conversion" / המרה journals, from just before the table's first fixing |
+| Conversions | the Hapoalim "Conversion" / המרה journals (EUR 11001 ↔ ILS 10002, euros bought back included), from 20 December 2025, or before the table's first month if it is earlier |
 
 The RESTlet gives what the bank imports last fetched: Bank Hapoalim and its deposits (several times a day),
 PKO (each morning's statement), PayPal (01:00 and 13:00) and Payhound (about every 20 minutes). Leumi and
 MoneyNet carry no balance in their files, so they are not in it. Only LSports' euros count.
+
+## The daily mail
+
+`scripts/fx-challenge-mail.cjs` sends the recommendation every day. It reads NetSuite fresh (no cache) and computes
+the same figures as the page (`planFromPayload`). The mail is HTML with a plain-text part:
+- the subject: what is free to convert (or short), the rate verdict, and what to keep for the next conversion;
+- what to keep and what is free now, and the rate check;
+- what the next conversion can sell, range by range (today's range highlighted);
+- your euros, with how "free to convert now" adds up and the typical inflow;
+- the next six conversions, and each deposit on the conversion it counts for;
+- the page's notes (what could not be read), and the setting and sources at the bottom.
+
+Set it up in the checkout's `.env` (immutable on the server: `sudo chattr -i .env`, edit, `sudo chattr +i .env`):
+
+```bash
+FX_MAIL_TO=matan.l@lsports.eu,<second address>@lsports.eu   # lsports.eu only, unless FX_MAIL_ALLOW_EXTERNAL=1
+FX_MAIL_FROM=matan.l@lsports.eu
+# FX_MAIL_HOUR=10                 # Israel time (default 10)
+# FX_MAIL_POLICY=p95              # today | p95 | worst, as the page's "What to keep"
+# FX_MAIL_LINK=https://<finance-it>/business-tools/fx-challenge
+# The mail server: FX_MAIL_SMTP_URL, else NET_CASH_SMTP_URL, else SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASS (the
+# backend's mailer, as the net-cash mail). FX_MAIL_SMTP_HELO (else NET_CASH_SMTP_HELO, else the sender's domain).
+```
+
+The mail server decides whether the mail can go out as `FX_MAIL_FROM`:
+- Google's SMTP relay (`smtp-relay.gmail.com`, allowlisted IP) sends as any lsports.eu address.
+- An account's own login (an app password) sends as that account. Gmail replaces another `From` with the account
+  unless that address is one of its "Send mail as" addresses.
+
+Then:
+
+```bash
+node scripts/fx-challenge-mail.cjs --dry-run --html=/tmp/fx-mail.html   # print it (and the HTML); sends nothing
+node scripts/fx-challenge-mail.cjs                                     # send one now (a test)
+# crontab -e: every hour; it sends once a day from 10:00 Israel time, so summer time needs no change
+0 * * * * cd /home/ubuntu/finance-it/extra-apps/bank-dashboard && /usr/bin/node scripts/fx-challenge-mail.cjs --scheduled >> /var/log/fx-challenge-mail.log 2>&1
+```
+
+The scheduled run behaves like this:
+- It sends once a day and records the day in `data/fx-challenge-mail-last.json`. A run by hand doesn't record it, so
+  the daily mail still goes.
+- If the balances or the rate could not be read, it tries again the next two hours, then sends what it has, with
+  the reason.
+- If the mail server refuses, it tries again every hour that day.
+- The log has one line per send or retry: `[fx-mail] 2026-10-22: sent to 2 recipient(s) from … via …`.
 
 ## Saving
 
@@ -116,7 +172,7 @@ exists, the page opens only at its URL.
 ## Checking it
 
 ```bash
-node scripts/test-fx-challenge.cjs   # bands, risk, the reserve plan, past fixings, the pasted table, its validation, both routes, the NetSuite reads
+node scripts/test-fx-challenge.cjs   # bands, risk, the reserve plan, past conversions, the rate check, the pasted table, its validation, both routes, the daily mail, the NetSuite reads
 ```
 
 On the server, `pm2 logs finance-it-backend --lines 300 --nostream | grep fx-challenge` shows

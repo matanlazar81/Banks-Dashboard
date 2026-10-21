@@ -6,14 +6,16 @@
 // The page simulates the monthly EUR→ILS conversions on the table (src/forecast/fx-challenge.mjs) and says how
 // much EUR to keep for them. This module gathers what it needs; each read is cached, and a failed read becomes a
 // warning while the rest still shows:
-//   rates        EUR/ILS by day (NetSuite currencyrate, HSBC), the last 400 days: today's rate and the volatility
+//   rates        EUR/ILS by day (NetSuite currencyrate, HSBC), back to the first past conversion and at least 400
+//                days: today's rate, the volatility (the last 400 days) and each past day's rate
 //   balances     the daily balances mail's figures, from the RESTlet next to it (NS_BALANCES_RESTLET =
 //                script:deploy); without it, or when it fails, NetSuite's books (EUR accounts in the primary book:
 //                exact in euros, but no deposit maturities)
 //   flows        EUR in and out by month, from four months back: the typical net inflow
-//   conversions  "Conversion" / המרה journals Hapoalim EUR → ILS (583400), from just before the table's first
-//                fixing: what each past fixing booked
-// The table is the saved one (data/fx-challenge-table.json) or the default.
+//   conversions  "Conversion" / המרה journals Hapoalim EUR ↔ ILS (583400), from January 2026 (HISTORY_FROM) or the
+//                table's first month if earlier: what each past month booked, euros bought back included
+// The table is the saved one (data/fx-challenge-table.json) or the default. The daily mail
+// (scripts/fx-challenge-mail.cjs) reads the same, uncached.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const path = require('path');
@@ -41,6 +43,8 @@ const shiftMonth = (mKey, n) => {
 };
 /** Today in Israel, YYYY-MM-DD (the fixings and the bank's dates are Israeli). */
 const israelDay = (ms) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jerusalem', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms));
+const daysBetween = (from, to) => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000);
+const isoDaysBefore = (iso, n) => new Date(Date.parse(`${iso}T00:00:00Z`) - n * 86400000).toISOString().slice(0, 10);
 
 /** NS_BALANCES_RESTLET = "script:deploy" → { script, deploy }, or null when unset or malformed. */
 function restletIds(value) {
@@ -128,7 +132,7 @@ function validateTable(body) {
 
 /**
  * The FX Challenge payload.
- *   reads     { rates(), books(), mail (null when the RESTlet is not configured), flows(fromMonth), conversions(fromDay) }
+ *   reads     { rates(days), books(), mail (null when the RESTlet is not configured), flows(fromMonth), conversions(fromDay) }
  *   cached    (key, fn) → promise, the handler's memo
  *   tableDoc  the saved table document ({ value: table | null, updatedAt, updatedBy }) or null
  */
@@ -139,13 +143,15 @@ async function readFxChallenge({ reads, cached = (k, fn) => fn(), tableDoc = nul
   const today = israelDay(nowMs);
   const saved = tableDoc && tableDoc.value;
   const table = saved || fx.cloneTable(fx.DEFAULT_TABLE);
-  const firstMonth = [...table.rows].map((r) => r.month).sort()[0];
+  const firstMonth = [fx.HISTORY_FROM, ...table.rows.map((r) => r.month)].sort()[0];
   const flowsFrom = shiftMonth(today.slice(0, 7), -4);
   const convFrom = `${shiftMonth(firstMonth, -1)}-20`;
+  // The rates reach back to the first past conversion, and 400 days at least for the volatility.
+  const rateDays = Math.max(400, daysBetween(convFrom, today) + 1);
   const warnings = [];
 
   const settled = await Promise.allSettled([
-    cached('fx:rates', () => reads.rates()),
+    cached(`fx:rates:${rateDays}`, () => reads.rates(rateDays)),
     mail ? cached('fx:mail', () => mail()) : Promise.resolve(null),
     cached('fx:books', () => reads.books()),
     cached(`fx:flows:${flowsFrom}`, () => reads.flows(flowsFrom)),
@@ -160,7 +166,7 @@ async function readFxChallenge({ reads, cached = (k, fn) => fn(), tableDoc = nul
   const series = val(0, 'rates') || [];
   if (!series.length) warnings.push('EUR/ILS could not be read from NetSuite, so the simulation starts from the rate you type.');
   const spot = fx.rateOn(series, today);
-  const sigma = fx.annualVol(series);
+  const sigma = fx.annualVol(series.filter((p) => p.date >= isoDaysBefore(today, 400)));
 
   let balances = null;
   const mailBody = val(1, 'mail balances');
@@ -208,7 +214,7 @@ async function readFxChallenge({ reads, cached = (k, fn) => fn(), tableDoc = nul
  * environment once the checkout's .env is loaded, so the RESTlet setting is read when the page is. */
 function nsReads({ ns, queue, env = () => process.env }) {
   return {
-    rates: () => queue(() => ns().fetchEurIlsRates({ days: 400, provider: 'HSBC' })),
+    rates: (days = 400) => queue(() => ns().fetchEurIlsRates({ days, provider: 'HSBC' })),
     books: () => queue(() => ns().fetchEurBalancesBooks()),
     get mail() {
       const ids = restletIds(env().NS_BALANCES_RESTLET);
@@ -225,28 +231,32 @@ function envMinutes(name, fallback) {
   return Number.isFinite(v) && v > 0 ? v : fallback;
 }
 
+/** The reads through the dashboard's NetSuite client: deps.getNsClient(sub) and deps.queueNsCall(fn), by default
+ * the cash projection's. The checkout's .env is loaded on the first read. */
+function defaultNsReads(deps = {}) {
+  const cmp = () => require(path.join(ROOT, 'scripts', 'net-cash-forecast-compute.cjs')); // loads the checkout's .env
+  const ns = () => {
+    const sub = cmp().SUBSIDIARY;
+    const c = deps.getNsClient ? deps.getNsClient(sub) : require('./cash-projection.cjs').defaultGetNsClient(sub);
+    if (!c) throw new Error('NetSuite is not configured');
+    return c;
+  };
+  const queue = deps.queueNsCall || require('./cash-projection.cjs').defaultQueueNsCall;
+  return nsReads({ ns, queue, env: () => { cmp(); return process.env; } });
+}
+
 /**
  * Express/connect handler for GET /api/fx-challenge. deps (all optional):
  *   getNsClient(sub), queueNsCall(fn)  the dashboard's NetSuite client and call queue; default: the cash
  *                                      projection's (finance-it's own route file passes none)
- *   reads      override every NetSuite read (tests): { rates, books, mail, flows(from), conversions(from) }
+ *   reads      override every NetSuite read (tests): { rates(days), books, mail, flows(from), conversions(from) }
  *   tableFile, clock(), ttlMs (default FX_CHALLENGE_TTL_MIN, 30 minutes)
  */
 function createFxChallengeHandler(deps = {}) {
   const clock = deps.clock || Date.now;
   const ttlMs = deps.ttlMs ?? envMinutes('FX_CHALLENGE_TTL_MIN', 30) * 60 * 1000;
   const tableFile = deps.tableFile || TABLE_FILE;
-  const reads = deps.reads || (() => {
-    const cmp = () => require(path.join(ROOT, 'scripts', 'net-cash-forecast-compute.cjs')); // loads the checkout's .env
-    const ns = () => {
-      const sub = cmp().SUBSIDIARY;
-      const c = deps.getNsClient ? deps.getNsClient(sub) : require('./cash-projection.cjs').defaultGetNsClient(sub);
-      if (!c) throw new Error('NetSuite is not configured');
-      return c;
-    };
-    const queue = deps.queueNsCall || require('./cash-projection.cjs').defaultQueueNsCall;
-    return nsReads({ ns, queue, env: () => { cmp(); return process.env; } });
-  })();
+  const reads = deps.reads || defaultNsReads(deps);
 
   const memo = new Map();
   const cached = (key, fn) => {
@@ -284,6 +294,6 @@ function createFxTableHandler(deps = {}) {
 }
 
 module.exports = {
-  createFxChallengeHandler, createFxTableHandler, validateTable, readFxChallenge, nsReads, restletIds, bookRow, mailRows, israelDay,
-  TABLE_FILE,
+  createFxChallengeHandler, createFxTableHandler, validateTable, readFxChallenge, nsReads, defaultNsReads, restletIds, bookRow, mailRows, israelDay,
+  loadFxModule, TABLE_FILE,
 };

@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // ─────────────────────────────────────────────────────────────────────────────
 // Checks for the FX Challenge page: the shared logic (src/forecast/fx-challenge.mjs), the saved table's
-// validation, GET /api/fx-challenge and GET/PUT /api/fx-challenge/table (server/fx-challenge.cjs), and the
-// NetSuite reads' mapping (netsuite-api.cjs, fetch stubbed). No network.
+// validation, GET /api/fx-challenge and GET/PUT /api/fx-challenge/table (server/fx-challenge.cjs), the daily mail
+// (scripts/fx-challenge-mail.cjs, the mail server stubbed) and the NetSuite reads' mapping (netsuite-api.cjs, fetch
+// stubbed). No network.
 //   node scripts/test-fx-challenge.cjs
 // ─────────────────────────────────────────────────────────────────────────────
 const fs = require('fs');
@@ -215,6 +216,75 @@ async function testPast(fx) {
   check(near(c.gainVsSpotIls, 2935000 - 800000 * 3.433991, 1), 'the gain is against that day\'s rate (₪188K)', c.gainVsSpotIls);
   const none = fx.checkPast({ fixing: oct, bounds: t.bounds, series: series(60), conversions: [] });
   check(none.booked === null && !none.match && none.gainVsSpotIls === null && none.conv.eur === 800000, 'nothing booked → the table only');
+
+  // Since January 2026: months before the table show what was booked, and euros bought back count against the month.
+  const rates = series(320);
+  const history = [
+    { date: '2026-08-03', eur: 800000, ils: 2800000 },
+    { date: '2026-08-05', eur: 300000, ils: 1068000 }, { date: '2026-08-05', eur: 1200000, ils: 4234000 },
+    { date: '2026-08-08', eur: 400000, ils: 1386000 },
+    { date: '2026-09-02', eur: 1750000, ils: 7287750 }, { date: '2026-09-02', eur: -1750000, ils: -6593475 },
+    ...OCT_CONVERSIONS,
+  ];
+  const past = fx.pastConversions({ table: t, today: TODAY, series: rates, conversions: history });
+  check(past.from === '2026-01' && past.months.length === 10 && past.months[0].month === '2026-01' && past.months[9].month === '2026-10',
+    'every month from January 2026 whose conversion day has passed (January to October)', past.months.map((p) => p.month).join(' '));
+  const aug = past.months.find((p) => p.month === '2026-08');
+  check(!aug.inTable && aug.conv === null && aug.booked.date === '2026-08-05' && aug.booked.eur === 1500000 && aug.booked.n === 2,
+    'before the table: the day near the 7th with the best rate (5 Aug, 3.535) is the booked one, not 3 or 8 Aug (3.5, 3.465)');
+  check(same(aug.others.map((o) => [o.date, o.eur]), [['2026-08-03', 800000], ['2026-08-08', 400000]]) && aug.others.every((o) => o.vsRateIls !== null),
+    'the other days of the month are listed apart, each against its day\'s rate');
+  const sep = past.months.find((p) => p.month === '2026-09');
+  check(sep.booked === null && same(sep.others.map((o) => [o.date, o.eur, Math.round(o.rate * 1000) / 1000]), [['2026-09-02', 1750000, 4.164], ['2026-09-02', -1750000, 3.768]]),
+    'euros sold and bought back on the same day stay apart (sold at 4.164, bought at 3.768)');
+  const octP = past.months.find((p) => p.month === '2026-10');
+  check(octP.inTable && octP.match && octP.booked.eur === 800000 && octP.others.length === 3, 'October is checked against the table as before');
+  const months = past.months.filter((p) => p.booked);
+  check(near(past.total.booked.eur, months.reduce((s, p) => s + p.booked.eur, 0)) && near(past.total.booked.vsRateIls, months.reduce((s, p) => s + p.gainVsSpotIls, 0), 1e-6)
+    && past.total.others.bought === 1750000 && near(past.total.others.eur, past.total.others.sold - 1750000) && past.total.booked.months === 2,
+  'the totals add up: booked near the days, and the rest sold less bought back');
+  const early = fx.cloneTable(t);
+  early.rows.unshift({ month: '2025-11', cells: t.rows[0].cells });
+  check(fx.pastConversions({ table: early, today: TODAY, series: rates, conversions: [] }).from === '2025-11', 'a table that starts earlier lists from its first month');
+}
+
+async function testRateCheck(fx) {
+  console.log('\nRATE: today against the last 90 days');
+  const s = series(120, { clean: true });
+  const rc = fx.rateCheck(s, TODAY);
+  const window = s.filter((p) => p.date >= '2026-07-23' && p.date < TODAY && ![0, 6].includes(new Date(`${p.date}T00:00:00Z`).getUTCDay()));
+  check(rc && rc.days === 90 && rc.n === window.length && near(rc.average, window.reduce((a, p) => a + p.rate, 0) / window.length, 1e-12),
+    'the business days of the 90 days before today: their count and average', rc && `${rc.n} vs ${window.length}`);
+  check(near(rc.share, window.filter((p) => p.rate < rc.rate).length / window.length, 1e-12) && rc.low <= rc.average && rc.average <= rc.high, 'the share of those days with a lower rate');
+  const up = s.map((p) => (p.date === TODAY ? { ...p, rate: 9 } : p));
+  const down = s.map((p) => (p.date === TODAY ? { ...p, rate: 1 } : p));
+  check(fx.rateCheck(up, TODAY).level === 'high' && fx.rateCheck(up, TODAY).share === 1 && fx.rateCheck(down, TODAY).level === 'low' && fx.rateCheck(down, TODAY).share === 0,
+    'above every day → high; below every day → low');
+  check(['high', 'middle', 'low'].includes(rc.level) && fx.rateCheck(series(15), TODAY) === null && fx.rateCheck([], TODAY) === null, 'too little history → no check');
+}
+
+async function testPlanFromPayload(fx) {
+  console.log('\nSHARED: the recommendation the page and the mail both use');
+  const t = fx.cloneTable(fx.DEFAULT_TABLE);
+  const rows = [
+    { bank: 'Bank Hapoalim', kind: 'current', currency: 'EUR', amount: 981000 },
+    { bank: 'PKO', kind: 'current', currency: 'EUR', amount: 229000 },
+    { bank: 'Hapoalim deposits', kind: 'deposit', currency: 'EUR', amount: 1500000, valueDate: '2026-11-03', label: 'EUR fixed-term' },
+  ];
+  const data = {
+    today: TODAY, table: t, rates: { series: series(400), spot: { date: TODAY, rate: 3.4778 }, sigma: 0.08 },
+    balances: { rows }, flows: [{ month: '2026-09', kind: 'customer', eur: 3000000 }], inflowMonths: ['2026-07', '2026-08', '2026-09'],
+  };
+  const v = fx.planFromPayload(data, 'p95');
+  const left = fx.fixings(t, TODAY).filter((f) => f.status !== 'past');
+  const upcoming = left.map((f) => ({ month: f.month, date: f.date, days: f.days, conv: fx.conversionAt(f.row, t.bounds, 3.4778), risk: fx.fixingRisk(f.row, t.bounds, 3.4778, 0.08, f.days / 365) }));
+  const inflow = fx.typicalInflow(data.flows, data.inflowMonths);
+  const direct = fx.planReserve({ upcoming, policy: 'p95', eur: fx.eurPosition(rows), inflowPerDay: inflow.perDay, today: TODAY });
+  check(same(v.plan, direct) && v.schedule.length === 14 && v.schedule[0].outcomes.length === 9 && v.spotBand === 2,
+    'the same plan as built by hand from the fixings, the risk and the euros');
+  check(v.sigma === 0.08 && v.sigmaFromHistory && fx.planFromPayload({ ...data, rates: { ...data.rates, sigma: null } }).sigma === fx.FALLBACK_SIGMA, 'NetSuite\'s volatility, or the fallback without it');
+  check(fx.planFromPayload({ ...data, balances: null }).plan === null && fx.planFromPayload({ ...data, rates: { series: [], spot: null, sigma: null } }).plan === null,
+    'no balances or no rate → no plan');
 }
 
 async function testParse(fx) {
@@ -306,18 +376,28 @@ async function testHandler(fx) {
       };
     },
     flows: async (from) => { counts.flows++; return from === '2026-06' ? [{ month: '2026-09', kind: 'customer', eur: 4424436 }] : []; },
-    conversions: async (from) => { counts.conversions++; return from === '2026-09-20' ? OCT_CONVERSIONS : []; },
+    conversions: async (from) => { counts.conversions++; return from === '2025-12-20' ? OCT_CONVERSIONS : []; },
   };
+  const rateDays = [];
+  const rates = fxReads.rates;
+  fxReads.rates = async (days) => { rateDays.push(days); return rates(); };
   const h = fxs.createFxChallengeHandler({ reads: fxReads, tableFile, clock: () => NOW });
 
   const a = (await call(h)).body;
   check(a.ok && a.status === 'ready' && a.today === TODAY, 'answers on its own route');
   check(same(a.table, fx.cloneTable(fx.DEFAULT_TABLE)) && a.tableSaved === null, 'no saved table → the default');
-  check(a.rates.spot.date === TODAY && near(a.rates.spot.rate, 3.4778, 1e-9) && a.rates.sigma > 0.05 && a.rates.series.length === 400, 'today\'s rate and the volatility from 400 days');
+  check(a.rates.spot.date === TODAY && near(a.rates.spot.rate, 3.4778, 1e-9) && a.rates.sigma > 0.05 && a.rates.series.length === 400 && same(rateDays, [400]),
+    'today\'s rate and the volatility from 400 days (the past conversions since January need no more)');
   check(a.balances.source === 'books' && a.balances.rows.length === 3 && a.balances.rows.find((r) => r.kind === 'deposit').bank === 'Bank Hapoalim'
     && a.balances.rows.find((r) => /AMEX/.test(r.account)).kind === 'card' && a.warnings.some((w) => /NS_BALANCES_RESTLET/.test(w)),
   'without the RESTlet: the books (deposit and card told apart, zero balances dropped) and a note on how to set it up');
-  check(a.conversions.length === 6 && a.flows.length === 1 && same(a.inflowMonths, ['2026-07', '2026-08', '2026-09']), 'flows from four months back, conversions from before the first fixing, the inflow months');
+  check(a.conversions.length === 6 && a.flows.length === 1 && same(a.inflowMonths, ['2026-07', '2026-08', '2026-09']),
+    'flows from four months back, conversions from 20 December 2025 (the past since January), the inflow months');
+  const longAgo = { value: { ...fx.cloneTable(fx.DEFAULT_TABLE), rows: [{ month: '2024-11', cells: fx.DEFAULT_TABLE.rows[0].cells }, ...fx.DEFAULT_TABLE.rows] } };
+  const asked = [];
+  const nothing = async () => [];
+  await fxs.readFxChallenge({ reads: { books: nothing, flows: nothing, mail: null, rates: async (days) => { asked.push(days); return []; }, conversions: async (from) => { asked.push(from); return []; } }, tableDoc: longAgo, clock: () => NOW });
+  check(same(asked, [732, '2024-10-20']), 'a table from November 2024: conversions from 20 Oct 2024, and the rates back to then (732 days)', JSON.stringify(asked));
 
   await call(h);
   check(counts.rates === 1 && counts.books === 1 && counts.flows === 1 && counts.conversions === 1, 'a second read is cached');
@@ -368,6 +448,105 @@ async function testHandler(fx) {
   fs.rmSync(tmp, { recursive: true, force: true });
 }
 
+/** Runs fn with console.log / console.error captured; returns [result, lines]. */
+async function quietly(fn) {
+  const lines = [];
+  const { log, error } = console;
+  console.log = (...a) => lines.push(a.join(' '));
+  console.error = (...a) => lines.push(a.join(' '));
+  try { return [await fn(), lines]; } finally { console.log = log; console.error = error; }
+}
+
+async function testMail(fx) {
+  console.log('\nMAIL: the daily mail (scripts/fx-challenge-mail.cjs)');
+  const mail = require(path.join(ROOT, 'scripts', 'fx-challenge-mail.cjs'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-mail-'));
+  const balances = { ok: true, builtAt: '2026-10-21T05:00:00Z', notes: [], rows: [
+    { company: 'LSports', bank: 'Bank Hapoalim', kind: 'current', currency: 'EUR', amount: 981000, asOf: '2026-10-20' },
+    { company: 'LSports', bank: 'PKO', kind: 'current', currency: 'EUR', amount: 229000, asOf: '2026-10-21' },
+    { company: 'LSports', bank: 'Hapoalim deposits', kind: 'deposit', currency: 'EUR', amount: 1500000, valueDate: '2026-11-03', label: 'EUR fixed-term' },
+    { company: 'LSports', bank: 'Hapoalim deposits', kind: 'deposit', currency: 'EUR', amount: 2000000, valueDate: '2027-02-15', label: 'EUR fixed-term' },
+    { company: 'LSports', bank: 'Hapoalim deposits', kind: 'deposit', currency: 'EUR', amount: 700000, valueDate: '2027-09-01', label: 'EUR fixed-term' },
+  ] };
+  const reads = {
+    rates: async () => series(400),
+    books: async () => [],
+    mail: async () => balances,
+    flows: async () => [{ month: '2026-07', kind: 'customer', eur: 3000000 }, { month: '2026-08', kind: 'customer', eur: 2500000 }, { month: '2026-09', kind: 'customer', eur: 2800000 }, { month: '2026-09', kind: 'vendor', eur: -600000 }],
+    conversions: async () => OCT_CONVERSIONS,
+  };
+  const data = await fxs.readFxChallenge({ reads, clock: () => NOW });
+  data.warnings.push('A note with <b>markup</b> & more.');
+  const m = mail.renderMail(fx, data, { policy: 'p95', link: 'https://finance.example/business-tools/fx-challenge' });
+  const v = fx.planFromPayload(data, 'p95');
+  const clean = (s) => !/undefined|NaN|\[object|null/.test(s);
+  check(/^FX Challenge Wed 21 Oct: /.test(m.subject) && m.subject.includes('for Sat 7 Nov') && /free to convert|short for/.test(m.subject) && /, (a good|an average|a weak) day \(EUR\/ILS 3\.478\) · keep €/.test(m.subject),
+    'the subject: what is free (or short), the rate verdict, what to keep and for when', m.subject);
+  check(m.html.startsWith('<!doctype html>') && clean(m.html) && clean(m.text) && clean(m.subject), 'HTML and text, with no undefined or NaN in either');
+  check(m.html.includes('A note with &lt;b&gt;markup&lt;/b&gt; &amp; more.') && !m.html.includes('<b>markup'), 'what comes from the data is escaped in the HTML');
+  check(m.text.includes('Free to convert now:') && m.text.includes('Hapoalim EUR (583400)') && m.text.includes(`${v.rateCheck.share === 1 ? 'above 100%' : 'above'}`) && /A (GOOD|WEAK) DAY TO CONVERT|AN AVERAGE DAY TO CONVERT/.test(m.text),
+    'the recommendation, then today\'s rate against the last 90 days with its verdict');
+  check(m.html.includes('(today)') && m.text.includes('If EUR/ILS that day is') && m.text.includes('Can be converted before it'), 'what the next conversion can sell (today\'s range marked), and the next conversions');
+  check(m.text.includes('By Sat 7 Nov: Tue 3 Nov €1.50M') && m.text.includes('By Sun 7 Mar: Mon 15 Feb €2.00M') && /a further €700K in 1 deposit\./.test(m.text),
+    'each deposit on the conversion it counts for, and the ones after the last conversion shown', m.text.split('\n').filter((l) => /By |further/.test(l)).join(' | '));
+  check(m.html.includes('href="https://finance.example/business-tools/fx-challenge"') && m.text.includes('95% of rate moves'), 'the page\'s link and the setting used');
+  const none = mail.renderMail(fx, { ...data, balances: null }, {});
+  check(/no recommendation today$/.test(none.subject) && clean(none.html) && none.text.includes('balances'), 'without balances: no recommendation, and why');
+  const failed = mail.failureMail(TODAY, new Error('NetSuite down'));
+  check(/not read today$/.test(failed.subject) && failed.text.includes('NetSuite down'), 'nothing read: a short mail saying so');
+
+  const ok = mail.parseRecipients('matan.l@lsports.eu, Dotan@LSports.EU;matan.l@lsports.eu');
+  const outside = mail.parseRecipients('matan.l@lsports.eu,someone@gmail.com');
+  check(ok.errors.length === 0 && same(ok.to, ['matan.l@lsports.eu', 'Dotan@LSports.EU']) && outside.errors.length === 1 && /outside lsports\.eu/.test(outside.errors[0])
+    && mail.parseRecipients('someone@gmail.com', { allowExternal: true }).errors.length === 0 && /not set/.test(mail.parseRecipients('').errors[0]) && /not an address/.test(mail.parseRecipients('matan').errors[0]),
+  'recipients: lsports.eu only (unless allowed), each once; a missing or bad address is said');
+  const cfg = mail.mailConfig({ FX_MAIL_TO: 'matan.l@lsports.eu', FX_MAIL_FROM: 'matan.l@lsports.eu', FX_MAIL_SMTP_URL: 'smtps://bot%40lsports.eu:pw-secret@smtp.gmail.com:465', FX_MAIL_HOUR: '25', FX_MAIL_POLICY: 'worst' });
+  check(cfg.errors.length === 0 && cfg.from === 'matan.l@lsports.eu' && cfg.smtp.host === 'smtp.gmail.com' && cfg.smtp.transport.port === 465 && cfg.smtp.transport.secure
+    && cfg.smtp.transport.auth.user === 'bot@lsports.eu' && cfg.smtp.transport.name === 'lsports.eu' && cfg.hour === 10 && cfg.policy === 'worst',
+  'the mail server from FX_MAIL_SMTP_URL, EHLO the sender\'s domain, a bad hour → 10');
+  const relay = mail.mailConfig({ FX_MAIL_TO: 'matan.l@lsports.eu', NET_CASH_SMTP_URL: 'smtp://smtp-relay.gmail.com:587', SMTP_HOST: 'ignored', FX_MAIL_FROM: 'matan.l@lsports.eu' });
+  const backend = mail.mailConfig({ FX_MAIL_TO: 'matan.l@lsports.eu', SMTP_HOST: 'smtp.example', SMTP_PORT: '587', SMTP_USER: 'bot@lsports.eu', SMTP_PASS: 'pw-secret' });
+  const bare = mail.mailConfig({ FX_MAIL_TO: 'matan.l@lsports.eu' });
+  check(relay.smtp.host === 'smtp-relay.gmail.com' && !relay.smtp.transport.auth && backend.from === 'bot@lsports.eu' && backend.smtp.transport.auth.pass === 'pw-secret'
+    && bare.errors.some((e) => /no mail server/.test(e)) && bare.errors.some((e) => /FX_MAIL_FROM/.test(e)) && !JSON.stringify([cfg.errors, backend.errors, bare.errors]).includes('pw-secret'),
+  'else NET_CASH_SMTP_URL, else the backend\'s SMTP_*; nothing set → said, never a password');
+  check(['wait', 'send', 'send', 'last', 'done'].every((want, i) => mail.scheduleState([
+    { hour: 9, sendHour: 10, sentDay: null, today: TODAY }, { hour: 10, sendHour: 10, sentDay: '2026-10-20', today: TODAY }, { hour: 11, sendHour: 10, sentDay: null, today: TODAY },
+    { hour: 12, sendHour: 10, sentDay: null, today: TODAY }, { hour: 15, sendHour: 10, sentDay: TODAY, today: TODAY },
+  ][i]) === want), 'scheduled: wait for the hour, send once, retry an incomplete read for two hours, then send it anyway');
+  check(mail.israelHour(Date.parse('2026-10-21T07:00:00Z')) === 10 && mail.israelHour(Date.parse('2026-12-01T08:00:00Z')) === 10, '10:00 in Israel, in summer time and in winter');
+
+  const sent = [];
+  const nodemailer = { createTransport: (t) => ({ sendMail: async (msg) => { sent.push({ t, msg }); return { messageId: 'x' }; } }) };
+  const env = { FX_MAIL_TO: 'matan.l@lsports.eu,dotan@lsports.eu', FX_MAIL_FROM: 'matan.l@lsports.eu', FX_MAIL_SMTP_URL: 'smtp://smtp-relay.gmail.com:587' };
+  const markerFile = path.join(tmp, 'last.json');
+  const at = (hhmm) => () => Date.parse(`${TODAY}T${hhmm}:00+03:00`);
+  const deps = (clock, extra = {}) => ({ env, clock, reads, nodemailer, markerFile, tableFile: path.join(tmp, 'none.json'), ...extra });
+  const [early] = await quietly(() => mail.main(['--scheduled'], deps(at('09:00'))));
+  check(early === 0 && sent.length === 0 && !fs.existsSync(markerFile), 'scheduled at 09:00: nothing yet');
+  const [ten, tenLog] = await quietly(() => mail.main(['--scheduled'], deps(at('10:00'))));
+  const s0 = sent[0];
+  check(ten === 0 && sent.length === 1 && s0.msg.from === 'matan.l@lsports.eu' && s0.msg.to === 'matan.l@lsports.eu, dotan@lsports.eu' && s0.msg.html.startsWith('<!doctype html>')
+    && s0.msg.text.includes('Free to convert now') && s0.t.name === 'lsports.eu' && JSON.parse(fs.readFileSync(markerFile, 'utf8')).day === TODAY && /sent to 2 recipient/.test(tenLog.join(' ')),
+  'scheduled at 10:00: sent from the sender set, to both, HTML and text, and marked as sent today');
+  await quietly(() => mail.main(['--scheduled'], deps(at('11:00'))));
+  const [manual] = await quietly(() => mail.main([], deps(at('15:00'))));
+  check(sent.length === 2 && manual === 0 && JSON.parse(fs.readFileSync(markerFile, 'utf8')).at === new Date(at('10:00')()).toISOString(), 'sent once a day; a run by hand sends a test and leaves the daily one alone');
+  const partial = { ...reads, mail: null, books: async () => { throw new Error('NetSuite down'); } };
+  const marker2 = path.join(tmp, 'last2.json');
+  const [retry, retryLog] = await quietly(() => mail.main(['--scheduled'], deps(at('10:00'), { reads: partial, markerFile: marker2 })));
+  check(retry === 0 && sent.length === 2 && !fs.existsSync(marker2) && /trying again next hour/.test(retryLog.join(' ')), 'no balances at 10:00: not sent, tried again next hour');
+  await quietly(() => mail.main(['--scheduled'], deps(at('12:00'), { reads: partial, markerFile: marker2 })));
+  check(sent.length === 3 && /no recommendation today/.test(sent[2].msg.subject) && fs.existsSync(marker2), 'still none at 12:00: the mail goes anyway, saying why');
+  const [refused, refusedLog] = await quietly(() => mail.main([], deps(at('10:00'), { env: { ...env, FX_MAIL_TO: 'someone@gmail.com' } })));
+  check(refused === 1 && sent.length === 3 && /outside lsports\.eu/.test(refusedLog.join(' ')), 'an address outside lsports.eu: nothing is sent');
+  const htmlFile = path.join(tmp, 'mail.html');
+  const [dry, dryLog] = await quietly(() => mail.main(['--dry-run', `--html=${htmlFile}`], deps(at('08:00'), { env: {} })));
+  check(dry === 0 && sent.length === 3 && /^Subject: FX Challenge/.test(dryLog[0]) && fs.readFileSync(htmlFile, 'utf8').startsWith('<!doctype html>') && /a real send would stop/.test(dryLog.join(' ')),
+    '--dry-run prints it and writes the HTML, sends nothing, says what a real send lacks');
+  fs.rmSync(tmp, { recursive: true, force: true });
+}
+
 function testServerParts() {
   console.log('\nSERVER: settings and rows');
   check(same(fxs.restletIds('customscript_ph_rl_balances:customdeploy_ph_rl_balances'), { script: 'customscript_ph_rl_balances', deploy: 'customdeploy_ph_rl_balances' })
@@ -396,6 +575,8 @@ async function testNetSuiteReads() {
     if (/FROM currencyrate/.test(q)) return reply([{ d: '2026-10-19', rate: '3.482737' }, { d: '2026-10-20', rate: '3.47' }, { d: '2026-10-20', rate: '3.4778365' }, { d: '2026-10-21', rate: null }]);
     if (/'conversion'/.test(q) && /GROUP BY/.test(q)) return reply([{ m: '2026-09', k: 'CustPymt', eur: '4424436.19' }, { m: '2026-09', k: 'VendPymt', eur: '-846093.1' }, { m: '2026-09', k: 'conversion', eur: '-2646867.75' }, { m: '2026-09', k: 'Journal', eur: '-132903.93' }, { m: '2026-09', k: 'Transfer', eur: '-47842.06' }, { m: '2026-09', k: 'CardChrg', eur: '-1' }]);
     if (/acctnumber IN/.test(q)) return reply([
+      { id: 168931, tranid: 'TRN328', d: '2026-01-02', num: '10002', book: 1, amt: -1750000 }, { id: 168931, tranid: 'TRN328', d: '2026-01-02', num: '11001', book: 1, amt: 1750000 },
+      { id: 168931, tranid: 'TRN328', d: '2026-01-02', num: '10002', book: 2, amt: -6593475 }, { id: 168931, tranid: 'TRN328', d: '2026-01-02', num: '11001', book: 2, amt: 6593475 },
       { id: 360134, tranid: 'JE10953', d: '2026-10-06', num: '11001', book: 1, amt: -200000 }, { id: 360134, tranid: 'JE10953', d: '2026-10-06', num: '10002', book: 1, amt: 200000 },
       { id: 360134, tranid: 'JE10953', d: '2026-10-06', num: '11001', book: 2, amt: -820000 }, { id: 360134, tranid: 'JE10953', d: '2026-10-06', num: '10002', book: 2, amt: 820000 },
       { id: 9, tranid: 'JE9', d: '2026-10-08', num: '10002', book: 2, amt: 5 },
@@ -412,8 +593,9 @@ async function testNetSuiteReads() {
     check(bad, 'the rate provider is checked before it reaches SuiteQL');
     const flows = await ns.fetchEurFlows({ from: '2026-06' });
     check(same(flows.map((f) => f.kind), ['customer', 'vendor', 'conversion', 'other', 'transfer', 'other']) && flows[0].eur === 4424436.19, 'flows: kinds by transaction type and memo');
-    const conv = await ns.fetchHapoalimConversions({ from: '2026-09-20' });
-    check(same(conv, [{ id: 360134, tranid: 'JE10953', date: '2026-10-06', eur: 200000, ils: 820000 }]), 'conversions: € from the primary book, ₪ from the ILS book; a one-sided journal is left out');
+    const conv = await ns.fetchHapoalimConversions({ from: '2025-12-20' });
+    check(same(conv, [{ id: 168931, tranid: 'TRN328', date: '2026-01-02', eur: -1750000, ils: -6593475 }, { id: 360134, tranid: 'JE10953', date: '2026-10-06', eur: 200000, ils: 820000 }]),
+      'conversions: € from the primary book, ₪ from the ILS book; euros bought back come negative; a one-sided journal is left out', JSON.stringify(conv));
     const books = await ns.fetchEurBalancesBooks();
     check(books[0].eur === 979709.61 && books[0].number === '11001', 'books: the EUR balance per account');
     await ns.restletGet('customscript_ph_rl_balances', 'customdeploy_ph_rl_balances');
@@ -439,9 +621,12 @@ async function main() {
   await testOutcomes(fx);
   await testPlan(fx);
   await testPast(fx);
+  await testRateCheck(fx);
+  await testPlanFromPayload(fx);
   await testParse(fx);
   await testValidation(fx);
   await testHandler(fx);
+  await testMail(fx);
   testServerParts();
   await testNetSuiteReads();
   console.log(failures ? `\n❌ FAIL — ${failures} check(s) failed.` : '\n✅ PASS — all checks green.');
