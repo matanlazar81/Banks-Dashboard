@@ -43,10 +43,15 @@ briefly a tab of the Metrics page before it got its own sidebar item.
   - Free to convert now = liquid euros less what the reserve still needs. It is also shown with the backup
     covering a jump above today's band, and by the fixing with the typical inflow (customers less EUR
     payments, before conversions, deposits and transfers, last 3 closed months).
-  - The path shows the next 6 fixings if nothing else is converted.
+  - The path shows the next 6 fixings if nothing else is converted. Its **Deposits released** column is the EUR
+    deposits maturing after the previous fixing (after today, for the first) and by that one; hover a figure for
+    each deposit's date and value. Deposits maturing after the last fixing shown are listed under the table.
+    They count only if the bank pays them out rather than rolling them over.
 - **Past fixings**: the table at that day's rate against the "Conversion" / המרה journals booked within
   3 days (Hapoalim EUR 11001 → ILS 10002), the shekels gained against that day's rate, and the month's other
   conversions.
+- **LSports euros**: the accounts, then each EUR deposit by the day it matures.
+- Every column header explains itself on hover (the dotted underline marks it).
 
 ## Sources
 

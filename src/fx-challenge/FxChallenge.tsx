@@ -6,7 +6,7 @@ import { Loader2, RefreshCw } from 'lucide-react';
 import { ErrorCard, Segmented, Skeleton, Warnings } from '../new-dashboard/PageParts.tsx';
 import { KpiCard } from '../new-dashboard/KpiStrip.tsx';
 import { readParam, writeParam } from '../new-dashboard/urlParams.ts';
-import { parseTable, POLICIES, POLICY_LABEL, tableToText, type FxTable, type Policy } from '../forecast/fx-challenge.mjs';
+import { parseTable, POLICIES, POLICY_LABEL, tableToText, type DepositRelease, type FxTable, type PathPoint, type Policy } from '../forecast/fx-challenge.mjs';
 import { formatEur, monthName } from '../metrics/model.ts';
 import { fetchFx, saveTable } from './api.ts';
 import { buildFxModel, formatDay, formatIls, formatPct0, formatRate, type FxModel } from './fxModel.ts';
@@ -53,6 +53,17 @@ const INPUT = 'rounded border border-slate-300 px-1.5 py-1 text-xs tabular-nums 
 const TH = 'px-2 py-1.5 text-right font-medium text-slate-500';
 const TD = 'px-2 py-1.5 text-right tabular-nums';
 const SOURCE_LABEL = { mail: "the daily balances mail's sources", books: "NetSuite's books (EUR only)" } as const;
+const THL = 'px-2 py-1.5 text-left font-medium text-slate-500';
+/** Marks text that explains itself on hover. */
+const HINT = 'cursor-help underline decoration-slate-300 decoration-dotted underline-offset-2';
+
+/** A column header whose explanation shows on hover. */
+function Th({ tip, left = false, children }: { tip: string; left?: boolean; children: ReactNode }) {
+  return <th className={left ? THL : TH} title={tip}><span className={HINT}>{children}</span></th>;
+}
+
+/** One line per deposit: its date, its value then and its kind. */
+const depositLines = (list: DepositRelease[]) => list.map((d) => `${formatDay(d.valueDate, true)} · ${formatEur(d.amount)} · ${d.label}`);
 
 export default function FxChallenge() {
   const { phase, data, error, busy, refresh, reload } = useFx();
@@ -139,6 +150,24 @@ function Kpis({ model }: { model: FxModel }) {
 }
 
 // ── the recommendation ──
+const KEEP_TIP: Record<Policy, string> = {
+  today: "What the fixing sells if EUR/ILS is where it is today: that band's cell in the table. It is paid from Hapoalim EUR (583400).",
+  p95: "Enough for 19 fixings in 20: how far EUR/ILS can move by that day from today, with the volatility of NetSuite's daily rates. It is paid from Hapoalim EUR (583400).",
+  worst: "The largest amount in that month's row of the table, whatever the rate. It is paid from Hapoalim EUR (583400).",
+};
+const PATH_TIP = {
+  fixing: "The fixing day, the 7th of each month: that day's EUR/ILS picks the band of the table. On a weekend the deal sets the day.",
+  expected: "What the fixing sells on average: each band's euros, weighted by the chance that EUR/ILS lands in it that day, from today's rate. The bank sells one cell; this is for planning.",
+  released: 'EUR deposits that mature after the previous fixing (after today, for the first) and by this one, at the bank\'s value at maturity with interest. Hover a figure for each deposit and its date. They count only if the bank pays them out rather than rolling them over; a blocked deposit is left out.',
+  available: "What you would hold on the day if nothing else is converted: today's liquid euros, plus the typical inflow and the deposits released by then, less what the earlier fixings take (at the amount kept).",
+  convertible: 'How much can be converted before this fixing, in total, as the euros come in, with this fixing and every later one still covered: the smallest spare from this row on. Euros converted now are gone at every later fixing too.',
+};
+
+const releaseTip = (p: PathPoint) => [
+  `${p.releasedDeposits.length} deposit${p.releasedDeposits.length === 1 ? '' : 's'} maturing by ${formatDay(p.date, true)}:`,
+  ...depositLines(p.releasedDeposits),
+].join('\n');
+
 function Recommendation({ model, policy, onPolicy, inflowMonths }: { model: FxModel; policy: Policy; onPolicy: (p: Policy) => void; inflowMonths: string[] }) {
   const plan = model.plan;
   const first = model.schedule[0];
@@ -150,6 +179,9 @@ function Recommendation({ model, policy, onPolicy, inflowMonths }: { model: FxMo
     return <Card title="What to keep, what is free" aside={aside}><p className="text-sm text-slate-500">The recommendation needs today&apos;s rate and the balances; see the notes above.</p></Card>;
   }
   const n = plan.next;
+  // Deposits from NetSuite's books have no dates, so none of them shows as released on a day.
+  const undated = !!model.position && model.position.deposits.length > 0 && model.position.deposits.every((d) => !d.valueDate);
+  const later = plan.later.reduce((s, d) => s + d.amount, 0);
   // The bands with a real chance on the next fixing, for the sentence under the headline.
   const likely = first.risk.probs.map((p, i) => ({ p, i, eur: -first.fixing.row.cells[i].eurK * 1000, rate: first.fixing.row.cells[i].rate }))
     .filter((b) => b.p >= 0.02).sort((a, b) => a.i - b.i);
@@ -192,11 +224,12 @@ function Recommendation({ model, policy, onPolicy, inflowMonths }: { model: FxMo
             <table className="min-w-full text-xs">
               <thead>
                 <tr className="border-b border-slate-200">
-                  <th className="px-2 py-1.5 text-left font-medium text-slate-500">Fixing</th>
-                  <th className={TH}>Keep ({POLICY_LABEL[plan.policy].toLowerCase()})</th>
-                  <th className={TH}>Expected</th>
-                  <th className={TH} title="Today's liquid euros, plus typical inflows and deposits maturing by then, less the earlier fixings at the amount kept">Euros by then</th>
-                  <th className={TH} title="Euros converted before a fixing are gone at it and every later one">Can be converted before it</th>
+                  <Th left tip={PATH_TIP.fixing}>Fixing</Th>
+                  <Th tip={KEEP_TIP[plan.policy]}>Keep ({POLICY_LABEL[plan.policy].toLowerCase()})</Th>
+                  <Th tip={PATH_TIP.expected}>Expected</Th>
+                  <Th tip={undated ? `${PATH_TIP.released} NetSuite's books give no maturity dates, so this stays empty until the balances RESTlet is set up.` : PATH_TIP.released}>Deposits released</Th>
+                  <Th tip={PATH_TIP.available}>Euros by then</Th>
+                  <Th tip={PATH_TIP.convertible}>Can be converted before it</Th>
                 </tr>
               </thead>
               <tbody>
@@ -205,13 +238,22 @@ function Recommendation({ model, policy, onPolicy, inflowMonths }: { model: FxMo
                     <td className="px-2 py-1.5 text-left text-slate-700">{formatDay(p.date)}{p.month.slice(0, 4) !== model.schedule[0].fixing.month.slice(0, 4) ? ` ${p.month.slice(0, 4)}` : ''}</td>
                     <td className={TD}>{formatEur(p.required)}</td>
                     <td className={`${TD} text-slate-500`}>{formatEur(p.expected)}</td>
+                    <td className={`${TD} text-slate-600`} title={p.releasedDeposits.length ? releaseTip(p) : undefined}>
+                      {p.released > 0 ? <span className={HINT}>{formatEur(p.released)}</span> : '–'}
+                    </td>
                     <td className={TD}>{formatEur(p.available)}</td>
                     <td className={`${TD} font-medium ${p.surplus < 0 ? 'text-rose-700' : 'text-emerald-700'}`}>{p.surplus < 0 ? `short ${formatEur(-p.surplus)}` : formatEur(p.convertibleBefore)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            <p className="mt-1 text-[11px] text-slate-500">If nothing else is converted and inflows stay typical: the euros converted before a fixing, in total, can reach that column and every fixing is still covered.</p>
+            <p className="mt-1 text-[11px] text-slate-500">
+              If nothing else is converted and inflows stay typical: the euros converted before a fixing, in total, can reach that column and every fixing is still covered.
+              {' '}Hover a header for what it means, and a deposits figure for each deposit and its date.
+              {later > 0 && (
+                <> After {formatDay(plan.path[plan.path.length - 1].date, true)}, a further <span className={HINT} title={depositLines(plan.later).join('\n')}>{formatEur(later)} in {plan.later.length} deposit{plan.later.length === 1 ? '' : 's'}</span> matures.</>
+              )}
+            </p>
           </div>
         )}
       </div>
@@ -247,14 +289,14 @@ function Simulation({ model, rateText, onRate }: { model: FxModel; rateText: str
         <table className="min-w-full text-xs">
           <thead>
             <tr className="border-b border-slate-200">
-              <th className="px-2 py-1.5 text-left font-medium text-slate-500">Fixing</th>
-              <th className={TH}>Sold at {formatRate(model.simRate)}</th>
-              <th className={TH}>Rate</th>
-              <th className={TH}>₪ received</th>
-              <th className={TH} title="Against selling the same euros at the simulated rate">₪ vs that rate</th>
-              <th className={TH} title="Weighted by the chance of each band, from today's rate">Expected €</th>
-              <th className={TH} title="Enough for 19 fixings in 20, from today's rate">95% €</th>
-              <th className={TH}>Worst €</th>
+              <Th left tip="Each month left in the table, and its fixing day (the 7th; weekends flagged).">Fixing</Th>
+              <Th tip="The euros that fixing sells if EUR/ILS is at the simulated rate on the day: the table's cell for that band.">Sold at {formatRate(model.simRate)}</Th>
+              <Th tip="The deals' blended rate in that cell.">Rate</Th>
+              <Th tip="The euros sold times the cell's rate.">₪ received</Th>
+              <Th tip="Against selling the same euros at the simulated rate itself: what the deal gains, or loses, over converting at that rate.">₪ vs that rate</Th>
+              <Th tip="What the fixing sells on average: each band's euros weighted by its chance, from today's rate (not the simulated one).">Expected €</Th>
+              <Th tip="Enough for 19 fixings in 20, from today's rate.">95% €</Th>
+              <Th tip="The largest amount in that month's row of the table.">Worst €</Th>
             </tr>
           </thead>
           <tbody>
@@ -310,11 +352,13 @@ function TableCard({ data, model, onSaved }: { data: FxPayload; model: FxModel; 
         <table className="min-w-full border-separate border-spacing-0.5 text-[11px]">
           <thead>
             <tr>
-              <th className="px-1.5 py-1 text-left font-medium text-slate-500">Month</th>
+              <th className="px-1.5 py-1 text-left font-medium text-slate-500" title="The fixing month: its row says what each band sells">
+                <span className={HINT}>Month</span>
+              </th>
               {model.labels.map((l, i) => (
                 <th key={l} className={`px-1.5 py-1 text-center font-medium ${i === model.simBand ? 'rounded bg-sky-700 text-white' : 'text-slate-500'}`}
-                  title={i === model.spotBand ? "Today's band" : undefined}>
-                  {l}{i === model.spotBand ? ' •' : ''}
+                  title={`EUR/ILS ${l} on the fixing day${i === model.spotBand ? " (today's band)" : ''}. A rate on an edge counts in the band above.`}>
+                  <span className={HINT}>{l}</span>{i === model.spotBand ? ' •' : ''}
                 </th>
               ))}
             </tr>
@@ -408,8 +452,13 @@ function Balances({ data, model }: { data: FxPayload; model: FxModel }) {
   const b = data.balances;
   if (!b) return null;
   const lsports = b.rows.filter((r) => !r.company || /lsports/i.test(r.company));
+  // Accounts first, largest first; then the deposits by the day they mature.
   const eur = lsports.filter((r) => r.currency === 'EUR' && (r.kind === 'current' || r.kind === 'deposit'))
-    .sort((x, y) => (x.kind === y.kind ? Math.abs(y.amount) - Math.abs(x.amount) : x.kind === 'current' ? -1 : 1));
+    .sort((x, y) => {
+      if (x.kind !== y.kind) return x.kind === 'current' ? -1 : 1;
+      if (x.kind === 'deposit') return (x.valueDate || '9999').localeCompare(y.valueDate || '9999') || Math.abs(y.amount) - Math.abs(x.amount);
+      return Math.abs(y.amount) - Math.abs(x.amount);
+    });
   const otherCcy = lsports.filter((r) => r.currency !== 'EUR' && (r.kind === 'current' || r.kind === 'deposit'));
   const byCcy = new Map<string, number>();
   for (const r of otherCcy) byCcy.set(r.currency, (byCcy.get(r.currency) || 0) + r.amount);
@@ -422,10 +471,10 @@ function Balances({ data, model }: { data: FxPayload; model: FxModel }) {
           <table className="min-w-full text-xs">
             <thead>
               <tr className="border-b border-slate-200">
-                <th className="px-2 py-1.5 text-left font-medium text-slate-500">Where</th>
-                <th className="px-2 py-1.5 text-left font-medium text-slate-500">Kind</th>
-                <th className={TH}>EUR</th>
-                <th className={TH}>{b.source === 'mail' ? 'As of / matures' : 'Matures'}</th>
+                <Th left tip="The bank, and for a deposit its kind as the bank names it.">Where</Th>
+                <Th left tip="Account: money held now. Deposit: paid out on the day it matures. Blocked: held by the bank, left out of the plan.">Kind</Th>
+                <Th tip={b.source === 'mail' ? "The bank's balance; for a deposit, its value on the day it matures, with interest (the bank's API gives no value for today)." : "NetSuite's books, in euros."}>EUR</Th>
+                <Th tip={b.source === 'mail' ? "For an account, the date of the bank's balance; for a deposit, the day it matures." : "NetSuite's books give no maturity dates."}>{b.source === 'mail' ? 'As of / matures' : 'Matures'}</Th>
               </tr>
             </thead>
             <tbody>
@@ -471,12 +520,12 @@ function PastFixings({ model }: { model: FxModel }) {
         <table className="min-w-full text-xs">
           <thead>
             <tr className="border-b border-slate-200">
-              <th className="px-2 py-1.5 text-left font-medium text-slate-500">Fixing</th>
-              <th className={TH}>EUR/ILS that day</th>
-              <th className={TH}>The table</th>
-              <th className={TH}>Booked (Hapoalim, &quot;Conversion&quot;)</th>
-              <th className={TH} title="Shekels received against selling the same euros at that day's rate">₪ vs that day&apos;s rate</th>
-              <th className="px-2 py-1.5 text-left font-medium text-slate-500">Other conversions that month</th>
+              <Th left tip="A fixing already past: its month and day.">Fixing</Th>
+              <Th tip="NetSuite's HSBC EUR/ILS on the fixing day.">EUR/ILS that day</Th>
+              <Th tip="What the table says at that day's rate: the euros sold and the deals' blended rate.">The table</Th>
+              <Th tip={'The "Conversion" / המרה journals from Hapoalim EUR (11001) to ILS (10002) within 3 days of the fixing; ✓ when they match the table.'}>Booked (Hapoalim, &quot;Conversion&quot;)</Th>
+              <Th tip="Shekels received against selling the same euros at that day's rate.">₪ vs that day&apos;s rate</Th>
+              <Th left tip="Other conversions booked the same month, apart from the fixing.">Other conversions that month</Th>
             </tr>
           </thead>
           <tbody>
