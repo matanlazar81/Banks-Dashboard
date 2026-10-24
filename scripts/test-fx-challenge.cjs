@@ -673,18 +673,18 @@ async function testMail(fx) {
   const data = await fxs.readFxChallenge({ reads, clock: () => NOW });
   data.warnings.push('A note with <b>markup</b> & more.');
   const m = mail.renderMail(fx, data, { policy: 'p95', link: 'https://finance.example/business-tools/fx-challenge' });
-  const v = fx.planFromPayload(data, 'p95');
   const clean = (s) => !/undefined|NaN|\[object|null/.test(s);
-  check(/^FX Challenge Wed 21 Oct: /.test(m.subject) && m.subject.includes('for Sat 7 Nov') && /free to convert|short for/.test(m.subject) && /, (a good|an average|a weak) day \(EUR\/ILS 3\.478\) · keep €/.test(m.subject),
-    'the subject: what is free (or short), the rate verdict, what to keep and for when', m.subject);
-  check(m.html.startsWith('<!doctype html>') && clean(m.html) && clean(m.text) && clean(m.subject), 'HTML and text, with no undefined or NaN in either');
-  check(m.html.includes('A note with &lt;b&gt;markup&lt;/b&gt; &amp; more.') && !m.html.includes('<b>markup'), 'what comes from the data is escaped in the HTML');
-  check(m.text.includes('Free to convert now:') && m.text.includes('Hapoalim EUR (583400)') && m.text.includes(`${v.rateCheck.share === 1 ? 'above 100%' : 'above'}`) && /A (GOOD|WEAK) DAY TO CONVERT|AN AVERAGE DAY TO CONVERT/.test(m.text),
-    'the recommendation, then today\'s rate against the last 90 days with its verdict');
-  check(m.html.includes('(today)') && m.text.includes('If EUR/ILS that day is') && m.text.includes('Can be converted before it'), 'what the next conversion can sell (today\'s range marked), and the next conversions');
-  check(m.text.includes('By Sat 7 Nov: Tue 3 Nov €1.50M') && m.text.includes('By Sun 7 Mar: Mon 15 Feb €2.00M') && /a further €700K in 1 deposit\./.test(m.text),
-    'each deposit on the conversion it counts for, and the ones after the last conversion shown', m.text.split('\n').filter((l) => /By |further/.test(l)).join(' | '));
-  check(m.html.includes('href="https://finance.example/business-tools/fx-challenge"') && m.text.includes('95% of rate moves'), 'the page\'s link and the setting used');
+  // English words in the mail's own text, names, the rate pair, the script's path and links aside.
+  const english = (s) => s.replace(/FX Challenge|EUR\/ILS|HSBC|NetSuite|scripts\/fx-challenge-mail\.cjs|https?:\/\/\S+/g, '').match(/\b[A-Za-z]{3,}\b/g);
+  check(/^FX יום ד' 21\.10 · /.test(m.subject) && m.html.startsWith('<!doctype html><html dir="rtl" lang="he">') && clean(m.html) && clean(m.text) && clean(m.subject),
+    'Hebrew, right to left: the subject has the day and the first recommendations', m.subject);
+  check(!english(m.text) && !english(m.subject), 'no English in the mail (names, the rate pair, the script\'s path and links aside)', JSON.stringify(english(m.text)));
+  check(m.text.includes('המצב היום') && m.text.includes('בחשבון האירו בפועלים') && m.text.includes('להשאיר €') && m.text.includes('להמרה של שבת 7.11')
+    && m.text.includes('פנוי להמרה עכשיו') && m.text.includes('שער EUR/ILS 3.478'),
+  "today's balances in one paragraph: what is held, what to keep for the conversion, what is free, the rate against the last 90 days");
+  check(!m.html.includes('<b>markup') && !m.text.includes('markup') && m.text.includes('חלק מהנתונים לא נקראו היום'), 'a read that failed is said in Hebrew; nothing from the data reaches the mail unescaped');
+  check((m.html.match(/<table/g) || []).length === 2 && m.text.length < 2500 && !/If EUR\/ILS|Can be converted/.test(m.text), 'focused: no tables and no workings (they stay on the page)', String(m.text.length));
+  check(m.html.includes('href="https://finance.example/business-tools/fx-challenge"') && m.text.includes('95% מתנודות השער'), 'the page\'s link and the setting used');
   const withCash = await fxs.readFxChallenge({
     reads: {
       ...reads,
@@ -699,16 +699,15 @@ async function testMail(fx) {
   });
   const mc = mail.renderMail(fx, withCash, { policy: 'p95' });
   const vc = fx.planFromPayload(withCash, 'p95');
-  check(/^FX Challenge Wed 21 Oct: convert €[\d.,]+[KM] today\b.* · EUR\/ILS 3\.478 (high|mid-range|low)$/.test(mc.subject) && clean(mc.html) && clean(mc.text)
-    && mc.actions[0].kind === 'convert' && mc.actions[0].urgent && mc.text.includes("Convert €") && mc.text.includes("The rest of October's ILS vendor payments: ")
-    && mc.text.includes('PAYMENTS IN SHEKELS AHEAD') && mc.text.includes('SALARIES AND VENDORS: THE SHEKELS EACH MONTH NEEDS') && mc.text.includes('Cards (10th)')
-    && mc.text.includes('(by the 14th)') && /New deposits: |Put €/.test(mc.text) && mc.text.includes('Spare before')
-    && mc.text.includes('50% net salaries') && vc.cash && vc.cash.months.length >= 6,
-  'with the payroll: today\'s actions lead (subject and body), then the payments in shekels ahead, the months\' shekels and the plan with them', mc.subject);
+  check(/^FX יום ד' 21\.10 · להמיר €[\d.,]+[KM] היום/.test(mc.subject) && clean(mc.html) && clean(mc.text) && !english(mc.text)
+    && mc.actions[0].kind === 'convert' && mc.actions[0].urgent && mc.text.includes('להמיר €') && mc.text.includes('יתרת תשלומי הספקים בשקלים של אוקטובר: ')
+    && mc.text.includes('תשלומים בשקלים בתקופה הקרובה') && mc.text.includes('שכר נטו של אוקטובר ותשלומי הספקים בשקלים של נובמבר')
+    && mc.text.includes('שבת 14.11 (מוכן עד יום ה\' 12.11)') && mc.text.includes('פנסיה, מס וביטוח לאומי של אוקטובר') && vc.cash && vc.cash.months.length >= 6,
+  'with the payroll: today\'s recommendations lead (subject and body), each with its balances, then the payments in shekels ahead', mc.subject);
   const none = mail.renderMail(fx, { ...data, balances: null }, {});
-  check(/no recommendation today$/.test(none.subject) && clean(none.html) && none.text.includes('balances'), 'without balances: no recommendation, and why');
+  check(/· אין היום המלצה$/.test(none.subject) && clean(none.html) && none.text.includes('היתרות'), 'without balances: no recommendation, and why');
   const failed = mail.failureMail(TODAY, new Error('NetSuite down'));
-  check(/not read today$/.test(failed.subject) && failed.text.includes('NetSuite down'), 'nothing read: a short mail saying so');
+  check(/· הנתונים לא נקראו היום$/.test(failed.subject) && failed.text.includes('NetSuite down'), 'nothing read: a short mail saying so');
 
   const ok = mail.parseRecipients('matan.l@lsports.eu, Dotan@LSports.EU;matan.l@lsports.eu');
   const outside = mail.parseRecipients('matan.l@lsports.eu,someone@gmail.com');
@@ -743,7 +742,7 @@ async function testMail(fx) {
   const [ten, tenLog] = await quietly(() => mail.main(['--scheduled'], deps(at('10:00'))));
   const s0 = sent[0];
   check(ten === 0 && sent.length === 1 && s0.msg.from === 'matan.l@lsports.eu' && s0.msg.to === 'matan.l@lsports.eu, dotan@lsports.eu' && s0.msg.html.startsWith('<!doctype html>')
-    && s0.msg.text.includes('Free to convert now') && s0.t.name === 'lsports.eu' && JSON.parse(fs.readFileSync(markerFile, 'utf8')).day === TODAY
+    && s0.msg.text.includes('פנוי להמרה עכשיו') && s0.t.name === 'lsports.eu' && JSON.parse(fs.readFileSync(markerFile, 'utf8')).day === TODAY
     && JSON.parse(fs.readFileSync(markerFile, 'utf8')).lastSent.recipients === 2 && JSON.parse(fs.readFileSync(markerFile, 'utf8')).lastSent.actions.length > 0
     && /sent to 2 recipient/.test(tenLog.join(' ')),
   'scheduled at 10:00 with something to do: sent from the sender set, to both (FX_MAIL_TO), HTML and text, and marked as sent today to 2 with its actions');
@@ -769,12 +768,12 @@ async function testMail(fx) {
   const [retry, retryLog] = await quietly(() => mail.main(['--scheduled'], deps(at('10:00'), { reads: partial, markerFile: marker2 })));
   check(retry === 0 && sent.length === 2 && !fs.existsSync(marker2) && /trying again next hour/.test(retryLog.join(' ')), 'no balances at 10:00: not sent, tried again next hour');
   await quietly(() => mail.main(['--scheduled'], deps(at('12:00'), { reads: partial, markerFile: marker2 })));
-  check(sent.length === 3 && /no recommendation today/.test(sent[2].msg.subject) && fs.existsSync(marker2), 'still none at 12:00: the mail goes anyway, saying why');
+  check(sent.length === 3 && /אין היום המלצה/.test(sent[2].msg.subject) && fs.existsSync(marker2), 'still none at 12:00: the mail goes anyway, saying why');
   const [refused, refusedLog] = await quietly(() => mail.main([], deps(at('10:00'), { env: { ...env, FX_MAIL_TO: 'someone@gmail.com' } })));
   check(refused === 1 && sent.length === 3 && /outside lsports\.eu/.test(refusedLog.join(' ')), 'an address outside lsports.eu: nothing is sent');
   const htmlFile = path.join(tmp, 'mail.html');
   const [dry, dryLog] = await quietly(() => mail.main(['--dry-run', `--html=${htmlFile}`], deps(at('08:00'), { env: {} })));
-  check(dry === 0 && sent.length === 3 && /^Subject: FX Challenge/.test(dryLog[0]) && fs.readFileSync(htmlFile, 'utf8').startsWith('<!doctype html>') && /a real send would stop/.test(dryLog.join(' ')),
+  check(dry === 0 && sent.length === 3 && /^Subject: FX /.test(dryLog[0]) && fs.readFileSync(htmlFile, 'utf8').startsWith('<!doctype html>') && /a real send would stop/.test(dryLog.join(' ')),
     '--dry-run prints it and writes the HTML, sends nothing, says what a real send lacks');
 
   // The page's list, once saved, is the one used; an empty one sends to nobody.
@@ -846,7 +845,7 @@ async function testMailSettings() {
   check(getSend.status === 405 && notJson.status === 415 && crossSend.status === 403 && outbox.length === 0, 'Send now: POST only, JSON, from the dashboard itself');
   const sentNow = await postSend();
   const mk = fxs.readMailMarker(sentFile);
-  check(sentNow.status === 200 && sentNow.body.recipients === 3 && /^FX Challenge Wed 21 Oct: /.test(sentNow.body.subject) && outbox.length === 1
+  check(sentNow.status === 200 && sentNow.body.recipients === 3 && /^FX יום ד' 21\.10 · /.test(sentNow.body.subject) && outbox.length === 1
     && outbox[0].to === 'matan.l@lsports.eu, dotan@lsports.eu, finance@lsports.eu' && mk.lastSent.manual && mk.lastSent.by === 'matan.l@lsports.eu'
     && mk.lastSent.at === new Date(NOW).toISOString() && mk.lastSent.actions.length > 0 && mk.day === TODAY && !mk.quiet,
   'Send now: read fresh and sent to the saved list; recorded as today\'s mail (by whom, with its recommendations)', JSON.stringify(sentNow.body));

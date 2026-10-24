@@ -179,18 +179,19 @@ or a day with no recommendation, sends nothing. `FX_MAIL_ALWAYS=1` sends every d
   10:00 check doesn't send it again that day. JSON and same-origin as a save, one at a time and once a minute at most;
   the log names who sent it.
 
-The mail is HTML with a plain-text part:
-- the subject: the first two recommendations and today's EUR/ILS;
-- what to do today, each with the balances behind it ("Convert €1.48M by Thu 5 Nov. October's net salaries and
-  November's ILS vendor payments: ₪5.76M goes out on Thu 5 Nov, with ₪611K on hand by then.");
-- the payments in shekels ahead, with how many days to each and what covers it;
-- what to keep for the next conversion, what is spare, new deposits for 1, 3 and 6 months, and the rate check;
-- the shekels each month needs (net salaries by the 5th; credit cards on the 10th; tax, pension and social security
-  by the 14th; transfers and Masav; the 7th's conversion; what to convert), and the shekels on hand by kind;
-- what the next conversion can sell, range by range (today's range highlighted);
-- your euros, with how "free to convert now" adds up and the typical inflow;
-- the next six conversions, and each deposit on the conversion it counts for;
-- the page's notes (what could not be read), and the setting and sources at the bottom.
+The mail is in Hebrew, right to left, and short: what to act on, and why. Amounts stay as on the page (€1.16M,
+₪4.91M), days read "יום ה' 5.11". The tables and the workings (the shekels by month, what the conversion sells range
+by range, how "free to convert" adds up, the next six conversions) stay on the page. HTML with a plain-text part:
+- the subject: the day and the first two recommendations (`FX יום א' 25.10 · להמיר €1.16M עד יום ה' 5.11 · …`);
+- the recommendations, each with the balances behind it ("להמיר €1.16M עד יום ה' 5.11. שכר נטו של אוקטובר ותשלומי
+  הספקים בשקלים של נובמבר: ₪4.91M יוצאים ביום ה' 5.11, ועד אז יהיו ביתרה ₪873K."); urgent ones in red;
+- the payments in shekels ahead: the day, how many days to it, what it pays, and what covers it (a conversion, or
+  the shekels on hand);
+- today's position in one paragraph: the shekels on hand (current and deposits), the euros at Hapoalim and elsewhere,
+  what to keep at Hapoalim for the next conversion (with the setting), and the rate check;
+- a note when part of the data could not be read, then a link to the page and the sources.
+
+When NetSuite can't be read at all, a short mail says so (`failureMail`).
 
 Set it up in the checkout's `.env` (immutable on the server: `sudo chattr -i .env`, edit, `sudo chattr +i .env`):
 
