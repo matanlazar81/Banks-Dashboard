@@ -65,7 +65,7 @@ briefly a tab of the Metrics page before it got its own sidebar item.
     there.
   - **Spare** euros: convert them on a high rate, else **put them in a new deposit** (the terms that hold at least
     €50K, as one line when every term holds the same).
-  - Amounts under €50K are left out. With nothing to do, the page says so.
+  - Amounts under €50K are left out. With no recommendation, the page says so and no mail goes.
 - **Payments in shekels ahead** (`duesAhead`, `describeDue`): each payment day up to the first month with salaries
   (its 5th, 10th and 14th, and any before): when (a Friday or Saturday one is ready by the Thursday) and in how many
   days, what it pays, how much, and what to convert for it, or what covers it (the shekels on hand, or a conversion).
@@ -157,21 +157,16 @@ MoneyNet carry no balance in their files, so they are not in it. Only LSports' e
 
 ## The daily mail
 
-`scripts/fx-challenge-mail.cjs` checks every working day and mails the recommendation **only when there is
-something to do**. It reads NetSuite and the bank balances fresh (no cache) and computes the same figures as the page
+`scripts/fx-challenge-mail.cjs` checks every day at 10:00 Israel time and mails **only when there is a
+recommendation**. It reads NetSuite and the bank balances fresh (no cache) and computes the same figures as the page
 (`planFromPayload`, `todayActions`).
 
-**When it goes** (`mailDecision`), at 10:00 Israel time, Sunday to Thursday:
-- an **urgent** action: a payment in shekels that the balances don't cover within 5 business days, a shortfall in its
-  last 5 business days, or euros to move to Hapoalim before a conversion: every working day until it is done (the next
-  day's balances show it);
-- anything else (a conversion further ahead, a high rate to convert early or convert the spare, a new deposit):
-  when it is **new** since the last mail, when its amount has moved by a fifth (and at least €50K), or a week after
-  the last mail if still open.
-
-So a conversion for the salaries is announced as soon as the balances show the gap, then reminded every working day
-of its last week. Nothing goes on Fridays and Saturdays or on days with nothing new. `FX_MAIL_ALWAYS=1` sends every
-day.
+**When it goes** (`mailDecision`): every day but Saturday (the bank works Sunday to Friday; finance writes to it on
+Fridays too), when there is at least one recommendation (a conversion for a payment the balances don't cover, a
+shortfall, euros to move to Hapoalim before a conversion, a high rate to convert early or convert the spare, or spare
+euros for a new deposit), and never without one. So a conversion for the salaries is in every day's mail from the day
+the balances show the gap until they show it converted; in its last 5 business days it leads, in red. A Saturday,
+or a day with no recommendation, sends nothing. `FX_MAIL_ALWAYS=1` sends every day, Saturday included.
 
 **Who gets it** is kept on the page, in the **Daily mail** card at the bottom:
 - Add or remove lsports.eu addresses, then **Save for everyone**.
@@ -180,22 +175,23 @@ day.
 - An empty list sends to nobody.
 - The card also shows the sender, the hour, when the mail last went, and the last check that sent nothing (and why).
 - **Send now** (`POST /api/fx-challenge/mail/send`, `sendNow`) reads today's figures fresh and sends the mail at once to
-  the saved list, whether or not there is something to do (save a changed list first). It counts as the last mail
-  sent, so the next daily check doesn't repeat what it said; the daily check itself still runs. JSON and same-origin
-  as a save, one at a time and once a minute at most; the log names who sent it.
+  the saved list, with or without a recommendation (save a changed list first). It counts as today's mail, so the
+  10:00 check doesn't send it again that day. JSON and same-origin as a save, one at a time and once a minute at most;
+  the log names who sent it.
 
-The mail is HTML with a plain-text part:
-- the subject: the first two things to do (or "nothing to do today") and today's EUR/ILS;
-- what to do today, each with the balances behind it ("Convert €1.48M by Thu 5 Nov. October's net salaries and
-  November's ILS vendor payments: ₪5.76M goes out on Thu 5 Nov, with ₪611K on hand by then.");
-- the payments in shekels ahead, with how many days to each and what covers it;
-- what to keep for the next conversion, what is spare, new deposits for 1, 3 and 6 months, and the rate check;
-- the shekels each month needs (net salaries by the 5th; credit cards on the 10th; tax, pension and social security
-  by the 14th; transfers and Masav; the 7th's conversion; what to convert), and the shekels on hand by kind;
-- what the next conversion can sell, range by range (today's range highlighted);
-- your euros, with how "free to convert now" adds up and the typical inflow;
-- the next six conversions, and each deposit on the conversion it counts for;
-- the page's notes (what could not be read), and the setting and sources at the bottom.
+The mail is in Hebrew, right to left, and short: what to act on, and why. Amounts stay as on the page (€1.16M,
+₪4.91M), days read "יום ה' 5.11". The tables and the workings (the shekels by month, what the conversion sells range
+by range, how "free to convert" adds up, the next six conversions) stay on the page. HTML with a plain-text part:
+- the subject: the day and the first two recommendations (`FX יום א' 25.10 · להמיר €1.16M עד יום ה' 5.11 · …`);
+- the recommendations, each with the balances behind it ("להמיר €1.16M עד יום ה' 5.11. שכר נטו של אוקטובר ותשלומי
+  הספקים בשקלים של נובמבר: ₪4.91M יוצאים ביום ה' 5.11, ועד אז יהיו ביתרה ₪873K."); urgent ones in red;
+- the payments in shekels ahead: the day, how many days to it, what it pays, and what covers it (a conversion, or
+  the shekels on hand);
+- today's position in one paragraph: the shekels on hand (current and deposits), the euros at Hapoalim and elsewhere,
+  what to keep at Hapoalim for the next conversion (with the setting), and the rate check;
+- a note when part of the data could not be read, then a link to the page and the sources.
+
+When NetSuite can't be read at all, a short mail says so (`failureMail`).
 
 Set it up in the checkout's `.env` (immutable on the server: `sudo chattr -i .env`, edit, `sudo chattr +i .env`):
 
@@ -205,7 +201,7 @@ FX_MAIL_FROM=matan.l@lsports.eu
 # FX_MAIL_HOUR=10                 # Israel time (default 10)
 # FX_MAIL_POLICY=p95              # today | p95 | worst, as the page's "What to keep"
 # FX_MAIL_LINK=https://<finance-it>/business-tools/fx-challenge
-# FX_MAIL_ALWAYS=1                # send every day, with or without something to do
+# FX_MAIL_ALWAYS=1                # send every day, Saturday included, with or without a recommendation
 # The mail server: FX_MAIL_SMTP_URL, else NET_CASH_SMTP_URL, else SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASS (the
 # backend's mailer, as the net-cash mail). FX_MAIL_SMTP_HELO (else NET_CASH_SMTP_HELO, else the sender's domain).
 ```
@@ -226,14 +222,14 @@ node scripts/fx-challenge-mail.cjs                                     # send on
 
 The scheduled run behaves like this:
 - It checks once a day and records it in `data/fx-challenge-mail-last.json`: the day, and either the mail that went
-  (to how many, its subject and its actions, which the next days compare with) or why none went. A run by hand
-  doesn't record anything, so the daily check still runs.
+  (to how many, its subject and its recommendations) or why none went. A run by hand from the command line doesn't
+  record anything, so the daily check still runs; the page's Send now counts as the day's mail.
 - With an empty list on the page it sends nothing, and says so once, at the hour.
 - If the balances or the rate could not be read, it tries again the next two hours, then sends what it has, with
   the reason.
 - If the mail server refuses, it tries again every hour that day.
-- The log has one line per check: `[fx-mail] 2026-10-22: sent to 2 recipient(s) from … via …: <subject>`, or
-  `[fx-mail] 2026-10-22: no mail (nothing new since the last mail)`.
+- The log has one line per check: `[fx-mail] 2026-10-22: sent to 2 recipient(s) from … via …: <subject>`,
+  `[fx-mail] 2026-10-22: no mail (no recommendations)`, or `[fx-mail] 2026-10-24: no mail on Saturdays`.
 
 ## Saving
 

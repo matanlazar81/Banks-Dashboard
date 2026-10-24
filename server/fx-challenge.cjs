@@ -201,10 +201,10 @@ function checkoutEnv(file = path.join(ROOT, '.env')) {
 }
 
 /**
- * The daily mail's marker (scripts/fx-challenge-mail.cjs --scheduled): the day it last checked, whether a mail went
- * that day or why not (quiet), and the last mail that went, with the actions it carried (so an action already mailed
- * is not mailed again unless it is urgent or has changed). A marker from before the checks counts as a mail sent.
- * Returns { day, at, quiet, why, lastSent: { day, at, recipients, subject, actions } | null } or null.
+ * The daily mail's marker (scripts/fx-challenge-mail.cjs --scheduled, and the page's Send now): the day it last
+ * checked, whether a mail went that day or why not (quiet), and the last mail that went, with its recommendations. A
+ * marker from before the checks counts as a mail sent.
+ * Returns { day, at, quiet, why, lastSent: { day, at, recipients, subject, actions, manual, by } | null } or null.
  */
 function readMailMarker(file) {
   const m = readDoc(file || MAIL_SENT_FILE);
@@ -245,15 +245,15 @@ function createFxMailHandler(deps = {}) {
       from: e.FX_MAIL_FROM || null,
       hour: mailHourOf(e.FX_MAIL_HOUR),
       lastSent: sent ? { day: sent.day, at: sent.at, recipients: sent.recipients, manual: sent.manual } : null,
-      lastCheck: marker && marker.quiet && marker.day ? { day: marker.day, at: marker.at, why: marker.why || 'nothing to do' } : null,
+      lastCheck: marker && marker.quiet && marker.day ? { day: marker.day, at: marker.at, why: marker.why || 'no recommendations' } : null,
     });
   };
 }
 
 /**
  * POST /api/fx-challenge/mail/send: the page's Send now. The daily mail, read fresh, goes at once to the list as saved
- * (or FX_MAIL_TO), whatever there is to do (sendNow in scripts/fx-challenge-mail.cjs); it counts as the last mail
- * sent. JSON and same-origin, as a save; one at a time, and once a minute at most.
+ * (or FX_MAIL_TO), with or without a recommendation (sendNow in scripts/fx-challenge-mail.cjs); it counts as today's
+ * mail. JSON and same-origin, as a save; one at a time, and once a minute at most.
  *   deps: reads (the page's NetSuite reads), tableFile, file (the list), sentFile, env() (default: this process's
  *   environment with the checkout's .env over it, as the cron has), clock(), nodemailer (tests)
  */

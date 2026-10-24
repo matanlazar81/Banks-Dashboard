@@ -473,19 +473,13 @@ async function testToday(fx) {
   check(fx.nothingToday(fx.duesAhead(cashOn(TODAY)), TODAY, fmt) === `Nothing to do today. Next: convert €${Math.round(7.1e6 / 3.5)} by 2026-11-05 (in 15 days) for October's net salaries and November's ILS vendor payments.`,
     'nothing to do: what comes next, and when');
 
-  // When the mail goes.
+  // When the mail goes: any day but Saturday, whenever there is a recommendation.
   const u = [{ kind: 'convert', key: 'convert:2026-11-05', urgent: true, eur: 1e6 }];
   const n1 = [{ kind: 'deposit', key: 'deposit', urgent: false, eur: 500000 }];
-  const marker = (day, actions) => ({ day, at: `${day}T07:00:00Z`, quiet: false, why: null, lastSent: { day, at: `${day}T07:00:00Z`, recipients: 2, subject: 's', actions } });
-  check(mailDecision(u, null, { today: '2026-10-23' }).why === 'Friday or Saturday' && mailDecision(u, null, { today: '2026-10-24' }).send === false
-    && mailDecision([], null, { today: TODAY }).why === 'nothing to do' && mailDecision(u, marker(TODAY, [{ key: 'convert:2026-11-05', eur: 1e6 }]), { today: '2026-10-22' }).send,
-  'no mail on Fridays and Saturdays or with nothing to do; an urgent action goes every working day');
-  check(mailDecision(n1, null, { today: TODAY }).send && !mailDecision(n1, marker('2026-10-20', [{ key: 'deposit', eur: 480000 }]), { today: TODAY }).send
-    && mailDecision(n1, marker('2026-10-20', [{ key: 'deposit', eur: 300000 }]), { today: TODAY }).send
-    && mailDecision(n1, marker('2026-10-14', [{ key: 'deposit', eur: 500000 }]), { today: TODAY }).send
-    && mailDecision(n1, marker('2026-10-20', [{ key: 'spare', eur: 500000 }]), { today: TODAY }).send,
-  'a non-urgent action: mailed when new or changed (a fifth and €50K), again a week later if still open, not every day');
-  check(mailDecision([], null, { today: '2026-10-23', always: true }).send, 'FX_MAIL_ALWAYS=1: every day');
+  check(mailDecision(u, { today: '2026-10-23' }).send && mailDecision(n1, { today: '2026-10-22' }).send && mailDecision(n1, { today: '2026-10-23' }).send
+    && mailDecision(n1, { today: '2026-10-25' }).send && mailDecision(u, { today: '2026-10-24' }).why === 'Saturday' && mailDecision([], { today: TODAY }).why === 'no recommendations',
+  'a mail every day but Saturday (Friday included) when there is a recommendation, urgent or not, the same as the day before or not; none without one');
+  check(mailDecision([], { today: '2026-10-24', always: true }).send, 'FX_MAIL_ALWAYS=1: every day, Saturday included');
 }
 
 async function testParse(fx) {
@@ -679,18 +673,18 @@ async function testMail(fx) {
   const data = await fxs.readFxChallenge({ reads, clock: () => NOW });
   data.warnings.push('A note with <b>markup</b> & more.');
   const m = mail.renderMail(fx, data, { policy: 'p95', link: 'https://finance.example/business-tools/fx-challenge' });
-  const v = fx.planFromPayload(data, 'p95');
   const clean = (s) => !/undefined|NaN|\[object|null/.test(s);
-  check(/^FX Challenge Wed 21 Oct: /.test(m.subject) && m.subject.includes('for Sat 7 Nov') && /free to convert|short for/.test(m.subject) && /, (a good|an average|a weak) day \(EUR\/ILS 3\.478\) · keep €/.test(m.subject),
-    'the subject: what is free (or short), the rate verdict, what to keep and for when', m.subject);
-  check(m.html.startsWith('<!doctype html>') && clean(m.html) && clean(m.text) && clean(m.subject), 'HTML and text, with no undefined or NaN in either');
-  check(m.html.includes('A note with &lt;b&gt;markup&lt;/b&gt; &amp; more.') && !m.html.includes('<b>markup'), 'what comes from the data is escaped in the HTML');
-  check(m.text.includes('Free to convert now:') && m.text.includes('Hapoalim EUR (583400)') && m.text.includes(`${v.rateCheck.share === 1 ? 'above 100%' : 'above'}`) && /A (GOOD|WEAK) DAY TO CONVERT|AN AVERAGE DAY TO CONVERT/.test(m.text),
-    'the recommendation, then today\'s rate against the last 90 days with its verdict');
-  check(m.html.includes('(today)') && m.text.includes('If EUR/ILS that day is') && m.text.includes('Can be converted before it'), 'what the next conversion can sell (today\'s range marked), and the next conversions');
-  check(m.text.includes('By Sat 7 Nov: Tue 3 Nov €1.50M') && m.text.includes('By Sun 7 Mar: Mon 15 Feb €2.00M') && /a further €700K in 1 deposit\./.test(m.text),
-    'each deposit on the conversion it counts for, and the ones after the last conversion shown', m.text.split('\n').filter((l) => /By |further/.test(l)).join(' | '));
-  check(m.html.includes('href="https://finance.example/business-tools/fx-challenge"') && m.text.includes('95% of rate moves'), 'the page\'s link and the setting used');
+  // English words in the mail's own text, names, the rate pair, the script's path and links aside.
+  const english = (s) => s.replace(/FX Challenge|EUR\/ILS|HSBC|NetSuite|scripts\/fx-challenge-mail\.cjs|https?:\/\/\S+/g, '').match(/\b[A-Za-z]{3,}\b/g);
+  check(/^FX יום ד' 21\.10 · /.test(m.subject) && m.html.startsWith('<!doctype html><html dir="rtl" lang="he">') && clean(m.html) && clean(m.text) && clean(m.subject),
+    'Hebrew, right to left: the subject has the day and the first recommendations', m.subject);
+  check(!english(m.text) && !english(m.subject), 'no English in the mail (names, the rate pair, the script\'s path and links aside)', JSON.stringify(english(m.text)));
+  check(m.text.includes('המצב היום') && m.text.includes('בחשבון האירו בפועלים') && m.text.includes('להשאיר €') && m.text.includes('להמרה של שבת 7.11')
+    && m.text.includes('פנוי להמרה עכשיו') && m.text.includes('שער EUR/ILS 3.478'),
+  "today's balances in one paragraph: what is held, what to keep for the conversion, what is free, the rate against the last 90 days");
+  check(!m.html.includes('<b>markup') && !m.text.includes('markup') && m.text.includes('חלק מהנתונים לא נקראו היום'), 'a read that failed is said in Hebrew; nothing from the data reaches the mail unescaped');
+  check((m.html.match(/<table/g) || []).length === 2 && m.text.length < 2500 && !/If EUR\/ILS|Can be converted/.test(m.text), 'focused: no tables and no workings (they stay on the page)', String(m.text.length));
+  check(m.html.includes('href="https://finance.example/business-tools/fx-challenge"') && m.text.includes('95% מתנודות השער'), 'the page\'s link and the setting used');
   const withCash = await fxs.readFxChallenge({
     reads: {
       ...reads,
@@ -705,16 +699,15 @@ async function testMail(fx) {
   });
   const mc = mail.renderMail(fx, withCash, { policy: 'p95' });
   const vc = fx.planFromPayload(withCash, 'p95');
-  check(/^FX Challenge Wed 21 Oct: convert €[\d.,]+[KM] today\b.* · EUR\/ILS 3\.478 (high|mid-range|low)$/.test(mc.subject) && clean(mc.html) && clean(mc.text)
-    && mc.actions[0].kind === 'convert' && mc.actions[0].urgent && mc.text.includes("Convert €") && mc.text.includes("The rest of October's ILS vendor payments: ")
-    && mc.text.includes('PAYMENTS IN SHEKELS AHEAD') && mc.text.includes('SALARIES AND VENDORS: THE SHEKELS EACH MONTH NEEDS') && mc.text.includes('Cards (10th)')
-    && mc.text.includes('(by the 14th)') && /New deposits: |Put €/.test(mc.text) && mc.text.includes('Spare before')
-    && mc.text.includes('50% net salaries') && vc.cash && vc.cash.months.length >= 6,
-  'with the payroll: today\'s actions lead (subject and body), then the payments in shekels ahead, the months\' shekels and the plan with them', mc.subject);
+  check(/^FX יום ד' 21\.10 · להמיר €[\d.,]+[KM] היום/.test(mc.subject) && clean(mc.html) && clean(mc.text) && !english(mc.text)
+    && mc.actions[0].kind === 'convert' && mc.actions[0].urgent && mc.text.includes('להמיר €') && mc.text.includes('יתרת תשלומי הספקים בשקלים של אוקטובר: ')
+    && mc.text.includes('תשלומים בשקלים בתקופה הקרובה') && mc.text.includes('שכר נטו של אוקטובר ותשלומי הספקים בשקלים של נובמבר')
+    && mc.text.includes('שבת 14.11 (מוכן עד יום ה\' 12.11)') && mc.text.includes('פנסיה, מס וביטוח לאומי של אוקטובר') && vc.cash && vc.cash.months.length >= 6,
+  'with the payroll: today\'s recommendations lead (subject and body), each with its balances, then the payments in shekels ahead', mc.subject);
   const none = mail.renderMail(fx, { ...data, balances: null }, {});
-  check(/no recommendation today$/.test(none.subject) && clean(none.html) && none.text.includes('balances'), 'without balances: no recommendation, and why');
+  check(/· אין היום המלצה$/.test(none.subject) && clean(none.html) && none.text.includes('היתרות'), 'without balances: no recommendation, and why');
   const failed = mail.failureMail(TODAY, new Error('NetSuite down'));
-  check(/not read today$/.test(failed.subject) && failed.text.includes('NetSuite down'), 'nothing read: a short mail saying so');
+  check(/· הנתונים לא נקראו היום$/.test(failed.subject) && failed.text.includes('NetSuite down'), 'nothing read: a short mail saying so');
 
   const ok = mail.parseRecipients('matan.l@lsports.eu, Dotan@LSports.EU;matan.l@lsports.eu');
   const outside = mail.parseRecipients('matan.l@lsports.eu,someone@gmail.com');
@@ -749,37 +742,38 @@ async function testMail(fx) {
   const [ten, tenLog] = await quietly(() => mail.main(['--scheduled'], deps(at('10:00'))));
   const s0 = sent[0];
   check(ten === 0 && sent.length === 1 && s0.msg.from === 'matan.l@lsports.eu' && s0.msg.to === 'matan.l@lsports.eu, dotan@lsports.eu' && s0.msg.html.startsWith('<!doctype html>')
-    && s0.msg.text.includes('Free to convert now') && s0.t.name === 'lsports.eu' && JSON.parse(fs.readFileSync(markerFile, 'utf8')).day === TODAY
+    && s0.msg.text.includes('פנוי להמרה עכשיו') && s0.t.name === 'lsports.eu' && JSON.parse(fs.readFileSync(markerFile, 'utf8')).day === TODAY
     && JSON.parse(fs.readFileSync(markerFile, 'utf8')).lastSent.recipients === 2 && JSON.parse(fs.readFileSync(markerFile, 'utf8')).lastSent.actions.length > 0
     && /sent to 2 recipient/.test(tenLog.join(' ')),
   'scheduled at 10:00 with something to do: sent from the sender set, to both (FX_MAIL_TO), HTML and text, and marked as sent today to 2 with its actions');
   await quietly(() => mail.main(['--scheduled'], deps(at('11:00'))));
   const [manual] = await quietly(() => mail.main([], deps(at('15:00'))));
   check(sent.length === 2 && manual === 0 && JSON.parse(fs.readFileSync(markerFile, 'utf8')).at === new Date(at('10:00')()).toISOString(), 'sent once a day; a run by hand sends a test and leaves the daily one alone');
-  // Thursday 22 Oct: the same thing to do as yesterday → no mail; Friday 23 Oct → no mail. Both keep the last mail.
+  // Thursday 22 and Friday 23 Oct: the same recommendations as Wednesday → a mail each day; Saturday 24 Oct → none.
   const [thu, thuLog] = await quietly(() => mail.main(['--scheduled'], deps(() => Date.parse('2026-10-22T10:00:00+03:00'))));
-  const m22 = JSON.parse(fs.readFileSync(markerFile, 'utf8'));
-  check(thu === 0 && sent.length === 2 && m22.day === '2026-10-22' && m22.quiet === true && m22.why === 'nothing new since the last mail' && m22.lastSent.day === TODAY
-    && /no mail \(nothing new since the last mail\)/.test(thuLog.join(' ')),
-  'the next day, nothing new to decide: no mail, the check is kept with why', JSON.stringify(m22));
-  const [fri, friLog] = await quietly(() => mail.main(['--scheduled'], deps(() => Date.parse('2026-10-23T10:00:00+03:00'))));
+  const [fri] = await quietly(() => mail.main(['--scheduled'], deps(() => Date.parse('2026-10-23T10:00:00+03:00'))));
   const m23 = JSON.parse(fs.readFileSync(markerFile, 'utf8'));
-  check(fri === 0 && sent.length === 2 && m23.day === '2026-10-23' && m23.why === 'Friday or Saturday' && m23.lastSent.day === TODAY && /no mail on Fridays and Saturdays/.test(friLog.join(' ')),
-    'a Friday: no mail');
-  const [always] = await quietly(() => mail.main(['--scheduled'], deps(() => Date.parse('2026-10-24T10:00:00+03:00'), { env: { ...env, FX_MAIL_ALWAYS: '1' } })));
-  check(always === 0 && sent.length === 3 && JSON.parse(fs.readFileSync(markerFile, 'utf8')).lastSent.day === '2026-10-24', 'FX_MAIL_ALWAYS=1: sent even on a Saturday');
-  sent.pop();
+  check(thu === 0 && fri === 0 && sent.length === 4 && m23.day === '2026-10-23' && m23.quiet === false && m23.lastSent.day === '2026-10-23' && /sent to 2 recipient/.test(thuLog.join(' ')),
+    'Thursday and Friday: a mail each day while there are recommendations, the same as the day before or not', JSON.stringify(m23));
+  const [sat, satLog] = await quietly(() => mail.main(['--scheduled'], deps(() => Date.parse('2026-10-24T10:00:00+03:00'))));
+  const m24 = JSON.parse(fs.readFileSync(markerFile, 'utf8'));
+  check(sat === 0 && sent.length === 4 && m24.day === '2026-10-24' && m24.quiet === true && m24.why === 'Saturday' && m24.lastSent.day === '2026-10-23' && /no mail on Saturdays/.test(satLog.join(' ')),
+    'a Saturday: no mail, the check kept with why, the last mail kept');
+  const markerAlways = path.join(tmp, 'last-always.json');
+  const [always] = await quietly(() => mail.main(['--scheduled'], deps(() => Date.parse('2026-10-24T10:00:00+03:00'), { env: { ...env, FX_MAIL_ALWAYS: '1' }, markerFile: markerAlways })));
+  check(always === 0 && sent.length === 5 && JSON.parse(fs.readFileSync(markerAlways, 'utf8')).lastSent.day === '2026-10-24', 'FX_MAIL_ALWAYS=1: sent even on a Saturday');
+  sent.splice(2);
   const partial = { ...reads, mail: null, books: async () => { throw new Error('NetSuite down'); } };
   const marker2 = path.join(tmp, 'last2.json');
   const [retry, retryLog] = await quietly(() => mail.main(['--scheduled'], deps(at('10:00'), { reads: partial, markerFile: marker2 })));
   check(retry === 0 && sent.length === 2 && !fs.existsSync(marker2) && /trying again next hour/.test(retryLog.join(' ')), 'no balances at 10:00: not sent, tried again next hour');
   await quietly(() => mail.main(['--scheduled'], deps(at('12:00'), { reads: partial, markerFile: marker2 })));
-  check(sent.length === 3 && /no recommendation today/.test(sent[2].msg.subject) && fs.existsSync(marker2), 'still none at 12:00: the mail goes anyway, saying why');
+  check(sent.length === 3 && /אין היום המלצה/.test(sent[2].msg.subject) && fs.existsSync(marker2), 'still none at 12:00: the mail goes anyway, saying why');
   const [refused, refusedLog] = await quietly(() => mail.main([], deps(at('10:00'), { env: { ...env, FX_MAIL_TO: 'someone@gmail.com' } })));
   check(refused === 1 && sent.length === 3 && /outside lsports\.eu/.test(refusedLog.join(' ')), 'an address outside lsports.eu: nothing is sent');
   const htmlFile = path.join(tmp, 'mail.html');
   const [dry, dryLog] = await quietly(() => mail.main(['--dry-run', `--html=${htmlFile}`], deps(at('08:00'), { env: {} })));
-  check(dry === 0 && sent.length === 3 && /^Subject: FX Challenge/.test(dryLog[0]) && fs.readFileSync(htmlFile, 'utf8').startsWith('<!doctype html>') && /a real send would stop/.test(dryLog.join(' ')),
+  check(dry === 0 && sent.length === 3 && /^Subject: FX /.test(dryLog[0]) && fs.readFileSync(htmlFile, 'utf8').startsWith('<!doctype html>') && /a real send would stop/.test(dryLog.join(' ')),
     '--dry-run prints it and writes the HTML, sends nothing, says what a real send lacks');
 
   // The page's list, once saved, is the one used; an empty one sends to nobody.
@@ -851,29 +845,30 @@ async function testMailSettings() {
   check(getSend.status === 405 && notJson.status === 415 && crossSend.status === 403 && outbox.length === 0, 'Send now: POST only, JSON, from the dashboard itself');
   const sentNow = await postSend();
   const mk = fxs.readMailMarker(sentFile);
-  check(sentNow.status === 200 && sentNow.body.recipients === 3 && /^FX Challenge Wed 21 Oct: /.test(sentNow.body.subject) && outbox.length === 1
+  check(sentNow.status === 200 && sentNow.body.recipients === 3 && /^FX יום ד' 21\.10 · /.test(sentNow.body.subject) && outbox.length === 1
     && outbox[0].to === 'matan.l@lsports.eu, dotan@lsports.eu, finance@lsports.eu' && mk.lastSent.manual && mk.lastSent.by === 'matan.l@lsports.eu'
-    && mk.lastSent.at === new Date(NOW).toISOString() && mk.lastSent.actions.length > 0 && mk.day === '2026-10-22' && mk.quiet,
-  'Send now: read fresh and sent to the saved list; recorded as the last mail (by whom, with its actions), the daily check left as it was', JSON.stringify(sentNow.body));
+    && mk.lastSent.at === new Date(NOW).toISOString() && mk.lastSent.actions.length > 0 && mk.day === TODAY && !mk.quiet,
+  'Send now: read fresh and sent to the saved list; recorded as today\'s mail (by whom, with its recommendations)', JSON.stringify(sentNow.body));
   const again = await postSend();
   now += 61 * 1000;
   const later = await postSend();
   check(again.status === 429 && later.status === 200 && outbox.length === 2, 'Send now: once a minute at most');
   const card = (await call(sendRouter, { url: '/api/fx-challenge/mail' })).body;
   check(card.lastSent.manual === true && card.lastSent.recipients === 3, 'the card shows the last mail as sent with Send now');
-  // The 10:00 check that day (the last check was the day before): what Send now said is not new.
-  fs.writeFileSync(sentFile, JSON.stringify({ ...JSON.parse(fs.readFileSync(sentFile, 'utf8')), day: '2026-10-20' }));
+  // The 10:00 check that day: Send now was today's mail, so it doesn't send it again; the next day it does.
   const { main: mailMain } = require(path.join(ROOT, 'scripts', 'fx-challenge-mail.cjs'));
-  const [daily] = await quietly(() => mailMain(['--scheduled'], {
-    env: sendEnv(), clock: () => Date.parse('2026-10-21T10:00:00+03:00') + 60 * 1000, reads: sendReads, nodemailer, markerFile: sentFile, mailFile: file, tableFile: path.join(tmp, 'table.json'),
+  const dailyAt = (iso) => quietly(() => mailMain(['--scheduled'], {
+    env: sendEnv(), clock: () => Date.parse(iso), reads: sendReads, nodemailer, markerFile: sentFile, mailFile: file, tableFile: path.join(tmp, 'table.json'),
   }));
+  const [daily] = await dailyAt('2026-10-21T10:01:00+03:00');
   const after10 = fxs.readMailMarker(sentFile);
-  check(daily === 0 && outbox.length === 2 && after10.day === TODAY && after10.why === 'nothing new since the last mail' && after10.lastSent.manual,
-    'after Send now, the daily check sends nothing new', JSON.stringify(after10));
+  const [nextDay] = await dailyAt('2026-10-22T10:01:00+03:00');
+  check(daily === 0 && after10.day === TODAY && after10.lastSent.manual && nextDay === 0 && outbox.length === 3 && fxs.readMailMarker(sentFile).lastSent.day === '2026-10-22',
+    'after Send now, the 10:00 check doesn\'t send it again that day; the next day\'s check sends as usual', JSON.stringify(after10));
   fs.writeFileSync(file, JSON.stringify({ value: { to: [] } }));
   now += 61 * 1000;
   const nobody = await postSend();
-  check(nobody.status === 400 && /Nobody is on the list/.test(nobody.body.error) && outbox.length === 2, 'Send now with nobody on the list: nothing sent, and why');
+  check(nobody.status === 400 && /Nobody is on the list/.test(nobody.body.error) && outbox.length === 3, 'Send now with nobody on the list: nothing sent, and why');
   fs.writeFileSync(file, JSON.stringify({ value: { to: ['matan.l@lsports.eu', 'dotan@lsports.eu', 'finance@lsports.eu'] } }));
   const outside = await call(router, { method: 'PUT', url: '/api/fx-challenge/mail', body: { value: { to: ['someone@gmail.com'] } }, headers: json });
   const cross = await call(router, { method: 'PUT', url: '/api/fx-challenge/mail', body: { value: { to: [] } }, headers: { ...json, origin: 'https://evil.example' } });

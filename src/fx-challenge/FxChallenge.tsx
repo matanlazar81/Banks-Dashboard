@@ -360,7 +360,7 @@ function TodayLines({ model }: { model: FxModel }) {
   const { todo } = model;
   if (!todo.actions.length) return model.cash ? <p className="text-[15px] text-slate-900">{todo.nothing}</p> : null;
   return (
-    <ul className="space-y-1 text-[15px] text-slate-900" title="What to do today, from today's balances and EUR/ILS: the same lines as the daily mail, which goes out only on days with something to do.">
+    <ul className="space-y-1 text-[15px] text-slate-900" title="What to do today, from today's balances and EUR/ILS: the same lines as the daily mail, which goes out every day but Saturday when there is a recommendation.">
       {todo.actions.map((a) => (
         <li key={a.key}><strong className={a.urgent ? 'text-rose-700' : 'text-slate-900'}>{a.head}</strong>. {a.body}</li>
       ))}
@@ -1021,8 +1021,8 @@ function DailyMail() {
       aside={<span className="text-[11px] text-slate-500">{saved ? `Saved${data.updatedAt ? ` ${atIsrael(data.updatedAt)}` : ''}${data.updatedBy ? ` by ${data.updatedBy}` : ''}` : "From the server's settings (FX_MAIL_TO) until saved here"}</span>}>
       <div className="space-y-2.5 text-xs text-slate-700">
         <p>
-          Checked every working day (Sunday to Thursday) at {String(data.hour).padStart(2, '0')}:00 Israel time, and sent{data.from ? ` from ${data.from}` : ''} to the addresses below
-          {' '}only when there is something to do: a payment in shekels the balances don&apos;t cover within a week, a shortfall, euros to move to Hapoalim, or something new to decide.
+          Checked every day but Saturday at {String(data.hour).padStart(2, '0')}:00 Israel time, and sent{data.from ? ` from ${data.from}` : ''} to the addresses below
+          {' '}when there is a recommendation: a conversion for a payment the balances don&apos;t cover, a shortfall, euros to move to Hapoalim, a high rate to convert on, or spare euros for a deposit.
           {' '}{sent ? `Last sent ${atIsrael(sent.at)}${sent.manual ? ' (Send now)' : ''}${sent.recipients ? `, to ${sent.recipients} address${sent.recipients === 1 ? '' : 'es'}` : ''}.` : 'Not sent by the daily job yet.'}
           {check ? ` Last check ${atIsrael(check.at)}: no mail (${check.why}).` : ''}
         </p>
@@ -1045,7 +1045,7 @@ function DailyMail() {
           </button>
           {edited !== null && <button type="button" className={BUTTON} disabled={saving} onClick={() => { setEdited(null); setErr(null); }}>Undo changes</button>}
           <button type="button" className={BUTTON} disabled={sending || saving || changed || !current.length} onClick={() => void sendNow()}
-            title={changed ? 'Save the list first: Send now goes to the saved list.' : !current.length ? 'Nobody is on the list.' : "Read today's figures and send the mail now, whether or not there is something to do. It counts as the day's mail."}>
+            title={changed ? 'Save the list first: Send now goes to the saved list.' : !current.length ? 'Nobody is on the list.' : "Read today's figures and send the mail now, with or without a recommendation. It counts as today's mail."}>
             {sending && <Loader2 size={12} className="animate-spin" />}Send now
           </button>
         </form>

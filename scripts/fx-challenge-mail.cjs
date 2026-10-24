@@ -1,17 +1,18 @@
 #!/usr/bin/env node
 // ─────────────────────────────────────────────────────────────────────────────
-// The FX Challenge's daily mail: what to do today from today's balances and rate (todayActions: shekels to convert
-// for a payment the balances don't cover, a shortfall, euros to move, spare euros), the payments in shekels ahead,
-// what to keep for the next conversion, what it can sell, the euros and the next six conversions, as on the page
-// (Business Tools → FX Challenge), read fresh from NetSuite. HTML, with a plain-text part.
+// The FX Challenge's daily mail, in Hebrew and to the point: what to do today from today's balances and rate
+// (todayActions: shekels to convert for a payment the balances don't cover, a shortfall, euros to move, spare euros),
+// the payments in shekels ahead and today's position, as on the page (Business Tools → FX Challenge), read fresh from
+// NetSuite. The tables and the workings stay on the page. HTML, with a plain-text part.
 //
 //   node scripts/fx-challenge-mail.cjs              read and send now (a test; the daily check still runs)
 //   node scripts/fx-challenge-mail.cjs --dry-run    read and print it, and whether today's check would send it; sends
 //                                                   nothing (--html=<file> also writes the HTML)
 //   node scripts/fx-challenge-mail.cjs --scheduled  the cron, every hour: checks once a day from FX_MAIL_HOUR, Israel
-//                                                   time, so daylight saving needs no change, and sends only on Sunday
-//                                                   to Thursday with something to do (mailDecision). An incomplete read
-//                                                   (no balances, no rate) is tried again the next two hours.
+//                                                   time, so daylight saving needs no change, and sends every day but
+//                                                   Saturday when there is a recommendation (mailDecision). An
+//                                                   incomplete read (no balances, no rate) is tried again the next two
+//                                                   hours.
 //
 // Who gets it is kept on the page ("Daily mail", saved for everyone in data/fx-challenge-mail.json); until a list is
 // saved there, FX_MAIL_TO. lsports.eu addresses only, unless FX_MAIL_ALLOW_EXTERNAL=1 (the mail carries LSports'
@@ -23,11 +24,11 @@
 //   FX_MAIL_HOUR    the hour of the daily mail, Israel time (default 10)
 //   FX_MAIL_POLICY  what to keep: today | p95 (default) | worst, as the page's "What to keep"
 //   FX_MAIL_LINK    the page's address, for a link at the bottom (optional)
-//   FX_MAIL_ALWAYS  1: send every day, with or without something to do
+//   FX_MAIL_ALWAYS  1: send every day, Saturday included, with or without a recommendation
 //   The mail server: FX_MAIL_SMTP_URL, else NET_CASH_SMTP_URL, else SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS
 //   (the backend's mailer); FX_MAIL_SMTP_HELO, else NET_CASH_SMTP_HELO, else the sender's domain, for Google's relay.
 //
-// Exit codes: 0 sent, skipped (not the hour, checked already, nothing to do) or printed; 1 not sent (the log says why).
+// Exit codes: 0 sent, skipped (not the hour, checked already, no recommendations) or printed; 1 not sent (the log says why).
 // ─────────────────────────────────────────────────────────────────────────────
 const fs = require('fs');
 const path = require('path');
@@ -46,10 +47,11 @@ const { readDoc } = require(path.join(ROOT, 'server', 'json-store.cjs'));
 const MARKER_FILE = fxs.MAIL_SENT_FILE;
 const TAG = '[fx-mail]';
 
-// ── formatting (as the page, with fixed day names so every server writes the same) ──
+// ── formatting: the mail is in Hebrew, right to left; amounts stay €1.21M and ₪4.92M, and the day names are fixed, so
+// every server writes the same ──
 const int = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
-const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const WEEKDAYS = ["יום א'", "יום ב'", "יום ג'", "יום ד'", "יום ה'", "יום ו'", 'שבת'];
+const MONTHS = ['ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני', 'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר'];
 
 function money(symbol, n) {
   if (n === null || n === undefined || !Number.isFinite(n)) return '–';
@@ -62,71 +64,112 @@ function money(symbol, n) {
 const eur = (n) => money('€', n);
 const ils = (n) => money('₪', n);
 const rate = (r) => (r === null || r === undefined || !Number.isFinite(r) ? '–' : r.toFixed(3));
-const pct = (p) => `${Math.round(p * 100)}%`;
-/** "Sat 7 Nov", or "Sat 7 Nov 2026" with the year. */
+/** "יום ה' 5.11", or "יום ה' 5.11.2026" with the year. */
 function day(iso, withYear = false) {
   if (!iso) return '–';
   const d = new Date(`${String(iso).slice(0, 10)}T12:00:00Z`);
-  return `${WEEKDAYS[d.getUTCDay()]} ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}${withYear ? ` ${d.getUTCFullYear()}` : ''}`;
+  return `${WEEKDAYS[d.getUTCDay()]} ${d.getUTCDate()}.${d.getUTCMonth() + 1}${withYear ? `.${d.getUTCFullYear()}` : ''}`;
 }
-const monthShort = (mKey) => MONTHS[Number(mKey.slice(5)) - 1];
-const rangeLabel = (o) => (o.lo === null ? `below ${o.hi}` : o.hi === null ? `${o.lo} or more` : `${o.lo} – ${o.hi}`);
-const chance = (p) => (p < 0.005 ? '<1%' : `${Math.round(p * 100)}%`);
+const monthName = (mKey) => MONTHS[Number(String(mKey).slice(5, 7)) - 1] || mKey;
+/** "היום", "מחר", "בעוד 15 ימים". */
+function inDays(from, to) {
+  const n = Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000);
+  return n <= 0 ? 'היום' : n === 1 ? 'מחר' : `בעוד ${n} ימים`;
+}
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-const RATE_WORD = { high: 'high', middle: 'mid-range', low: 'low' };
-const RATE_VERDICT = { high: 'a good day to convert', middle: 'an average day to convert', low: 'a weak day to convert' };
-const RATE_COLOR = { high: '#047857', middle: '#0f172a', low: '#b45309' };
-const RATE_SUBJECT = { high: 'a good day', middle: 'an average day', low: 'a weak day' };
-const SOURCE = { mail: "the daily balances mail's sources", books: "NetSuite's books (EUR only, no deposit dates)" };
+const LEVEL = { high: 'גבוה', middle: 'בינוני', low: 'נמוך' };
+const SOURCE = { mail: 'מקורות מייל היתרות היומי', books: 'ספרי NetSuite (אירו בלבד)' };
+const POLICY = { today: 'לפי השער היום', p95: '95% מתנודות השער', worst: 'המקרה הגרוע בטבלה' };
+
+// ── the recommendations in Hebrew: the same actions and payment days as the page (todayActions, duesAhead) ──
+const ITEM = {
+  net: (i) => `שכר נטו של ${monthName(i.payrollMonth)}`,
+  later: (i) => `פנסיה, מס וביטוח לאומי של ${monthName(i.payrollMonth)}`,
+  cards: (i) => `חיובי כרטיסי האשראי של ${monthName(i.spendMonth)}`,
+  vendors: (i) => `${i.rest ? 'יתרת ' : ''}תשלומי הספקים בשקלים של ${monthName(i.month)}`,
+};
+
+/** What a payment day pays: "שכר נטו של אוקטובר ותשלומי הספקים בשקלים של נובמבר". */
+function whatOf(due) {
+  const parts = (due.items || []).map((i) => (ITEM[i.why] ? ITEM[i.why](i) : i.why));
+  return parts.length > 1 ? `${parts.slice(0, -1).join(', ')} ו${parts[parts.length - 1]}` : parts[0] || '';
+}
+const rateIs = (rc) => `שער EUR/ILS ${rate(rc.rate)} ${LEVEL[rc.level]} ביחס ל-${rc.days} הימים האחרונים`;
+
+/** A recommendation in words: { head: what to do, body: why, from the day's balances }. */
+function actionText(a, v, today) {
+  const n = v.plan.next;
+  const rc = v.rateCheck;
+  if (a.kind === 'convert') {
+    const d = a.due;
+    const now = a.by <= today;
+    const when = d.date <= today ? 'עד סוף החודש' : `ב${day(d.date)}${d.by !== d.date ? ` (צריך להיות מוכן עד ${day(d.by)})` : ''}`;
+    const held = d.before < -0.5 ? `ועד אז החשבון במינוס ${ils(-d.before)}` : `ועד אז יהיו ביתרה ${ils(Math.max(0, d.before))}`;
+    let body = `${whatOf(d)}: ${ils(d.ils)} יוצאים ${when}, ${held}.`;
+    if (rc && !now && rc.level === 'high') body += ` ${rateIs(rc)}: יום טוב להמיר.`;
+    if (rc && !now && rc.level === 'low') body += ` ${rateIs(rc)}: אם אפשר, כדאי לחכות, אבל לא יאוחר מ${day(a.by)}.`;
+    return { head: `להמיר ${eur(a.eur)} ${now ? 'היום' : `עד ${day(a.by)}`}`, body };
+  }
+  if (a.kind === 'convert-early') {
+    const part = a.eur < a.due.eur - 0.5 ? ` (${eur(a.due.eur)} בסך הכול; מעבר ל-${eur(n.eurFloor)} השמורים לספקים באירו יש היום ${eur(a.eur)})` : '';
+    return { head: `להמיר ${eur(a.eur)} היום`, body: `${rateIs(rc)}: יום טוב להקדים את ההמרה עבור ${whatOf(a.due)}, הנדרשת עד ${day(a.by)}${part}.` };
+  }
+  if (a.kind === 'short') {
+    const what = a.shekels ? 'ההמרה לשקלים הנדרשת אז' : `ההמרה של ${day(a.date)}`;
+    const fix = n.backup > 0 ? ` כדאי להיערך לשבירה של עד ${eur(Math.min(a.eur, n.backup))} מהפיקדונות שנפתחים מאוחר יותר.` : ' כדאי לשמור כל אירו פנוי עד אז.';
+    return { head: `חוסר של ${eur(a.eur)} עד ${day(a.date)}`, body: `האירו שיש ושצפוי להיכנס עד אז לא מכסים את ${what} ואת ${eur(n.eurFloor)} השמורים לספקים באירו.${fix}` };
+  }
+  if (a.kind === 'move') {
+    return { head: `להעביר ${eur(a.eur)} לחשבון האירו בפועלים עד ${day(a.by)}`, body: `ההמרה של ${day(a.date)} יורדת מחשבון האירו בפועלים (583400), שבו ${eur(n.hapoalim)}; צריך שיהיו בו ${eur(n.required)}.` };
+  }
+  if (a.kind === 'convert-spare') {
+    return { head: `להמיר היום את ${eur(a.eur)} הפנויים`, body: `${rateIs(rc)}. התמורה: ${ils(a.eur * rc.rate)}, וכל ההמרות, המשכורות והספקים עדיין מכוסים.` };
+  }
+  // A new deposit: one line when every term holds the same.
+  const last = a.options[a.options.length - 1];
+  const options = a.options.length > 1 && a.options.every((o) => Math.abs(o.eur - a.eur) < 0.5)
+    ? `${eur(a.eur)} ל-${a.options.map((o) => o.months).join(', ').replace(/, (\d+)$/, ' או $1')} חודשים (הארוך עד ${day(last.until)})`
+    : a.options.map((o) => `${eur(o.eur)} ${o.months === 1 ? 'לחודש' : `ל-${o.months} חודשים`} (עד ${day(o.until)})`).join(', או ');
+  return { head: `להפקיד ${eur(a.eur)} בפיקדון חדש`, body: `${options}, וכל התשלומים עד אז עדיין מכוסים לפי התקבולים הרגילים.` };
+}
+
+/** A payment day in the list: "יום ה' 5.11, בעוד 15 ימים: שכר נטו …, ₪4.92M: להמיר €1.21M". */
+function dueText(d, today) {
+  const when = d.date <= today ? 'עכשיו' : `${day(d.date)}${d.by !== d.date ? ` (מוכן עד ${day(d.by)})` : ''}, ${inDays(today, d.by)}`;
+  const action = d.eur > 0.5 ? `להמיר ${eur(d.eur)}` : d.after ? `מכוסה מההמרה של ${day(d.after)}` : 'מכוסה מהיתרה בשקלים';
+  return `${when}: ${whatOf(d)}, ${ils(d.ils)}: ${action}`;
+}
 
 // ── the mail ──
 // Each part is written twice, as HTML and as text: a part is { html, text }.
-const para = (html, text, style = '') => ({ html: `<p style="margin:0 0 10px;font-size:14px;line-height:1.5;${style}">${html}</p>`, text });
+const para = (html, text, style = '') => ({ html: `<p style="margin:0 0 10px;font-size:14px;line-height:1.6;${style}">${html}</p>`, text });
 const strong = (s, color = '#0f172a') => `<strong style="color:${color};">${esc(s)}</strong>`;
-const heading = (s) => ({ html: `<p style="margin:18px 0 6px;font-size:13px;font-weight:bold;color:#0f172a;">${esc(s)}</p>`, text: `\n${s.toUpperCase()}` });
-
-/** A table: head and rows of plain strings (left-aligned first column); `mark(i)` highlights a row, `dim(i)` greys it;
- * `compact` for six columns on a phone, `dense` for seven. */
-function table(head, rows, { mark = () => false, dim = () => false, compact = false, dense = false } = {}) {
-  const pad = dense ? '3px 2px' : compact ? '4px 4px' : '5px 6px';
-  const size = dense ? 11 : compact ? 12 : 13;
-  const cell = (c, i, style) => `<td style="padding:${pad};text-align:${i ? 'right' : 'left'};border-bottom:1px solid #f1f5f9;font-size:${size}px;white-space:nowrap;${style}">${esc(c)}</td>`;
-  const html = `<table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:2px 0 12px;">`
-    + `<tr>${head.map((h, i) => `<th style="padding:${pad};text-align:${i ? 'right' : 'left'};font-weight:normal;font-size:${size - 1}px;color:#64748b;border-bottom:1px solid #e2e8f0;">${esc(h)}</th>`).join('')}</tr>`
-    + rows.map((r, n) => {
-      const style = mark(n) ? 'background:#e0f2fe;font-weight:bold;color:#0f172a;' : dim(n) ? 'color:#94a3b8;' : 'color:#334155;';
-      return `<tr>${r.map((c, i) => cell(c, i, style)).join('')}</tr>`;
-    }).join('')
-    + '</table>';
-  const all = [head, ...rows];
-  const width = head.map((_, i) => Math.max(...all.map((r) => String(r[i]).length)));
-  const text = all.map((r, n) => r.map((c, i) => (i ? String(c).padStart(width[i]) : String(c).padEnd(width[i]))).join('  ') + (n && mark(n - 1) ? '  <' : '')).join('\n');
-  return { html, text };
-}
-
+const heading = (s) => ({ html: `<p style="margin:16px 0 6px;font-size:13px;font-weight:bold;color:#0f172a;">${esc(s)}</p>`, text: `\n${s}` });
 const list = (items) => ({
-  html: `<ul style="margin:0 0 10px;padding-left:20px;font-size:13px;line-height:1.5;">${items.map((x) => `<li style="margin-bottom:4px;${x.style || ''}">${x.html}</li>`).join('')}</ul>`,
+  html: `<ul style="margin:0 0 10px;padding:0 20px 0 0;font-size:14px;line-height:1.6;">${items.map((x) => `<li style="margin-bottom:6px;${x.style || ''}">${x.html}</li>`).join('')}</ul>`,
   text: items.map((x) => `- ${x.text}`).join('\n'),
 });
 
 function page(title, subtitle, parts, footer) {
-  const html = '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>'
-    + '<body style="margin:0;padding:0;background:#f1f5f9;">'
-    + '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;"><tr><td align="center" style="padding:12px 2px;">'
-    + '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:720px;background:#ffffff;border:1px solid #e2e8f0;border-radius:8px;font-family:Arial,Helvetica,sans-serif;color:#334155;">'
+  const html = '<!doctype html><html dir="rtl" lang="he"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>'
+    + '<body dir="rtl" style="margin:0;padding:0;background:#f1f5f9;">'
+    + '<table role="presentation" dir="rtl" width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;"><tr><td align="center" style="padding:12px 2px;">'
+    + '<table role="presentation" dir="rtl" width="100%" cellpadding="0" cellspacing="0" style="max-width:640px;background:#ffffff;border:1px solid #e2e8f0;border-radius:8px;font-family:Arial,Helvetica,sans-serif;color:#334155;direction:rtl;text-align:right;">'
     + `<tr><td style="padding:14px 20px;border-bottom:1px solid #e2e8f0;"><div style="font-size:12px;color:#64748b;">${esc(subtitle)}</div>`
     + `<div style="font-size:18px;font-weight:bold;color:#0f172a;margin-top:2px;">${esc(title)}</div></td></tr>`
-    + `<tr><td style="padding:16px 10px;">${parts.map((p) => p.html).join('')}</td></tr>`
-    + `<tr><td style="padding:12px 20px;border-top:1px solid #e2e8f0;font-size:11px;line-height:1.5;color:#64748b;">${footer.map((f) => f.html).join('<br>')}</td></tr>`
+    + `<tr><td style="padding:16px 14px;">${parts.map((p) => p.html).join('')}</td></tr>`
+    + `<tr><td style="padding:12px 20px;border-top:1px solid #e2e8f0;font-size:11px;line-height:1.6;color:#64748b;">${footer.map((f) => f.html).join('<br>')}</td></tr>`
     + '</table></td></tr></table></body></html>';
   const text = [title, subtitle, '', ...parts.map((p) => p.text), '', '--', ...footer.map((f) => f.text)].join('\n');
   return { html, text };
 }
 
 /**
- * The mail from GET /api/fx-challenge's answer (readFxChallenge): { subject, html, text }. fx is
- * src/forecast/fx-challenge.mjs; the recommendation is its planFromPayload, the same as the page's.
+ * The mail from GET /api/fx-challenge's answer (readFxChallenge), in Hebrew and to the point: today's recommendations
+ * (todayActions, the same as the page's) with the balances behind each, the payments in shekels ahead, today's
+ * balances in one paragraph, and a link to the page for the rest. fx is src/forecast/fx-challenge.mjs.
+ * Returns { subject, html, text, actions }.
  */
 function renderMail(fx, data, { policy = 'p95', link = null } = {}) {
   const v = fx.planFromPayload(data, policy);
@@ -136,208 +179,76 @@ function renderMail(fx, data, { policy = 'p95', link = null } = {}) {
   const today = data.today;
   const parts = [];
   let title;
-  let subject;
+  let heads = [];
   let actions = [];
 
   if (plan && first && first.atSpot && first.risk) {
     const n = plan.next;
     const cash = v.cash;
-    const months = (data.inflowMonths || []).map(monthShort).join('–');
-    const weekend = first.fixing.weekend ? ' (a weekend: the deal sets the day)' : '';
-    // What can go: with the salaries known, the spare (every due met); without them, the reserve's free euros.
-    const spare = cash ? n.spare : n.freeNow;
-    // What to do today, from today's balances and rate, most pressing first; the subject and the title lead with it.
-    const fmt = { eur, ils, day, rate };
     const todo = fx.todayActions(v, today);
     actions = todo.actions;
-    const said = actions.map((a) => fx.describeAction(a, v, today, fmt));
-    const lower = (s) => s[0].toLowerCase() + s.slice(1);
-    const nothing = fx.nothingToday(todo.ahead, today, fmt);
-    const rateTail = rc ? ` · EUR/ILS ${rate(rc.rate)} ${RATE_WORD[rc.level]}` : '';
+    const said = actions.map((a) => actionText(a, v, today));
+    heads = said.map((s) => s.head);
     if (said.length) {
-      parts.push(list(said.map((s, i) => ({ html: `${strong(s.head, actions[i].urgent ? '#be123c' : '#0f172a')}. ${esc(s.body)}`, text: `${s.head}. ${s.body}`, style: 'font-size:14px;' }))));
-    } else if (cash) {
-      parts.push(para(esc(nothing), nothing, 'font-size:15px;'));
-    }
-    if (cash) {
-      title = said.length ? said[0].head : 'Nothing to do today';
-      subject = `FX Challenge ${day(today)}: ${said.length ? said.slice(0, 2).map((s) => lower(s.head)).join(' · ') : 'nothing to do today'}${rateTail}`;
-      if (todo.ahead.dues.length) {
-        parts.push(heading('Payments in shekels ahead'));
-        parts.push(list(todo.ahead.dues.map((d) => { const s = `${fx.describeDue(d, today, fmt)}.`; return { html: esc(s), text: s, style: d.eur > 0.5 ? 'color:#0f172a;' : 'color:#475569;' }; })));
-      }
-      const keepText = `Keep ${eur(n.required)} in Hapoalim EUR (583400) for ${day(n.date)}${weekend}.${n.short ? '' : ` Spare now: ${eur(spare)}.`}`;
-      parts.push(para(esc(keepText).replace(esc(eur(n.required)), strong(eur(n.required))), keepText, 'font-size:14px;'));
-      if (!actions.some((a) => a.kind === 'deposit')) {
-        const ok = plan.deposits.filter((d) => d.eur > 0);
-        const dep = ok.length
-          ? `New deposits: ${ok.map((d) => `${eur(d.eur)} for ${d.months} month${d.months === 1 ? '' : 's'} (until ${day(d.until)})`).join(', ')}, with everything before then still covered as the typical inflow comes in.`
-          : `New deposits: none now. The coming weeks need the euros held${n.short ? '' : ' and expected'}.`;
-        parts.push(para(esc(dep), dep, 'font-size:13px;'));
-      }
+      parts.push(list(said.map((s, i) => ({ html: `${strong(s.head, actions[i].urgent ? '#be123c' : '#0f172a')}. ${esc(s.body)}`, text: `${s.head}. ${s.body}` }))));
     } else {
-      // Without the payroll, the reserve's view as before (the actions above still lead the mail).
-      title = n.shortfall > 0
-        ? `Keep ${eur(n.required)} for ${day(n.date)}: today's euros are ${eur(n.shortfall)} short`
-        : `Keep ${eur(n.required)} for ${day(n.date)} · free to convert now ${eur(n.freeNow)}`;
-      subject = `FX Challenge ${day(today)}: ${n.shortfall > 0 ? `${eur(n.shortfall)} short for ${day(n.date)}` : `${eur(n.freeNow)} free to convert`}`
-        + `${rc ? `, ${RATE_SUBJECT[rc.level]} (EUR/ILS ${rate(rc.rate)})` : ''} · keep ${eur(n.required)} for ${day(n.date)}`;
-      const backup = n.freeNowWithBackup > n.freeNow;
-      parts.push(para(
-        `Keep ${strong(eur(n.required))} in Hapoalim EUR (583400) for ${esc(day(n.date))}${weekend}. `
-        + `Free to convert now: ${strong(eur(n.freeNow))}${backup ? `, or ${strong(eur(n.freeNowWithBackup))} if the backup deposits cover a rate jump` : ''}.`,
-        `Keep ${eur(n.required)} in Hapoalim EUR (583400) for ${day(n.date)}${weekend}. `
-        + `Free to convert now: ${eur(n.freeNow)}${backup ? `, or ${eur(n.freeNowWithBackup)} if the backup deposits cover a rate jump` : ''}.`,
-        'font-size:15px;',
-      ));
+      const last = todo.ahead.dues[todo.ahead.dues.length - 1];
+      const s = last ? `אין היום המלצות: היתרה בשקלים וההמרות מכסות את התשלומים עד ${day(last.date)}.` : 'אין היום המלצות.';
+      parts.push(para(esc(s), s, 'font-size:15px;'));
     }
-    if (rc) {
-      const diff = spare * (rc.rate - rc.average);
-      const lead = `EUR/ILS ${rate(rc.rate)} is ${RATE_WORD[rc.level]} for the last ${rc.days} days: above ${pct(rc.share)} of them (average ${rate(rc.average)}, from ${rate(rc.low)} to ${rate(rc.high)}), so `;
-      const tail = spare > 0
-        ? `: the ${eur(spare)} ${cash ? 'spare' : 'free'} now brings ${ils(spare * rc.rate)}, ${ils(Math.abs(diff))} ${diff >= 0 ? 'more' : 'less'} than at the average.`
-        : '. Nothing is spare to convert today.';
-      parts.push(para(`${esc(lead)}${strong(RATE_VERDICT[rc.level], RATE_COLOR[rc.level])}${esc(tail)}`, `${lead}${RATE_VERDICT[rc.level].toUpperCase()}${tail}`));
+    title = said.length ? said[0].head : 'אין היום המלצות';
+    if (todo.ahead.dues.length) {
+      parts.push(heading('תשלומים בשקלים בתקופה הקרובה'));
+      parts.push(list(todo.ahead.dues.map((d) => { const s = `${dueText(d, today)}.`; return { html: esc(s), text: s, style: d.eur > 0.5 ? 'color:#0f172a;' : 'color:#64748b;' }; })));
     }
-
-    if (cash) {
-      parts.push(heading('Salaries and vendors: the shekels each month needs'));
-      parts.push(table(['Paid in', 'Net (5th)', 'Cards (10th)', 'Tax, pension, SS (14th)', 'Vendors', 'The 7th brings', 'Convert'],
-        cash.months.map((m) => [
-          `${monthShort(m.month)} ${m.month.slice(2, 4)}`, m.net > 0.5 ? ils(m.net) : '–', m.cards > 0.5 ? ils(m.cards) : '–', m.later > 0.5 ? ils(m.later) : '–',
-          m.vendors > 0.5 ? ils(m.vendors) : '–', m.tableIls > 0.5 ? `+${ils(m.tableIls)}` : '–', m.convertIls > 0.5 ? `${eur(m.convertEur)}` : '–',
-        ]), { dense: true }));
-      const held = cash.onHand
-        ? `${ils(cash.onHand.total)} (${ils(cash.onHand.current)} in the current accounts and ${ils(cash.onHand.deposits)} in ILS deposits, released the day a payment goes out)`
-        : 'not known';
-      const notes = [
-        `Shekels on hand today: ${held}. Converted at today's rate (${rate(v.spot)}).`,
-        `Payroll: the Salary Projection's Total payroll${cash.projectionAsOf ? ` (saved ${day(cash.projectionAsOf.slice(0, 10))})` : ''}${cash.share !== null ? `, ${pct(cash.share)} net salaries (by the 5th of the next month) and ${pct(1 - cash.share)} pension, withholding tax and social security (by the 14th), as NetSuite's payroll journals of ${months}` : ''}.`,
-        `Vendors in shekels: ${cash.vendors.ils === null ? 'not known' : `the credit cards ${ils(cash.vendors.cards)} a month, billed on the 10th of the next month (this month's at least what was spent so far), and ${ils(cash.vendors.other)} a month in bank transfers and Masav batches, kept from the 5th`}. In euros, ${eur(cash.vendors.eur)} a month kept at all times. The averages of ${months}. The 7th brings the shekels of the amount kept.`,
-        ...cash.notes,
-      ];
-      parts.push(list(notes.map((x) => ({ html: esc(x), text: x, style: 'font-size:12px;color:#64748b;' }))));
-    }
-
-    parts.push(heading(`What the ${day(n.date)} conversion sells`));
-    parts.push(para(esc(`It depends on EUR/ILS that day. At today's ${rate(v.spot)}: ${eur(n.todayAmount)} at ${first.atSpot.rate} (${ils(first.atSpot.ils)}). On average (expected): ${eur(first.risk.expectedEur)}.`),
-      `It depends on EUR/ILS that day. At today's ${rate(v.spot)}: ${eur(n.todayAmount)} at ${first.atSpot.rate} (${ils(first.atSpot.ils)}). On average (expected): ${eur(first.risk.expectedEur)}.`));
-    const shown = (first.outcomes || []).filter((o) => o.p >= 0.005 || (v.spotBand !== null && o.bands.includes(v.spotBand)));
-    parts.push(table(['If EUR/ILS that day is', 'Chance', 'It sells', 'At', 'You receive'],
-      shown.map((o) => [`${rangeLabel(o)}${v.spotBand !== null && o.bands.includes(v.spotBand) ? ' (today)' : ''}`, chance(o.p), eur(o.eur), String(o.rate), ils(o.ils)]),
-      { mark: (i) => v.spotBand !== null && shown[i].bands.includes(v.spotBand), dim: (i) => shown[i].p < 0.01 }));
-
-    parts.push(heading('Your euros'));
-    const items = [];
-    const euros = `Euros now: Hapoalim ${eur(n.hapoalim)}, elsewhere ${eur(n.other)}`
-      + `${n.moveToHapoalim > 0 ? ` (move ${eur(n.moveToHapoalim)} to Hapoalim before the conversion)` : ''}`
-      + `${n.maturing > 0 ? `, deposits maturing by then ${eur(n.maturing)}` : ''}${n.backup > 0 ? `, backup deposits after it ${eur(n.backup)}` : ''}.`;
-    items.push({ html: esc(euros), text: euros });
-    let adds;
-    if (cash) {
-      const t = n.tightest;
-      adds = `How the spare adds up: euro cash ${eur(n.liquid)} − ${eur(n.eurFloor)} kept for EUR vendors = ${eur(n.liquid - n.eurFloor)} at most today`
-        + `${t ? `; the tightest due, ${day(t.date)} (${t.shekels ? 'salaries and vendors' : 'the conversion'}), ${t.spare < 0 ? `is short ${eur(-t.spare)}` : `leaves ${eur(t.spare)} after it`}` : ''}; so ${eur(n.spare)}.`;
-    } else {
-      adds = n.shortfall > 0
-        ? `How it adds up: keep ${eur(n.required)} − deposits maturing before it ${eur(n.maturing)} = ${eur(n.needLiquid)} needed from today's cash of ${eur(n.liquid)}: short ${eur(n.shortfall)}. It needs inflows before the conversion${n.backup > 0 ? ', or a backup deposit' : ''}.`
-        : `How it adds up: keep ${eur(n.required)} − deposits maturing before it ${eur(n.maturing)} = ${eur(n.needLiquid)} needed from today's cash; ${eur(n.liquid)} − ${eur(n.needLiquid)} = ${eur(n.freeNow)} free.`;
-    }
-    items.push({ html: esc(adds), text: adds, style: (cash ? n.short : n.shortfall > 0) ? 'color:#be123c;' : '' });
-    if (n.freeByFixing !== null && v.inflow) {
-      const s2 = `With the typical inflow (${eur(v.inflow.perMonth)} a month, ${months}), about ${eur(n.inflowUntil)} comes in before the conversion`
-        + (n.freeByFixing > 0.5
-          ? `, so ${eur(n.freeByFixing)} can be converted before it, in total, as the euros come in, with the next ${plan.path.length} conversions${cash ? ', the salaries and vendors' : ''} still covered.`
-          : `: ${cash ? 'the salaries, vendors and this conversion need all of it' : 'this conversion needs all of it'}.`);
-      items.push({ html: esc(s2), text: s2 });
-    }
-    parts.push(list(items));
-
-    if (plan.path.length > 1) {
-      const year0 = plan.path[0].month.slice(0, 4);
-      parts.push(heading(`The next ${plan.path.length} conversions, if nothing else is converted`));
-      parts.push(table(
-        cash
-          ? ['Conversion day', 'Keep', 'Deposits', 'Salaries', 'Euros by then', 'Spare before']
-          : ['Conversion day', `Keep (${fx.POLICY_LABEL[plan.policy].toLowerCase()})`, 'Deposits released', 'Euros by then', 'Can be converted before it'],
-        plan.path.map((p) => [
-          `${day(p.date)}${p.month.slice(0, 4) !== year0 ? ` ${p.month.slice(0, 4)}` : ''}`, eur(p.required),
-          p.released > 0 ? eur(p.released) : '–', ...(cash ? [p.shekels > 0.5 ? eur(p.shekels) : '–'] : []),
-          eur(p.available), p.surplus < 0 ? `short ${eur(-p.surplus)}` : eur(p.convertibleBefore),
-        ]),
-        { dense: !!cash },
-      ));
-      const dated = plan.path.filter((p) => p.releasedDeposits.length);
-      const lines = dated.map((p) => `By ${day(p.date)}: ${p.releasedDeposits.map((d) => `${day(d.valueDate)} ${eur(d.amount)}`).join(' · ')}`);
-      const later = plan.later.reduce((s2, d) => s2 + d.amount, 0);
-      if (later > 0) lines.push(`After ${day(plan.path[plan.path.length - 1].date, true)}: a further ${eur(later)} in ${plan.later.length} deposit${plan.later.length === 1 ? '' : 's'}.`);
-      if (lines.length) {
-        parts.push(para(esc('Deposits released, each on the day it matures (if the bank pays it out rather than rolling it over):'), 'Deposits released, each on the day it matures (if the bank pays it out rather than rolling it over):', 'font-size:13px;margin-bottom:4px;'));
-        parts.push(list(lines.map((l) => ({ html: esc(l), text: l }))));
-      }
-      const explain = cash
-        ? `Keep: ${fx.POLICY_LABEL[plan.policy].toLowerCase()}. Salaries: the euros converted for salaries and ILS vendors since the conversion before. Euros by then: cash today, plus the typical inflow and the deposits released by then, less the earlier conversions at the amount kept and the salaries. Spare before it: what can be converted before it, in total, with every later conversion, the salaries and vendors still covered and ${eur(n.eurFloor)} kept for EUR vendors.`
-        : 'Euros by then: cash today, plus the typical inflow and the deposits released by then, less the earlier conversions at the amount kept. Can be converted before it: the smallest spare from that day on, so every later conversion is still covered.';
-      parts.push(para(esc(explain), explain, 'font-size:12px;color:#64748b;'));
-    }
+    // Today's balances, in one paragraph.
+    const shekels = cash && cash.onHand ? `${ils(cash.onHand.total)} בשקלים (${ils(cash.onHand.current)} בעו"ש ו-${ils(cash.onHand.deposits)} בפיקדונות), ` : '';
+    const status = `${shekels}${eur(n.hapoalim)} בחשבון האירו בפועלים ו-${eur(n.other)} בחשבונות אחרים. `
+      + `להשאיר ${eur(n.required)} בפועלים להמרה של ${day(n.date)} (${POLICY[plan.policy]}).${cash ? '' : ` פנוי להמרה עכשיו: ${eur(n.freeNow)}.`}`
+      + `${rc ? ` ${rateIs(rc)}.` : ''}`;
+    parts.push(heading('המצב היום'));
+    parts.push(para(esc(status), status, 'font-size:13px;'));
   } else {
-    title = 'No recommendation today';
-    subject = `FX Challenge ${day(today)}: no recommendation today`;
-    const why = !v.schedule.length ? 'No conversion is left in the table.' : 'It needs today\'s rate and the balances; the notes below say what could not be read.';
+    title = 'אין היום המלצה';
+    const why = !v.schedule.length ? 'לא נשארו המרות בטבלה.' : 'ההמלצה צריכה את שער היום ואת היתרות, ואחד מהם לא נקרא היום.';
     parts.push(para(esc(why), why));
-    if (rc) {
-      const s = `EUR/ILS ${rate(rc.rate)} is ${RATE_WORD[rc.level]} for the last ${rc.days} days: above ${pct(rc.share)} of them (average ${rate(rc.average)}, from ${rate(rc.low)} to ${rate(rc.high)}).`;
-      parts.push(para(esc(s), s));
-    }
   }
 
   if (data.warnings && data.warnings.length) {
-    parts.push({
-      html: `<div style="margin:12px 0 0;padding:8px 12px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;font-size:12px;line-height:1.5;color:#92400e;">${data.warnings.map(esc).join('<br>')}</div>`,
-      text: `\nNOTES\n${data.warnings.map((w) => `- ${w}`).join('\n')}`,
-    });
+    const s = 'שימו לב: חלק מהנתונים לא נקראו היום, ולכן ההמלצה עלולה להיות חלקית. הפרטים בדף.';
+    parts.push({ html: `<div style="margin:12px 0 0;padding:8px 12px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;font-size:12px;line-height:1.5;color:#92400e;">${esc(s)}</div>`, text: `\n${s}` });
   }
 
   const b = data.balances;
-  const asOf = b && b.asOf ? `, ${new Date(b.asOf).toLocaleString('en-GB', { timeZone: 'Asia/Jerusalem', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}` : '';
-  const footer = [
-    `What to keep: ${fx.POLICY_LABEL[policy]} (FX_MAIL_POLICY). EUR/ILS: NetSuite's HSBC rate; volatility ${pct(v.sigma)} a year${v.sigmaFromHistory ? '' : ' (assumed)'}.`,
-    `Balances: ${b ? `${SOURCE[b.source]}${asOf}` : 'not read'}. Typical inflow: NetSuite's books (${(data.inflowMonths || []).map(monthShort).join('–')}).`,
-    'Estimates from today\'s numbers: the chances come from how EUR/ILS has moved, and the rate check looks back 90 days. Where EUR/ILS goes next is not known.',
-  ].map((s) => ({ html: esc(s), text: s }));
-  if (link) footer.push({ html: `The page: <a href="${esc(link)}" style="color:#0369a1;">FX Challenge</a>`, text: `The page: ${link}` });
-  const sentWhen = 'Sent by the bank dashboard (scripts/fx-challenge-mail.cjs) on working days with something to do: a payment in shekels the balances don\'t cover within a week, a shortfall, euros to move, or something new to decide.';
-  footer.push({ html: esc(sentWhen), text: sentWhen });
+  const asOf = b && b.asOf ? `, ${new Date(b.asOf).toLocaleString('en-GB', { timeZone: 'Asia/Jerusalem', day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' })}` : '';
+  const footer = [];
+  if (link) footer.push({ html: `הפירוט המלא בדף: <a href="${esc(link)}" style="color:#0369a1;">FX Challenge</a>`, text: `הפירוט המלא בדף: ${link}` });
+  const about = `יתרות: ${b ? `${SOURCE[b.source]}${asOf}` : 'לא נקראו'}. שער: HSBC ב-NetSuite. נשלח בימים א'–ו' כשיש המלצה (scripts/fx-challenge-mail.cjs).`;
+  footer.push({ html: esc(about), text: about });
 
+  const subject = `FX ${day(today)} · ${heads.length ? heads.slice(0, 2).join(' · ') : title}`;
   const { html, text } = page(title, `FX Challenge · ${day(today, true)}`, parts, footer);
   return { subject, html, text, actions };
 }
 
 /**
- * Whether the daily mail goes today. On Fridays and Saturdays it doesn't (the bank's working days are Sunday to
- * Thursday); otherwise when there is something to do that is urgent, new since the last mail (not in it, or its amount
- * moved by a fifth and at least €50K), or still open a week after the last mail. always (FX_MAIL_ALWAYS=1): every day.
- * marker: readMailMarker's. Returns { send, why } (why: when it doesn't).
+ * Whether the daily mail goes today: on any day but Saturday (the bank works Sunday to Friday), when there is at least
+ * one recommendation (todayActions); never without one. always (FX_MAIL_ALWAYS=1): every day, Saturday included, with
+ * or without. Returns { send, why } (why: when it doesn't).
  */
-function mailDecision(actions, marker, { today, always = false }) {
+function mailDecision(actions, { today, always = false }) {
   if (always) return { send: true, why: null };
-  const dow = new Date(`${today}T12:00:00Z`).getUTCDay();
-  if (dow === 5 || dow === 6) return { send: false, why: 'Friday or Saturday' };
-  if (!actions.length) return { send: false, why: 'nothing to do' };
-  if (actions.some((a) => a.urgent)) return { send: true, why: null };
-  const last = marker && marker.lastSent;
-  if (!last || !last.day || (Date.parse(`${today}T00:00:00Z`) - Date.parse(`${last.day}T00:00:00Z`)) / 86400000 >= 7) return { send: true, why: null };
-  const before = new Map((last.actions || []).map((a) => [a.key, Number(a.eur) || 0]));
-  const fresh = actions.some((a) => !before.has(a.key) || Math.abs(a.eur - before.get(a.key)) >= Math.max(50000, 0.2 * before.get(a.key)));
-  return fresh ? { send: true, why: null } : { send: false, why: 'nothing new since the last mail' };
+  if (offDay(today)) return { send: false, why: 'Saturday' };
+  return actions.length ? { send: true, why: null } : { send: false, why: 'no recommendations' };
 }
 
 /** When nothing could be read: a short mail saying so. */
 function failureMail(today, error) {
   const why = String((error && error.message) || error || 'unknown error').slice(0, 300);
-  const s = `The FX Challenge could not be read from NetSuite today (${why}). The page shows the figures again once NetSuite answers.`;
-  const { html, text } = page('Not read today', `FX Challenge · ${day(today, true)}`, [para(esc(s), s)], [{ html: 'Sent by the bank dashboard (scripts/fx-challenge-mail.cjs).', text: 'Sent by the bank dashboard (scripts/fx-challenge-mail.cjs).' }]);
-  return { subject: `FX Challenge ${day(today)}: not read today`, html, text, actions: [] };
+  const s = `לא ניתן היה לקרוא היום את הנתונים מ-NetSuite (${why}). הדף יציג אותם שוב כש-NetSuite יענה.`;
+  const sent = 'נשלח מלוח הבנקים (scripts/fx-challenge-mail.cjs).';
+  const { html, text } = page('הנתונים לא נקראו היום', `FX Challenge · ${day(today, true)}`, [para(esc(s), s)], [{ html: esc(sent), text: sent }]);
+  return { subject: `FX ${day(today)} · הנתונים לא נקראו היום`, html, text, actions: [] };
 }
 
 // ── settings ──
@@ -432,15 +343,15 @@ function writeMarker(file, marker) {
   fs.writeFileSync(file, JSON.stringify(marker));
 }
 
-/** Friday or Saturday in Israel: the bank's working days are Sunday to Thursday. */
-const offDay = (today) => [5, 6].includes(new Date(`${today}T12:00:00Z`).getUTCDay());
+/** Saturday in Israel: no mail (the bank works Sunday to Friday). */
+const offDay = (today) => new Date(`${today}T12:00:00Z`).getUTCDay() === 6;
 
 const actionsOf = (mail) => mail.actions.map((a) => ({ key: a.key, eur: Math.round(a.eur) }));
 
 /**
- * The page's Send now: today's mail, read fresh, sent at once whatever there is to do, to the page's list (or
- * FX_MAIL_TO). It counts as the last mail sent, so the daily check doesn't repeat what it said; the daily check itself
- * still runs. deps: env, reads, tableFile, mailFile, markerFile, clock(), nodemailer, by (who asked).
+ * The page's Send now: today's mail, read fresh, sent at once with or without a recommendation, to the page's list (or
+ * FX_MAIL_TO). It counts as today's mail, so the 10:00 check doesn't send it again today.
+ * deps: env, reads, tableFile, mailFile, markerFile, clock(), nodemailer, by (who asked).
  * Returns { ok: true, recipients, subject, at } or { ok: false, status, error }.
  */
 async function sendNow(deps = {}) {
@@ -461,10 +372,8 @@ async function sendNow(deps = {}) {
   const mail = renderMail(fx, data, { policy: cfg.policy, link: cfg.link });
   const nodemailer = deps.nodemailer || require('nodemailer');
   await nodemailer.createTransport(cfg.smtp.transport).sendMail({ from: cfg.from, to: cfg.to.join(', '), subject: mail.subject, text: mail.text, html: mail.html });
-  const markerFile = deps.markerFile || MARKER_FILE;
-  const marker = fxs.readMailMarker(markerFile);
-  writeMarker(markerFile, {
-    day: marker ? marker.day : null, at: marker ? marker.at : at, quiet: marker ? marker.quiet : false, why: marker ? marker.why : null,
+  writeMarker(deps.markerFile || MARKER_FILE, {
+    day: today, at, quiet: false, why: null,
     lastSent: { day: today, at, recipients: cfg.to.length, subject: mail.subject, actions: actionsOf(mail), manual: true, by: deps.by || null },
   });
   console.log(`${TAG} ${today}: sent by hand${deps.by ? ` by ${deps.by}` : ''} to ${cfg.to.length} recipient(s) from ${cfg.from} via ${cfg.smtp.host}: ${mail.subject}`);
@@ -495,8 +404,8 @@ async function main(argv = process.argv.slice(2), deps = {}) {
       return 0;
     }
     if (!always && offDay(today)) {
-      writeMarker(markerFile, { day: today, at, quiet: true, why: 'Friday or Saturday', lastSent: marker ? marker.lastSent : null });
-      console.log(`${TAG} ${today}: no mail on Fridays and Saturdays`);
+      writeMarker(markerFile, { day: today, at, quiet: true, why: 'Saturday', lastSent: marker ? marker.lastSent : null });
+      console.log(`${TAG} ${today}: no mail on Saturdays`);
       return 0;
     }
   }
@@ -519,8 +428,8 @@ async function main(argv = process.argv.slice(2), deps = {}) {
     return 0;
   }
   const mail = data ? renderMail(fx, data, { policy: cfg.policy, link: cfg.link }) : failureMail(today, failure);
-  // A mail only with something to do; a read that failed is always said.
-  const decision = complete ? mailDecision(mail.actions, marker, { today, always }) : { send: true, why: null };
+  // A mail only with a recommendation; a read that failed is always said.
+  const decision = complete ? mailDecision(mail.actions, { today, always }) : { send: true, why: null };
 
   if (args.dryRun) {
     console.log(`Subject: ${mail.subject}\n\n${mail.text}`);
