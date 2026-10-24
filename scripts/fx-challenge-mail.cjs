@@ -9,9 +9,10 @@
 //   node scripts/fx-challenge-mail.cjs --dry-run    read and print it, and whether today's check would send it; sends
 //                                                   nothing (--html=<file> also writes the HTML)
 //   node scripts/fx-challenge-mail.cjs --scheduled  the cron, every hour: checks once a day from FX_MAIL_HOUR, Israel
-//                                                   time, so daylight saving needs no change, and sends only on Sunday
-//                                                   to Thursday with something to do (mailDecision). An incomplete read
-//                                                   (no balances, no rate) is tried again the next two hours.
+//                                                   time, so daylight saving needs no change, and sends every day but
+//                                                   Saturday when there is a recommendation (mailDecision). An
+//                                                   incomplete read (no balances, no rate) is tried again the next two
+//                                                   hours.
 //
 // Who gets it is kept on the page ("Daily mail", saved for everyone in data/fx-challenge-mail.json); until a list is
 // saved there, FX_MAIL_TO. lsports.eu addresses only, unless FX_MAIL_ALLOW_EXTERNAL=1 (the mail carries LSports'
@@ -23,11 +24,11 @@
 //   FX_MAIL_HOUR    the hour of the daily mail, Israel time (default 10)
 //   FX_MAIL_POLICY  what to keep: today | p95 (default) | worst, as the page's "What to keep"
 //   FX_MAIL_LINK    the page's address, for a link at the bottom (optional)
-//   FX_MAIL_ALWAYS  1: send every day, with or without something to do
+//   FX_MAIL_ALWAYS  1: send every day, Saturday included, with or without a recommendation
 //   The mail server: FX_MAIL_SMTP_URL, else NET_CASH_SMTP_URL, else SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS
 //   (the backend's mailer); FX_MAIL_SMTP_HELO, else NET_CASH_SMTP_HELO, else the sender's domain, for Google's relay.
 //
-// Exit codes: 0 sent, skipped (not the hour, checked already, nothing to do) or printed; 1 not sent (the log says why).
+// Exit codes: 0 sent, skipped (not the hour, checked already, no recommendations) or printed; 1 not sent (the log says why).
 // ─────────────────────────────────────────────────────────────────────────────
 const fs = require('fs');
 const path = require('path');
@@ -306,7 +307,7 @@ function renderMail(fx, data, { policy = 'p95', link = null } = {}) {
     'Estimates from today\'s numbers: the chances come from how EUR/ILS has moved, and the rate check looks back 90 days. Where EUR/ILS goes next is not known.',
   ].map((s) => ({ html: esc(s), text: s }));
   if (link) footer.push({ html: `The page: <a href="${esc(link)}" style="color:#0369a1;">FX Challenge</a>`, text: `The page: ${link}` });
-  const sentWhen = 'Sent by the bank dashboard (scripts/fx-challenge-mail.cjs) on working days with something to do: a payment in shekels the balances don\'t cover within a week, a shortfall, euros to move, or something new to decide.';
+  const sentWhen = 'Sent by the bank dashboard (scripts/fx-challenge-mail.cjs) every day but Saturday when there is a recommendation: a conversion for a payment the balances don\'t cover, a shortfall, euros to move to Hapoalim, a high rate to convert on, or spare euros for a deposit.';
   footer.push({ html: esc(sentWhen), text: sentWhen });
 
   const { html, text } = page(title, `FX Challenge · ${day(today, true)}`, parts, footer);
@@ -314,22 +315,14 @@ function renderMail(fx, data, { policy = 'p95', link = null } = {}) {
 }
 
 /**
- * Whether the daily mail goes today. On Fridays and Saturdays it doesn't (the bank's working days are Sunday to
- * Thursday); otherwise when there is something to do that is urgent, new since the last mail (not in it, or its amount
- * moved by a fifth and at least €50K), or still open a week after the last mail. always (FX_MAIL_ALWAYS=1): every day.
- * marker: readMailMarker's. Returns { send, why } (why: when it doesn't).
+ * Whether the daily mail goes today: on any day but Saturday (the bank works Sunday to Friday), when there is at least
+ * one recommendation (todayActions); never without one. always (FX_MAIL_ALWAYS=1): every day, Saturday included, with
+ * or without. Returns { send, why } (why: when it doesn't).
  */
-function mailDecision(actions, marker, { today, always = false }) {
+function mailDecision(actions, { today, always = false }) {
   if (always) return { send: true, why: null };
-  const dow = new Date(`${today}T12:00:00Z`).getUTCDay();
-  if (dow === 5 || dow === 6) return { send: false, why: 'Friday or Saturday' };
-  if (!actions.length) return { send: false, why: 'nothing to do' };
-  if (actions.some((a) => a.urgent)) return { send: true, why: null };
-  const last = marker && marker.lastSent;
-  if (!last || !last.day || (Date.parse(`${today}T00:00:00Z`) - Date.parse(`${last.day}T00:00:00Z`)) / 86400000 >= 7) return { send: true, why: null };
-  const before = new Map((last.actions || []).map((a) => [a.key, Number(a.eur) || 0]));
-  const fresh = actions.some((a) => !before.has(a.key) || Math.abs(a.eur - before.get(a.key)) >= Math.max(50000, 0.2 * before.get(a.key)));
-  return fresh ? { send: true, why: null } : { send: false, why: 'nothing new since the last mail' };
+  if (offDay(today)) return { send: false, why: 'Saturday' };
+  return actions.length ? { send: true, why: null } : { send: false, why: 'no recommendations' };
 }
 
 /** When nothing could be read: a short mail saying so. */
@@ -432,15 +425,15 @@ function writeMarker(file, marker) {
   fs.writeFileSync(file, JSON.stringify(marker));
 }
 
-/** Friday or Saturday in Israel: the bank's working days are Sunday to Thursday. */
-const offDay = (today) => [5, 6].includes(new Date(`${today}T12:00:00Z`).getUTCDay());
+/** Saturday in Israel: no mail (the bank works Sunday to Friday). */
+const offDay = (today) => new Date(`${today}T12:00:00Z`).getUTCDay() === 6;
 
 const actionsOf = (mail) => mail.actions.map((a) => ({ key: a.key, eur: Math.round(a.eur) }));
 
 /**
- * The page's Send now: today's mail, read fresh, sent at once whatever there is to do, to the page's list (or
- * FX_MAIL_TO). It counts as the last mail sent, so the daily check doesn't repeat what it said; the daily check itself
- * still runs. deps: env, reads, tableFile, mailFile, markerFile, clock(), nodemailer, by (who asked).
+ * The page's Send now: today's mail, read fresh, sent at once with or without a recommendation, to the page's list (or
+ * FX_MAIL_TO). It counts as today's mail, so the 10:00 check doesn't send it again today.
+ * deps: env, reads, tableFile, mailFile, markerFile, clock(), nodemailer, by (who asked).
  * Returns { ok: true, recipients, subject, at } or { ok: false, status, error }.
  */
 async function sendNow(deps = {}) {
@@ -461,10 +454,8 @@ async function sendNow(deps = {}) {
   const mail = renderMail(fx, data, { policy: cfg.policy, link: cfg.link });
   const nodemailer = deps.nodemailer || require('nodemailer');
   await nodemailer.createTransport(cfg.smtp.transport).sendMail({ from: cfg.from, to: cfg.to.join(', '), subject: mail.subject, text: mail.text, html: mail.html });
-  const markerFile = deps.markerFile || MARKER_FILE;
-  const marker = fxs.readMailMarker(markerFile);
-  writeMarker(markerFile, {
-    day: marker ? marker.day : null, at: marker ? marker.at : at, quiet: marker ? marker.quiet : false, why: marker ? marker.why : null,
+  writeMarker(deps.markerFile || MARKER_FILE, {
+    day: today, at, quiet: false, why: null,
     lastSent: { day: today, at, recipients: cfg.to.length, subject: mail.subject, actions: actionsOf(mail), manual: true, by: deps.by || null },
   });
   console.log(`${TAG} ${today}: sent by hand${deps.by ? ` by ${deps.by}` : ''} to ${cfg.to.length} recipient(s) from ${cfg.from} via ${cfg.smtp.host}: ${mail.subject}`);
@@ -495,8 +486,8 @@ async function main(argv = process.argv.slice(2), deps = {}) {
       return 0;
     }
     if (!always && offDay(today)) {
-      writeMarker(markerFile, { day: today, at, quiet: true, why: 'Friday or Saturday', lastSent: marker ? marker.lastSent : null });
-      console.log(`${TAG} ${today}: no mail on Fridays and Saturdays`);
+      writeMarker(markerFile, { day: today, at, quiet: true, why: 'Saturday', lastSent: marker ? marker.lastSent : null });
+      console.log(`${TAG} ${today}: no mail on Saturdays`);
       return 0;
     }
   }
@@ -519,8 +510,8 @@ async function main(argv = process.argv.slice(2), deps = {}) {
     return 0;
   }
   const mail = data ? renderMail(fx, data, { policy: cfg.policy, link: cfg.link }) : failureMail(today, failure);
-  // A mail only with something to do; a read that failed is always said.
-  const decision = complete ? mailDecision(mail.actions, marker, { today, always }) : { send: true, why: null };
+  // A mail only with a recommendation; a read that failed is always said.
+  const decision = complete ? mailDecision(mail.actions, { today, always }) : { send: true, why: null };
 
   if (args.dryRun) {
     console.log(`Subject: ${mail.subject}\n\n${mail.text}`);

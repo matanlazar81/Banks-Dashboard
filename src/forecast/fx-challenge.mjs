@@ -707,9 +707,9 @@ function cashPlanOf(data, today, spot, upcoming, schedule, policy) {
 
 // ── what to do today ──
 /**
- * What to do today, from today's balances and rate (view: planFromPayload's), urgent first. urgent: a mail goes for it
- * every working day; the others are worth a mail when they are new (or have changed, or a week on), so a conversion is
- * announced ahead and reminded in its last week.
+ * What to do today, from today's balances and rate (view: planFromPayload's): the recommendations, urgent first. The
+ * daily mail goes on any day but Saturday when there is at least one. urgent: due within `lead` business days (in red),
+ * so a conversion is announced ahead and stands out in its last week.
  *   convert        a payment in shekels that the shekels on hand (and the conversions before it) don't cover: urgent
  *                  within `lead` business days of when it has to be ready
  *   convert-early  instead, for one due before the next conversion day, while EUR/ILS is high against the last 90

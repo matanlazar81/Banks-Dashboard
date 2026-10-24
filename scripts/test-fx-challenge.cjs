@@ -473,19 +473,13 @@ async function testToday(fx) {
   check(fx.nothingToday(fx.duesAhead(cashOn(TODAY)), TODAY, fmt) === `Nothing to do today. Next: convert €${Math.round(7.1e6 / 3.5)} by 2026-11-05 (in 15 days) for October's net salaries and November's ILS vendor payments.`,
     'nothing to do: what comes next, and when');
 
-  // When the mail goes.
+  // When the mail goes: any day but Saturday, whenever there is a recommendation.
   const u = [{ kind: 'convert', key: 'convert:2026-11-05', urgent: true, eur: 1e6 }];
   const n1 = [{ kind: 'deposit', key: 'deposit', urgent: false, eur: 500000 }];
-  const marker = (day, actions) => ({ day, at: `${day}T07:00:00Z`, quiet: false, why: null, lastSent: { day, at: `${day}T07:00:00Z`, recipients: 2, subject: 's', actions } });
-  check(mailDecision(u, null, { today: '2026-10-23' }).why === 'Friday or Saturday' && mailDecision(u, null, { today: '2026-10-24' }).send === false
-    && mailDecision([], null, { today: TODAY }).why === 'nothing to do' && mailDecision(u, marker(TODAY, [{ key: 'convert:2026-11-05', eur: 1e6 }]), { today: '2026-10-22' }).send,
-  'no mail on Fridays and Saturdays or with nothing to do; an urgent action goes every working day');
-  check(mailDecision(n1, null, { today: TODAY }).send && !mailDecision(n1, marker('2026-10-20', [{ key: 'deposit', eur: 480000 }]), { today: TODAY }).send
-    && mailDecision(n1, marker('2026-10-20', [{ key: 'deposit', eur: 300000 }]), { today: TODAY }).send
-    && mailDecision(n1, marker('2026-10-14', [{ key: 'deposit', eur: 500000 }]), { today: TODAY }).send
-    && mailDecision(n1, marker('2026-10-20', [{ key: 'spare', eur: 500000 }]), { today: TODAY }).send,
-  'a non-urgent action: mailed when new or changed (a fifth and €50K), again a week later if still open, not every day');
-  check(mailDecision([], null, { today: '2026-10-23', always: true }).send, 'FX_MAIL_ALWAYS=1: every day');
+  check(mailDecision(u, { today: '2026-10-23' }).send && mailDecision(n1, { today: '2026-10-22' }).send && mailDecision(n1, { today: '2026-10-23' }).send
+    && mailDecision(n1, { today: '2026-10-25' }).send && mailDecision(u, { today: '2026-10-24' }).why === 'Saturday' && mailDecision([], { today: TODAY }).why === 'no recommendations',
+  'a mail every day but Saturday (Friday included) when there is a recommendation, urgent or not, the same as the day before or not; none without one');
+  check(mailDecision([], { today: '2026-10-24', always: true }).send, 'FX_MAIL_ALWAYS=1: every day, Saturday included');
 }
 
 async function testParse(fx) {
@@ -756,19 +750,20 @@ async function testMail(fx) {
   await quietly(() => mail.main(['--scheduled'], deps(at('11:00'))));
   const [manual] = await quietly(() => mail.main([], deps(at('15:00'))));
   check(sent.length === 2 && manual === 0 && JSON.parse(fs.readFileSync(markerFile, 'utf8')).at === new Date(at('10:00')()).toISOString(), 'sent once a day; a run by hand sends a test and leaves the daily one alone');
-  // Thursday 22 Oct: the same thing to do as yesterday → no mail; Friday 23 Oct → no mail. Both keep the last mail.
+  // Thursday 22 and Friday 23 Oct: the same recommendations as Wednesday → a mail each day; Saturday 24 Oct → none.
   const [thu, thuLog] = await quietly(() => mail.main(['--scheduled'], deps(() => Date.parse('2026-10-22T10:00:00+03:00'))));
-  const m22 = JSON.parse(fs.readFileSync(markerFile, 'utf8'));
-  check(thu === 0 && sent.length === 2 && m22.day === '2026-10-22' && m22.quiet === true && m22.why === 'nothing new since the last mail' && m22.lastSent.day === TODAY
-    && /no mail \(nothing new since the last mail\)/.test(thuLog.join(' ')),
-  'the next day, nothing new to decide: no mail, the check is kept with why', JSON.stringify(m22));
-  const [fri, friLog] = await quietly(() => mail.main(['--scheduled'], deps(() => Date.parse('2026-10-23T10:00:00+03:00'))));
+  const [fri] = await quietly(() => mail.main(['--scheduled'], deps(() => Date.parse('2026-10-23T10:00:00+03:00'))));
   const m23 = JSON.parse(fs.readFileSync(markerFile, 'utf8'));
-  check(fri === 0 && sent.length === 2 && m23.day === '2026-10-23' && m23.why === 'Friday or Saturday' && m23.lastSent.day === TODAY && /no mail on Fridays and Saturdays/.test(friLog.join(' ')),
-    'a Friday: no mail');
-  const [always] = await quietly(() => mail.main(['--scheduled'], deps(() => Date.parse('2026-10-24T10:00:00+03:00'), { env: { ...env, FX_MAIL_ALWAYS: '1' } })));
-  check(always === 0 && sent.length === 3 && JSON.parse(fs.readFileSync(markerFile, 'utf8')).lastSent.day === '2026-10-24', 'FX_MAIL_ALWAYS=1: sent even on a Saturday');
-  sent.pop();
+  check(thu === 0 && fri === 0 && sent.length === 4 && m23.day === '2026-10-23' && m23.quiet === false && m23.lastSent.day === '2026-10-23' && /sent to 2 recipient/.test(thuLog.join(' ')),
+    'Thursday and Friday: a mail each day while there are recommendations, the same as the day before or not', JSON.stringify(m23));
+  const [sat, satLog] = await quietly(() => mail.main(['--scheduled'], deps(() => Date.parse('2026-10-24T10:00:00+03:00'))));
+  const m24 = JSON.parse(fs.readFileSync(markerFile, 'utf8'));
+  check(sat === 0 && sent.length === 4 && m24.day === '2026-10-24' && m24.quiet === true && m24.why === 'Saturday' && m24.lastSent.day === '2026-10-23' && /no mail on Saturdays/.test(satLog.join(' ')),
+    'a Saturday: no mail, the check kept with why, the last mail kept');
+  const markerAlways = path.join(tmp, 'last-always.json');
+  const [always] = await quietly(() => mail.main(['--scheduled'], deps(() => Date.parse('2026-10-24T10:00:00+03:00'), { env: { ...env, FX_MAIL_ALWAYS: '1' }, markerFile: markerAlways })));
+  check(always === 0 && sent.length === 5 && JSON.parse(fs.readFileSync(markerAlways, 'utf8')).lastSent.day === '2026-10-24', 'FX_MAIL_ALWAYS=1: sent even on a Saturday');
+  sent.splice(2);
   const partial = { ...reads, mail: null, books: async () => { throw new Error('NetSuite down'); } };
   const marker2 = path.join(tmp, 'last2.json');
   const [retry, retryLog] = await quietly(() => mail.main(['--scheduled'], deps(at('10:00'), { reads: partial, markerFile: marker2 })));
@@ -853,27 +848,28 @@ async function testMailSettings() {
   const mk = fxs.readMailMarker(sentFile);
   check(sentNow.status === 200 && sentNow.body.recipients === 3 && /^FX Challenge Wed 21 Oct: /.test(sentNow.body.subject) && outbox.length === 1
     && outbox[0].to === 'matan.l@lsports.eu, dotan@lsports.eu, finance@lsports.eu' && mk.lastSent.manual && mk.lastSent.by === 'matan.l@lsports.eu'
-    && mk.lastSent.at === new Date(NOW).toISOString() && mk.lastSent.actions.length > 0 && mk.day === '2026-10-22' && mk.quiet,
-  'Send now: read fresh and sent to the saved list; recorded as the last mail (by whom, with its actions), the daily check left as it was', JSON.stringify(sentNow.body));
+    && mk.lastSent.at === new Date(NOW).toISOString() && mk.lastSent.actions.length > 0 && mk.day === TODAY && !mk.quiet,
+  'Send now: read fresh and sent to the saved list; recorded as today\'s mail (by whom, with its recommendations)', JSON.stringify(sentNow.body));
   const again = await postSend();
   now += 61 * 1000;
   const later = await postSend();
   check(again.status === 429 && later.status === 200 && outbox.length === 2, 'Send now: once a minute at most');
   const card = (await call(sendRouter, { url: '/api/fx-challenge/mail' })).body;
   check(card.lastSent.manual === true && card.lastSent.recipients === 3, 'the card shows the last mail as sent with Send now');
-  // The 10:00 check that day (the last check was the day before): what Send now said is not new.
-  fs.writeFileSync(sentFile, JSON.stringify({ ...JSON.parse(fs.readFileSync(sentFile, 'utf8')), day: '2026-10-20' }));
+  // The 10:00 check that day: Send now was today's mail, so it doesn't send it again; the next day it does.
   const { main: mailMain } = require(path.join(ROOT, 'scripts', 'fx-challenge-mail.cjs'));
-  const [daily] = await quietly(() => mailMain(['--scheduled'], {
-    env: sendEnv(), clock: () => Date.parse('2026-10-21T10:00:00+03:00') + 60 * 1000, reads: sendReads, nodemailer, markerFile: sentFile, mailFile: file, tableFile: path.join(tmp, 'table.json'),
+  const dailyAt = (iso) => quietly(() => mailMain(['--scheduled'], {
+    env: sendEnv(), clock: () => Date.parse(iso), reads: sendReads, nodemailer, markerFile: sentFile, mailFile: file, tableFile: path.join(tmp, 'table.json'),
   }));
+  const [daily] = await dailyAt('2026-10-21T10:01:00+03:00');
   const after10 = fxs.readMailMarker(sentFile);
-  check(daily === 0 && outbox.length === 2 && after10.day === TODAY && after10.why === 'nothing new since the last mail' && after10.lastSent.manual,
-    'after Send now, the daily check sends nothing new', JSON.stringify(after10));
+  const [nextDay] = await dailyAt('2026-10-22T10:01:00+03:00');
+  check(daily === 0 && after10.day === TODAY && after10.lastSent.manual && nextDay === 0 && outbox.length === 3 && fxs.readMailMarker(sentFile).lastSent.day === '2026-10-22',
+    'after Send now, the 10:00 check doesn\'t send it again that day; the next day\'s check sends as usual', JSON.stringify(after10));
   fs.writeFileSync(file, JSON.stringify({ value: { to: [] } }));
   now += 61 * 1000;
   const nobody = await postSend();
-  check(nobody.status === 400 && /Nobody is on the list/.test(nobody.body.error) && outbox.length === 2, 'Send now with nobody on the list: nothing sent, and why');
+  check(nobody.status === 400 && /Nobody is on the list/.test(nobody.body.error) && outbox.length === 3, 'Send now with nobody on the list: nothing sent, and why');
   fs.writeFileSync(file, JSON.stringify({ value: { to: ['matan.l@lsports.eu', 'dotan@lsports.eu', 'finance@lsports.eu'] } }));
   const outside = await call(router, { method: 'PUT', url: '/api/fx-challenge/mail', body: { value: { to: ['someone@gmail.com'] } }, headers: json });
   const cross = await call(router, { method: 'PUT', url: '/api/fx-challenge/mail', body: { value: { to: [] } }, headers: { ...json, origin: 'https://evil.example' } });
