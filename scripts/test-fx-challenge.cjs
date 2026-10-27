@@ -199,13 +199,13 @@ async function testPlan(fx) {
   const words = { eur: (n) => `€${Math.round(n / 1000)}K`, day: (iso) => iso };
   const partly = fx.keepCover(fx.planReserve({ upcoming, policy: 'p95', eur: before, today: TODAY }));
   check(partly.fromDeposits === 1000000 && partly.fromCash === 400000 && !partly.covered && partly.deposits.length === 1
-    && fx.describeKeep(partly, words) === '€1000K of it comes from the deposit released on 2026-11-03, €400K from today\'s cash.',
-  'the keep line: a deposit released before the conversion holds part of it (€1M of €1.4M), today\'s cash the rest');
+    && fx.describeKeep(partly, words) === 'it takes €1400K, and the deposit released on 2026-11-03 brings €1000K of it',
+  'the keep line: keep only what a deposit released before the conversion doesn\'t bring (€400K of €1.4M), and why');
   const whole = fx.keepCover(fx.planReserve({ upcoming, policy: 'today', eur: before, today: TODAY }));
   check(whole.covered && whole.fromDeposits === 800000 && whole.fromCash === 0
-    && fx.describeKeep(whole, words) === 'The deposit released on 2026-11-03 (€1000K) covers it, so it needs none of today\'s cash.',
-  'a deposit released by the conversion holding all of it (€1M for €800K): none of today\'s cash is needed');
-  check(fx.describeKeep(fx.keepCover(r), words) === 'The 2 deposits released by 2026-11-07 (€800K) cover it, so it needs none of today\'s cash.',
+    && fx.describeKeep(whole, words) === 'the deposit released on 2026-11-03 (€1000K) covers the €800K it takes from Hapoalim EUR (583400)',
+  'a deposit released by the conversion holding all of it (€1M for €800K): nothing to keep, and why');
+  check(fx.describeKeep(fx.keepCover(r), words) === 'the 2 deposits released by 2026-11-07 (€800K) cover the €800K it takes from Hapoalim EUR (583400)',
     'several deposits: added up, by the last one\'s date (one released on the conversion day counts)');
   check(fx.describeKeep(fx.keepCover(fx.planReserve({ upcoming, policy: 'p95', eur: pos, today: TODAY })), words) === '',
     'no deposit released by then (an undated one is backup): nothing more to say');
@@ -699,19 +699,21 @@ async function testMail(fx) {
   check(/^FX יום ד' 21\.10 · /.test(m.subject) && m.html.startsWith('<!doctype html><html dir="rtl" lang="he">') && clean(m.html) && clean(m.text) && clean(m.subject),
     'Hebrew, right to left: the subject has the day and the first recommendations', m.subject);
   check(!english(m.text) && !english(m.subject), 'no English in the mail (names, the rate pair, the script\'s path and links aside)', JSON.stringify(english(m.text)));
-  check(m.text.includes('המצב היום') && m.text.includes('בחשבון האירו בפועלים') && m.text.includes('להשאיר €') && m.text.includes('להמרה של שבת 7.11')
+  check(m.text.includes('המצב היום') && m.text.includes('בחשבון האירו בפועלים') && m.text.includes('אין צורך לשמור כסף להמרה של שבת 7.11')
     && m.text.includes('פנוי להמרה עכשיו') && m.text.includes('שער EUR/ILS 3.478'),
   "today's balances in one paragraph: what is held, what to keep for the conversion, what is free, the rate against the last 90 days");
   check(!m.html.includes('<b>markup') && !m.text.includes('markup') && m.text.includes('חלק מהנתונים לא נקראו היום'), 'a read that failed is said in Hebrew; nothing from the data reaches the mail unescaped');
   check((m.html.match(/<table/g) || []).length === 2 && m.text.length < 2500 && !/If EUR\/ILS|Can be converted/.test(m.text), 'focused: no tables and no workings (they stay on the page)', String(m.text.length));
   check(m.html.includes('href="https://finance.example/business-tools/fx-challenge"') && m.text.includes('95% מתנודות השער'), 'the page\'s link and the setting used');
   const cover = fx.keepCover(fx.planFromPayload(data, 'p95').plan);
-  check(cover.covered && m.text.includes('הפיקדון שמשתחרר ביום ג\' 3.11 (€1.50M) מכסה את זה, כך שלא צריך לשמור לזה כסף מהיתרה של היום.'),
-    'the €1.5M deposit released on Tue 3 Nov holds all that is kept for Sat 7 Nov: the mail says none of today\'s cash is needed for it');
+  check(cover.covered && /אין צורך לשמור כסף להמרה של שבת 7\.11: הפיקדון שמשתחרר ביום ג' 3\.11 \(€1\.50M\) מכסה את ה-€[\d.]+[KM] שהיא מוכרת מחשבון האירו בפועלים \(95% מתנודות השער\)\./.test(m.text)
+    && !m.text.includes('להשאיר €'),
+  'the €1.5M deposit released on Tue 3 Nov covers what Sat 7 Nov takes: the mail says there is nothing to keep, and why');
   const worst = fx.keepCover(fx.planFromPayload(data, 'worst').plan);
   const mw = mail.renderMail(fx, data, { policy: 'worst' });
-  check(!worst.covered && worst.fromCash > 0 && /€1\.50M מזה מגיעים מהפיקדון שמשתחרר ביום ג' 3\.11, ו-€[\d.]+[KM] מהיתרה של היום\./.test(mw.text) && !english(mw.text),
-    'keeping the table\'s worst case: the deposit holds part of it, today\'s cash the rest');
+  check(!worst.covered && worst.fromCash > 0
+    && /להשאיר €[\d.]+[KM] בפועלים להמרה של שבת 7\.11 \(המקרה הגרוע בטבלה\): היא מוכרת €[\d.]+[KM], ו-€1\.50M מזה מגיעים מהפיקדון שמשתחרר ביום ג' 3\.11\./.test(mw.text) && !english(mw.text),
+  'keeping the table\'s worst case: keep only what the deposit doesn\'t bring, and why');
   const withCash = await fxs.readFxChallenge({
     reads: {
       ...reads,

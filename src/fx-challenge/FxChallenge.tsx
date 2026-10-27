@@ -154,11 +154,13 @@ function Kpis({ model }: { model: FxModel }) {
   const { todo } = model;
   const toConvert = todo.dues.filter((d) => d.eur > 0.5);
   const lastDue = todo.dues[todo.dues.length - 1];
+  // What today's cash has to keep for the next conversion: what it takes, less the deposits released by then.
   const keep = model.keep;
   const one = keep && keep.deposits.length === 1;
+  const keepEur = plan ? (keep ? keep.fromCash : plan.required) : null;
   const coverNote = !keep || !(keep.fromDeposits > 0.5) ? ''
-    : keep.covered ? ` · covered by ${one ? 'a deposit' : `${keep.deposits.length} deposits`}`
-      : ` · ${formatEur(keep.fromDeposits)} from ${one ? 'a deposit' : 'deposits'}`;
+    : keep.covered ? ` · ${formatEur(keep.required)}, covered by ${one ? 'a deposit' : `${keep.deposits.length} deposits`}`
+      : ` · ${formatEur(keep.required)}, ${formatEur(keep.fromDeposits)} from ${one ? 'a deposit' : 'deposits'}`;
   return (
     <div className={`grid grid-cols-2 gap-3 ${cash ? 'lg:grid-cols-5' : 'lg:grid-cols-4'}`}>
       <KpiCard label="EUR/ILS today" value={model.spot} ccy="eur" display={formatRate(model.spot)}
@@ -166,7 +168,7 @@ function Kpis({ model }: { model: FxModel }) {
       <KpiCard label="Next conversion" value={next && next.atSpot ? next.atSpot.eur : null} ccy="eur"
         display={next && next.atSpot ? `${formatEur(next.atSpot.eur)} → ${formatIls(next.atSpot.ils)}` : undefined}
         note={next ? `${formatDay(next.fixing.date)}${next.fixing.weekend ? ' (weekend)' : ''} at today's rate${next.atSpot ? `, ${next.atSpot.rate}` : ''}` : 'No conversion left in the table'} />
-      <KpiCard label="Keep for it" value={plan ? plan.required : null} ccy="eur" display={plan ? formatEur(plan.required) : undefined}
+      <KpiCard label="Keep for it" value={keepEur} ccy="eur" display={keepEur !== null ? eur0(keepEur) : undefined}
         note={model.plan ? `${POLICY_LABEL[model.plan.policy]}${coverNote}` : 'Needs balances'} />
       {cash && plan ? (
         <>
@@ -223,6 +225,8 @@ function Recommendation({ model, policy, onPolicy, inflowMonths }: { model: FxMo
     return <Card title="What to keep, what is free" aside={aside}><p className="text-sm text-slate-500">The recommendation needs today&apos;s rate and the balances; see the notes above.</p></Card>;
   }
   const n = plan.next;
+  const keep = model.keep;
+  const weekend = first.fixing.weekend ? ' (a weekend: the deal sets the day)' : '';
   // Deposits from NetSuite's books have no dates, so none of them shows as released on a day.
   const undated = !!model.position && model.position.deposits.length > 0 && model.position.deposits.every((d) => !d.valueDate);
   const later = plan.later.reduce((s, d) => s + d.amount, 0);
@@ -233,13 +237,15 @@ function Recommendation({ model, policy, onPolicy, inflowMonths }: { model: FxMo
       <div className="space-y-3 text-sm text-slate-700">
         <TodayLines model={model} />
         <p className="text-base text-slate-900">
-          Keep <strong>{formatEur(n.required)}</strong> in Hapoalim EUR (583400) for {formatDay(n.date)}
-          {first.fixing.weekend ? ' (a weekend: the deal sets the day)' : ''}.
-          {model.keep && model.keep.text ? (
-            <span title="A deposit counts if the bank pays it into Hapoalim EUR (583400) by the conversion, rather than rolling it over.">
-              {' '}{model.keep.text}
-            </span>
-          ) : null}
+          {keep && keep.text ? (
+            <>
+              {keep.covered ? <><strong>Nothing to keep</strong> for</> : <>Keep <strong>{eur0(keep.fromCash)}</strong> in Hapoalim EUR (583400) for</>}
+              {' '}{formatDay(n.date)}{weekend}:{' '}
+              <span title="A deposit counts if the bank pays it into Hapoalim EUR (583400) by the conversion, rather than rolling it over.">{keep.text}</span>.
+            </>
+          ) : (
+            <>Keep <strong>{formatEur(n.required)}</strong> in Hapoalim EUR (583400) for {formatDay(n.date)}{weekend}.</>
+          )}
           {model.cash ? null : (
             <>
               {' '}Free to convert now: <strong>{formatEur(n.freeNow)}</strong>
