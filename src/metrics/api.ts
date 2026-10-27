@@ -56,9 +56,9 @@ export async function patchSettings(patch: Partial<MetricsSettings>): Promise<Sa
   return put('/api/metrics/settings', { ...doc.value, ...patch });
 }
 
-/** What one pack figure is made of (GET /api/metrics?detail=…). */
-export async function fetchDetail(item: string, signal?: AbortSignal): Promise<Explain> {
-  const res = await fetch(`/api/metrics?detail=${encodeURIComponent(item)}`, { credentials: 'include', headers: { Accept: 'application/json' }, signal });
+/** What one pack figure is made of (GET /api/metrics?detail=…); all: every customer too (NRR, for the Excel). */
+export async function fetchDetail(item: string, signal?: AbortSignal, { all = false } = {}): Promise<Explain> {
+  const res = await fetch(`/api/metrics?detail=${encodeURIComponent(item)}${all ? '&all=true' : ''}`, { credentials: 'include', headers: { Accept: 'application/json' }, signal });
   if (res.status === 401 || res.status === 403) throw new Error(SESSION);
   const b = (await res.json().catch(() => null)) as { ok?: boolean; status?: string; error?: string; detail?: Explain } | null;
   if (b && b.status === 'computing') throw new Error('The projections are being rebuilt. Try again in a minute.');

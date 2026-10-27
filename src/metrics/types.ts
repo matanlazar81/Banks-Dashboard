@@ -106,16 +106,29 @@ export interface ExplainTable {
   more: number;
   total: Record<string, string | number | null> | null;
 }
+/** One customer of the NRR breakdown (?detail=nrr&all=true): its revenue in the base December and now. */
+export interface NrrCustomer {
+  id: string;
+  customer: string;
+  group: 'churned' | 'contracted' | 'expanded' | 'unchanged' | 'new';
+  then: number;
+  now: number;
+}
 export interface Explain {
   item: string;
   title: string;
   subtitle: string;
+  /** NRR: the base December and the month measured ('YYYY-MM'). */
+  period?: { from: string; to: string };
   value: { value: number; unit: ExplainUnit };
   formula: string[];
   source: string[];
   summary: { label: string; value: number | null; unit: ExplainUnit; strong?: boolean; sign?: boolean }[];
   notes?: string[];
   tables: ExplainTable[];
+  /** NRR with all=true: every customer, and each month of the year so far (% as on the page). */
+  customers?: NrrCustomer[];
+  series?: { month: string; nrr: number; grr: number }[];
 }
 
 export interface SavedDoc<T> { ok: true; value: T; updatedAt: string | null; updatedBy: string | null }

@@ -14,6 +14,7 @@ The FX Challenge was briefly a second tab here; it is its own page now (`docs/fx
 | `metrics.html` | the page (a small bundle, never loads the old dashboard) |
 | `GET /api/metrics` | the pack (`server/metrics.cjs`); `?refresh=true` reads ARR, NRR, churn and employees again |
 | `GET /api/metrics?detail=<item>` | what one figure is made of: `nrr`, `churn-quarter`, `churn-ytd`, `churn-forecast` |
+| `GET /api/metrics?detail=nrr&all=true` | the same, plus every customer (id, group, December and now) and each month: what NRR's Excel is built from |
 | `GET/PUT /api/metrics/settings` | the cloud cap (`server/metrics-settings.cjs`) |
 | `GET/PUT /api/metrics/deposits` | the old deposit tracker: no longer on the page, kept mounted for finance-it's route file |
 | finance-it | sidebar item → iframe of `<bank-dashboard static base>/metrics.html` (see Deploying) |
@@ -112,6 +113,16 @@ to the figure in the cell.
   - the customers in each group, by name, with this year's new customers listed but not counted;
   - NRR and GRR month by month this year, each against the same December.
   - Source: Snowflake revenue by customer and month (the same rows as the figure).
+  - **Excel** (top of the window) downloads `lsports-nrr-<month>.xlsx` for review, e.g. by the CRO. The
+    calculation is live formulas over the customer rows (`src/metrics/nrrWorkbook.ts`), so every step can be
+    checked or changed:
+    - **Summary**: how it is calculated and the source; the bridge (December revenue, expansion, contraction,
+      churned, unchanged, revenue now, each with its number of customers); NRR, GRR and the figure on the page;
+      the new customers not counted; what is worth checking (an account that moved to another customer ID
+      shows as churned and again as new).
+    - **Customers**: every customer, unchanged and new ones included, with its group, December and now, the
+      change, whether it counts, the amount kept for GRR and its Snowflake customer ID; a filter and totals.
+    - **Month by month**: NRR and GRR for each month of the year so far.
 - **Churn, last full quarter** and **year so far**: every opportunity marked churned in Snowflake
   (`DIM_OPPORTUNITY__FINANCE`) with its customer, churn month, currency and MRR, by quarter. Amounts in
   another currency are added as they are, as the figure does, and the window says so.

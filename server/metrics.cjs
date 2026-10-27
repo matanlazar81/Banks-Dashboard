@@ -20,7 +20,8 @@
 //                         and cloud (server costs as a % of revenue, or the category's % change)
 //
 // GET /api/metrics?detail=<item> answers what one figure is made of (NRR, the churn cells): the formula,
-// the source, the steps and the customers behind it (DETAILS, buildDetail).
+// the source, the steps and the customers behind it (DETAILS, buildDetail). &all=true adds every NRR customer,
+// for the Excel the page builds from it (src/metrics/nrrWorkbook.ts).
 //
 // The projections come from their cached handlers (no second NetSuite pull); the other reads are cached
 // for METRICS_TTL_MIN (default 30). GET/PUT /api/metrics/settings saves what the page edits (the cloud
@@ -154,12 +155,16 @@ function nrrSeries(rows, months) {
   }).filter(Boolean);
 }
 
+// The groups of the NRR breakdown, in the order they are listed, and their keys in the full list.
+const NRR_GROUPS = [['churned', 'churned'], ['contracted', 'contracted'], ['expanded', 'expanded'], ['flat', 'unchanged'], ['added', 'new']];
+
 /**
  * How one month's NRR is made (pure): the bridge from the base customers' December revenue to their
  * revenue now, and the customers behind each step. rows: [{ month, customer, name, rev }].
  * The figures equal nrrSeries' for the month. limit: customers listed per group (the rest are counted).
+ * all: also every customer, unchanged ones included ({ id, customer, group, then, now }), for the Excel.
  */
-function nrrDetail(rows, month, { limit = 40 } = {}) {
+function nrrDetail(rows, month, { limit = 40, all = false } = {}) {
   const prev = nrrBase(month);
   const at = (m) => {
     const out = new Map();
@@ -184,13 +189,13 @@ function nrrDetail(rows, month, { limit = 40 } = {}) {
     base += b.rev;
     kept += cur;
     gross += Math.min(cur, b.rev);
-    const row = { customer: b.name, then: round2(b.rev), now: round2(cur), change: round2(cur - b.rev) };
+    const row = { id, customer: b.name, then: round2(b.rev), now: round2(cur), change: round2(cur - b.rev) };
     if (cur <= 0) groups.churned.push(row);
     else if (Math.abs(cur - b.rev) < 0.5) groups.flat.push(row);
     else (cur > b.rev ? groups.expanded : groups.contracted).push(row);
   }
   for (const [id, c] of now) {
-    if (c.rev > 0 && !(before.has(id) && before.get(id).rev > 0)) groups.added.push({ customer: c.name, then: 0, now: round2(c.rev), change: round2(c.rev) });
+    if (c.rev > 0 && !(before.has(id) && before.get(id).rev > 0)) groups.added.push({ id, customer: c.name, then: 0, now: round2(c.rev), change: round2(c.rev) });
   }
   if (!(base > 0)) return null;
   const total = (list, f) => round2(sumOf(list, f));
@@ -210,8 +215,9 @@ function nrrDetail(rows, month, { limit = 40 } = {}) {
     };
   };
   const customers = groups.churned.length + groups.contracted.length + groups.expanded.length + groups.flat.length;
-  return {
+  const out = {
     item: 'nrr', title: `NRR, ${ytdSpan(month)}`, subtitle: `The customers going into 1 January: ${P} → ${N}`,
+    period: { from: prev, to: month },
     value: { value: Math.round((kept / base) * 10000) / 100, unit: 'pct' },
     formula: [
       `NRR is counted from 1 January: the revenue in ${N} of the customers who had revenue in ${P}, ÷ their revenue in ${P}.`,
@@ -241,6 +247,10 @@ function nrrDetail(rows, month, { limit = 40 } = {}) {
       table('New this year (not counted)', groups.added, `No revenue in ${P}: outside NRR.`),
     ],
   };
+  if (all) {
+    out.customers = NRR_GROUPS.flatMap(([g, group]) => byImpact(groups[g]).map((r) => ({ id: r.id, customer: r.customer, group, then: r.then, now: r.now })));
+  }
+  return out;
 }
 
 // ── churn: what each figure is made of ──────────────────────────────────────
@@ -688,7 +698,8 @@ const DETAILS = ['nrr', 'churn-quarter', 'churn-ytd', 'churn-forecast'];
 
 /**
  * The breakdown of one pack figure, from the same reads as the pack (null when there is nothing yet).
- *   ctx: { pnl, pnlDetails, closed, nrrMonths, quarters(), customerRevenue(), churnedOpps(from, to) }
+ *   ctx: { pnl, pnlDetails, closed, nrrMonths, quarters(), customerRevenue(), churnedOpps(from, to), all }
+ *   all (NRR): every customer and the months as figures too, for the Excel (nrrDetail).
  */
 async function buildDetail(item, ctx) {
   const Y = ctx.pnl.years[0];
@@ -697,13 +708,14 @@ async function buildDetail(item, ctx) {
     const series = nrrSeries(rows, ctx.nrrMonths);
     const last = series[series.length - 1];
     if (!last) return null;
-    const d = nrrDetail(rows, last.month);
+    const d = nrrDetail(rows, last.month, { all: !!ctx.all });
     if (d) {
       d.tables.push({
         title: `NRR month by month, ${last.month.slice(0, 4)}`, note: `Each month against ${monthShort(last.from)}, the revenue going into 1 January.`,
         columns: [{ key: 'month', label: 'Month', unit: 'text' }, { key: 'nrr', label: 'NRR', unit: 'pct' }, { key: 'grr', label: 'GRR', unit: 'pct' }],
         rows: series.map((s) => ({ month: monthShort(s.month), nrr: s.nrr, grr: s.grr })), more: 0, total: null,
       });
+      if (ctx.all) d.series = series.map((s) => ({ month: s.month, nrr: s.nrr, grr: s.grr }));
     }
     return d;
   }
@@ -790,10 +802,12 @@ function createMetricsHandler(deps = {}) {
     }
     let refresh = false;
     let detail = null;
+    let all = false;
     try {
       const q = new URL(req.url || '', 'http://localhost').searchParams;
       refresh = /^(1|true)$/.test(q.get('refresh') || '');
       detail = q.get('detail');
+      all = /^(1|true)$/.test(q.get('all') || '');
     } catch { /* plain read */ }
     if (detail !== null && !DETAILS.includes(detail)) {
       send(res, 404, { ok: false, status: 'error', error: 'There is no breakdown for that figure.' });
@@ -823,7 +837,7 @@ function createMetricsHandler(deps = {}) {
     if (detail !== null) {
       try {
         const out = await buildDetail(detail, {
-          pnl: p.entry.payload, pnlDetails: p.entry.details, closed, nrrMonths,
+          pnl: p.entry.payload, pnlDetails: p.entry.details, closed, nrrMonths, all,
           quarters: () => cached('churn', reads.churnQuarters),
           customerRevenue,
           churnedOpps: (from, to) => cached(`churnOpps:${from}:${to}`, () => reads.churnedOpps(from, to)),
