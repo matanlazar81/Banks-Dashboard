@@ -219,7 +219,7 @@ Set it up in the checkout's `.env` (immutable on the server: `sudo chattr -i .en
 FX_MAIL_TO=matan.l@lsports.eu,dotan@lsports.eu   # until a list is saved on the page; lsports.eu only, unless FX_MAIL_ALLOW_EXTERNAL=1
 FX_MAIL_FROM=matan.l@lsports.eu
 # FX_MAIL_HOUR=10                 # Israel time (default 10)
-# FX_MAIL_POLICY=p95              # today | p95 | worst, as the page's "What to keep"
+# FX_MAIL_POLICY=today            # today (default: today's scenario) | p95 | worst, as the page's "What to keep"
 # FX_MAIL_LINK=https://<finance-it>/business-tools/fx-challenge
 # FX_MAIL_ALWAYS=1                # send every day, Saturday included, with or without a recommendation
 # The mail server: FX_MAIL_SMTP_URL, else NET_CASH_SMTP_URL, else SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASS (the

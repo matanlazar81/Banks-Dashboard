@@ -22,7 +22,7 @@
 //   FX_MAIL_TO      recipients until the page has a list, comma-separated
 //   FX_MAIL_FROM    the sender (default SMTP_USER); the mail server has to allow sending as it
 //   FX_MAIL_HOUR    the hour of the daily mail, Israel time (default 10)
-//   FX_MAIL_POLICY  what to keep: today | p95 (default) | worst, as the page's "What to keep"
+//   FX_MAIL_POLICY  what to keep: today (default: what today's rate would sell) | p95 | worst, as the page's "What to keep"
 //   FX_MAIL_LINK    the page's address, for a link at the bottom (optional)
 //   FX_MAIL_ALWAYS  1: send every day, Saturday included, with or without a recommendation
 //   The mail server: FX_MAIL_SMTP_URL, else NET_CASH_SMTP_URL, else SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS
@@ -211,7 +211,7 @@ function page(title, subtitle, parts, footer) {
  * balances in one paragraph, and a link to the page for the rest. fx is src/forecast/fx-challenge.mjs.
  * Returns { subject, html, text, actions }.
  */
-function renderMail(fx, data, { policy = 'p95', link = null } = {}) {
+function renderMail(fx, data, { policy = 'today', link = null } = {}) {
   const v = fx.planFromPayload(data, policy);
   const plan = v.plan;
   const first = v.schedule[0];
@@ -368,7 +368,8 @@ function mailConfig(env, saved = null) {
     if (helo) smtp.transport.name = helo;
   }
   const hour = fxs.mailHourOf(env.FX_MAIL_HOUR);
-  const policy = ['today', 'p95', 'worst'].includes(env.FX_MAIL_POLICY) ? env.FX_MAIL_POLICY : 'p95';
+  // Today's scenario unless the .env asks for more: what today's rate would sell, as finance reads the conversions.
+  const policy = ['today', 'p95', 'worst'].includes(env.FX_MAIL_POLICY) ? env.FX_MAIL_POLICY : 'today';
   const link = /^https?:\/\/\S+$/.test(String(env.FX_MAIL_LINK || '').trim()) ? env.FX_MAIL_LINK.trim() : null;
   return { to, source, nobody: source === 'page' && !to.length, from, smtp, hour, policy, link, errors };
 }
