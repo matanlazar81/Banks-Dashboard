@@ -485,6 +485,11 @@ export function dueWhat(due) {
   return parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0] || '';
 }
 
+const isoAddDays = (iso, n) => new Date(utc(iso) + n * DAY_MS).toISOString().slice(0, 10);
+/** A new deposit for a conversion's gap pays out at least this many days from today; a nearer conversion is left to
+ * the cash (the keep line). */
+const LADDER_MIN_DAYS = 14;
+
 const addMonthsIso = (iso, n) => {
   const [y, m, d] = iso.split('-').map(Number);
   const last = new Date(Date.UTC(y, m - 1 + n + 1, 0)).getUTCDate();
@@ -615,8 +620,44 @@ export function planReserve({ upcoming, policy = 'p95', eur, inflowPerDay = null
     return { months, until, eur: Math.max(0, Math.floor(most / 10000) * 10000) };
   });
 
+  // First in, first out: each deposit counts for the first conversion after it pays out, and what a conversion doesn't
+  // take rolls on to the next. What the deposits don't cover is the conversion's gap: euros on hand or coming in fill
+  // it, or a new deposit timed for it (until: the business day before the euros have to be in Hapoalim EUR).
+  // The next conversion's gap is the cash to keep (the keep line), so a deposit is timed for the later ones only.
+  let carried = 0;
+  let prior = today;
+  const coverage = fx.map((f, i) => {
+    const req = requirementOf(policy, f.conv, f.risk);
+    const releasedDeposits = releasedBetween(prior, f.date);
+    const released = releasedDeposits.reduce((s, d) => s + d.amount, 0);
+    const have = carried + released;
+    const until = businessDayOnOrBefore(isoAddDays(businessDayOnOrBefore(f.date), -1));
+    const row = { month: f.month, date: f.date, required: req, released, releasedDeposits, carried, have, gap: Math.max(0, req - have), until, timed: i > 0 && daysTo(until) >= LADDER_MIN_DAYS };
+    carried = Math.max(0, have - req);
+    prior = f.date;
+    return row;
+  });
+  // The new deposits for the gaps, earliest first: each holds its gap (rounded up to €10K) or as much as the dues
+  // before it pays out leave room for (rounded down), never more than today's euros above the floor. A deposit locks
+  // its euros away from every due before it pays out. A conversion closer than LADDER_MIN_DAYS is left to the cash.
+  const ladder = [];
+  const lockedAt = (date) => ladder.filter((l) => l.until > date).reduce((s, l) => s + l.eur, 0);
+  let laddered = 0;
+  for (const c of coverage) {
+    if (c.gap < 0.5 || !c.timed) continue;
+    const room = Math.min(cap - laddered, ...checkpoints.filter((x) => x.date < c.until).map((x) => x.spare - lockedAt(x.date)));
+    const eur = Math.min(Math.ceil(c.gap / 10000) * 10000, Math.floor(Math.max(0, room) / 10000) * 10000);
+    if (eur < 10000) break;
+    ladder.push({ month: c.month, date: c.date, until: c.until, eur, gap: c.gap, required: c.required, have: c.have });
+    laddered += eur;
+  }
+  // What can still leave for good once the ladder is deposited.
+  next.spareAfterLadder = laddered > 0
+    ? Math.max(0, Math.min(cap - laddered, ...checkpoints.map((x) => x.spare - lockedAt(x.date))))
+    : next.spare;
+
   // Deposits maturing after the last fixing shown: not needed for any of them.
-  return { policy, next, path: shown, later: releasedBetween(shown[shown.length - 1].date, null), deposits };
+  return { policy, next, path: shown, later: releasedBetween(shown[shown.length - 1].date, null), deposits, coverage, ladder };
 }
 
 /**
@@ -716,8 +757,10 @@ function cashPlanOf(data, today, spot, upcoming, schedule, policy) {
  *                  days: as much now as today's euros above the EUR vendors' floor allow
  *   short          the euros held and expected fall short of a due: urgent within `lead` business days
  *   move           the conversion day is within `moveLead` business days and Hapoalim EUR holds less than to keep there
- *   convert-spare  euros spare while EUR/ILS is high
- *   deposit        euros spare for a new deposit
+ *   ladder         a conversion the deposits don't cover (first in, first out): spare euros into deposits that pay out
+ *                  just before it, earliest first
+ *   convert-spare  euros spare while EUR/ILS is high (what is left after the ladder)
+ *   deposit        euros spare for a new deposit of 1, 3 or 6 months, when every conversion ahead is covered
  * Amounts under `minEur` are left out. Returns { actions: [{ kind, key (the same on another day), urgent, eur, ... }],
  * ahead (duesAhead) }.
  */
@@ -753,9 +796,17 @@ export function todayActions(view, today, { lead = 5, moveLead = 3, minEur = 500
   }
   const spare = view.cash ? n.spare : n.freeNow;
   const shortNow = view.cash ? !!n.short : n.shortfall > 0;
-  if (!shortNow && spare >= minEur) {
-    if (high) actions.push({ kind: 'convert-spare', key: 'spare', urgent: false, eur: spare });
-    else {
+  // A conversion the deposits don't cover (first in, first out) comes first: spare euros go into deposits timed for
+  // it. They pay out before it, so a shortfall after them is no reason to wait (the ladder already leaves every due
+  // before them covered). Only with no such conversion left open is there a deposit for 1, 3 or 6 months.
+  const legs = plan.ladder || [];
+  const laddered = legs.reduce((s, l) => s + l.eur, 0);
+  if (laddered >= minEur) actions.push({ kind: 'ladder', key: 'ladder', urgent: false, eur: laddered, legs });
+  const open = (plan.coverage || []).some((c) => c.timed && c.gap >= minEur);
+  const left = laddered >= minEur ? Math.min(spare, n.spareAfterLadder) : spare;
+  if (!shortNow && left >= minEur) {
+    if (high) actions.push({ kind: 'convert-spare', key: 'spare', urgent: false, eur: left });
+    else if (!open) {
       const options = (plan.deposits || []).filter((x) => x.eur >= minEur);
       if (options.length) actions.push({ kind: 'deposit', key: 'deposit', urgent: false, eur: options[0].eur, options });
     }
@@ -804,6 +855,19 @@ export function describeAction(a, view, today, fmt) {
   }
   if (a.kind === 'convert-spare') {
     return { head: `Convert the ${eur(a.eur)} spare today`, body: `${rateIs}. It brings ${ils(a.eur * rc.rate)}, with every conversion, salary and vendor payment ahead still covered.` };
+  }
+  if (a.kind === 'ladder') {
+    const legs = a.legs;
+    if (legs.length === 1) {
+      const l = legs[0];
+      return { head: `Put ${eur(l.eur)} in a deposit until ${day(l.until)}`, body: `For the ${day(l.date)} conversion: it takes ${eur(l.required)}, and the deposits paid out by then hold ${eur(l.have)}, ${eur(l.gap)} short. Every payment before then stays covered.` };
+    }
+    const first = monthNameOf(legs[0].month);
+    const last = monthNameOf(legs[legs.length - 1].month);
+    return {
+      head: `Put ${eur(a.eur)} in deposits for the ${first} ${legs.length === 2 ? 'and' : 'to'} ${last} conversions`,
+      body: `${legs.map((l) => `${eur(l.eur)} until ${day(l.until)} for ${day(l.date)} (${eur(l.gap)} short)`).join(', ')}. Every payment before then stays covered.`,
+    };
   }
   // The same amount for every term: one line ("€430K for 1, 3 or 6 months").
   const last = a.options[a.options.length - 1];

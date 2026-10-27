@@ -128,6 +128,20 @@ function actionText(a, v, today) {
   if (a.kind === 'convert-spare') {
     return { head: `להמיר היום את ${eur(a.eur)} הפנויים`, body: `${rateIs(rc)}. התמורה: ${ils(a.eur * rc.rate)}, וכל ההמרות, המשכורות והספקים עדיין מכוסים.` };
   }
+  if (a.kind === 'ladder') {
+    const legs = a.legs;
+    const tail = 'כל התשלומים עד אז עדיין מכוסים.';
+    if (legs.length === 1) {
+      const l = legs[0];
+      return { head: `להפקיד ${eur(l.eur)} בפיקדון עד ${day(l.until)}`, body: `להמרה של ${day(l.date)}: היא מוכרת ${eur(l.required)}, והפיקדונות שמשתחררים עד אז מכסים ${eur(l.have)}, כלומר חסרים ${eur(l.gap)}. ${tail}` };
+    }
+    const first = monthName(legs[0].month);
+    const last = monthName(legs[legs.length - 1].month);
+    return {
+      head: `להפקיד ${eur(a.eur)} בפיקדונות להמרות של ${legs.length === 2 ? `${first} ו${last}` : `${first} עד ${last}`}`,
+      body: `${legs.map((l) => `${eur(l.eur)} עד ${day(l.until)} להמרה של ${day(l.date)} (חסרים ${eur(l.gap)})`).join(', ')}. ${tail}`,
+    };
+  }
   // A new deposit: one line when every term holds the same.
   const last = a.options[a.options.length - 1];
   const options = a.options.length > 1 && a.options.every((o) => Math.abs(o.eur - a.eur) < 0.5)
@@ -150,6 +164,14 @@ function keepLine(cover, date, policy) {
   }
   const which = ds.length === 1 ? `מהפיקדון שמשתחרר ב${day(last)}` : `מ-${ds.length} פיקדונות שמשתחררים עד ${day(last)}`;
   return `להשאיר ${eur(cover.fromCash)} בפועלים ${conversion} (${policy}): היא מוכרת ${eur(cover.required)}, ו-${eur(cover.fromDeposits)} מזה מגיעים ${which}.`;
+}
+
+/** A conversion against the deposits, first in, first out (plan.coverage): "יום ה' 7.1: €1.05M, הפיקדונות מכסים €922K:
+ * חסרים €128K". */
+function coverText(c) {
+  const head = `${day(c.date)}: ${eur(c.required)}`;
+  if (!(c.gap >= 0.5)) return `${head}, מכוסה מהפיקדונות (${eur(c.have)})`;
+  return c.have >= 0.5 ? `${head}, הפיקדונות מכסים ${eur(c.have)}: חסרים ${eur(c.gap)}` : `${head}, אין פיקדון שמשתחרר לפניה: חסרים ${eur(c.gap)}`;
 }
 
 /** A payment day in the list: "יום ה' 5.11, בעוד 15 ימים: שכר נטו …, ₪4.92M: להמיר €1.21M". */
@@ -215,6 +237,11 @@ function renderMail(fx, data, { policy = 'p95', link = null } = {}) {
       parts.push(para(esc(s), s, 'font-size:15px;'));
     }
     title = said.length ? said[0].head : 'אין היום המלצות';
+    // The conversions against the deposits, first in, first out: which ones the deposits leave short.
+    if (plan.coverage && plan.coverage.length) {
+      parts.push(heading(`ההמרות הבאות מול הפיקדונות (${POLICY[plan.policy]})`));
+      parts.push(list(plan.coverage.map((c) => { const s = `${coverText(c)}.`; return { html: esc(s), text: s, style: c.gap >= 0.5 ? 'color:#be123c;' : 'color:#64748b;' }; })));
+    }
     if (todo.ahead.dues.length) {
       parts.push(heading('תשלומים בשקלים בתקופה הקרובה'));
       parts.push(list(todo.ahead.dues.map((d) => { const s = `${dueText(d, today)}.`; return { html: esc(s), text: s, style: d.eur > 0.5 ? 'color:#0f172a;' : 'color:#64748b;' }; })));
@@ -480,4 +507,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { main, sendNow, renderMail, failureMail, mailDecision, parseArgs, parseRecipients, smtpFrom, mailConfig, scheduleState, israelHour, formatDay: day, MARKER_FILE };
+module.exports = { main, sendNow, renderMail, failureMail, mailDecision, parseArgs, parseRecipients, smtpFrom, mailConfig, scheduleState, israelHour, formatDay: day, actionText, MARKER_FILE };

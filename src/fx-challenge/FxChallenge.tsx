@@ -125,6 +125,7 @@ export default function FxChallenge() {
             <Warnings warnings={data.warnings} />
             <Kpis model={model} />
             <Recommendation model={model} policy={policy} onPolicy={setPolicy} inflowMonths={data.inflowMonths} />
+            {model.plan && model.plan.coverage.length > 0 && <CoverageCard model={model} plan={model.plan} />}
             {model.cash && <ShekelsCard cash={model.cash} spot={model.spot} policy={policy} inflowMonths={data.inflowMonths} />}
             <Simulation model={model} rateText={rateText} onRate={setRateText} />
             <TableCard data={data} model={model} onSaved={reload} />
@@ -350,6 +351,63 @@ function Recommendation({ model, policy, onPolicy, inflowMonths }: { model: FxMo
         </div>
         {showWorkings && <Workings model={model} plan={plan} month={chosen} inflowMonths={inflowMonths} onClose={() => setShowWorkings(false)} />}
       </div>
+    </Card>
+  );
+}
+
+const COVER_TIP = {
+  released: "EUR deposits paying out after the previous conversion (after today, for the first) and by this one, at the bank's value then, interest included. Hover a figure for each deposit and its date. They count only if the bank pays them out rather than rolling them over.",
+  carried: "What the deposits of the conversions before it left over: it rolls on to this one.",
+  result: 'The deposits paid out before it, plus what is left from earlier, against what it takes. Short: the euros on hand or coming in have to fill the rest, or a new deposit timed for it.',
+  ladder: "A new deposit that pays out the business day before the euros have to be in Hapoalim EUR (583400), for the gap rounded up to €10K, as much as the payments before it leave room for; earliest first. A conversion less than two weeks away takes the rest from today's cash (the keep line above).",
+};
+
+/** The next conversions against the deposits, first in, first out, and the new deposits timed for their gaps. */
+function CoverageCard({ model, plan }: { model: FxModel; plan: ReservePlan }) {
+  const year0 = model.schedule[0] ? model.schedule[0].fixing.month.slice(0, 4) : '';
+  return (
+    <Card title="The conversions against your deposits (first in, first out)">
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-xs">
+          <thead>
+            <tr className="border-b border-slate-200">
+              <Th left tip={PATH_TIP.fixing}>Conversion day</Th>
+              <Th tip={KEEP_TIP[plan.policy]}>It takes ({POLICY_LABEL[plan.policy].toLowerCase()})</Th>
+              <Th tip={COVER_TIP.released}>Deposits paid out before it</Th>
+              <Th tip={COVER_TIP.carried}>Left from earlier</Th>
+              <Th tip={COVER_TIP.result}>Covered?</Th>
+              <Th tip={COVER_TIP.ladder}>New deposit for it</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {plan.coverage.map((c) => {
+              const leg = plan.ladder.find((l) => l.month === c.month);
+              const over = c.have - c.required;
+              return (
+                <tr key={c.month} className="border-b border-slate-100">
+                  <td className="px-2 py-1.5 text-left text-slate-700">{formatDay(c.date)}{c.month.slice(0, 4) !== year0 ? ` ${c.month.slice(0, 4)}` : ''}</td>
+                  <td className={TD}>{formatEur(c.required)}</td>
+                  <td className={`${TD} text-slate-600`} title={c.releasedDeposits.length ? depositLines(c.releasedDeposits).join('\n') : undefined}>
+                    {c.released > 0.5 ? <span className={HINT}>{formatEur(c.released)}</span> : '–'}
+                  </td>
+                  <td className={`${TD} text-slate-600`}>{c.carried > 0.5 ? formatEur(c.carried) : '–'}</td>
+                  <td className={`${TD} whitespace-nowrap font-medium ${c.gap >= 0.5 ? 'text-rose-700' : 'text-emerald-700'}`}>
+                    {c.gap >= 0.5 ? `${formatEur(c.gap)} short` : `covered${over >= 500 ? ` (+${formatEur(over)})` : ''}`}
+                  </td>
+                  <td className={`${TD} whitespace-nowrap text-slate-700`}>
+                    {leg ? `${formatEur(leg.eur)} until ${formatDay(leg.until)}` : c.gap >= 0.5 && !c.timed ? "from today's cash" : '–'}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-1 text-[11px] text-slate-500">
+        Each deposit counts for the first conversion after it pays out, and what one conversion doesn&apos;t take rolls on to the next.
+        A conversion the deposits don&apos;t cover is short: the euros on hand or coming in fill the rest, or a new deposit that pays out
+        just before it (the last column, also under what to do today). Hover a header for what it means.
+      </p>
     </Card>
   );
 }
