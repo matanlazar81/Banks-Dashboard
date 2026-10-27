@@ -79,9 +79,10 @@ briefly a tab of the Metrics page before it got its own sidebar item.
   - **Deposits for the conversions the deposits leave short** (`ladder`): "Put €440K in deposits for the January to
     March conversions: €130K until Wed 6 Jan for Thu 7 Jan (€128K short), …". It comes before any other use of spare
     euros.
-  - **Spare** euros: convert them on a high rate (what the ladder leaves), else **put them in a new deposit** for 1, 3
-    or 6 months (the terms that hold at least €50K, as one line when every term holds the same), but only when no
-    conversion ahead is left short by €50K or more.
+  - **Spare** euros: **put them in a new deposit** for 1, 3 or 6 months (the terms that hold at least €50K, as one
+    line when every term holds the same), but only when no conversion ahead is left short by €50K or more. Nothing is
+    converted for the rate alone, however high EUR/ILS is (converting the spare on a high rate was dropped on 27 Oct
+    2026); the rate check stays on the page as information.
   - Amounts under €50K are left out. With no recommendation, the page says so and no mail goes.
 - **Payments in shekels ahead** (`duesAhead`, `describeDue`): each payment day up to the first month with salaries
   (its 5th, 10th and 14th, and any before): when (a Friday or Saturday one is ready by the Thursday) and in how many
@@ -180,10 +181,9 @@ recommendation**. It reads NetSuite and the bank balances fresh (no cache) and c
 
 **When it goes** (`mailDecision`): every day but Saturday (the bank works Sunday to Friday; finance writes to it on
 Fridays too), when there is at least one recommendation (a conversion for a payment the balances don't cover, a
-shortfall, euros to move to Hapoalim before a conversion, deposits for the conversions the deposits leave short, a
-high rate to convert the spare, or spare euros for a new deposit), and never without one. So a
-conversion for the salaries is in the mail, in red, from 2 business days before it has to be ready until the
-balances show it converted. A Saturday, or a day with no recommendation, sends nothing. `FX_MAIL_ALWAYS=1` sends
+shortfall, euros to move to Hapoalim before a conversion, deposits for the conversions the deposits leave short, or
+spare euros for a new deposit), and never without one. So a conversion for the salaries is in the mail, in red, from
+2 business days before it has to be ready until the balances show it converted. A Saturday, or a day with no recommendation, sends nothing. `FX_MAIL_ALWAYS=1` sends
 every day, Saturday included.
 
 **Who gets it** is kept on the page, in the **Daily mail** card at the bottom:

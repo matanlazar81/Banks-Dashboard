@@ -121,9 +121,6 @@ function actionText(a, v, today) {
     const dep = fromDeposits > 0.5 ? `, מזה ${eur(fromDeposits)} מפיקדונות שמשתחררים עד אז` : '';
     return { head: `להעביר ${eur(a.eur)} לחשבון האירו בפועלים עד ${day(a.by)}`, body: `ההמרה של ${day(a.date)} יורדת מחשבון האירו בפועלים (583400), שבו ${eur(n.hapoalim)}; צריך שיהיו בו ${eur(n.required)}${dep}.` };
   }
-  if (a.kind === 'convert-spare') {
-    return { head: `להמיר היום את ${eur(a.eur)} הפנויים`, body: `${rateIs(rc)}. התמורה: ${ils(a.eur * rc.rate)}, וכל ההמרות, המשכורות והספקים עדיין מכוסים.` };
-  }
   if (a.kind === 'ladder') {
     const legs = a.legs;
     const tail = 'כל התשלומים עד אז עדיין מכוסים.';

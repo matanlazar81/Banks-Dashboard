@@ -179,8 +179,6 @@ export interface NextFixingPlan {
   inflowUntil: number | null;
   freeByFixing: number | null;
   moveToHapoalim: number;
-  /** What can still leave for good once the ladder's deposits are made (spare when there is no ladder). */
-  spareAfterLadder: number;
 }
 /** A deposit maturing on valueDate: the bank's value then, interest included. */
 export interface DepositRelease { amount: number; valueDate: string; label: string }
@@ -295,7 +293,6 @@ export type TodayAction =
   | { kind: 'convert'; key: string; urgent: boolean; eur: number; by: string; left: number; due: ShekelDue }
   | { kind: 'short'; key: string; urgent: boolean; eur: number; date: string; by: string; left: number; shekels: boolean }
   | { kind: 'move'; key: string; urgent: boolean; eur: number; date: string; by: string; left: number }
-  | { kind: 'convert-spare'; key: string; urgent: boolean; eur: number }
   | { kind: 'ladder'; key: string; urgent: boolean; eur: number; legs: LadderLeg[] }
   | { kind: 'deposit'; key: string; urgent: boolean; eur: number; options: { months: number; until: string; eur: number }[] };
 export declare function todayActions(view: PlanView, today: string, opts?: { lead?: number; moveLead?: number; minEur?: number; notice?: number }): { actions: TodayAction[]; ahead: { dues: ShekelDue[]; eur: number } };
