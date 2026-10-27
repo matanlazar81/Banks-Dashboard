@@ -7,9 +7,9 @@
 //   Net cash              New Bank Dashboard, Plan: bank at the last month-end (actual), December
 //                         closings (forecast). There is no debt data, so net cash is the cash in the bank.
 //   ARR                   Snowflake MRR × 12 now (actual); December customer revenue × 12 (forecast)
-//   NRR                   Snowflake contracted MRR by customer (the source of ARR), from 1 January: the last
-//                         closed month's MRR of the customers who had MRR in December ÷ their December MRR (GRR
-//                         caps each at it)
+//   NRR                   Snowflake contracted revenue by customer (Salesforce's revenue schedule, paid or still to
+//                         be collected), from 1 January: the last closed month's revenue of the customers who had
+//                         contracted revenue in December ÷ their December revenue (GRR caps each at it)
 //   Churn                 churned MRR by quarter (Snowflake), and the revenue the forecast loses to churn
 //   Cloud vs cap          cloud (NetSuite 640xxx; forecast: the budget's cloud share of operating
 //                         expenses) against cap % × projected FY revenue
@@ -121,20 +121,23 @@ function cloudYear({ block, details, targetsBase, category, capPct, revenue, wit
 }
 
 // ── NRR ─────────────────────────────────────────────────────────────────────
-// NRR and GRR are counted on contracted MRR by customer (sfCustomerMrr: the opportunities' MRR, the source of
-// ARR), not on the revenue booked in a month: a customer whose contract runs counts in full, whatever was billed.
-/** NRR is counted from 1 January: a month's base is the December before its year, the MRR going into the year. */
+// NRR and GRR are counted on contracted revenue by customer (sfContractedRevenue: Salesforce's revenue schedule,
+// what each contract brings in a month, paid or still to be collected), not on what was booked or paid: a
+// customer whose contract runs counts in full. The contracted MRR table (FCT_OPPORTUNITY__MONTHLY, the source of
+// ARR) holds only the current month, so it can't give December's base.
+/** NRR is counted from 1 January: a month's base is the December before its year, the revenue going into the year. */
 const nrrBase = (mKey) => `${Number(String(mKey).slice(0, 4)) - 1}-12`;
 /** 'Jan–Sep 2026' ('Jan 2026' in January): the year to date through a month. */
 const ytdSpan = (mKey) => (String(mKey).slice(5) === '01' ? monthShort(mKey) : `Jan–${monthShort(mKey)}`);
 
-/** NRR and GRR for each month from MRR by customer: [{ month, customer, mrr }], each against its base (nrrBase). */
+/** NRR and GRR for each month from contracted revenue by customer: [{ month, customer, amount }], each against its
+ *  base (nrrBase). */
 function nrrSeries(rows, months) {
   const by = new Map();
   for (const r of rows) {
     if (!by.has(r.month)) by.set(r.month, new Map());
     const m = by.get(r.month);
-    m.set(r.customer, (m.get(r.customer) || 0) + num(r.mrr));
+    m.set(r.customer, (m.get(r.customer) || 0) + num(r.amount));
   }
   return months.map((month) => {
     const from = nrrBase(month);
@@ -161,11 +164,11 @@ function nrrSeries(rows, months) {
 const NRR_GROUPS = [['churned', 'churned'], ['contracted', 'contracted'], ['expanded', 'expanded'], ['flat', 'unchanged'], ['added', 'new']];
 
 /**
- * How one month's NRR is made (pure): the bridge from the base customers' December MRR to their MRR now, and
- * the customers behind each step. rows: [{ month, customer, name, mrr, currency, churnDate }] (sfCustomerMrr).
- * The figures equal nrrSeries' for the month. limit: customers listed per group (the rest are counted).
- * all: also every customer, unchanged ones included ({ id, customer, group, then, now, currency, churnDate }),
- * for the Excel.
+ * How one month's NRR is made (pure): the bridge from the base customers' December contracted revenue to theirs
+ * now, and the customers behind each step. rows: [{ month, customer, name, amount, unpaid, churnDate }]
+ * (sfContractedRevenue). The figures equal nrrSeries' for the month. limit: customers listed per group (the rest
+ * are counted). all: also every customer, unchanged ones included ({ id, customer, group, then, now, unpaid,
+ * churnDate }), for the Excel; unpaid is the part of now still to be collected.
  */
 function nrrDetail(rows, month, { limit = 40, all = false } = {}) {
   const prev = nrrBase(month);
@@ -173,9 +176,9 @@ function nrrDetail(rows, month, { limit = 40, all = false } = {}) {
     const out = new Map();
     for (const r of rows) {
       if (r.month !== m) continue;
-      const c = out.get(r.customer) || { name: r.name || r.customer, mrr: 0, currencies: new Set(), churnDate: null };
-      c.mrr += num(r.mrr);
-      if (r.currency) c.currencies.add(r.currency);
+      const c = out.get(r.customer) || { name: r.name || r.customer, amount: 0, unpaid: 0, churnDate: null };
+      c.amount += num(r.amount);
+      c.unpaid += num(r.unpaid);
       if (r.churnDate) c.churnDate = r.churnDate;
       out.set(r.customer, c);
     }
@@ -184,29 +187,28 @@ function nrrDetail(rows, month, { limit = 40, all = false } = {}) {
   const before = at(prev);
   const now = at(month);
   if (!before.size || !now.size) return null;
-  // A customer's contract currencies and its CRM churn date, from its rows in either month.
+  // The part of a customer's revenue now still to be collected, and its CRM churn date (from either month).
   const infoOf = (id) => {
     const [b, n] = [before.get(id), now.get(id)];
-    const currencies = new Set([...(b ? b.currencies : []), ...(n ? n.currencies : [])]);
-    return { currency: [...currencies].sort().join('+') || 'EUR', churnDate: (b && b.churnDate) || (n && n.churnDate) || null };
+    return { unpaid: n ? round2(Math.max(0, n.unpaid)) : 0, churnDate: (b && b.churnDate) || (n && n.churnDate) || null };
   };
   const groups = { churned: [], contracted: [], expanded: [], flat: [], added: [] };
   let base = 0;
   let kept = 0;
   let gross = 0;
   for (const [id, b] of before) {
-    if (b.mrr <= 0) continue;
-    const cur = Math.max(0, now.has(id) ? now.get(id).mrr : 0);
-    base += b.mrr;
+    if (b.amount <= 0) continue;
+    const cur = Math.max(0, now.has(id) ? now.get(id).amount : 0);
+    base += b.amount;
     kept += cur;
-    gross += Math.min(cur, b.mrr);
-    const row = { id, customer: b.name, then: round2(b.mrr), now: round2(cur), change: round2(cur - b.mrr), ...infoOf(id) };
+    gross += Math.min(cur, b.amount);
+    const row = { id, customer: b.name, then: round2(b.amount), now: round2(cur), change: round2(cur - b.amount), ...infoOf(id) };
     if (cur <= 0) groups.churned.push(row);
-    else if (Math.abs(cur - b.mrr) < 0.5) groups.flat.push(row);
-    else (cur > b.mrr ? groups.expanded : groups.contracted).push(row);
+    else if (Math.abs(cur - b.amount) < 0.5) groups.flat.push(row);
+    else (cur > b.amount ? groups.expanded : groups.contracted).push(row);
   }
   for (const [id, c] of now) {
-    if (c.mrr > 0 && !(before.has(id) && before.get(id).mrr > 0)) groups.added.push({ id, customer: c.name, then: 0, now: round2(c.mrr), change: round2(c.mrr), ...infoOf(id) });
+    if (c.amount > 0 && !(before.has(id) && before.get(id).amount > 0)) groups.added.push({ id, customer: c.name, then: 0, now: round2(c.amount), change: round2(c.amount), ...infoOf(id) });
   }
   if (!(base > 0)) return null;
   const total = (list, f) => round2(sumOf(list, f));
@@ -225,49 +227,46 @@ function nrrDetail(rows, month, { limit = 40, all = false } = {}) {
       total: { customer: 'Total', then: total(list, (r) => r.then), now: total(list, (r) => r.now), change: total(list, (r) => r.change) },
     };
   };
-  const customers = groups.churned.length + groups.contracted.length + groups.expanded.length + groups.flat.length;
-  const everyone = NRR_GROUPS.flatMap(([g]) => groups[g]);
-  const foreign = everyone.filter((r) => r.currency !== 'EUR');
+  const counted = [...groups.churned, ...groups.contracted, ...groups.expanded, ...groups.flat];
   const churnDated = groups.churned.filter((r) => r.churnDate).length;
   const out = {
-    item: 'nrr', title: `NRR, ${ytdSpan(month)}`, subtitle: `The customers going into 1 January: ${P} → ${N} (MRR)`,
+    item: 'nrr', title: `NRR, ${ytdSpan(month)}`, subtitle: `The customers going into 1 January: ${P} → ${N} (contracted revenue)`,
     period: { from: prev, to: month },
     value: { value: Math.round((kept / base) * 10000) / 100, unit: 'pct' },
     formula: [
-      `NRR is counted from 1 January on contracted MRR: the MRR in ${N} of the customers who had MRR in ${P}, ÷ their MRR in ${P}.`,
-      `GRR = the same with each customer capped at its ${P} MRR, so growth doesn't count: only what was kept.`,
-      `Customers with no MRR in ${P} (new this year) are left out (listed at the end, not counted). No forecast: only the contracts as they stood.`,
+      `NRR is counted from 1 January on contracted revenue: the ${N} revenue of the customers who had contracted revenue in ${P}, ÷ their ${P} revenue.`,
+      'Contracted revenue is what each contract brings in the month in Salesforce\'s revenue schedule, paid or still to be collected. Nothing is forecast.',
+      `GRR = the same with each customer capped at its ${P} revenue, so growth doesn't count: only what was kept.`,
+      `Customers with no contracted revenue in ${P} (new this year) are left out (listed at the end, not counted).`,
     ],
     source: [
-      'Snowflake FCT_OPPORTUNITY__MONTHLY__FINANCE: contracted MRR by opportunity and month (OPPORTUNITY_MRR, the source of ARR), by customer through DIM_OPPORTUNITY__FINANCE.',
+      'Snowflake FCT_OPPORTUNITY_MONTHLY_REVENUE__SCD_DAILY__FINANCE: Salesforce\'s revenue schedule by opportunity and month, in € (REVENUE_AMOUNT_EUR, paid and unpaid), summed by customer.',
       'Test customers excluded (DIM_CUSTOMER__FINANCE.IS_TEST); names and churn dates from DIM_CUSTOMER__FINANCE.',
       'Read when the page loads and kept for 30 minutes; Refresh reads it again.',
     ],
     summary: [
-      { label: `Customers with MRR in ${P}`, value: customers, unit: 'int' },
-      { label: `Their MRR, ${P}`, value: round2(base), unit: 'eur' },
+      { label: `Customers with contracted revenue in ${P}`, value: counted.length, unit: 'int' },
+      { label: `Their contracted revenue, ${P}`, value: round2(base), unit: 'eur' },
       { label: `+ Expansion (${groups.expanded.length} customers)`, value: expansion, unit: 'eur', sign: true },
       { label: `− Contraction (${groups.contracted.length} customers)`, value: -contraction, unit: 'eur', sign: true },
-      { label: `− Churned (${groups.churned.length} customers, no MRR in ${N})`, value: -churn, unit: 'eur', sign: true },
-      { label: `= Their MRR, ${N}`, value: round2(kept), unit: 'eur', strong: true },
+      { label: `− Churned (${groups.churned.length} customers, nothing in ${N})`, value: -churn, unit: 'eur', sign: true },
+      { label: `= Their contracted revenue, ${N}`, value: round2(kept), unit: 'eur', strong: true },
+      { label: `Of which still to be collected, ${N}`, value: total(counted, (r) => r.unpaid), unit: 'eur' },
       { label: `NRR = ${N} ÷ ${P}`, value: Math.round((kept / base) * 10000) / 100, unit: 'pct', strong: true },
-      { label: `GRR (each capped at its ${P} MRR)`, value: Math.round((gross / base) * 10000) / 100, unit: 'pct' },
-      { label: `Not counted: ${groups.added.length} new customers, MRR ${N}`, value: total(groups.added, (r) => r.now), unit: 'eur' },
+      { label: `GRR (each capped at its ${P} revenue)`, value: Math.round((gross / base) * 10000) / 100, unit: 'pct' },
+      { label: `Not counted: ${groups.added.length} new customers, revenue ${N}`, value: total(groups.added, (r) => r.now), unit: 'eur' },
     ],
-    notes: [
-      ...(groups.churned.length ? [`Churned customers with a churn date in the CRM (DIM_CUSTOMER__FINANCE.CHURN_DATE): ${churnDated} of ${groups.churned.length}.`] : []),
-      ...(foreign.length ? [`Customers with contracts in ${[...new Set(foreign.map((r) => r.currency))].join(', ')}: ${foreign.length}. Their MRR is added as it is, not converted to €, as the churn figures do: each customer's own change is right, only its weight in the total moves.`] : []),
-    ],
+    notes: groups.churned.length ? [`Churned customers with a churn date in the CRM (DIM_CUSTOMER__FINANCE.CHURN_DATE): ${churnDated} of ${groups.churned.length}.`] : [],
     tables: [
-      table('Churned', groups.churned, `MRR in ${P}, none in ${N}.`),
-      table('Contracted', groups.contracted, `Less MRR in ${N} than in ${P}.`),
-      table('Expanded', groups.expanded, `More MRR in ${N} than in ${P}.`),
-      table('New this year (not counted)', groups.added, `No MRR in ${P}: outside NRR.`),
+      table('Churned', groups.churned, `Contracted revenue in ${P}, none in ${N}.`),
+      table('Contracted', groups.contracted, `Less in ${N} than in ${P}.`),
+      table('Expanded', groups.expanded, `More in ${N} than in ${P}.`),
+      table('New this year (not counted)', groups.added, `No contracted revenue in ${P}: outside NRR.`),
     ],
   };
   if (all) {
     out.customers = NRR_GROUPS.flatMap(([g, group]) => byImpact(groups[g]).map((r) => ({
-      id: r.id, customer: r.customer, group, then: r.then, now: r.now, currency: r.currency, churnDate: r.churnDate,
+      id: r.id, customer: r.customer, group, then: r.then, now: r.now, unpaid: r.unpaid, churnDate: r.churnDate,
     })));
   }
   return out;
@@ -424,40 +423,36 @@ async function sfChurnedOpportunities(sf, from, to) {
 }
 
 /**
- * Contracted MRR by customer and month, from..to inclusive: the opportunities' MRR (FCT_OPPORTUNITY__MONTHLY, the
- * source of ARR) summed by customer and contract currency, test customers excluded, with the customer's name and
- * CRM churn date. DIM_OPPORTUNITY and DIM_CUSTOMER are reduced to one row per id first, so a duplicate row can't
- * multiply the MRR.
+ * Contracted revenue by customer and month, from..to inclusive: Salesforce's revenue schedule (MONTHLY_REVENUE:
+ * what each contract brings in a month, in €, paid or still to be collected) summed by customer, with the unpaid
+ * part, test customers excluded, with the customer's name and CRM churn date. DIM_CUSTOMER is reduced to one row
+ * per customer first, so a duplicate row can't multiply the revenue.
  */
-async function sfCustomerMrr(sf, from, to) {
-  if (!/^\d{4}-\d{2}$/.test(from) || !/^\d{4}-\d{2}$/.test(to)) throw new Error('sfCustomerMrr: bad months');
+async function sfContractedRevenue(sf, from, to) {
+  if (!/^\d{4}-\d{2}$/.test(from) || !/^\d{4}-\d{2}$/.test(to)) throw new Error('sfContractedRevenue: bad months');
   const T = require(path.join(ROOT, 'snowflake-api.cjs')).SF_TABLES;
   const rows = await sf.query(`
-    WITH opp AS (
-      SELECT OPPORTUNITY_ID, MAX(CUSTOMER_ID) AS CUSTOMER_ID, MAX(CURRENCY) AS CURRENCY
-      FROM ${T.DIM_OPPORTUNITY} GROUP BY 1
-    ), cust AS (
+    WITH cust AS (
       SELECT CUSTOMER_ID, MAX(CUSTOMER_NAME) AS CUSTOMER_NAME, MAX(CHURN_DATE) AS CHURN_DATE, MAX(IFF(IS_TEST, 1, 0)) AS IS_TEST
       FROM ${T.DIM_CUSTOMER} GROUP BY 1
     )
-    SELECT TO_VARCHAR(DATE_TRUNC('month', f.CAL_MONTH_START_DATE), 'YYYY-MM') AS M,
-           o.CUSTOMER_ID AS C,
+    SELECT TO_VARCHAR(DATE_TRUNC('month', r.CAL_MONTH_START_DATE), 'YYYY-MM') AS M,
+           r.CUSTOMER_ID AS C,
            MAX(c.CUSTOMER_NAME) AS N,
            MAX(TO_VARCHAR(c.CHURN_DATE, 'YYYY-MM-DD')) AS CD,
-           COALESCE(o.CURRENCY, 'EUR') AS CUR,
-           SUM(f.OPPORTUNITY_MRR) AS MRR
-    FROM ${T.FCT_OPPORTUNITY_MONTHLY} f
-    JOIN opp o ON o.OPPORTUNITY_ID = f.OPPORTUNITY_ID
-    LEFT JOIN cust c ON c.CUSTOMER_ID = o.CUSTOMER_ID
-    WHERE o.CUSTOMER_ID IS NOT NULL
+           SUM(r.REVENUE_AMOUNT_EUR) AS AMT,
+           SUM(r.UNPAID_REVENUE_AMOUNT_EUR) AS UNPAID
+    FROM ${T.MONTHLY_REVENUE} r
+    LEFT JOIN cust c ON c.CUSTOMER_ID = r.CUSTOMER_ID
+    WHERE r.CUSTOMER_ID IS NOT NULL
       AND COALESCE(c.IS_TEST, 0) = 0
-      AND f.CAL_MONTH_START_DATE >= '${from}-01'
-      AND f.CAL_MONTH_START_DATE < '${shiftMonth(to, 1)}-01'
-    GROUP BY 1, 2, 5
+      AND r.CAL_MONTH_START_DATE >= '${from}-01'
+      AND r.CAL_MONTH_START_DATE < '${shiftMonth(to, 1)}-01'
+    GROUP BY 1, 2
   `);
   return rows.map((r) => ({
     month: String(r.M || ''), customer: String(r.C || ''), name: r.N ? String(r.N) : null,
-    churnDate: r.CD ? String(r.CD).slice(0, 10) : null, currency: r.CUR ? String(r.CUR) : 'EUR', mrr: num(r.MRR),
+    churnDate: r.CD ? String(r.CD).slice(0, 10) : null, amount: num(r.AMT), unpaid: num(r.UNPAID),
   }));
 }
 
@@ -676,7 +671,7 @@ function buildMetrics({ nowMs, cash, pnl, pnlDetails, settings, extras, failed =
     },
     {
       key: 'nrr', label: 'NRR', unit: 'pct',
-      note: nrrLast ? `MRR since 1 Jan ${nrrLast.month.slice(0, 4)} (${monthShort(nrrBase(nrrLast.month))} → ${monthShort(nrrLast.month)}); GRR ${nrrLast.grr}%` : 'MRR since 1 January',
+      note: nrrLast ? `Contracted revenue since 1 Jan ${nrrLast.month.slice(0, 4)} (${monthShort(nrrBase(nrrLast.month))} → ${monthShort(nrrLast.month)}); GRR ${nrrLast.grr}%` : 'Contracted revenue since 1 January',
       lastMonth: null,
       ytd: nrrLast ? cell(nrrLast.nrr, 'actual', ytdSpan(nrrLast.month), { grr: nrrLast.grr, customers: nrrLast.customers, detail: 'nrr' }) : null,
       fy: [null, null],
@@ -712,6 +707,10 @@ function buildMetrics({ nowMs, cash, pnl, pnlDetails, settings, extras, failed =
     targets: `The ${T} targets could not be applied right now: FY ${T} shows the Plan.`,
     employees: 'Employees could not be read from HiBob (Snowflake) right now: revenue per employee is empty.',
   }[f] || `${f} is unavailable right now.`));
+  // Read, but nothing to compare: say so rather than leave an unexplained dash.
+  if (Array.isArray(extras.nrr) && !extras.nrr.length) {
+    warnings.push('NRR has no figure: Snowflake returned no contracted revenue for the December before this year, or none for this year\'s months.');
+  }
 
   return {
     ok: true, status: 'ready', generatedAt: new Date(nowMs).toISOString(), years: [Y, T],
@@ -736,13 +735,13 @@ const DETAILS = ['nrr', 'churn-quarter', 'churn-ytd', 'churn-forecast'];
 
 /**
  * The breakdown of one pack figure, from the same reads as the pack (null when there is nothing yet).
- *   ctx: { pnl, pnlDetails, closed, nrrMonths, quarters(), customerMrr(), churnedOpps(from, to), all }
+ *   ctx: { pnl, pnlDetails, closed, nrrMonths, quarters(), contractedRevenue(), churnedOpps(from, to), all }
  *   all (NRR): every customer and the months as figures too, for the Excel (nrrDetail).
  */
 async function buildDetail(item, ctx) {
   const Y = ctx.pnl.years[0];
   if (item === 'nrr') {
-    const rows = await ctx.customerMrr();
+    const rows = await ctx.contractedRevenue();
     const series = nrrSeries(rows, ctx.nrrMonths);
     const last = series[series.length - 1];
     if (!last) return null;
@@ -783,7 +782,7 @@ function envMinutes(name, fallback) {
  * Express/connect handler for GET /api/metrics. deps (all optional):
  *   cash, pnl        the projection handlers (their .current()); default: own instances on the same caches
  *   getSfClient()
- *   reads            override every external read (tests): { arr, churnQuarters, customerMrr(from, to), churnedOpps(from, to), employees(company) }
+ *   reads            override every external read (tests): { arr, churnQuarters, contractedRevenue(from, to), churnedOpps(from, to), employees(company) }
  *   company          the HiBob company of the P&L's subsidiary (default METRICS_HEADCOUNT_COMPANY or 'LSports')
  *   settingsFile, targetsFile (the saved 2027 targets), clock(), ttlMs
  */
@@ -817,7 +816,7 @@ function createMetricsHandler(deps = {}) {
     return {
       arr: () => sf().fetchCurrentARR(),
       churnQuarters: () => sf().fetchQuarterlyChurnMRR(),
-      customerMrr: (from, to) => sfCustomerMrr(sf(), from, to),
+      contractedRevenue: (from, to) => sfContractedRevenue(sf(), from, to),
       churnedOpps: (from, to) => sfChurnedOpportunities(sf(), from, to),
       employees: (co) => sfEmployeeSpans(sf(), co),
     };
@@ -869,15 +868,15 @@ function createMetricsHandler(deps = {}) {
     const closed = lastClosedMonth(nowMs);
     // NRR for each month of the closed month's year, from the December before it.
     const nrrMonths = Array.from({ length: Number(closed.slice(5)) }, (_, i) => `${closed.slice(0, 4)}-${pad2(i + 1)}`);
-    // MRR by customer is kept as read: the NRR series and its breakdown both come from it.
-    const customerMrr = () => cached(`custmrr:${closed}`, () => reads.customerMrr(nrrBase(closed), closed));
+    // Contracted revenue by customer is kept as read: the NRR series and its breakdown both come from it.
+    const contractedRevenue = () => cached(`contracted:${closed}`, () => reads.contractedRevenue(nrrBase(closed), closed));
 
     if (detail !== null) {
       try {
         const out = await buildDetail(detail, {
           pnl: p.entry.payload, pnlDetails: p.entry.details, closed, nrrMonths, all,
           quarters: () => cached('churn', reads.churnQuarters),
-          customerMrr,
+          contractedRevenue,
           churnedOpps: (from, to) => cached(`churnOpps:${from}:${to}`, () => reads.churnedOpps(from, to)),
         });
         if (out) send(res, 200, { ok: true, status: 'ready', detail: out });
@@ -892,7 +891,7 @@ function createMetricsHandler(deps = {}) {
     const settled = await Promise.allSettled([
       cached('arr', reads.arr),
       cached('churn', reads.churnQuarters),
-      customerMrr().then((rows) => nrrSeries(rows, nrrMonths)),
+      contractedRevenue().then((rows) => nrrSeries(rows, nrrMonths)),
       cached(`employees:${company}`, () => reads.employees(company)),
     ]);
     const names = ['arr', 'churn', 'nrr', 'employees'];

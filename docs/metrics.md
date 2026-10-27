@@ -14,7 +14,7 @@ The FX Challenge was briefly a second tab here; it is its own page now (`docs/fx
 | `metrics.html` | the page (a small bundle, never loads the old dashboard) |
 | `GET /api/metrics` | the pack (`server/metrics.cjs`); `?refresh=true` reads ARR, NRR, churn and employees again |
 | `GET /api/metrics?detail=<item>` | what one figure is made of: `nrr`, `churn-quarter`, `churn-ytd`, `churn-forecast` |
-| `GET /api/metrics?detail=nrr&all=true` | the same, plus every customer (id, group, December and now, currency, CRM churn date) and each month: what NRR's Excel is built from |
+| `GET /api/metrics?detail=nrr&all=true` | the same, plus every customer (id, group, December and now, the part still to collect, CRM churn date) and each month: what NRR's Excel is built from |
 | `GET/PUT /api/metrics/settings` | the cloud cap (`server/metrics-settings.cjs`) |
 | `GET/PUT /api/metrics/deposits` | the old deposit tracker: no longer on the page, kept mounted for finance-it's route file |
 | finance-it | sidebar item → iframe of `<bank-dashboard static base>/metrics.html` (see Deploying) |
@@ -27,7 +27,7 @@ The FX Challenge was briefly a second tab here; it is its own page now (`docs/fx
 | EBITDA | same, P&L operating profit | (A) | (A+F) | (F) |
 | Net cash | the NetSuite bank balance at the last month-end (A) | change since 1 January (A) | December closing, New Bank Dashboard (F) | December closing (F) |
 | ARR | MRR × 12 now (Snowflake, A) | – | December customer revenue (after pipeline and churn) × 12 (F) | same (F) |
-| NRR | – | contracted MRR from 1 January to the last closed month (A), with GRR | – | – |
+| NRR | – | contracted revenue from 1 January to the last closed month (A), with GRR | – | – |
 | Churn | churned MRR of the last full quarter (A) | churned MRR this year so far (A) | revenue the forecast loses to churn (F) | – (not projected) |
 
 There is no debt data, so **net cash is the cash in the bank**.
@@ -41,27 +41,31 @@ Targets view on both projection pages (`src/forecast/targets.mjs`):
 The page says so next to the Plan name (hover for the assumptions), and so does the export. A save on the New
 Bank Dashboard shows at the next load. With no targets saved, the column is the Plan.
 
-**NRR** is counted from 1 January on **contracted MRR**, the opportunities' MRR that ARR is made of, not on
-the revenue booked in a month. A customer whose contract runs counts in full, whatever was billed or paid that
-month, and nothing is forecast. The base is the customers who had MRR in December of the year before, i.e.
-going into 1 January:
-- **NRR** = their MRR in the last closed month ÷ their December MRR;
-- customers with no December MRR (new this year) are not counted;
-- **GRR** caps each customer at their December MRR, so it measures only what was kept.
+**NRR** is counted from 1 January on **contracted revenue**: what each contract brings in a month in
+Salesforce's revenue schedule, paid or still to be collected. It is not what was booked or paid that month: a
+customer whose contract runs counts in full, and nothing is forecast. The base is the customers who had
+contracted revenue in December of the year before, i.e. going into 1 January:
+- **NRR** = their contracted revenue in the last closed month ÷ their December revenue;
+- customers with none in December (new this year) are not counted;
+- **GRR** caps each customer at their December amount, so it measures only what was kept.
 
 In January the base is still the December before, so it measures one month. At the year's end (December
 against December) it is the full year. On 1 January itself it would be 100%: nothing has changed yet.
 
-**Source**: Snowflake `FCT_OPPORTUNITY__MONTHLY__FINANCE` (`OPPORTUNITY_MRR` by opportunity and month),
-summed by customer through `DIM_OPPORTUNITY__FINANCE`. Test customers are excluded, and names and CRM churn
-dates come from `DIM_CUSTOMER__FINANCE`. Both dimensions are reduced to one row per id first, so a duplicate
-can't multiply the MRR. MRR is in each contract's currency and added as it is (as the churn figures do): a
-customer's own change is right, and only its weight in the total moves. The breakdown says how many customers
-have contracts in another currency.
+**Source**: Snowflake `FCT_OPPORTUNITY_MONTHLY_REVENUE__SCD_DAILY__FINANCE`, the revenue schedule by
+opportunity and month in € (`REVENUE_AMOUNT_EUR` = paid + unpaid; the unpaid part is shown), summed by
+customer.
+- Test customers are excluded, and names and CRM churn dates come from `DIM_CUSTOMER__FINANCE`.
+- That dimension is reduced to one row per customer first, so a duplicate can't multiply the revenue.
+- The contracted MRR table that ARR is read from (`FCT_OPPORTUNITY__MONTHLY__FINANCE`) holds only the current
+  month, so it can't give December's base.
 
-Until October 2026, NRR was counted on the monthly revenue of `FCT_CUSTOMER__MONTHLY__FINANCE`. That counted a
-customer with a running contract but nothing booked that month as churned, and one-off revenue swelled the
-December base.
+When NRR has nothing to compare (no December, or no month of this year), the page warns instead of showing an
+unexplained dash.
+
+Until October 2026, NRR was counted on the monthly revenue of `FCT_CUSTOMER__MONTHLY__FINANCE`, which is neither
+the schedule nor its paid part. That counted a customer with a running contract but nothing booked that month
+as churned, and one-off revenue swelled the December base.
 
 The page shows NRR in the Year to date column; the API also returns each month of the year so far
 (`nrrTrend`).
@@ -122,28 +126,28 @@ the figure, how it is calculated, where the data comes from, and the items behin
 to the figure in the cell.
 
 - **NRR**:
-  - the bridge: the December customers' MRR then, + expansion, − contraction, − churned, = their MRR now,
-    then NRR and GRR;
+  - the bridge: the December customers' contracted revenue then, + expansion, − contraction, − churned, =
+    theirs now (and how much of it is still to be collected), then NRR and GRR;
   - the customers in each group, by name, with this year's new customers listed but not counted;
-  - how many churned customers have a churn date in the CRM, and how many customers have contracts in another
-    currency;
+  - how many churned customers have a churn date in the CRM;
   - NRR and GRR month by month this year, each against the same December.
-  - Source: Snowflake contracted MRR by customer and month (the same rows as the figure).
+  - Source: Snowflake contracted revenue by customer and month (the same rows as the figure).
   - **Excel** (top of the window) downloads `lsports-nrr-<month>.xlsx` for review, e.g. by the CRO. The
     calculation is live formulas over the customer rows (`src/metrics/nrrWorkbook.ts`), so every step can be
     checked or changed:
     - **Summary**:
       - how it is calculated and the source;
-      - the bridge (December MRR, expansion, contraction, churned, unchanged, MRR now), each step with its
-        number of customers;
+      - the bridge (December contracted revenue, expansion, contraction, churned, unchanged, revenue now and
+        how much of it is still to be collected), each step with its number of customers;
       - NRR, GRR and the figure on the page;
       - the new customers not counted;
       - the churned customers with a churn date in the CRM;
       - what is worth checking: an account that moved to another customer ID shows as churned and again as
         new, and a churned customer with no CRM churn date ended its contracts without being marked churned.
     - **Customers**: every customer, unchanged and new ones included, with:
-      - its group, December and current MRR, the change, whether it counts and the amount kept for GRR;
-      - its contracts' currency, its CRM churn date and its Snowflake customer ID.
+      - its group, December and current contracted revenue, the change, whether it counts and the amount
+        kept for GRR;
+      - the part of its current revenue still to be collected, its CRM churn date and its Snowflake customer ID.
 
       The sheet has a filter and totals.
     - **Month by month**: NRR and GRR for each month of the year so far.
@@ -175,7 +179,7 @@ The breakdown reads only when clicked, and is cached like the pack's reads.
 - The two projections come from their cached handlers (`handler.current()`), so the page adds no
   NetSuite pull.
 - The saved targets (`data/projection-targets.json`) are read on every request.
-- ARR, churn, NRR (contracted MRR by customer) and employees are read once and cached for `METRICS_TTL_MIN`
+- ARR, churn, NRR (contracted revenue by customer) and employees are read once and cached for `METRICS_TTL_MIN`
   (default 30 minutes).
 - A source that fails shows as an empty cell and a warning. The rest of the pack still shows.
 - While a projection is computing for the first time, the page shows "computing" and polls.
