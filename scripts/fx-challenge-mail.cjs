@@ -121,7 +121,9 @@ function actionText(a, v, today) {
     return { head: `חוסר של ${eur(a.eur)} עד ${day(a.date)}`, body: `האירו שיש ושצפוי להיכנס עד אז לא מכסים את ${what} ואת ${eur(n.eurFloor)} השמורים לספקים באירו.${fix}` };
   }
   if (a.kind === 'move') {
-    return { head: `להעביר ${eur(a.eur)} לחשבון האירו בפועלים עד ${day(a.by)}`, body: `ההמרה של ${day(a.date)} יורדת מחשבון האירו בפועלים (583400), שבו ${eur(n.hapoalim)}; צריך שיהיו בו ${eur(n.required)}.` };
+    const fromDeposits = Math.min(n.required, n.maturing || 0);
+    const dep = fromDeposits > 0.5 ? `, מזה ${eur(fromDeposits)} מפיקדונות שמשתחררים עד אז` : '';
+    return { head: `להעביר ${eur(a.eur)} לחשבון האירו בפועלים עד ${day(a.by)}`, body: `ההמרה של ${day(a.date)} יורדת מחשבון האירו בפועלים (583400), שבו ${eur(n.hapoalim)}; צריך שיהיו בו ${eur(n.required)}${dep}.` };
   }
   if (a.kind === 'convert-spare') {
     return { head: `להמיר היום את ${eur(a.eur)} הפנויים`, body: `${rateIs(rc)}. התמורה: ${ils(a.eur * rc.rate)}, וכל ההמרות, המשכורות והספקים עדיין מכוסים.` };
@@ -132,6 +134,21 @@ function actionText(a, v, today) {
     ? `${eur(a.eur)} ל-${a.options.map((o) => o.months).join(', ').replace(/, (\d+)$/, ' או $1')} חודשים (הארוך עד ${day(last.until)})`
     : a.options.map((o) => `${eur(o.eur)} ${o.months === 1 ? 'לחודש' : `ל-${o.months} חודשים`} (עד ${day(o.until)})`).join(', או ');
   return { head: `להפקיד ${eur(a.eur)} בפיקדון חדש`, body: `${options}, וכל התשלומים עד אז עדיין מכוסים לפי התקבולים הרגילים.` };
+}
+
+/** Where the amount kept for the next conversion comes from (fx.keepCover), when deposits released by then hold some
+ * of it: "הפיקדון שמשתחרר ביום ה' 5.11 (€1.00M) מכסה את זה, …"; empty when none does. */
+function keepText(cover) {
+  const ds = cover.deposits;
+  if (!(cover.fromDeposits > 0.5) || !ds.length) return '';
+  const last = ds[ds.length - 1].valueDate;
+  if (cover.covered) {
+    const total = ds.reduce((s, d) => s + d.amount, 0);
+    const which = ds.length === 1 ? `הפיקדון שמשתחרר ב${day(last)} (${eur(total)}) מכסה` : `${ds.length} פיקדונות שמשתחררים עד ${day(last)} (${eur(total)}) מכסים`;
+    return `${which} את זה, כך שלא צריך לשמור לזה כסף מהיתרה של היום.`;
+  }
+  const which = ds.length === 1 ? `מהפיקדון שמשתחרר ב${day(last)}` : `מ-${ds.length} פיקדונות שמשתחררים עד ${day(last)}`;
+  return `${eur(cover.fromDeposits)} מזה מגיעים ${which}, ו-${eur(cover.fromCash)} מהיתרה של היום.`;
 }
 
 /** A payment day in the list: "יום ה' 5.11, בעוד 15 ימים: שכר נטו …, ₪4.92M: להמיר €1.21M". */
@@ -203,8 +220,10 @@ function renderMail(fx, data, { policy = 'p95', link = null } = {}) {
     }
     // Today's balances, in one paragraph.
     const shekels = cash && cash.onHand ? `${ils(cash.onHand.total)} בשקלים (${ils(cash.onHand.current)} בעו"ש ו-${ils(cash.onHand.deposits)} בפיקדונות), ` : '';
+    const covered = keepText(fx.keepCover(plan));
     const status = `${shekels}${eur(n.hapoalim)} בחשבון האירו בפועלים ו-${eur(n.other)} בחשבונות אחרים. `
-      + `להשאיר ${eur(n.required)} בפועלים להמרה של ${day(n.date)} (${POLICY[plan.policy]}).${cash ? '' : ` פנוי להמרה עכשיו: ${eur(n.freeNow)}.`}`
+      + `להשאיר ${eur(n.required)} בפועלים להמרה של ${day(n.date)} (${POLICY[plan.policy]}).${covered ? ` ${covered}` : ''}`
+      + `${cash ? '' : ` פנוי להמרה עכשיו: ${eur(n.freeNow)}.`}`
       + `${rc ? ` ${rateIs(rc)}.` : ''}`;
     parts.push(heading('המצב היום'));
     parts.push(para(esc(status), status, 'font-size:13px;'));

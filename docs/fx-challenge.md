@@ -46,6 +46,10 @@ briefly a tab of the Metrics page before it got its own sidebar item.
   - It is paid from Hapoalim EUR (583400); the other EUR accounts can be moved there before the day.
   - EUR deposits that mature before the fixing count for it; later ones are the backup (broken early only
     if needed). Without the mail's balances there are no dates, so every deposit is backup.
+  - The keep line (and the mail's) says how much of it the deposits released by then hold, and what today's cash
+    still has to (`keepCover`, `describeKeep`): "The deposit released on Thu 5 Nov (€1.00M) covers it, so it needs
+    none of today's cash", or "€500K of it comes from the deposit released on Thu 5 Nov, €300K from today's cash".
+    The **Keep for it** card says the same in short ("covered by a deposit").
   - Free to convert now = liquid euros less what the reserve still needs. It is also shown with the backup
     covering a jump above today's band, and by the fixing with the typical inflow (customers less EUR
     payments, before conversions, deposits and transfers, last 3 closed months).
