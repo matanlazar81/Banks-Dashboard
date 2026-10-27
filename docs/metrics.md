@@ -26,7 +26,7 @@ The FX Challenge was briefly a second tab here; it is its own page now (`docs/fx
 | EBITDA | same, P&L operating profit | (A) | (A+F) | (F) |
 | Net cash | the NetSuite bank balance at the last month-end (A) | change since 1 January (A) | December closing, New Bank Dashboard (F) | December closing (F) |
 | ARR | MRR × 12 now (Snowflake, A) | – | December customer revenue (after pipeline and churn) × 12 (F) | same (F) |
-| NRR | trailing 12 months to the last closed month (A), with GRR | – | – | – |
+| NRR | – | from 1 January to the last closed month (A), with GRR | – | – |
 | Churn | churned MRR of the last full quarter (A) | churned MRR this year so far (A) | revenue the forecast loses to churn (F) | – (not projected) |
 
 There is no debt data, so **net cash is the cash in the bank**.
@@ -40,10 +40,16 @@ Targets view on both projection pages (`src/forecast/targets.mjs`):
 The page says so next to the Plan name (hover for the assumptions), and so does the export. A save on the New
 Bank Dashboard shows at the next load. With no targets saved, the column is the Plan.
 
-**NRR**: for the customers who had revenue 12 months earlier, their revenue this month ÷ their revenue
-then. Customers new since then are not counted. **GRR** caps each customer at their old amount, so it
-measures only what was kept. Source: Snowflake revenue by customer and month (actual months, test
-customers excluded). The page shows the last closed month; the API also returns the last 6 months.
+**NRR** is counted from 1 January. The base is the customers who had revenue in December of the year
+before, i.e. going into 1 January:
+- **NRR** = their revenue in the last closed month ÷ their December revenue;
+- customers with no December revenue (new this year) are not counted;
+- **GRR** caps each customer at their December amount, so it measures only what was kept.
+
+In January the base is still the December before, so it measures one month. At the year's end (December
+against December) it is the full year. Source: Snowflake revenue by customer and month (actual months,
+test customers excluded). The page shows it in the Year to date column; the API also returns each month
+of the year so far (`nrrTrend`).
 
 ## Payroll / revenue and revenue per employee
 
@@ -101,10 +107,10 @@ the figure, how it is calculated, where the data comes from, and the items behin
 to the figure in the cell.
 
 - **NRR**:
-  - the bridge: last year's customers' revenue then, + expansion, − contraction, − churned, = their
+  - the bridge: the December customers' revenue then, + expansion, − contraction, − churned, = their
     revenue now, then NRR and GRR;
-  - the customers in each group, by name, with the new customers listed but not counted;
-  - the last 6 months of NRR and GRR.
+  - the customers in each group, by name, with this year's new customers listed but not counted;
+  - NRR and GRR month by month this year, each against the same December.
   - Source: Snowflake revenue by customer and month (the same rows as the figure).
 - **Churn, last full quarter** and **year so far**: every opportunity marked churned in Snowflake
   (`DIM_OPPORTUNITY__FINANCE`) with its customer, churn month, currency and MRR, by quarter. Amounts in

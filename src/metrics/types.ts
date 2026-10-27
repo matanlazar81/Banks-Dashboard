@@ -80,7 +80,8 @@ export interface MetricsPayload {
   /** The projection-year targets saved on the New Bank Dashboard (applied when active). */
   targets?: { year: number; active: boolean; updatedAt: string | null; updatedBy: string | null; assumptions: string[] };
   metrics: Metric[];
-  nrrTrend: { month: string; nrr: number; grr: number; customers: number }[];
+  /** NRR for each month of the year so far, each against the December before it (`from`). */
+  nrrTrend: { month: string; from: string; nrr: number; grr: number; customers: number }[];
   cloud: { category: string; categories: string[]; capPct: number; accounts: string; years: CloudYear[] };
   /** Payroll / revenue and revenue per employee (absent from servers before this page had them). */
   people?: People;
