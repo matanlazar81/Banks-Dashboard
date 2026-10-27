@@ -886,6 +886,17 @@ function Balances({ data, model }: { data: FxPayload; model: FxModel }) {
       if (x.kind === 'deposit') return (x.valueDate || '9999').localeCompare(y.valueDate || '9999') || Math.abs(y.amount) - Math.abs(x.amount);
       return Math.abs(y.amount) - Math.abs(x.amount);
     });
+  // A total after each month's deposits, by the month they mature.
+  const monthOf = (r: (typeof eur)[number] | undefined) => (r && r.kind === 'deposit' && r.valueDate ? r.valueDate.slice(0, 7) : null);
+  const rowsAndTotals: ({ row: (typeof eur)[number] } | { month: string; total: number; count: number; blocked: number })[] = [];
+  eur.forEach((r, i) => {
+    rowsAndTotals.push({ row: r });
+    const m = monthOf(r);
+    if (m && m !== monthOf(eur[i + 1])) {
+      const same = eur.filter((x) => monthOf(x) === m);
+      rowsAndTotals.push({ month: m, total: same.reduce((s, x) => s + x.amount, 0), count: same.length, blocked: same.filter((x) => x.blocked).length });
+    }
+  });
   const otherCcy = lsports.filter((r) => r.currency !== 'EUR' && (r.kind === 'current' || r.kind === 'deposit'));
   const byCcy = new Map<string, number>();
   for (const r of otherCcy) byCcy.set(r.currency, (byCcy.get(r.currency) || 0) + r.amount);
@@ -905,14 +916,22 @@ function Balances({ data, model }: { data: FxPayload; model: FxModel }) {
               </tr>
             </thead>
             <tbody>
-              {eur.map((r, i) => (
-                <tr key={`${r.bank}-${r.kind}-${i}`} className="border-b border-slate-100">
-                  <td className="px-2 py-1.5 text-left text-slate-700">{r.label && r.kind === 'deposit' ? `${r.bank} · ${r.label}` : r.bank}</td>
-                  <td className="px-2 py-1.5 text-left text-slate-500">{KIND_LABEL[r.kind]}{r.blocked ? ' (blocked)' : ''}</td>
-                  <td className={`${TD} text-slate-900`}>{formatEur(r.amount)}</td>
-                  <td className={`${TD} text-slate-500`}>{r.kind === 'deposit' ? (r.valueDate ? formatDay(r.valueDate, true) : 'not in the books') : (r.asOf || '–')}</td>
+              {rowsAndTotals.map((it, i) => ('row' in it ? (
+                <tr key={`${it.row.bank}-${it.row.kind}-${i}`} className="border-b border-slate-100">
+                  <td className="px-2 py-1.5 text-left text-slate-700">{it.row.label && it.row.kind === 'deposit' ? `${it.row.bank} · ${it.row.label}` : it.row.bank}</td>
+                  <td className="px-2 py-1.5 text-left text-slate-500">{KIND_LABEL[it.row.kind]}{it.row.blocked ? ' (blocked)' : ''}</td>
+                  <td className={`${TD} text-slate-900`}>{formatEur(it.row.amount)}</td>
+                  <td className={`${TD} text-slate-500`}>{it.row.kind === 'deposit' ? (it.row.valueDate ? formatDay(it.row.valueDate, true) : 'not in the books') : (it.row.asOf || '–')}</td>
                 </tr>
-              ))}
+              ) : (
+                <tr key={`total-${it.month}`} className="border-b border-slate-200 bg-slate-50">
+                  <td colSpan={2} className="px-2 py-1.5 text-left font-medium text-slate-700">
+                    Total for {monthName(it.month)}: {it.count} deposit{it.count === 1 ? '' : 's'}{it.blocked ? ` (${it.blocked} blocked)` : ''}
+                  </td>
+                  <td className={`${TD} font-semibold text-slate-900`}>{formatEur(it.total)}</td>
+                  <td className={TD} />
+                </tr>
+              )))}
             </tbody>
           </table>
         </div>

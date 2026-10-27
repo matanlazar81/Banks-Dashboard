@@ -150,7 +150,8 @@ briefly a tab of the Metrics page before it got its own sidebar item.
     2 February and 2 March 2026), each against its day's rate (hover);
   - a total row, and under the table everything since January: euros sold net, shekels, and the gain against each
     day's rate.
-- **LSports euros**: the accounts, then each EUR deposit by the day it matures.
+- **LSports euros**: the accounts, then each EUR deposit by the day it matures, with a total after each month's
+  deposits ("Total for Jan 2027: 2 deposits €908K").
 - Every column header explains itself on hover (the dotted underline marks it), and so does every figure in the plan
   (its sum, or its chances).
 - **How are these figures worked out?** (under the plan, or click a conversion day): the workings with today's
