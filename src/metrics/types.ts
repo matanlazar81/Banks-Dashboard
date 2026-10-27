@@ -106,15 +106,15 @@ export interface ExplainTable {
   more: number;
   total: Record<string, string | number | null> | null;
 }
-/** One customer of the NRR breakdown (?detail=nrr&all=true): its contracted MRR in the base December and now. */
+/** One customer of the NRR breakdown (?detail=nrr&all=true): its contracted revenue in the base December and now (€). */
 export interface NrrCustomer {
   id: string;
   customer: string;
   group: 'churned' | 'contracted' | 'expanded' | 'unchanged' | 'new';
   then: number;
   now: number;
-  /** Its contracts' currency ('EUR', 'USD', 'EUR+USD'): MRR is added as it is, not converted. */
-  currency: string;
+  /** The part of now still to be collected (unpaid). */
+  unpaid: number;
   /** The CRM's churn date (DIM_CUSTOMER.CHURN_DATE, 'YYYY-MM-DD'), or null. */
   churnDate: string | null;
 }

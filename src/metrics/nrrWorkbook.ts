@@ -52,21 +52,22 @@ export function nrrWorkbook(d: Explain, generatedAt: Date): { sheets: WbSheet[];
   // Customers: one row each (header on row 1), the change and the GRR amount as formulas, totals below.
   const last = list.length + 1;
   const customers: WbValue[][] = [
-    [bold('Customer'), bold('Group'), head(`${P} MRR`), head(`${N} MRR`), head('Change'), bold('Counted in NRR'), head('Kept for GRR'),
-      bold('Currency'), bold('CRM churn date'), bold('Customer ID')],
+    [bold('Customer'), bold('Group'), head(P), head(N), head('Change'), bold('Counted in NRR'), head('Kept for GRR'),
+      head(`${N} still to collect`), bold('CRM churn date'), bold('Customer ID')],
     ...list.map((c, i) => {
       const r = i + 2;
       const inNrr = c.group !== 'new';
       return [
         c.customer, GROUP_LABEL[c.group], eur(c.then), eur(c.now), eur(round2(c.now - c.then), `D${r}-C${r}`),
         inNrr ? 'Yes' : 'No', eur(inNrr ? Math.min(c.then, c.now) : 0, `IF(F${r}="Yes",MIN(C${r},D${r}),0)`),
-        c.currency, c.churnDate, c.id,
+        eur(c.unpaid), c.churnDate, c.id,
       ];
     }),
     [bold('Total'), null,
       eur(sum(list.map((c) => c.then)), `SUM(C2:C${last})`, true), eur(sum(list.map((c) => c.now)), `SUM(D2:D${last})`, true),
       eur(sum(list.map((c) => c.now - c.then)), `SUM(E2:E${last})`, true), null,
-      eur(sum(counted.map((c) => Math.min(c.then, c.now))), `SUM(G2:G${last})`, true)],
+      eur(sum(counted.map((c) => Math.min(c.then, c.now))), `SUM(G2:G${last})`, true),
+      eur(sum(list.map((c) => c.unpaid)), `SUM(H2:H${last})`, true)],
   ];
 
   // Summary: the definitions, then the bridge as formulas over the Customers sheet.
@@ -76,51 +77,51 @@ export function nrrWorkbook(d: Explain, generatedAt: Date): { sheets: WbSheet[];
   const base = sum(counted.map((c) => c.then));
   const now = sum(counted.map((c) => c.now));
   const keptForGrr = sum(counted.map((c) => Math.min(c.then, c.now)));
-  const foreign = list.filter((c) => c.currency !== 'EUR');
   const generated = generatedAt.toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
   const summary: WbValue[][] = [
-    [bold(`LSports NRR, ${span}: counted from 1 January on contracted MRR`, 14)],
-    [`From the Metrics page (Business Tools → Metrics), generated ${generated}. MRR as in Snowflake, in each contract's currency.`],
+    [bold(`LSports NRR, ${span}: counted from 1 January on contracted revenue`, 14)],
+    [`From the Metrics page (Business Tools → Metrics), generated ${generated}. Amounts in € as in Snowflake.`],
     [],
     [bold('How it is calculated')],
-    [`NRR = the ${N} MRR of the customers who had MRR in ${P} (going into 1 January) ÷ their ${P} MRR.`],
-    [`GRR = the same with each customer capped at its ${P} MRR, so growth doesn't count: only what was kept.`],
-    [`Customers with no MRR in ${P} are new this year: listed at the end of the Customers sheet, not counted.`],
-    [`No forecast: only the contracts as they stood. Unchanged: within €0.50 of its ${P} MRR; MRR below zero counts as zero.`],
-    ['Source: Snowflake FCT_OPPORTUNITY__MONTHLY__FINANCE, contracted MRR by opportunity and month (the source of ARR), by customer; test customers excluded; churn dates from DIM_CUSTOMER__FINANCE.'],
-    ...(foreign.length ? [[`Customers with contracts in ${[...new Set(foreign.map((c) => c.currency))].join(', ')}: ${foreign.length}. Their MRR is added as it is, not converted to €.`]] : []),
+    [`NRR = the ${N} contracted revenue of the customers who had contracted revenue in ${P} (going into 1 January) ÷ their ${P} revenue.`],
+    ['Contracted revenue is what each contract brings in the month in Salesforce\'s revenue schedule, paid or still to be collected. Nothing is forecast.'],
+    [`GRR = the same with each customer capped at its ${P} revenue, so growth doesn't count: only what was kept.`],
+    [`Customers with no contracted revenue in ${P} are new this year: listed at the end of the Customers sheet, not counted.`],
+    [`Unchanged: within €0.50 of its ${P} revenue. Revenue below zero counts as zero.`],
+    ['Source: Snowflake FCT_OPPORTUNITY_MONTHLY_REVENUE__SCD_DAILY__FINANCE (the revenue schedule by opportunity, paid and unpaid), by customer; test customers excluded; churn dates from DIM_CUSTOMER__FINANCE.'],
     [],
     [bold('The bridge'), head('€'), head('Customers')],
   ];
   const baseRow = summary.length + 1;
-  summary.push([`Their MRR, ${P}`, eur(base, sumIf('C', 'F', 'Yes')), { v: counted.length, f: countIf('F', 'Yes') }]);
+  summary.push([`Their contracted revenue, ${P}`, eur(base, sumIf('C', 'F', 'Yes')), { v: counted.length, f: countIf('F', 'Yes') }]);
   const step = (label: string, g: NrrCustomer['group']) => [
     label, eur(sum(of(g).map((c) => c.now - c.then)), sumIf('E', 'B', GROUP_LABEL[g])), { v: of(g).length, f: countIf('B', GROUP_LABEL[g]) },
   ];
   summary.push(step('+ Expansion', 'expanded'));
   summary.push(step('− Contraction', 'contracted'));
-  summary.push(step(`− Churned (no MRR in ${N})`, 'churned'));
+  summary.push(step(`− Churned (nothing in ${N})`, 'churned'));
   summary.push(step('± Unchanged', 'unchanged'));
   const nowRow = summary.length + 1;
   // No label starts with '=': a spreadsheet could take it for a formula.
-  summary.push([bold(`Their MRR, ${N}`), eur(now, sumIf('D', 'F', 'Yes'), true)]);
+  summary.push([bold(`Their contracted revenue, ${N}`), eur(now, sumIf('D', 'F', 'Yes'), true)]);
+  summary.push([`Of which still to be collected, ${N}`, eur(sum(counted.map((c) => c.unpaid)), sumIf('H', 'F', 'Yes'))]);
   summary.push([]);
   summary.push([bold(`NRR = ${N} ÷ ${P}`), pct(base > 0 ? now / base : 0, `B${nowRow}/B${baseRow}`, true)]);
-  summary.push([`GRR (each capped at its ${P} MRR)`, pct(base > 0 ? keptForGrr / base : 0, `${sumIf('G', 'F', 'Yes')}/B${baseRow}`)]);
+  summary.push([`GRR (each capped at its ${P} revenue)`, pct(base > 0 ? keptForGrr / base : 0, `${sumIf('G', 'F', 'Yes')}/B${baseRow}`)]);
   summary.push(['NRR shown on the Metrics page', pct(d.value.value / 100)]);
   summary.push([]);
-  summary.push([`Not counted: new this year, MRR ${N}`, eur(sum(of('new').map((c) => c.now)), sumIf('D', 'B', GROUP_LABEL.new)), { v: of('new').length, f: countIf('B', GROUP_LABEL.new) }]);
+  summary.push([`Not counted: new this year, revenue ${N}`, eur(sum(of('new').map((c) => c.now)), sumIf('D', 'B', GROUP_LABEL.new)), { v: of('new').length, f: countIf('B', GROUP_LABEL.new) }]);
   summary.push(['Churned customers with a churn date in the CRM', null,
     { v: of('churned').filter((c) => c.churnDate).length, f: `COUNTIFS(${range('B')},"${GROUP_LABEL.churned}",${range('I')},"<>")` }]);
   summary.push([]);
   summary.push([bold('Worth checking')]);
   summary.push(['A churned customer that still buys under another customer ID (a renamed or merged account) shows as churned, and again as new this year.']);
-  summary.push(['A churned customer with no churn date in the CRM: its contracts ended without being marked churned, or its MRR moved to another opportunity or customer.']);
+  summary.push(['A churned customer with no churn date in the CRM: its contracts ended without being marked churned, or its revenue moved to another opportunity or customer.']);
 
   const months: WbValue[][] = [
     [bold(`NRR month by month, ${d.period.to.slice(0, 4)}`, 14)],
-    [`Each month: the MRR that month of the customers who had MRR in ${P}, ÷ their ${P} MRR.`],
+    [`Each month: the contracted revenue that month of the customers who had contracted revenue in ${P}, ÷ their ${P} revenue.`],
     [],
     [bold('Month'), head('NRR'), head('GRR')],
     ...(d.series || []).map((s) => [monthName(s.month), pct(s.nrr / 100), pct(s.grr / 100)]),
@@ -129,7 +130,7 @@ export function nrrWorkbook(d: Explain, generatedAt: Date): { sheets: WbSheet[];
   return {
     sheets: [
       { name: 'Summary', rows: summary, cols: [62, 16, 12] },
-      { name: 'Customers', rows: customers, cols: [40, 14, 14, 14, 14, 15, 14, 10, 15, 20], autofilter: `A1:J${last}`, freezeRows: 1 },
+      { name: 'Customers', rows: customers, cols: [40, 14, 14, 14, 14, 15, 14, 18, 15, 20], autofilter: `A1:J${last}`, freezeRows: 1 },
       { name: 'Month by month', rows: months, cols: [16, 12, 12] },
     ],
     fileName: `lsports-nrr-${d.period.to}.xlsx`,

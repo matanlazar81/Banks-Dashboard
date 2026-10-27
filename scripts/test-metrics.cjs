@@ -93,15 +93,16 @@ function build(settings = ms.emptySettings(), extras = EXTRAS, failed = []) {
   return m.buildMetrics({ nowMs: NOW, cash: cashPayload(), pnl: pnlPayload(), pnlDetails: pnlDetails(), settings, extras, failed });
 }
 
-// Contracted MRR by customer for the NRR breakdown, December 2025 (the base) to September 2026: A grows, B
-// stays, C shrinks (a USD contract), D leaves (with a CRM churn date); N and Z are new (Z had a zero December).
+// Contracted revenue by customer for the NRR breakdown, December 2025 (the base) to September 2026: A grows (20
+// of it still to be collected), B stays, C shrinks, D leaves (with a CRM churn date); N and Z are new (Z had a
+// zero December; 5 of N's is unpaid).
 const CUSTREV = [
-  { month: '2025-12', customer: '1', name: 'Alpha', mrr: 100 }, { month: '2025-12', customer: '2', name: 'Beta', mrr: 100 },
-  { month: '2025-12', customer: '3', name: 'Gamma', mrr: 50, currency: 'USD' }, { month: '2025-12', customer: '4', name: 'Delta', mrr: 30, churnDate: '2026-06-30' },
-  { month: '2025-12', customer: '9', name: 'Zeta', mrr: 0 },
-  { month: '2026-09', customer: '1', name: 'Alpha', mrr: 120 }, { month: '2026-09', customer: '2', name: 'Beta', mrr: 100 },
-  { month: '2026-09', customer: '3', name: 'Gamma', mrr: 20, currency: 'USD' }, { month: '2026-09', customer: '8', name: 'Nu', mrr: 40 },
-  { month: '2026-09', customer: '9', name: 'Zeta', mrr: 10 },
+  { month: '2025-12', customer: '1', name: 'Alpha', amount: 100 }, { month: '2025-12', customer: '2', name: 'Beta', amount: 100 },
+  { month: '2025-12', customer: '3', name: 'Gamma', amount: 50 }, { month: '2025-12', customer: '4', name: 'Delta', amount: 30, churnDate: '2026-06-30' },
+  { month: '2025-12', customer: '9', name: 'Zeta', amount: 0 },
+  { month: '2026-09', customer: '1', name: 'Alpha', amount: 120, unpaid: 20 }, { month: '2026-09', customer: '2', name: 'Beta', amount: 100 },
+  { month: '2026-09', customer: '3', name: 'Gamma', amount: 20 }, { month: '2026-09', customer: '8', name: 'Nu', amount: 40, unpaid: 5 },
+  { month: '2026-09', customer: '9', name: 'Zeta', amount: 10 },
 ];
 // Churned opportunities matching EXTRAS.churnQuarters: Q2 30K, Q3 40K (one in USD), Q4 so far 5K.
 const OPPS = [
@@ -131,7 +132,7 @@ function testPack() {
     'ARR: Snowflake now; December run-rate × 12 forecast');
   const nrr = metric(out, 'nrr');
   check(nrr.unit === 'pct' && nrr.lastMonth === null && nrr.ytd.value === 104.5 && nrr.ytd.grr === 93.2 && nrr.ytd.label === 'Jan–Sep 2026'
-    && nrr.ytd.detail === 'nrr' && nrr.note === 'MRR since 1 Jan 2026 (Dec 2025 → Sep 2026); GRR 93.2%',
+    && nrr.ytd.detail === 'nrr' && nrr.note === 'Contracted revenue since 1 Jan 2026 (Dec 2025 → Sep 2026); GRR 93.2%',
   'NRR: from 1 January, in the year-to-date column, with GRR', JSON.stringify(nrr));
   const churn = metric(out, 'churn');
   check(churn.lastMonth.value === 40_000 && churn.lastMonth.label === 'Q3 2026' && churn.ytd.value === 75_000 && churn.fy[0].value === 60_000 && churn.fy[1] === null,
@@ -256,6 +257,11 @@ function testWarnings() {
   check(metric(noArr, 'arr').lastMonth === null && noArr.warnings.length === 1 && /ARR/.test(noArr.warnings[0]), 'an empty cell and a warning, the rest still shows');
   const out = build();
   check(!('fx' in out) && !('rates' in out) && !('deposits' in out) && !('innovation' in out), 'the removed cards are not in the pack (FX conversions, rates, deposits, envelope)');
+  const noNrr = build(undefined, { ...EXTRAS, nrr: [] });
+  const failedNrr = build(undefined, { ...EXTRAS, nrr: null }, ['nrr']);
+  check(metric(noNrr, 'nrr').ytd === null && noNrr.warnings.length === 1 && /NRR has no figure/.test(noNrr.warnings[0])
+    && failedNrr.warnings.length === 1 && /NRR could not be computed/.test(failedNrr.warnings[0]) && !out.warnings.length,
+  'NRR read but with nothing to compare: a warning that says so, not an unexplained dash', JSON.stringify(noNrr.warnings));
 }
 
 async function testDetails() {
@@ -263,12 +269,12 @@ async function testDetails() {
   const [s] = m.nrrSeries(CUSTREV, ['2026-09']);
   const d = m.nrrDetail(CUSTREV, '2026-09');
   const line = (label) => d.summary.find((x) => x.label.startsWith(label));
-  check(s.nrr === 85.71 && d.value.value === s.nrr && line('NRR').value === s.nrr && line('GRR').value === s.grr && line('Customers with MRR').value === s.customers,
+  check(s.nrr === 85.71 && d.value.value === s.nrr && line('NRR').value === s.nrr && line('GRR').value === s.grr && line('Customers with contracted revenue').value === s.customers,
     'NRR breakdown: the same NRR, GRR and base customers as the pack', JSON.stringify({ s, v: d.value }));
-  check(line('Their MRR, Dec 2025').value === 280 && line('+ Expansion').value === 20 && line('− Contraction').value === -30 && line('− Churned').value === -30
-    && line('= Their MRR, Sep 2026').value === 240 && 280 + 20 - 30 - 30 === 240,
-    'the bridge: December\'s customers + expansion − contraction − churned = their MRR now');
-  check(d.title === 'NRR, Jan–Sep 2026' && d.subtitle === 'The customers going into 1 January: Dec 2025 → Sep 2026 (MRR)' && /from 1 January/.test(d.formula[0]),
+  check(line('Their contracted revenue, Dec 2025').value === 280 && line('+ Expansion').value === 20 && line('− Contraction').value === -30 && line('− Churned').value === -30
+    && line('= Their contracted revenue, Sep 2026').value === 240 && line('Of which still to be collected').value === 20 && 280 + 20 - 30 - 30 === 240,
+    'the bridge: December\'s customers + expansion − contraction − churned = their contracted revenue now, and the part still to collect');
+  check(d.title === 'NRR, Jan–Sep 2026' && d.subtitle === 'The customers going into 1 January: Dec 2025 → Sep 2026 (contracted revenue)' && /from 1 January/.test(d.formula[0]),
     'the breakdown says NRR is counted from 1 January, against December', `${d.title} | ${d.subtitle}`);
   const t = (title) => d.tables.find((x) => x.title.startsWith(title));
   check(t('Churned').rows[0].customer === 'Delta' && t('Contracted').rows[0].customer === 'Gamma' && t('Expanded').rows[0].customer === 'Alpha'
@@ -281,12 +287,12 @@ async function testDetails() {
     && namesIn('new') === 'Nu,Zeta' && full.customers[0].id === '4' && full.value.value === d.value.value,
   'all: every customer with its id and group, the unchanged ones too, and the same figure', JSON.stringify(full.customers));
   const who = (name) => full.customers.find((c) => c.customer === name);
-  check(who('Delta').churnDate === '2026-06-30' && who('Alpha').churnDate === null && who('Gamma').currency === 'USD' && who('Alpha').currency === 'EUR'
-    && d.notes.some((n) => /churn date in the CRM .*: 1 of 1\./.test(n)) && d.notes.some((n) => /contracts in USD: 1\. .*not converted/.test(n)),
-  'each customer\'s contract currency and CRM churn date; the window counts churned customers with a churn date and says USD is not converted', JSON.stringify(d.notes));
-  const many = Array.from({ length: 50 }, (_, i) => [{ month: '2025-12', customer: `c${i}`, name: `C${i}`, mrr: 10 + i }]).flat();
-  const cut = m.nrrDetail([...many, { month: '2026-09', customer: 'x', name: 'X', mrr: 1 }], '2026-09', { limit: 40 });
-  check(t('Churned').total.then === 30 && cut.tables[0].rows.length === 40 && cut.tables[0].more === 10 && cut.tables[0].total.then === many.reduce((a, r) => a + r.mrr, 0),
+  check(who('Delta').churnDate === '2026-06-30' && who('Alpha').churnDate === null && who('Alpha').unpaid === 20 && who('Delta').unpaid === 0 && who('Nu').unpaid === 5
+    && d.notes.length === 1 && /churn date in the CRM .*: 1 of 1\./.test(d.notes[0]),
+  'each customer\'s part still to collect and CRM churn date; the window counts the churned customers with a churn date', JSON.stringify(d.notes));
+  const many = Array.from({ length: 50 }, (_, i) => [{ month: '2025-12', customer: `c${i}`, name: `C${i}`, amount: 10 + i }]).flat();
+  const cut = m.nrrDetail([...many, { month: '2026-09', customer: 'x', name: 'X', amount: 1 }], '2026-09', { limit: 40 });
+  check(t('Churned').total.then === 30 && cut.tables[0].rows.length === 40 && cut.tables[0].more === 10 && cut.tables[0].total.then === many.reduce((a, r) => a + r.amount, 0),
     'long lists: the largest first, the rest counted, the total over all');
 
   const q3 = EXTRAS.churnQuarters.find((q) => q.q === 'Q3 2026');
@@ -314,7 +320,7 @@ async function testDetails() {
   const h = m.createMetricsHandler({
     cash: { current: () => ({ entry: { payload: cashPayload() } }) }, pnl: { current: () => ({ entry: { payload: pnlPayload(), details: pnlDetails() } }) },
     reads: {
-      arr: async () => EXTRAS.arr, churnQuarters: async () => EXTRAS.churnQuarters, customerMrr: async () => CUSTREV,
+      arr: async () => EXTRAS.arr, churnQuarters: async () => EXTRAS.churnQuarters, contractedRevenue: async () => CUSTREV,
       churnedOpps: async () => { oppReads++; if (failOpps) throw new Error('Snowflake down'); return OPPS; }, employees: async () => EXTRAS.employees,
     },
     settingsFile: path.join(tmp, 's.json'), targetsFile: path.join(tmp, 't.json'), clock: () => NOW,
@@ -344,18 +350,18 @@ async function testDetails() {
 }
 
 function testNrr() {
-  console.log('\nNRR: from contracted MRR by customer, counted from 1 January');
+  console.log('\nNRR: from contracted revenue by customer, counted from 1 January');
   // S paid in September 2025 and again now, but not in December: outside the base.
   const rows = [
-    { month: '2025-09', customer: 'S', mrr: 500 },
-    { month: '2025-12', customer: 'A', mrr: 100 }, { month: '2025-12', customer: 'B', mrr: 100 }, { month: '2025-12', customer: 'Z', mrr: 0 },
-    { month: '2026-01', customer: 'A', mrr: 100 }, { month: '2026-01', customer: 'B', mrr: 50 },
-    { month: '2026-09', customer: 'A', mrr: 120 }, { month: '2026-09', customer: 'C', mrr: 50 }, { month: '2026-09', customer: 'Z', mrr: 10 },
-    { month: '2026-09', customer: 'S', mrr: 70 },
+    { month: '2025-09', customer: 'S', amount: 500 },
+    { month: '2025-12', customer: 'A', amount: 100 }, { month: '2025-12', customer: 'B', amount: 100 }, { month: '2025-12', customer: 'Z', amount: 0 },
+    { month: '2026-01', customer: 'A', amount: 100 }, { month: '2026-01', customer: 'B', amount: 50 },
+    { month: '2026-09', customer: 'A', amount: 120 }, { month: '2026-09', customer: 'C', amount: 50 }, { month: '2026-09', customer: 'Z', amount: 10 },
+    { month: '2026-09', customer: 'S', amount: 70 },
   ];
   const [s] = m.nrrSeries(rows, ['2026-09']);
   check(s.from === '2025-12' && s.nrr === 60 && s.grr === 50 && s.customers === 2,
-    'NRR = December\'s customers\' MRR now ÷ their December MRR; customers new this year excluded; GRR caps growth', JSON.stringify(s));
+    'NRR = December\'s customers\' contracted revenue now ÷ theirs in December; customers new this year excluded; GRR caps growth', JSON.stringify(s));
   const [jan] = m.nrrSeries(rows, ['2026-01']);
   check(jan.from === '2025-12' && jan.nrr === 75 && jan.grr === 75, 'January: against the December just before it (one month)', JSON.stringify(jan));
   check(m.nrrBase('2026-01') === '2025-12' && m.nrrBase('2026-12') === '2025-12' && m.nrrBase('2027-03') === '2026-12',
@@ -406,11 +412,11 @@ async function testHandlers() {
   const entry = (payload, details) => ({ entry: { payload, details } });
   let state = { cash: entry(cashPayload()), pnl: entry(pnlPayload(), pnlDetails()) };
   let reads = 0;
-  let mrrRead = null;
+  let readRange = null;
   const stubReads = {
     arr: async () => { reads++; return EXTRAS.arr; },
     churnQuarters: async () => EXTRAS.churnQuarters,
-    customerMrr: async (from, to) => { mrrRead = `${from}..${to}`; return [{ month: '2025-12', customer: 'A', mrr: 100 }, { month: '2026-09', customer: 'A', mrr: 110 }]; },
+    contractedRevenue: async (from, to) => { readRange = `${from}..${to}`; return [{ month: '2025-12', customer: 'A', amount: 100 }, { month: '2026-09', customer: 'A', amount: 110 }]; },
     churnedOpps: async () => OPPS,
     employees: async (company) => (company === 'LSports' ? EXTRAS.employees : []),
   };
@@ -420,8 +426,8 @@ async function testHandlers() {
   let r = await call(h);
   check(r.status === 200 && r.body.status === 'ready' && r.body.metrics.length === 6 && metric(r.body, 'nrr').ytd.value === 110,
     'GET: the pack from the cached projections and the reads');
-  check(mrrRead === '2025-12..2026-09' && r.body.nrrTrend.length === 1 && r.body.nrrTrend[0].from === '2025-12',
-    'NRR reads contracted MRR by customer from the December before the year to the last closed month', `${mrrRead} ${JSON.stringify(r.body.nrrTrend)}`);
+  check(readRange === '2025-12..2026-09' && r.body.nrrTrend.length === 1 && r.body.nrrTrend[0].from === '2025-12',
+    'NRR reads contracted revenue by customer from the December before the year to the last closed month', `${readRange} ${JSON.stringify(r.body.nrrTrend)}`);
   check(r.body.warnings.length === 0 && metric(r.body, 'churn').lastMonth.detail === 'churn-quarter', 'no warnings when every read works; the churn cells carry their breakdown');
   check(r.body.people.months.length === 9 && r.body.people.months[8].headcount === 111 && r.body.people.company === 'LSports',
     'the employees of the P&L\'s company (LSports by default) are read for revenue per employee');
@@ -477,7 +483,7 @@ async function testModel() {
   check(rows[0][0] === 'LSports metrics pack, as of Sep 2026' && at('Metric').join('|') === 'Metric|Last month|Year to date|FY 2026|FY 2027|Basis',
     'export: title and the same header every month');
   check(at('Revenue')[1] === '€5,000,000 (A)' && at('Revenue')[3] === '€60,000,000 (A+F)' && at('Revenue')[4] === '€60,000,000 (F)'
-    && at('NRR')[1] === '–' && at('NRR')[2] === '104.5% (A)' && /^MRR since 1 Jan 2026/.test(at('NRR')[5]),
+    && at('NRR')[1] === '–' && at('NRR')[2] === '104.5% (A)' && /^Contracted revenue since 1 Jan 2026/.test(at('NRR')[5]),
   'export: each figure tagged A, F or A+F; NRR in the year-to-date column', `${at('Revenue').join(' | ')} / ${at('NRR').join(' | ')}`);
   check(rows.some((r) => /^Payroll \/ revenue and revenue per employee, through Sep 2026/.test(String(r[0])))
     && at('Jan–Sep 2026') && at('Jan–Sep 2026')[3] === '40.0%' && at('Sep 2026') && at('Sep 2026')[4] === 111,
@@ -537,14 +543,13 @@ async function testNrrWorkbook() {
   const v = (c) => (c !== null && typeof c === 'object' ? c.v : c);
   check(sheets.map((s) => s.name).join() === 'Summary,Customers,Month by month' && fileName === 'lsports-nrr-2026-09.xlsx',
     'three sheets: Summary, Customers, Month by month; named after the month');
-  check(customers.rows.length === 8 && customers.rows[0].map(v).join('|') === 'Customer|Group|Dec 2025 MRR|Sep 2026 MRR|Change|Counted in NRR|Kept for GRR|Currency|CRM churn date|Customer ID'
-    && customers.rows[1].map(v).join('|') === 'Delta|Churned|30|0|-30|Yes|0|EUR|2026-06-30|4' && customers.autofilter === 'A1:J7'
-    && customers.rows.find((r) => v(r[0]) === 'Nu').map(v).join('|') === 'Nu|New this year|0|40|40|No|0|EUR||8'
-    && customers.rows.find((r) => v(r[0]) === 'Gamma').map(v)[7] === 'USD' && v(customers.rows[7][0]) === 'Total',
+  check(customers.rows.length === 8 && customers.rows[0].map(v).join('|') === 'Customer|Group|Dec 2025|Sep 2026|Change|Counted in NRR|Kept for GRR|Sep 2026 still to collect|CRM churn date|Customer ID'
+    && customers.rows[1].map(v).join('|') === 'Delta|Churned|30|0|-30|Yes|0|0|2026-06-30|4' && customers.autofilter === 'A1:J7'
+    && customers.rows.find((r) => v(r[0]) === 'Nu').map(v).join('|') === 'Nu|New this year|0|40|40|No|0|5||8' && v(customers.rows[7][0]) === 'Total',
   'Customers: every customer once, with its group, December and now, counted or not, its id; a filter and totals', customers.rows.map((r) => r.map(v).join('|')).join(' / '));
   const line = (label) => summary.rows.find((r) => typeof v(r[0]) === 'string' && v(r[0]).startsWith(label));
-  check(v(line('Their MRR, Dec 2025')[1]) === 280 && v(line('Their MRR, Dec 2025')[2]) === 4 && v(line('+ Expansion')[1]) === 20
-    && v(line('− Contraction')[1]) === -30 && v(line('− Churned')[1]) === -30 && v(line('± Unchanged')[1]) === 0 && v(line('Their MRR, Sep 2026')[1]) === 240
+  check(v(line('Their contracted revenue, Dec 2025')[1]) === 280 && v(line('Their contracted revenue, Dec 2025')[2]) === 4 && v(line('+ Expansion')[1]) === 20
+    && v(line('− Contraction')[1]) === -30 && v(line('− Churned')[1]) === -30 && v(line('± Unchanged')[1]) === 0 && v(line('Their contracted revenue, Sep 2026')[1]) === 240 && v(line('Of which still to be collected')[1]) === 20
     && 280 + 20 - 30 - 30 + 0 === 240,
   'Summary: the bridge from December to now adds up, with the customers in each step');
   check(sheets.every((s) => s.rows.every((r) => r.every((c) => typeof v(c) !== 'string' || !v(c).startsWith('=')))),
@@ -555,14 +560,14 @@ async function testNrrWorkbook() {
     && v(line('Not counted')[1]) === 50 && v(line('Not counted')[2]) === 2 && /^LSports NRR, Jan–Sep 2026/.test(v(summary.rows[0][0])),
   'Summary: NRR and GRR equal the page\'s; new customers shown, not counted', `${v(nrrLine[1])} ${v(grrLine[1])}`);
   const dated = line('Churned customers with a churn date in the CRM');
-  check(v(dated[2]) === 1 && /COUNTIFS\(.*"Churned".*"<>"\)/.test(dated[2].f) && /^Customers with contracts in USD: 1\. /.test(v(summary.rows.find((r) => /^Customers with contracts in/.test(String(v(r[0]))))[0]))
-    && /^LSports NRR, .*on contracted MRR$/.test(v(summary.rows[0][0])),
-  'Summary: on contracted MRR; the churned customers with a CRM churn date (a formula); USD contracts said', dated[2].f);
-  check(line('Their MRR, Dec 2025')[1].f === 'SUMIFS(Customers!$C$2:$C$7,Customers!$F$2:$F$7,"Yes")' && /^B\d+\/B\d+$/.test(nrrLine[1].f),
-    'Summary: the figures are formulas over the Customers sheet', line('Their MRR, Dec 2025')[1].f);
+  check(v(dated[2]) === 1 && /COUNTIFS\(.*"Churned".*"<>"\)/.test(dated[2].f) && /^LSports NRR, .*on contracted revenue$/.test(v(summary.rows[0][0]))
+    && line('Of which still to be collected')[1].f === 'SUMIFS(Customers!$H$2:$H$7,Customers!$F$2:$F$7,"Yes")',
+  'Summary: on contracted revenue; the part still to collect and the churned customers with a CRM churn date (formulas)', dated[2].f);
+  check(line('Their contracted revenue, Dec 2025')[1].f === 'SUMIFS(Customers!$C$2:$C$7,Customers!$F$2:$F$7,"Yes")' && /^B\d+\/B\d+$/.test(nrrLine[1].f),
+    'Summary: the figures are formulas over the Customers sheet', line('Their contracted revenue, Dec 2025')[1].f);
   const formulas = formulaValues(sheets);
   const off = formulas.filter((x) => !near(x.got, x.v, 0.005));
-  check(formulas.length === 32 && off.length === 0, `every formula (${formulas.length}) gives the value written next to it`, JSON.stringify(off.slice(0, 3)));
+  check(formulas.length === 34 && off.length === 0, `every formula (${formulas.length}) gives the value written next to it`, JSON.stringify(off.slice(0, 3)));
   check(months.rows.length === 5 && v(months.rows[4][0]) === 'Sep 2026' && near(v(months.rows[4][1]), d.value.value / 100, 1e-9),
     'Month by month: each month of the year so far');
   let threw = '';
