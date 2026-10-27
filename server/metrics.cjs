@@ -7,8 +7,8 @@
 //   Net cash              New Bank Dashboard, Plan: bank at the last month-end (actual), December
 //                         closings (forecast). There is no debt data, so net cash is the cash in the bank.
 //   ARR                   Snowflake MRR × 12 now (actual); December customer revenue × 12 (forecast)
-//   NRR                   Snowflake revenue by customer: this month's revenue from customers who had
-//                         revenue 12 months earlier ÷ their revenue then (GRR caps each at its old amount)
+//   NRR                   Snowflake revenue by customer, from 1 January: the last closed month's revenue from
+//                         the customers who had revenue in December ÷ their December revenue (GRR caps each at it)
 //   Churn                 churned MRR by quarter (Snowflake), and the revenue the forecast loses to churn
 //   Cloud vs cap          cloud (NetSuite 640xxx; forecast: the budget's cloud share of operating
 //                         expenses) against cap % × projected FY revenue
@@ -119,7 +119,13 @@ function cloudYear({ block, details, targetsBase, category, capPct, revenue, wit
 }
 
 // ── NRR ─────────────────────────────────────────────────────────────────────
-/** NRR and GRR for each month from revenue by customer: [{ month, customer, rev }] (actual months). */
+/** NRR is counted from 1 January: a month's base is the December before its year, the revenue going into the year. */
+const nrrBase = (mKey) => `${Number(String(mKey).slice(0, 4)) - 1}-12`;
+/** 'Jan–Sep 2026' ('Jan 2026' in January): the year to date through a month. */
+const ytdSpan = (mKey) => (String(mKey).slice(5) === '01' ? monthShort(mKey) : `Jan–${monthShort(mKey)}`);
+
+/** NRR and GRR for each month from revenue by customer: [{ month, customer, rev }] (actual months), each
+ *  against its base (nrrBase). */
 function nrrSeries(rows, months) {
   const by = new Map();
   for (const r of rows) {
@@ -128,7 +134,8 @@ function nrrSeries(rows, months) {
     m.set(r.customer, (m.get(r.customer) || 0) + num(r.rev));
   }
   return months.map((month) => {
-    const before = by.get(shiftMonth(month, -12));
+    const from = nrrBase(month);
+    const before = by.get(from);
     const now = by.get(month);
     if (!before || !now) return null;
     let base = 0;
@@ -143,17 +150,17 @@ function nrrSeries(rows, months) {
       gross += Math.min(cur, v);
       customers++;
     }
-    return base > 0 ? { month, nrr: Math.round((kept / base) * 10000) / 100, grr: Math.round((gross / base) * 10000) / 100, customers } : null;
+    return base > 0 ? { month, from, nrr: Math.round((kept / base) * 10000) / 100, grr: Math.round((gross / base) * 10000) / 100, customers } : null;
   }).filter(Boolean);
 }
 
 /**
- * How one month's NRR is made (pure): the bridge from the base customers' revenue a year earlier to
- * their revenue now, and the customers behind each step. rows: [{ month, customer, name, rev }].
+ * How one month's NRR is made (pure): the bridge from the base customers' December revenue to their
+ * revenue now, and the customers behind each step. rows: [{ month, customer, name, rev }].
  * The figures equal nrrSeries' for the month. limit: customers listed per group (the rest are counted).
  */
 function nrrDetail(rows, month, { limit = 40 } = {}) {
-  const prev = shiftMonth(month, -12);
+  const prev = nrrBase(month);
   const at = (m) => {
     const out = new Map();
     for (const r of rows) {
@@ -204,12 +211,12 @@ function nrrDetail(rows, month, { limit = 40 } = {}) {
   };
   const customers = groups.churned.length + groups.contracted.length + groups.expanded.length + groups.flat.length;
   return {
-    item: 'nrr', title: `NRR, ${N}`, subtitle: `Last year's customers: ${P} → ${N}`,
+    item: 'nrr', title: `NRR, ${ytdSpan(month)}`, subtitle: `The customers going into 1 January: ${P} → ${N}`,
     value: { value: Math.round((kept / base) * 10000) / 100, unit: 'pct' },
     formula: [
-      `NRR = the revenue in ${N} of the customers who had revenue in ${P}, ÷ their revenue in ${P}.`,
+      `NRR is counted from 1 January: the revenue in ${N} of the customers who had revenue in ${P}, ÷ their revenue in ${P}.`,
       `GRR = the same with each customer capped at its ${P} revenue, so growth doesn't count: only what was kept.`,
-      `Customers new since ${P} are left out (listed at the end, not counted).`,
+      `Customers with no revenue in ${P} (new this year) are left out (listed at the end, not counted).`,
     ],
     source: [
       'Snowflake FCT_CUSTOMER__MONTHLY__FINANCE: revenue by customer and month, actual months only (DATE_STATUS = \'actual\').',
@@ -224,14 +231,14 @@ function nrrDetail(rows, month, { limit = 40 } = {}) {
       { label: `− Churned (${groups.churned.length} customers, no revenue in ${N})`, value: -churn, unit: 'eur', sign: true },
       { label: `= Their revenue, ${N}`, value: round2(kept), unit: 'eur', strong: true },
       { label: `NRR = ${N} ÷ ${P}`, value: Math.round((kept / base) * 10000) / 100, unit: 'pct', strong: true },
-      { label: 'GRR (each capped at its old revenue)', value: Math.round((gross / base) * 10000) / 100, unit: 'pct' },
+      { label: `GRR (each capped at its ${P} revenue)`, value: Math.round((gross / base) * 10000) / 100, unit: 'pct' },
       { label: `Not counted: ${groups.added.length} new customers, revenue ${N}`, value: total(groups.added, (r) => r.now), unit: 'eur' },
     ],
     tables: [
       table('Churned', groups.churned, `Revenue in ${P}, none in ${N}.`),
       table('Contracted', groups.contracted, `Less revenue in ${N} than in ${P}.`),
       table('Expanded', groups.expanded, `More revenue in ${N} than in ${P}.`),
-      table('New since then (not counted)', groups.added, `No revenue in ${P}: outside NRR.`),
+      table('New this year (not counted)', groups.added, `No revenue in ${P}: outside NRR.`),
     ],
   };
 }
@@ -547,7 +554,7 @@ async function sfEmployeeSpans(sf, company) {
 /**
  * The Metrics payload from its inputs (pure; unit-tested).
  *   cash, pnl: the projection payloads (Plan); pnlDetails: the P&L's server-side details
- *   extras: { arr, churnQuarters, nrr: [{ month, nrr, grr, customers }],
+ *   extras: { arr, churnQuarters, nrr: [{ month, from, nrr, grr, customers }] (from: the December base),
  *             employees: [{ start, end, type }], company }
  *   failed: names of the extras that could not be read
  *   targets: the saved targets store ({ years: { 'YYYY': targets }, updatedAt, updatedBy }) or null;
@@ -620,9 +627,11 @@ function buildMetrics({ nowMs, cash, pnl, pnlDetails, settings, extras, failed =
       fy: [decRunRate(pY), decRunRate(pT)],
     },
     {
-      key: 'nrr', label: 'NRR', unit: 'pct', note: nrrLast ? `Trailing 12 months; GRR ${nrrLast.grr}%` : 'Trailing 12 months',
-      lastMonth: nrrLast ? cell(nrrLast.nrr, 'actual', monthShort(nrrLast.month), { grr: nrrLast.grr, customers: nrrLast.customers, detail: 'nrr' }) : null,
-      ytd: null, fy: [null, null],
+      key: 'nrr', label: 'NRR', unit: 'pct',
+      note: nrrLast ? `Since 1 Jan ${nrrLast.month.slice(0, 4)} (${monthShort(nrrBase(nrrLast.month))} → ${monthShort(nrrLast.month)}); GRR ${nrrLast.grr}%` : 'Since 1 January',
+      lastMonth: null,
+      ytd: nrrLast ? cell(nrrLast.nrr, 'actual', ytdSpan(nrrLast.month), { grr: nrrLast.grr, customers: nrrLast.customers, detail: 'nrr' }) : null,
+      fy: [null, null],
     },
     {
       key: 'churn', label: 'Churn', unit: 'eur', note: 'Churned MRR (actual); revenue lost to churn (forecast)',
@@ -691,9 +700,9 @@ async function buildDetail(item, ctx) {
     const d = nrrDetail(rows, last.month);
     if (d) {
       d.tables.push({
-        title: 'NRR, the last 6 months', note: 'Each month against the same month a year earlier.',
-        columns: [{ key: 'month', label: 'Month', unit: 'text' }, { key: 'customers', label: 'Base customers', unit: 'int' }, { key: 'nrr', label: 'NRR', unit: 'pct' }, { key: 'grr', label: 'GRR', unit: 'pct' }],
-        rows: series.map((s) => ({ month: monthShort(s.month), customers: s.customers, nrr: s.nrr, grr: s.grr })), more: 0, total: null,
+        title: `NRR month by month, ${last.month.slice(0, 4)}`, note: `Each month against ${monthShort(last.from)}, the revenue going into 1 January.`,
+        columns: [{ key: 'month', label: 'Month', unit: 'text' }, { key: 'nrr', label: 'NRR', unit: 'pct' }, { key: 'grr', label: 'GRR', unit: 'pct' }],
+        rows: series.map((s) => ({ month: monthShort(s.month), nrr: s.nrr, grr: s.grr })), more: 0, total: null,
       });
     }
     return d;
@@ -806,9 +815,10 @@ function createMetricsHandler(deps = {}) {
     }
     const nowMs = clock();
     const closed = lastClosedMonth(nowMs);
-    const nrrMonths = Array.from({ length: 6 }, (_, i) => shiftMonth(closed, i - 5));
+    // NRR for each month of the closed month's year, from the December before it.
+    const nrrMonths = Array.from({ length: Number(closed.slice(5)) }, (_, i) => `${closed.slice(0, 4)}-${pad2(i + 1)}`);
     // Revenue by customer is kept as read: the NRR series and its breakdown both come from it.
-    const customerRevenue = () => cached(`custrev:${closed}`, () => reads.customerRevenue(shiftMonth(nrrMonths[0], -12), closed));
+    const customerRevenue = () => cached(`custrev:${closed}`, () => reads.customerRevenue(nrrBase(closed), closed));
 
     if (detail !== null) {
       try {
@@ -879,7 +889,7 @@ function createMetricsDepositsHandler(deps = {}) {
 
 module.exports = {
   createMetricsHandler, createMetricsSettingsHandler, createMetricsDepositsHandler,
-  buildMetrics, buildDetail, nrrSeries, nrrDetail, churnQuarterDetail, churnYtdDetail, churnForecastDetail, DETAILS,
+  buildMetrics, buildDetail, nrrBase, nrrSeries, nrrDetail, churnQuarterDetail, churnYtdDetail, churnForecastDetail, DETAILS,
   shiftMonth, lastClosedMonth, cloudTargetsOf, headcountByMonth, peopleMetrics, employedOn, lastDayOf, sfEmployeeSpans,
   HEADCOUNT_MOVES, peopleOf, periodOn,
 };
