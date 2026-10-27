@@ -71,10 +71,8 @@ briefly a tab of the Metrics page before it got its own sidebar item.
   balances and rate, urgent ones first (in red):
   - **Convert** for a payment in shekels that the shekels on hand (and the conversions before it) don't cover, by the
     business day it has to be ready: said from 2 business days (Sunday to Thursday) before that day, in red, and not
-    earlier (`notice`). Finance converts at once, and the figure moves until then; before that, the payment is only
-    in the payments ahead.
-  - **Convert early**, instead, for a payment due before the next conversion day while EUR/ILS is high against the
-    last 90 days: as much now as today's euros above the EUR floor allow.
+    earlier (`notice`), whatever the rate. Finance converts at once, and the figure moves until then; before that,
+    the payment is only in the payments ahead. (An early conversion on a high EUR/ILS was dropped on 27 Oct 2026.)
   - **Short**: the euros held and expected fall short of a due (urgent in its last 5 business days).
   - **Move** euros to Hapoalim EUR in the last 3 business days before a conversion, when it holds less than to keep
     there.
@@ -183,7 +181,7 @@ recommendation**. It reads NetSuite and the bank balances fresh (no cache) and c
 **When it goes** (`mailDecision`): every day but Saturday (the bank works Sunday to Friday; finance writes to it on
 Fridays too), when there is at least one recommendation (a conversion for a payment the balances don't cover, a
 shortfall, euros to move to Hapoalim before a conversion, deposits for the conversions the deposits leave short, a
-high rate to convert early or convert the spare, or spare euros for a new deposit), and never without one. So a
+high rate to convert the spare, or spare euros for a new deposit), and never without one. So a
 conversion for the salaries is in the mail, in red, from 2 business days before it has to be ready until the
 balances show it converted. A Saturday, or a day with no recommendation, sends nothing. `FX_MAIL_ALWAYS=1` sends
 every day, Saturday included.

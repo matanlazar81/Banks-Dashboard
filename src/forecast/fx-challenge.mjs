@@ -752,9 +752,8 @@ function cashPlanOf(data, today, spot, upcoming, schedule, policy) {
  * daily mail goes on any day but Saturday when there is at least one. urgent: due within `lead` business days (in red).
  *   convert        a payment in shekels that the shekels on hand (and the conversions before it) don't cover: from
  *                  `notice` business days before it has to be ready (finance converts at once; asked on 27 Oct 2026,
- *                  as the figure moves until then), urgent
- *   convert-early  instead, for one due before the next conversion day, while EUR/ILS is high against the last 90
- *                  days: as much now as today's euros above the EUR vendors' floor allow
+ *                  as the figure moves until then), urgent. Never earlier, whatever the rate (finance asked the same
+ *                  day for no early conversion on a high EUR/ILS)
  *   short          the euros held and expected fall short of a due: urgent within `lead` business days
  *   move           the conversion day is within `moveLead` business days and Hapoalim EUR holds less than to keep there
  *   ladder         a conversion the deposits don't cover (first in, first out): spare euros into deposits that pay out
@@ -771,20 +770,12 @@ export function todayActions(view, today, { lead = 5, moveLead = 3, minEur = 500
   const actions = [];
   if (!n) return { actions, ahead };
   const high = !!view.rateCheck && view.rateCheck.level === 'high';
-  let room = Math.max(0, n.liquid - n.eurFloor);
   for (const d of ahead.dues) {
     if (!(d.eur >= minEur)) continue;
     const left = businessDaysBetween(today, d.by);
-    if (left >= lead && high && d.date <= n.date && room >= minEur) {
-      const eur = Math.min(d.eur, room);
-      actions.push({ kind: 'convert-early', key: `early:${d.date}`, urgent: false, eur, by: d.by, left, due: d });
-      room -= eur;
-    } else {
-      // Said `notice` business days ahead, not before: finance converts at once, and the figure is fresher then.
-      // Earlier it is only among the payments ahead.
-      if (left <= notice) actions.push({ kind: 'convert', key: `convert:${d.date}`, urgent: left < lead, eur: d.eur, by: d.by, left, due: d });
-      if (left < lead) room -= d.eur;
-    }
+    // Said `notice` business days ahead, not before: finance converts at once, and the figure is fresher then.
+    // Earlier it is only among the payments ahead.
+    if (left <= notice) actions.push({ kind: 'convert', key: `convert:${d.date}`, urgent: left < lead, eur: d.eur, by: d.by, left, due: d });
   }
   if (n.short && n.short.first.eur >= minEur) {
     const by = businessDayOnOrBefore(n.short.first.date);
@@ -840,10 +831,6 @@ export function describeAction(a, view, today, fmt) {
       else if (rc.level === 'low') body += ` ${rateIs}: if it can wait, wait, but no later than ${day(a.by)}.`;
     }
     return { head: `Convert ${eur(a.eur)} ${now ? 'today' : `by ${day(a.by)}`}`, body };
-  }
-  if (a.kind === 'convert-early') {
-    const part = a.eur < a.due.eur - 0.5 ? ` (${eur(a.due.eur)} in all: today's euros above the ${eur(n.eurFloor)} kept for EUR vendors allow ${eur(a.eur)} now)` : '';
-    return { head: `Convert ${eur(a.eur)} today`, body: `${rateIs}: a good day to convert early for ${dueWhat(a.due)}, due by ${day(a.by)}${part}.` };
   }
   if (a.kind === 'short') {
     const what = a.shekels ? 'the conversion for shekels due then' : `the ${day(a.date)} conversion`;

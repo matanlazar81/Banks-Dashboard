@@ -111,10 +111,6 @@ function actionText(a, v, today) {
     if (rc && !now && rc.level === 'low') body += ` ${rateIs(rc)}: אם אפשר, כדאי לחכות, אבל לא יאוחר מ${day(a.by)}.`;
     return { head: `להמיר ${eur(a.eur)} ${now ? 'היום' : `עד ${day(a.by)}`}`, body };
   }
-  if (a.kind === 'convert-early') {
-    const part = a.eur < a.due.eur - 0.5 ? ` (${eur(a.due.eur)} בסך הכול; מעבר ל-${eur(n.eurFloor)} השמורים לספקים באירו יש היום ${eur(a.eur)})` : '';
-    return { head: `להמיר ${eur(a.eur)} היום`, body: `${rateIs(rc)}: יום טוב להקדים את ההמרה עבור ${whatOf(a.due)}, הנדרשת עד ${day(a.by)}${part}.` };
-  }
   if (a.kind === 'short') {
     const what = a.shekels ? 'ההמרה לשקלים הנדרשת אז' : `ההמרה של ${day(a.date)}`;
     const fix = n.backup > 0 ? ` כדאי להיערך לשבירה של עד ${eur(Math.min(a.eur, n.backup))} מהפיקדונות שנפתחים מאוחר יותר.` : ' כדאי לשמור כל אירו פנוי עד אז.';
