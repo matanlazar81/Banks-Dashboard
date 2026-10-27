@@ -812,6 +812,9 @@ async function testMail(fx) {
   check(relay.smtp.host === 'smtp-relay.gmail.com' && !relay.smtp.transport.auth && backend.from === 'bot@lsports.eu' && backend.smtp.transport.auth.pass === 'pw-secret'
     && bare.errors.some((e) => /no mail server/.test(e)) && bare.errors.some((e) => /FX_MAIL_FROM/.test(e)) && !JSON.stringify([cfg.errors, backend.errors, bare.errors]).includes('pw-secret'),
   'else NET_CASH_SMTP_URL, else the backend\'s SMTP_*; nothing set → said, never a password');
+  check(relay.policy === 'today' && mail.mailConfig({ FX_MAIL_TO: 'matan.l@lsports.eu', FX_MAIL_POLICY: 'p95' }).policy === 'p95'
+    && /\(לפי השער היום\)/.test(mail.renderMail(fx, data).text),
+  'the mail tells today\'s scenario (what today\'s rate would sell) unless FX_MAIL_POLICY asks for 95% or the worst case');
   check(['wait', 'send', 'send', 'last', 'done'].every((want, i) => mail.scheduleState([
     { hour: 9, sendHour: 10, sentDay: null, today: TODAY }, { hour: 10, sendHour: 10, sentDay: '2026-10-20', today: TODAY }, { hour: 11, sendHour: 10, sentDay: null, today: TODAY },
     { hour: 12, sendHour: 10, sentDay: null, today: TODAY }, { hour: 15, sendHour: 10, sentDay: TODAY, today: TODAY },
