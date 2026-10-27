@@ -489,6 +489,12 @@ const isoAddDays = (iso, n) => new Date(utc(iso) + n * DAY_MS).toISOString().sli
 /** A new deposit for a conversion's gap pays out at least this many days from today; a nearer conversion is left to
  * the cash (the keep line). */
 const LADDER_MIN_DAYS = 14;
+/**
+ * The day the bank takes the euros for the conversion on `date` (the 7th): the business day before it. NetSuite's
+ * "Conversion" journals: October 2026's, for Wed 7 Oct, went through on Tue 6 Oct; in 2026 a 7th on a weekend went
+ * through on the Wednesday or Thursday before. A deposit counts for a conversion only if it pays out by then.
+ */
+const conversionTakes = (date) => businessDayOnOrBefore(isoAddDays(date, -1));
 
 const addMonthsIso = (iso, n) => {
   const [y, m, d] = iso.split('-').map(Number);
@@ -620,21 +626,23 @@ export function planReserve({ upcoming, policy = 'p95', eur, inflowPerDay = null
     return { months, until, eur: Math.max(0, Math.floor(most / 10000) * 10000) };
   });
 
-  // First in, first out: each deposit counts for the first conversion after it pays out, and what a conversion doesn't
-  // take rolls on to the next. What the deposits don't cover is the conversion's gap: euros on hand or coming in fill
-  // it, or a new deposit timed for it (until: the business day before the euros have to be in Hapoalim EUR).
-  // The next conversion's gap is the cash to keep (the keep line), so a deposit is timed for the later ones only.
+  // First in, first out: each deposit counts for the first conversion the bank takes its euros for after it pays out
+  // (conversionTakes: the business day before the 7th), and what a conversion doesn't take rolls on to the next. What
+  // the deposits don't cover is the conversion's gap: euros on hand or coming in fill it, or a new deposit timed for
+  // it, paying out the business day before the bank takes the euros (until). The next conversion's gap is the cash to
+  // keep (the keep line), so a deposit is timed for the later ones only.
   let carried = 0;
   let prior = today;
   const coverage = fx.map((f, i) => {
     const req = requirementOf(policy, f.conv, f.risk);
-    const releasedDeposits = releasedBetween(prior, f.date);
+    const takes = conversionTakes(f.date);
+    const releasedDeposits = releasedBetween(prior, takes);
     const released = releasedDeposits.reduce((s, d) => s + d.amount, 0);
     const have = carried + released;
-    const until = businessDayOnOrBefore(isoAddDays(businessDayOnOrBefore(f.date), -1));
-    const row = { month: f.month, date: f.date, required: req, released, releasedDeposits, carried, have, gap: Math.max(0, req - have), until, timed: i > 0 && daysTo(until) >= LADDER_MIN_DAYS };
+    const until = businessDayOnOrBefore(isoAddDays(takes, -1));
+    const row = { month: f.month, date: f.date, takes, required: req, released, releasedDeposits, carried, have, gap: Math.max(0, req - have), until, timed: i > 0 && daysTo(until) >= LADDER_MIN_DAYS };
     carried = Math.max(0, have - req);
-    prior = f.date;
+    prior = takes;
     return row;
   });
   // The new deposits for the gaps, earliest first: each holds its gap (rounded up to €10K) or as much as the dues
@@ -777,7 +785,7 @@ export function todayActions(view, today, { lead = 5, moveLead = 3, minEur = 500
     const left = businessDaysBetween(today, by);
     actions.push({ kind: 'short', key: `short:${n.short.first.date}`, urgent: left < lead, eur: n.short.first.eur, date: n.short.first.date, by, left, shekels: n.short.first.shekels });
   }
-  const fixingBy = businessDayOnOrBefore(n.date);
+  const fixingBy = conversionTakes(n.date);
   const fixLeft = businessDaysBetween(today, fixingBy);
   if (fixLeft < moveLead && n.moveToHapoalim >= 10000) {
     actions.push({ kind: 'move', key: `move:${n.date}`, urgent: true, eur: n.moveToHapoalim, date: n.date, by: fixingBy, left: fixLeft });
@@ -871,15 +879,17 @@ export function nothingToday(ahead, today, fmt, { minEur = 50000 } = {}) {
 }
 
 /**
- * Where the euros kept for the next conversion come from on the day: the EUR deposits released after today and by
- * the conversion day (they count for it, paid into Hapoalim EUR), and today's cash for the rest.
+ * Where the euros kept for the next conversion come from: the EUR deposits paying out after today and by the day the
+ * bank takes the euros (the business day before the 7th; they count for it, paid into Hapoalim EUR), and today's cash
+ * for the rest. The same figures as the first conversion of the coverage.
  * Returns { required, deposits (earliest first), fromDeposits, fromCash, covered } (covered: the deposits alone hold it).
  */
 export function keepCover(plan) {
-  const n = plan.next;
-  const deposits = plan.path.length ? plan.path[0].releasedDeposits : [];
-  const fromDeposits = Math.min(n.required, n.maturing);
-  return { required: n.required, deposits, fromDeposits, fromCash: n.needLiquid, covered: fromDeposits > 0.5 && n.needLiquid < 0.5 };
+  // The first conversion of the coverage: the deposits paying out by the day the bank takes the euros.
+  const c = plan.coverage && plan.coverage[0];
+  if (!c) return { required: plan.next.required, deposits: [], fromDeposits: 0, fromCash: plan.next.required, covered: false };
+  const fromDeposits = Math.min(c.required, c.have);
+  return { required: c.required, deposits: c.releasedDeposits, fromDeposits, fromCash: c.gap, covered: fromDeposits > 0.5 && c.gap < 0.5 };
 }
 
 /** Why the amount to keep (keepCover's fromCash) is what it is, when deposits released by then hold some of the
