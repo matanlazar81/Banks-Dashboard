@@ -224,9 +224,12 @@ export interface ReservePlan {
 export interface CoverageRow {
   month: string;
   date: string;
+  /** The day the bank takes the euros: the business day before the 7th. */
+  takes: string;
   /** What it takes, at the setting (today's band, 95% or the worst case). */
   required: number;
-  /** The deposits paying out after the previous conversion (after today, for the first) and by this one. */
+  /** The deposits paying out after the day the bank took the previous conversion's euros (after today, for the
+   * first) and by the day it takes this one's. */
   released: number;
   releasedDeposits: DepositRelease[];
   /** Left over from the deposits of the conversions before it. */
@@ -234,7 +237,7 @@ export interface CoverageRow {
   have: number;
   /** What the deposits don't cover. */
   gap: number;
-  /** The business day before the euros have to be in Hapoalim EUR: when a deposit for its gap should pay out. */
+  /** When a deposit for its gap should pay out: the business day before the bank takes the euros. */
   until: string;
   /** A deposit can be timed for it: not the next conversion (its gap is the cash to keep), and 14 days or more until
    * `until`. */
@@ -304,7 +307,8 @@ export declare function nothingToday(ahead: { dues: ShekelDue[] }, today: string
 /** Where the euros kept for the next conversion come from on the day. */
 export interface KeepCover {
   required: number;
-  /** The EUR deposits released after today and by the conversion day, earliest first: they count for it. */
+  /** The EUR deposits paying out after today and by the day the bank takes the euros, earliest first: they count for
+   * it. */
   deposits: DepositRelease[];
   fromDeposits: number;
   /** What today's cash still has to hold for it. */

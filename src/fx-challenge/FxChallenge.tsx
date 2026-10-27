@@ -356,10 +356,10 @@ function Recommendation({ model, policy, onPolicy, inflowMonths }: { model: FxMo
 }
 
 const COVER_TIP = {
-  released: "EUR deposits paying out after the previous conversion (after today, for the first) and by this one, at the bank's value then, interest included. Hover a figure for each deposit and its date. They count only if the bank pays them out rather than rolling them over.",
+  released: "EUR deposits paying out by the day the bank takes the euros (the business day before the 7th: October's went through on Tue 6 Oct for Wed 7 Oct), and after it took the previous conversion's (after today, for the first), at the bank's value then, interest included. Hover a figure for each deposit and its date. They count only if the bank pays them out rather than rolling them over.",
   carried: "What the deposits of the conversions before it left over: it rolls on to this one.",
   result: 'The deposits paid out before it, plus what is left from earlier, against what it takes. Short: the euros on hand or coming in have to fill the rest, or a new deposit timed for it.',
-  ladder: "A new deposit that pays out the business day before the euros have to be in Hapoalim EUR (583400), for the gap rounded up to €10K, as much as the payments before it leave room for; earliest first. A conversion less than two weeks away takes the rest from today's cash (the keep line above).",
+  ladder: "A new deposit that pays out the business day before the bank takes the euros from Hapoalim EUR (583400), for the gap rounded up to €10K, as much as the payments before it leave room for; earliest first. A conversion less than two weeks away takes the rest from today's cash (the keep line above).",
 };
 
 /** The next conversions against the deposits, first in, first out, and the new deposits timed for their gaps. */
@@ -385,7 +385,9 @@ function CoverageCard({ model, plan }: { model: FxModel; plan: ReservePlan }) {
               const over = c.have - c.required;
               return (
                 <tr key={c.month} className="border-b border-slate-100">
-                  <td className="px-2 py-1.5 text-left text-slate-700">{formatDay(c.date)}{c.month.slice(0, 4) !== year0 ? ` ${c.month.slice(0, 4)}` : ''}</td>
+                  <td className="px-2 py-1.5 text-left text-slate-700" title={`The bank takes the euros on ${formatDay(c.takes, true)}, the business day before.`}>
+                    <span className={HINT}>{formatDay(c.date)}{c.month.slice(0, 4) !== year0 ? ` ${c.month.slice(0, 4)}` : ''}</span>
+                  </td>
                   <td className={TD}>{formatEur(c.required)}</td>
                   <td className={`${TD} text-slate-600`} title={c.releasedDeposits.length ? depositLines(c.releasedDeposits).join('\n') : undefined}>
                     {c.released > 0.5 ? <span className={HINT}>{formatEur(c.released)}</span> : '–'}
@@ -404,9 +406,10 @@ function CoverageCard({ model, plan }: { model: FxModel; plan: ReservePlan }) {
         </table>
       </div>
       <p className="mt-1 text-[11px] text-slate-500">
-        Each deposit counts for the first conversion after it pays out, and what one conversion doesn&apos;t take rolls on to the next.
-        A conversion the deposits don&apos;t cover is short: the euros on hand or coming in fill the rest, or a new deposit that pays out
-        just before it (the last column, also under what to do today). Hover a header for what it means.
+        The bank takes a conversion&apos;s euros the business day before the 7th (hover a day), so each deposit counts for the first
+        conversion it pays out in time for, and what one conversion doesn&apos;t take rolls on to the next. A conversion the deposits
+        don&apos;t cover is short: the euros on hand or coming in fill the rest, or a new deposit that pays out the business day before
+        the bank takes them (the last column, also under what to do today). Hover a header for what it means.
       </p>
     </Card>
   );

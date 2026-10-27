@@ -205,8 +205,11 @@ async function testPlan(fx) {
   check(whole.covered && whole.fromDeposits === 800000 && whole.fromCash === 0
     && fx.describeKeep(whole, words) === 'the deposit released on 2026-11-03 (€1000K) covers the €800K it takes from Hapoalim EUR (583400)',
   'a deposit released by the conversion holding all of it (€1M for €800K): nothing to keep, and why');
-  check(fx.describeKeep(fx.keepCover(r), words) === 'the 2 deposits released by 2026-11-07 (€800K) cover the €800K it takes from Hapoalim EUR (583400)',
-    'several deposits: added up, by the last one\'s date (one released on the conversion day counts)');
+  check(fx.describeKeep(fx.keepCover(r), words) === 'it takes €800K, and the deposit released on 2026-10-25 brings €300K of it',
+    'a deposit paying out on the conversion day itself is too late: the bank takes the euros the business day before (Thu 5 Nov for Sat 7 Nov)');
+  const both = fx.keepCover(fx.planReserve({ upcoming, policy: 'today', eur: { ...dated, deposits: dated.deposits.map((d) => (d.label === 'on the day' ? { ...d, valueDate: '2026-11-04' } : d)) }, today: TODAY, inflowPerDay: 0 }));
+  check(fx.describeKeep(both, words) === 'the 2 deposits released by 2026-11-04 (€800K) cover the €800K it takes from Hapoalim EUR (583400)',
+    'several deposits paying out in time: added up, by the last one\'s date');
   check(fx.describeKeep(fx.keepCover(fx.planReserve({ upcoming, policy: 'p95', eur: pos, today: TODAY })), words) === '',
     'no deposit released by then (an undated one is backup): nothing more to say');
 
@@ -218,11 +221,12 @@ async function testPlan(fx) {
   const cov = rich.coverage.map((c) => [c.date, c.required, c.released, c.carried, c.gap]);
   check(same(cov, [
     ['2026-11-07', 800000, 806000, 0, 0], ['2026-12-07', 800000, 808000, 6000, 0], ['2027-01-07', 1050000, 908000, 14000, 128000],
-    ['2027-02-07', 1050000, 909000, 0, 141000], ['2027-03-07', 1050000, 405000, 0, 645000], ['2027-04-07', 1050000, 0, 0, 1050000],
-  ]), 'FIFO: each deposit counts for the first conversion after it pays out, leftovers roll on (Nov +€6K, Dec +€14K), Jan €128K short', JSON.stringify(cov));
-  check(same(rich.coverage.map((c) => c.until), ['2026-11-04', '2026-12-06', '2027-01-06', '2027-02-04', '2027-03-04', '2027-04-06']),
-    'a deposit for a gap pays out the business day before the euros have to be in Hapoalim (Sat 7 Nov: Thu 5 Nov, so Wed 4 Nov; Sun 7 Feb: Thu 4 Feb)');
-  check(same(rich.ladder.map((l) => [l.until, l.eur]), [['2027-01-06', 130000], ['2027-02-04', 150000], ['2027-03-04', 650000], ['2027-04-06', 1050000]]),
+    ['2027-02-07', 1050000, 909000, 0, 141000], ['2027-03-07', 1050000, 0, 0, 1050000], ['2027-04-07', 1050000, 405000, 0, 645000],
+  ]), 'FIFO: each deposit counts for the first conversion whose euros the bank takes after it pays out, leftovers roll on (Nov +€6K, Dec +€14K), Jan €128K short; Fri 5 Mar is after Thu 4 Mar, so it counts for April', JSON.stringify(cov));
+  check(same(rich.coverage.map((c) => [c.takes, c.until]), [['2026-11-05', '2026-11-04'], ['2026-12-06', '2026-12-03'], ['2027-01-06', '2027-01-05'],
+    ['2027-02-04', '2027-02-03'], ['2027-03-04', '2027-03-03'], ['2027-04-06', '2027-04-05']]),
+  'the bank takes the euros the business day before the 7th (Thu 7 Jan: Wed 6 Jan; Sun 7 Feb: Thu 4 Feb); a deposit for a gap pays out the business day before that (Tue 5 Jan, Wed 3 Feb)');
+  check(same(rich.ladder.map((l) => [l.until, l.eur]), [['2027-01-05', 130000], ['2027-02-03', 150000], ['2027-03-03', 1050000], ['2027-04-05', 650000]]),
     'with room, a deposit for each gap, earliest first, rounded up to €10K', JSON.stringify(rich.ladder));
   // Made, the ladder closes the gaps and leaves every due covered.
   const total = rich.ladder.reduce((s, l) => s + l.eur, 0);
@@ -230,7 +234,7 @@ async function testPlan(fx) {
   check(made.coverage.every((c) => c.gap === 0) && made.next.short === null && made.ladder.length === 0,
     'once deposited, every conversion is covered and nothing falls short');
   const tight = fx.planReserve({ upcoming, policy: 'today', eur: { hapoalim: 1e6, other: 0, deposits: LADDER }, inflowPerDay: 0, today: TODAY, eurFloor: 200000 });
-  check(same(tight.ladder.map((l) => [l.until, l.eur]), [['2027-01-06', 130000], ['2027-02-04', 150000], ['2027-03-04', 520000]]),
+  check(same(tight.ladder.map((l) => [l.until, l.eur]), [['2027-01-05', 130000], ['2027-02-03', 150000], ['2027-03-03', 520000]]),
     'with €800K above the floor: Jan and Feb in full, Mar as far as it goes, Apr waits', JSON.stringify(tight.ladder));
   const soon = fx.planReserve({ upcoming, policy: 'p95', eur: { hapoalim: 3e6, other: 0, deposits: LADDER }, inflowPerDay: 0, today: TODAY, eurFloor: 200000 });
   check(soon.coverage[0].gap > 0 && !soon.coverage[0].timed && !soon.ladder.some((l) => l.month === '2026-11') && soon.ladder[0].month === '2026-12',

@@ -59,14 +59,18 @@ briefly a tab of the Metrics page before it got its own sidebar item.
     each deposit's date and value. Deposits maturing after the last fixing shown are listed under the table.
     They count only if the bank pays them out rather than rolling them over.
 - **The conversions against your deposits (first in, first out)** (`planReserve`'s `coverage` and `ladder`): the next
-  6 conversions at the setting, each against the EUR deposits paying out before it. Each deposit counts for the first
-  conversion after it pays out, and what one conversion doesn't take rolls on to the next ("Left from earlier"). What
-  the deposits don't cover is the conversion's gap ("€128K short"): the euros on hand or coming in fill it, or a new
-  deposit timed for it. **New deposit for it** is that deposit: it pays out the business day before the euros have to
-  be in Hapoalim EUR (Thu 7 Jan: Wed 6 Jan; Sun 7 Feb: Thu 4 Feb), holds the gap rounded up to €10K, and is never more
-  than the dues before it pays out leave room for (each new deposit locks its euros away from them), earliest gap
-  first, from today's euros above the floor. The next conversion's gap is the cash to keep (the keep line), and a
-  deposit is only timed when it pays out 14 days or more from today.
+  6 conversions at the setting, each against the EUR deposits paying out before the bank takes its euros. The bank
+  takes them the business day before the 7th (`conversionTakes`): NetSuite's "Conversion" journals show October
+  2026's, for Wed 7 Oct, on Tue 6 Oct, and in 2026 a 7th on a weekend went through on the Wednesday or Thursday
+  before. Each deposit counts for the first conversion whose euros the bank takes after it pays out, and what one
+  conversion doesn't take rolls on to the next ("Left from earlier"). So a deposit paying out on the 7th itself, or
+  on Fri 5 Mar for Sun 7 Mar (taken Thu 4 Mar), counts for the conversion after. What the deposits don't cover is the
+  conversion's gap ("€128K short"): the euros on hand or coming in fill it, or a new deposit timed for it. **New
+  deposit for it** is that deposit: it pays out the business day before the bank takes the euros (Thu 7 Jan: taken
+  Wed 6 Jan, so Tue 5 Jan; Sun 7 Feb: taken Thu 4 Feb, so Wed 3 Feb), holds the gap rounded up to €10K, and is never
+  more than the dues before it pays out leave room for (each new deposit locks its euros away from them), earliest
+  gap first, from today's euros above the floor. The next conversion's gap is the cash to keep (the keep line, which
+  counts the same deposits), and a deposit is only timed when it pays out 14 days or more from today.
 - **What to do today** (`todayActions`, the first lines of the recommendation and of the daily mail): from today's
   balances and rate, urgent ones first (in red):
   - **Convert** for a payment in shekels that the shekels on hand (and the conversions before it) don't cover, by the
@@ -74,8 +78,8 @@ briefly a tab of the Metrics page before it got its own sidebar item.
     earlier (`notice`), whatever the rate. Finance converts at once, and the figure moves until then; before that,
     the payment is only in the payments ahead. (An early conversion on a high EUR/ILS was dropped on 27 Oct 2026.)
   - **Short**: the euros held and expected fall short of a due (urgent in its last 5 business days).
-  - **Move** euros to Hapoalim EUR in the last 3 business days before a conversion, when it holds less than to keep
-    there.
+  - **Move** euros to Hapoalim EUR in the last 3 business days before the bank takes the euros (the business day
+    before the 7th), when it holds less than to keep there.
   - **Deposits for the conversions the deposits leave short** (`ladder`): "Put €440K in deposits for the January to
     March conversions: €130K until Wed 6 Jan for Thu 7 Jan (€128K short), …". It comes before any other use of spare
     euros.
