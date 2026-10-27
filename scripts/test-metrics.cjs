@@ -274,6 +274,12 @@ async function testDetails() {
   check(t('Churned').rows[0].customer === 'Delta' && t('Contracted').rows[0].customer === 'Gamma' && t('Expanded').rows[0].customer === 'Alpha'
     && t('New this year').rows.length === 2 && /2 new customers/.test(line('Not counted').label) && line('Not counted').value === 50,
     'the customers behind each step, by name; new customers listed but not counted');
+  const full = m.nrrDetail(CUSTREV, '2026-09', { all: true });
+  const namesIn = (g) => full.customers.filter((c) => c.group === g).map((c) => c.customer).join();
+  check(!('customers' in d) && JSON.stringify(full.period) === '{"from":"2025-12","to":"2026-09"}' && full.customers.length === 6
+    && namesIn('churned') === 'Delta' && namesIn('contracted') === 'Gamma' && namesIn('expanded') === 'Alpha' && namesIn('unchanged') === 'Beta'
+    && namesIn('new') === 'Nu,Zeta' && full.customers[0].id === '4' && full.value.value === d.value.value,
+  'all: every customer with its id and group, the unchanged ones too, and the same figure', JSON.stringify(full.customers));
   const many = Array.from({ length: 50 }, (_, i) => [{ month: '2025-12', customer: `c${i}`, name: `C${i}`, rev: 10 + i }]).flat();
   const cut = m.nrrDetail([...many, { month: '2026-09', customer: 'x', name: 'X', rev: 1 }], '2026-09', { limit: 40 });
   check(t('Churned').total.then === 30 && cut.tables[0].rows.length === 40 && cut.tables[0].more === 10 && cut.tables[0].total.then === many.reduce((a, r) => a + r.rev, 0),
@@ -318,9 +324,13 @@ async function testDetails() {
     same.push(r.status === 200 && r.body.ok && near(r.body.detail.value.value, c.value, 0.02) ? 'ok' : `${c.detail}: ${JSON.stringify(r.body).slice(0, 120)}`);
   }
   check(same.every((x) => x === 'ok') && oppReads === 1, 'the NRR and churn cells are clickable and their breakdown equals the cell (one opportunity read, cached)', same.join(', '));
-  const byMonth = (await call(h, { url: '/api/metrics?detail=nrr' })).body.detail.tables.find((x) => x.title === 'NRR month by month, 2026');
+  const plain = (await call(h, { url: '/api/metrics?detail=nrr' })).body.detail;
+  const byMonth = plain.tables.find((x) => x.title === 'NRR month by month, 2026');
   check(byMonth && byMonth.rows.length === 1 && byMonth.rows[0].month === 'Sep 2026' && /against Dec 2025/.test(byMonth.note),
     'the NRR breakdown lists this year\'s months, each against the same December', JSON.stringify(byMonth));
+  const everyone = (await call(h, { url: '/api/metrics?detail=nrr&all=true' })).body.detail;
+  check(!('customers' in plain) && everyone.customers.length === 6 && JSON.stringify(everyone.series) === JSON.stringify([{ month: '2026-09', nrr: plain.value.value, grr: 78.57 }]),
+    '?detail=nrr&all=true: every customer and the months as figures, for the Excel', JSON.stringify(everyone.series));
   const bogus = await call(h, { url: '/api/metrics?detail=revenue' });
   failOpps = true;
   const fresh = await call(h, { url: '/api/metrics?detail=churn-ytd&refresh=true' });
@@ -475,6 +485,76 @@ async function testModel() {
   'breakdown figures: € in full, signed steps, % to one decimal, counts and names');
 }
 
+// Recomputes a workbook's formulas (the few nrrWorkbook writes: SUM, SUMIFS, COUNTIFS, IF/MIN, − and ÷ of
+// cells) from the cells they point to, so a wrong row or column shows up as a value that doesn't match.
+function formulaValues(sheets) {
+  const byName = new Map(sheets.map((s) => [s.name, s]));
+  const ref = /\$?([A-H])\$?(\d+)/;
+  const raw = (sheet, col, row) => {
+    const c = byName.get(sheet).rows[row - 1]?.[col.charCodeAt(0) - 65] ?? null;
+    return c !== null && typeof c === 'object' ? c : { v: c };
+  };
+  const value = (sheet, col, row) => { const c = raw(sheet, col, row); return c.f ? calc(sheet, c.f) : c.v; };
+  const range = (sheet, text) => {
+    const [sh, r] = text.includes('!') ? text.split('!') : [sheet, text];
+    const [a, b] = r.split(':').map((x) => ref.exec(x));
+    if (a[1] !== b[1]) throw new Error(`not one column: ${text}`);
+    return Array.from({ length: Number(b[2]) - Number(a[2]) + 1 }, (_, i) => value(sh, a[1], Number(a[2]) + i));
+  };
+  const n = (x) => (typeof x === 'number' ? x : 0);
+  function calc(sheet, f) {
+    const s = f
+      .replace(/SUMIFS\(([^,]+),([^,]+),"([^"]+)"\)/g, (_, a, b, crit) => { const ks = range(sheet, b); return `(${range(sheet, a).reduce((t, x, i) => t + (ks[i] === crit ? n(x) : 0), 0)})`; })
+      .replace(/COUNTIFS\(([^,]+),"([^"]+)"\)/g, (_, a, crit) => `(${range(sheet, a).filter((x) => x === crit).length})`)
+      .replace(/SUM\(([^)]+)\)/g, (_, a) => `(${range(sheet, a).reduce((t, x) => t + n(x), 0)})`)
+      .replace(/IF\(([A-H])(\d+)="Yes",MIN\(([A-H])(\d+),([A-H])(\d+)\),0\)/g, (_, tc, tr, ac, ar, bc, br) => `(${value(sheet, tc, Number(tr)) === 'Yes' ? Math.min(n(value(sheet, ac, Number(ar))), n(value(sheet, bc, Number(br)))) : 0})`)
+      .replace(/\$?([A-H])\$?(\d+)/g, (_, col, row) => `(${n(value(sheet, col, Number(row)))})`);
+    if (!/^[-+*/(). \d]+$/.test(s)) throw new Error(`a formula the check doesn't know: ${f}`);
+    return Function(`return ${s};`)();
+  }
+  const out = [];
+  for (const sh of sheets) sh.rows.forEach((row, r) => row.forEach((c, i) => { if (c && typeof c === 'object' && c.f) out.push({ sheet: sh.name, at: `${String.fromCharCode(65 + i)}${r + 1}`, f: c.f, v: c.v, got: calc(sh.name, c.f) }); }));
+  return out;
+}
+
+async function testNrrWorkbook() {
+  console.log('\nNRR EXCEL: every customer and the calculation as formulas (src/metrics/nrrWorkbook.ts)');
+  const wbm = await import(pathToFileURL(path.join(ROOT, 'src', 'metrics', 'nrrWorkbook.ts')).href);
+  const d = m.nrrDetail(CUSTREV, '2026-09', { all: true });
+  d.series = [{ month: '2026-09', nrr: d.value.value, grr: 78.57 }];
+  const { sheets, fileName } = wbm.nrrWorkbook(d, new Date('2026-10-27T10:00:00Z'));
+  const [summary, customers, months] = sheets;
+  const v = (c) => (c !== null && typeof c === 'object' ? c.v : c);
+  check(sheets.map((s) => s.name).join() === 'Summary,Customers,Month by month' && fileName === 'lsports-nrr-2026-09.xlsx',
+    'three sheets: Summary, Customers, Month by month; named after the month');
+  check(customers.rows.length === 8 && customers.rows[0].map(v).join('|') === 'Customer|Group|Dec 2025|Sep 2026|Change|Counted in NRR|Kept for GRR|Customer ID'
+    && customers.rows[1].map(v).join('|') === 'Delta|Churned|30|0|-30|Yes|0|4' && customers.autofilter === 'A1:H7'
+    && customers.rows.find((r) => v(r[0]) === 'Nu').map(v).join('|') === 'Nu|New this year|0|40|40|No|0|8' && v(customers.rows[7][0]) === 'Total',
+  'Customers: every customer once, with its group, December and now, counted or not, its id; a filter and totals', customers.rows.map((r) => r.map(v).join('|')).join(' / '));
+  const line = (label) => summary.rows.find((r) => typeof v(r[0]) === 'string' && v(r[0]).startsWith(label));
+  check(v(line('Their revenue, Dec 2025')[1]) === 280 && v(line('Their revenue, Dec 2025')[2]) === 4 && v(line('+ Expansion')[1]) === 20
+    && v(line('− Contraction')[1]) === -30 && v(line('− Churned')[1]) === -30 && v(line('± Unchanged')[1]) === 0 && v(line('Their revenue, Sep 2026')[1]) === 240
+    && 280 + 20 - 30 - 30 + 0 === 240,
+  'Summary: the bridge from December to now adds up, with the customers in each step');
+  check(sheets.every((s) => s.rows.every((r) => r.every((c) => typeof v(c) !== 'string' || !v(c).startsWith('=')))),
+    'no text starts with "=" (a spreadsheet could read it as a formula)');
+  const nrrLine = line('NRR = Sep 2026 ÷ Dec 2025');
+  const grrLine = line('GRR (each capped');
+  check(near(v(nrrLine[1]), d.value.value / 100, 0.0001) && near(v(grrLine[1]), 0.7857, 0.0001) && v(line('NRR shown on the Metrics page')[1]) === d.value.value / 100
+    && v(line('Not counted')[1]) === 50 && v(line('Not counted')[2]) === 2 && /^LSports NRR, Jan–Sep 2026/.test(v(summary.rows[0][0])),
+  'Summary: NRR and GRR equal the page\'s; new customers shown, not counted', `${v(nrrLine[1])} ${v(grrLine[1])}`);
+  check(line('Their revenue, Dec 2025')[1].f === 'SUMIFS(Customers!$C$2:$C$7,Customers!$F$2:$F$7,"Yes")' && /^B\d+\/B\d+$/.test(nrrLine[1].f),
+    'Summary: the figures are formulas over the Customers sheet', line('Their revenue, Dec 2025')[1].f);
+  const formulas = formulaValues(sheets);
+  const off = formulas.filter((x) => !near(x.got, x.v, 0.005));
+  check(formulas.length === 31 && off.length === 0, `every formula (${formulas.length}) gives the value written next to it`, JSON.stringify(off.slice(0, 3)));
+  check(months.rows.length === 5 && v(months.rows[4][0]) === 'Sep 2026' && near(v(months.rows[4][1]), d.value.value / 100, 1e-9),
+    'Month by month: each month of the year so far');
+  let threw = '';
+  try { wbm.nrrWorkbook({ ...d, customers: undefined }, new Date()); } catch (e) { threw = e.message; }
+  check(/Pull & Build/.test(threw), 'a server without the customer list says so instead of writing an empty file');
+}
+
 async function main() {
   console.log('=== metrics checks (synthetic data) ===');
   testPack();
@@ -487,6 +567,7 @@ async function main() {
   await testHandlers();
   await testDetails();
   await testModel();
+  await testNrrWorkbook();
   console.log(failures ? `\n❌ FAIL — ${failures} check(s) failed.` : '\n✅ PASS — all checks green.');
   process.exit(failures ? 1 : 0);
 }

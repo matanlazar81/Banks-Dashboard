@@ -1,8 +1,9 @@
 // Movable window with what one pack figure is made of (GET /api/metrics?detail=…): the steps from the
 // source to the figure, how it is calculated, where the data comes from, and the items behind it. Drag it
-// by its title bar; Esc or × closes it. Not modal: the pack stays usable behind it.
+// by its title bar; Esc or × closes it. Not modal: the pack stays usable behind it. NRR's window also
+// downloads every customer and the calculation as an Excel for review (exportNrr.ts).
 import { useEffect, useId, useState } from 'react';
-import { ChevronDown, ChevronRight, GripHorizontal, Loader2, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Download, GripHorizontal, Loader2, X } from 'lucide-react';
 import { clampPosition, type PanelPosition } from '../new-dashboard/breakdown.ts';
 import { useDrag } from '../new-dashboard/useDrag.ts';
 import { fetchDetail } from './api.ts';
@@ -94,6 +95,21 @@ export default function ExplainWindow({ item, onClose }: { item: string; onClose
   const dragBar = useDrag(position, (p) => { lastPosition = p; setPosition(p); }, W);
   const [result, setResult] = useState<{ item: string; load: Load }>({ item: '', load: { phase: 'loading' } });
   const load: Load = result.item === item ? result.load : { phase: 'loading' };
+  const [download, setDownload] = useState<{ item: string; busy: boolean; error: string | null }>({ item: '', busy: false, error: null });
+  const downloading = download.item === item && download.busy;
+  const downloadError = download.item === item ? download.error : null;
+
+  async function onDownload() {
+    setDownload({ item, busy: true, error: null });
+    try {
+      const full = await fetchDetail(item, undefined, { all: true });
+      const { exportNrrXlsx } = await import('./exportNrr.ts');
+      await exportNrrXlsx(full);
+      setDownload({ item, busy: false, error: null });
+    } catch (e) {
+      setDownload({ item, busy: false, error: e instanceof Error ? e.message : 'The Excel could not be built.' });
+    }
+  }
 
   useEffect(() => {
     const ctrl = new AbortController();
@@ -127,9 +143,18 @@ export default function ExplainWindow({ item, onClose }: { item: string; onClose
           </div>
           {d && <div className="mt-0.5 truncate text-xs text-slate-500">{d.subtitle}</div>}
         </div>
-        <button type="button" onClick={onClose} aria-label="Close" className="rounded p-1 text-slate-500 hover:bg-slate-200 hover:text-slate-800"><X size={16} /></button>
+        <div className="flex shrink-0 items-center gap-1">
+          {d && d.item === 'nrr' && (
+            <button type="button" onClick={onDownload} disabled={downloading} title="Every customer and the calculation, with formulas (Excel), for review"
+              className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-60">
+              {downloading ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}Excel
+            </button>
+          )}
+          <button type="button" onClick={onClose} aria-label="Close" className="rounded p-1 text-slate-500 hover:bg-slate-200 hover:text-slate-800"><X size={16} /></button>
+        </div>
       </div>
       <div className="overflow-y-auto px-4 py-3">
+        {downloadError && <p className="mb-2 text-xs text-rose-700">{downloadError}</p>}
         {load.phase === 'loading' && <div className="flex items-center gap-2 py-6 text-sm text-slate-500"><Loader2 size={16} className="animate-spin" />Reading the data behind this figure…</div>}
         {load.phase === 'error' && <p className="py-4 text-sm text-rose-700">{load.error}</p>}
         {d && <Body d={d} />}
