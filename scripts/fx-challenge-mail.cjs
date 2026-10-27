@@ -136,19 +136,20 @@ function actionText(a, v, today) {
   return { head: `להפקיד ${eur(a.eur)} בפיקדון חדש`, body: `${options}, וכל התשלומים עד אז עדיין מכוסים לפי התקבולים הרגילים.` };
 }
 
-/** Where the amount kept for the next conversion comes from (fx.keepCover), when deposits released by then hold some
- * of it: "הפיקדון שמשתחרר ביום ה' 5.11 (€1.00M) מכסה את זה, …"; empty when none does. */
-function keepText(cover) {
+/** What to keep in Hapoalim EUR for the next conversion (fx.keepCover): nothing when the deposits released by then
+ * cover what it takes ("אין צורך לשמור כסף להמרה של שבת 7.11: …"), else the rest, with what the deposits bring. */
+function keepLine(cover, date, policy) {
   const ds = cover.deposits;
-  if (!(cover.fromDeposits > 0.5) || !ds.length) return '';
+  const conversion = `להמרה של ${day(date)}`;
+  if (!(cover.fromDeposits > 0.5) || !ds.length) return `להשאיר ${eur(cover.required)} בפועלים ${conversion} (${policy}).`;
   const last = ds[ds.length - 1].valueDate;
   if (cover.covered) {
     const total = ds.reduce((s, d) => s + d.amount, 0);
     const which = ds.length === 1 ? `הפיקדון שמשתחרר ב${day(last)} (${eur(total)}) מכסה` : `${ds.length} פיקדונות שמשתחררים עד ${day(last)} (${eur(total)}) מכסים`;
-    return `${which} את זה, כך שלא צריך לשמור לזה כסף מהיתרה של היום.`;
+    return `אין צורך לשמור כסף ${conversion}: ${which} את ה-${eur(cover.required)} שהיא מוכרת מחשבון האירו בפועלים (${policy}).`;
   }
   const which = ds.length === 1 ? `מהפיקדון שמשתחרר ב${day(last)}` : `מ-${ds.length} פיקדונות שמשתחררים עד ${day(last)}`;
-  return `${eur(cover.fromDeposits)} מזה מגיעים ${which}, ו-${eur(cover.fromCash)} מהיתרה של היום.`;
+  return `להשאיר ${eur(cover.fromCash)} בפועלים ${conversion} (${policy}): היא מוכרת ${eur(cover.required)}, ו-${eur(cover.fromDeposits)} מזה מגיעים ${which}.`;
 }
 
 /** A payment day in the list: "יום ה' 5.11, בעוד 15 ימים: שכר נטו …, ₪4.92M: להמיר €1.21M". */
@@ -220,9 +221,8 @@ function renderMail(fx, data, { policy = 'p95', link = null } = {}) {
     }
     // Today's balances, in one paragraph.
     const shekels = cash && cash.onHand ? `${ils(cash.onHand.total)} בשקלים (${ils(cash.onHand.current)} בעו"ש ו-${ils(cash.onHand.deposits)} בפיקדונות), ` : '';
-    const covered = keepText(fx.keepCover(plan));
     const status = `${shekels}${eur(n.hapoalim)} בחשבון האירו בפועלים ו-${eur(n.other)} בחשבונות אחרים. `
-      + `להשאיר ${eur(n.required)} בפועלים להמרה של ${day(n.date)} (${POLICY[plan.policy]}).${covered ? ` ${covered}` : ''}`
+      + `${keepLine(fx.keepCover(plan), n.date, POLICY[plan.policy])}`
       + `${cash ? '' : ` פנוי להמרה עכשיו: ${eur(n.freeNow)}.`}`
       + `${rc ? ` ${rateIs(rc)}.` : ''}`;
     parts.push(heading('המצב היום'));

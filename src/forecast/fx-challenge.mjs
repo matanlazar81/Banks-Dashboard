@@ -841,19 +841,21 @@ export function keepCover(plan) {
   return { required: n.required, deposits, fromDeposits, fromCash: n.needLiquid, covered: fromDeposits > 0.5 && n.needLiquid < 0.5 };
 }
 
-/** keepCover in words, after "Keep €800K in Hapoalim EUR for Sat 7 Nov.": "The deposit released on Thu 5 Nov (€1.00M)
- * covers it, so it needs none of today's cash." or "€500K of it comes from the deposit released on Thu 5 Nov, €300K
- * from today's cash." Empty when no deposit is released by then. */
+/** Why the amount to keep (keepCover's fromCash) is what it is, when deposits released by then hold some of the
+ * conversion: "the 3 deposits released by Tue 3 Nov (€806K) cover the €800K it takes from Hapoalim EUR (583400)" (so
+ * nothing to keep), or "it takes €800K, and the deposit released on Thu 5 Nov brings €500K of it" (keep the rest).
+ * Empty when no deposit is released by then. */
 export function describeKeep(cover, fmt) {
   const ds = cover.deposits;
   if (!(cover.fromDeposits > 0.5) || !ds.length) return '';
   const last = ds[ds.length - 1].valueDate;
-  const which = ds.length === 1 ? `the deposit released on ${fmt.day(last)}` : `the ${ds.length} deposits released by ${fmt.day(last)}`;
+  const one = ds.length === 1;
+  const which = one ? `the deposit released on ${fmt.day(last)}` : `the ${ds.length} deposits released by ${fmt.day(last)}`;
   if (cover.covered) {
     const total = ds.reduce((s, d) => s + d.amount, 0);
-    return `${capital(which)} (${fmt.eur(total)}) ${ds.length === 1 ? 'covers' : 'cover'} it, so it needs none of today's cash.`;
+    return `${which} (${fmt.eur(total)}) ${one ? 'covers' : 'cover'} the ${fmt.eur(cover.required)} it takes from Hapoalim EUR (583400)`;
   }
-  return `${fmt.eur(cover.fromDeposits)} of it comes from ${which}, ${fmt.eur(cover.fromCash)} from today's cash.`;
+  return `it takes ${fmt.eur(cover.required)}, and ${which} ${one ? 'brings' : 'bring'} ${fmt.eur(cover.fromDeposits)} of it`;
 }
 
 // ── past fixings ──
