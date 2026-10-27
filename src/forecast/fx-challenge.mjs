@@ -651,10 +651,6 @@ export function planReserve({ upcoming, policy = 'p95', eur, inflowPerDay = null
     ladder.push({ month: c.month, date: c.date, until: c.until, eur, gap: c.gap, required: c.required, have: c.have });
     laddered += eur;
   }
-  // What can still leave for good once the ladder is deposited.
-  next.spareAfterLadder = laddered > 0
-    ? Math.max(0, Math.min(cap - laddered, ...checkpoints.map((x) => x.spare - lockedAt(x.date))))
-    : next.spare;
 
   // Deposits maturing after the last fixing shown: not needed for any of them.
   return { policy, next, path: shown, later: releasedBetween(shown[shown.length - 1].date, null), deposits, coverage, ladder };
@@ -758,8 +754,8 @@ function cashPlanOf(data, today, spot, upcoming, schedule, policy) {
  *   move           the conversion day is within `moveLead` business days and Hapoalim EUR holds less than to keep there
  *   ladder         a conversion the deposits don't cover (first in, first out): spare euros into deposits that pay out
  *                  just before it, earliest first
- *   convert-spare  euros spare while EUR/ILS is high (what is left after the ladder)
  *   deposit        euros spare for a new deposit of 1, 3 or 6 months, when every conversion ahead is covered
+ * No conversion is suggested for the rate alone (finance asked on 27 Oct 2026): spare euros go to deposits.
  * Amounts under `minEur` are left out. Returns { actions: [{ kind, key (the same on another day), urgent, eur, ... }],
  * ahead (duesAhead) }.
  */
@@ -769,7 +765,6 @@ export function todayActions(view, today, { lead = 5, moveLead = 3, minEur = 500
   const ahead = duesAhead(view ? view.cash : null);
   const actions = [];
   if (!n) return { actions, ahead };
-  const high = !!view.rateCheck && view.rateCheck.level === 'high';
   for (const d of ahead.dues) {
     if (!(d.eur >= minEur)) continue;
     const left = businessDaysBetween(today, d.by);
@@ -796,13 +791,9 @@ export function todayActions(view, today, { lead = 5, moveLead = 3, minEur = 500
   const laddered = legs.reduce((s, l) => s + l.eur, 0);
   if (laddered >= minEur) actions.push({ kind: 'ladder', key: 'ladder', urgent: false, eur: laddered, legs });
   const open = (plan.coverage || []).some((c) => c.timed && c.gap >= minEur);
-  const left = laddered >= minEur ? Math.min(spare, n.spareAfterLadder) : spare;
-  if (!shortNow && left >= minEur) {
-    if (high) actions.push({ kind: 'convert-spare', key: 'spare', urgent: false, eur: left });
-    else if (!open) {
-      const options = (plan.deposits || []).filter((x) => x.eur >= minEur);
-      if (options.length) actions.push({ kind: 'deposit', key: 'deposit', urgent: false, eur: options[0].eur, options });
-    }
+  if (!shortNow && !open && laddered < minEur && spare >= minEur) {
+    const options = (plan.deposits || []).filter((x) => x.eur >= minEur);
+    if (options.length) actions.push({ kind: 'deposit', key: 'deposit', urgent: false, eur: options[0].eur, options });
   }
   return { actions: [...actions.filter((a) => a.urgent), ...actions.filter((a) => !a.urgent)], ahead };
 }
@@ -841,9 +832,6 @@ export function describeAction(a, view, today, fmt) {
     const fromDeposits = Math.min(n.required, n.maturing || 0);
     const dep = fromDeposits > 0.5 ? `, ${eur(fromDeposits)} of it from deposits released by then` : '';
     return { head: `Move ${eur(a.eur)} to Hapoalim EUR by ${day(a.by)}`, body: `The ${day(a.date)} conversion takes its euros from Hapoalim EUR (583400), which holds ${eur(n.hapoalim)}; keep ${eur(n.required)} there${dep}.` };
-  }
-  if (a.kind === 'convert-spare') {
-    return { head: `Convert the ${eur(a.eur)} spare today`, body: `${rateIs}. It brings ${ils(a.eur * rc.rate)}, with every conversion, salary and vendor payment ahead still covered.` };
   }
   if (a.kind === 'ladder') {
     const legs = a.legs;

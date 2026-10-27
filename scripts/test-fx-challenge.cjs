@@ -227,10 +227,10 @@ async function testPlan(fx) {
   // Made, the ladder closes the gaps and leaves every due covered.
   const total = rich.ladder.reduce((s, l) => s + l.eur, 0);
   const made = fx.planReserve({ upcoming, policy: 'today', eur: { hapoalim: 3e6 - total, other: 0, deposits: [...LADDER, ...rich.ladder.map((l) => dep(l.eur, l.until))] }, inflowPerDay: 0, today: TODAY, eurFloor: 200000 });
-  check(made.coverage.every((c) => c.gap === 0) && made.next.short === null && made.ladder.length === 0 && near(rich.next.spareAfterLadder, made.next.spare),
-    'once deposited, every conversion is covered, nothing falls short, and what is left to spare is what the plan said');
+  check(made.coverage.every((c) => c.gap === 0) && made.next.short === null && made.ladder.length === 0,
+    'once deposited, every conversion is covered and nothing falls short');
   const tight = fx.planReserve({ upcoming, policy: 'today', eur: { hapoalim: 1e6, other: 0, deposits: LADDER }, inflowPerDay: 0, today: TODAY, eurFloor: 200000 });
-  check(same(tight.ladder.map((l) => [l.until, l.eur]), [['2027-01-06', 130000], ['2027-02-04', 150000], ['2027-03-04', 520000]]) && tight.next.spareAfterLadder === 0,
+  check(same(tight.ladder.map((l) => [l.until, l.eur]), [['2027-01-06', 130000], ['2027-02-04', 150000], ['2027-03-04', 520000]]),
     'with €800K above the floor: Jan and Feb in full, Mar as far as it goes, Apr waits', JSON.stringify(tight.ladder));
   const soon = fx.planReserve({ upcoming, policy: 'p95', eur: { hapoalim: 3e6, other: 0, deposits: LADDER }, inflowPerDay: 0, today: TODAY, eurFloor: 200000 });
   check(soon.coverage[0].gap > 0 && !soon.coverage[0].timed && !soon.ladder.some((l) => l.month === '2026-11') && soon.ladder[0].month === '2026-12',
@@ -495,9 +495,9 @@ async function testToday(fx) {
   'euros to move to Hapoalim EUR: urgent in the last business days before the conversion (a Saturday one counts from the Thursday), not before');
   const deps = [{ months: 1, until: '2026-11-21', eur: 500000 }, { months: 3, until: '2027-01-21', eur: 0 }];
   const depo = fx.todayActions(view(TODAY, { next: { spare: 500000 }, deposits: deps }), TODAY);
-  check(same(kinds(fx.todayActions(view(TODAY, { next: { spare: 500000 }, level: 'high' }), TODAY)), ['convert-spare:'])
+  check(same(kinds(fx.todayActions(view(TODAY, { next: { spare: 500000 }, level: 'high', deposits: deps }), TODAY)), ['deposit:'])
     && same(kinds(depo), ['deposit:']) && depo.actions[0].options.length === 1,
-  'spare euros: convert on a high rate, else a new deposit (the terms that hold at least €50K)');
+  'spare euros: a new deposit (the terms that hold at least €50K), on a high rate too: no conversion for the rate alone');
   const fmt0 = { eur: (n) => `€${Math.round(n / 1000)}K`, ils: (n) => `₪${Math.round(n / 1000)}K`, day: (iso) => iso, rate: (r) => r.toFixed(3) };
   const allSame = { kind: 'deposit', key: 'deposit', urgent: false, eur: 430000, options: [{ months: 1, until: '2026-11-21', eur: 430000 }, { months: 3, until: '2027-01-21', eur: 430000 }, { months: 6, until: '2027-04-21', eur: 430000 }] };
   check(fx.describeAction(allSame, view(TODAY), TODAY, fmt0).body.startsWith('€430K for 1, 3 or 6 months (the longest until 2027-04-21)')
@@ -508,12 +508,11 @@ async function testToday(fx) {
     { month: '2027-02', date: '2027-02-07', until: '2027-02-04', eur: 150000, gap: 141000, required: 1050000, have: 909000 }];
   const coverage = [{ month: '2027-01', date: '2027-01-07', gap: 128000, timed: true }, { month: '2027-02', date: '2027-02-07', gap: 141000, timed: true }];
   const withGaps = (next, level = 'middle', ladder = legs) => ({ ...view(TODAY, { next, level, deposits: deps }), plan: { next: { ...NEXT, ...next }, deposits: deps, coverage, ladder } });
-  const lad = fx.todayActions(withGaps({ spare: 500000, spareAfterLadder: 220000 }), TODAY);
+  const lad = fx.todayActions(withGaps({ spare: 500000 }), TODAY);
   check(kinds(lad).includes('ladder:') && !kinds(lad).some((k) => k.startsWith('deposit')) && lad.actions.find((a) => a.kind === 'ladder').eur === 280000,
     'gaps ahead: deposits timed for them (€280K), and no 1, 3 or 6 month deposit while one is open', JSON.stringify(kinds(lad)));
-  const ladHigh = fx.todayActions(withGaps({ spare: 500000, spareAfterLadder: 220000 }, 'high'), TODAY);
-  check(ladHigh.actions.find((a) => a.kind === 'convert-spare').eur === 220000, 'on a high rate, only what the ladder leaves is converted');
-  check(!kinds(fx.todayActions(withGaps({ spare: 40000, spareAfterLadder: 0 }, 'middle', [{ ...legs[0], eur: 40000 }]), TODAY)).some((k) => k.startsWith('ladder') || k.startsWith('deposit')),
+  check(same(kinds(fx.todayActions(withGaps({ spare: 500000 }, 'high'), TODAY)), ['ladder:']), 'on a high rate, the same: the ladder, and nothing converted for the rate');
+  check(!kinds(fx.todayActions(withGaps({ spare: 40000 }, 'middle', [{ ...legs[0], eur: 40000 }]), TODAY)).some((k) => k.startsWith('ladder') || k.startsWith('deposit')),
     'under €50K of room: no deposit at all while the gap is open');
   const lv = withGaps({ spare: 500000 });
   check(fx.describeAction({ kind: 'ladder', key: 'ladder', urgent: false, eur: 130000, legs: [legs[0]] }, lv, TODAY, fmt0).head === 'Put €130K in a deposit until 2027-01-06'
