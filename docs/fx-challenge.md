@@ -58,6 +58,15 @@ briefly a tab of the Metrics page before it got its own sidebar item.
     deposits maturing after the previous fixing (after today, for the first) and by that one; hover a figure for
     each deposit's date and value. Deposits maturing after the last fixing shown are listed under the table.
     They count only if the bank pays them out rather than rolling them over.
+- **The conversions against your deposits (first in, first out)** (`planReserve`'s `coverage` and `ladder`): the next
+  6 conversions at the setting, each against the EUR deposits paying out before it. Each deposit counts for the first
+  conversion after it pays out, and what one conversion doesn't take rolls on to the next ("Left from earlier"). What
+  the deposits don't cover is the conversion's gap ("€128K short"): the euros on hand or coming in fill it, or a new
+  deposit timed for it. **New deposit for it** is that deposit: it pays out the business day before the euros have to
+  be in Hapoalim EUR (Thu 7 Jan: Wed 6 Jan; Sun 7 Feb: Thu 4 Feb), holds the gap rounded up to €10K, and is never more
+  than the dues before it pays out leave room for (each new deposit locks its euros away from them), earliest gap
+  first, from today's euros above the floor. The next conversion's gap is the cash to keep (the keep line), and a
+  deposit is only timed when it pays out 14 days or more from today.
 - **What to do today** (`todayActions`, the first lines of the recommendation and of the daily mail): from today's
   balances and rate, urgent ones first (in red):
   - **Convert** for a payment in shekels that the shekels on hand (and the conversions before it) don't cover, by the
@@ -68,8 +77,12 @@ briefly a tab of the Metrics page before it got its own sidebar item.
   - **Short**: the euros held and expected fall short of a due (urgent in its last 5 business days).
   - **Move** euros to Hapoalim EUR in the last 3 business days before a conversion, when it holds less than to keep
     there.
-  - **Spare** euros: convert them on a high rate, else **put them in a new deposit** (the terms that hold at least
-    €50K, as one line when every term holds the same).
+  - **Deposits for the conversions the deposits leave short** (`ladder`): "Put €440K in deposits for the January to
+    March conversions: €130K until Wed 6 Jan for Thu 7 Jan (€128K short), …". It comes before any other use of spare
+    euros.
+  - **Spare** euros: convert them on a high rate (what the ladder leaves), else **put them in a new deposit** for 1, 3
+    or 6 months (the terms that hold at least €50K, as one line when every term holds the same), but only when no
+    conversion ahead is left short by €50K or more.
   - Amounts under €50K are left out. With no recommendation, the page says so and no mail goes.
 - **Payments in shekels ahead** (`duesAhead`, `describeDue`): each payment day up to the first month with salaries
   (its 5th, 10th and 14th, and any before): when (a Friday or Saturday one is ready by the Thursday) and in how many
@@ -168,8 +181,8 @@ recommendation**. It reads NetSuite and the bank balances fresh (no cache) and c
 
 **When it goes** (`mailDecision`): every day but Saturday (the bank works Sunday to Friday; finance writes to it on
 Fridays too), when there is at least one recommendation (a conversion for a payment the balances don't cover, a
-shortfall, euros to move to Hapoalim before a conversion, a high rate to convert early or convert the spare, or spare
-euros for a new deposit), and never without one. So a conversion for the salaries is in every day's mail from the day
+shortfall, euros to move to Hapoalim before a conversion, deposits for the conversions the deposits leave short, a
+high rate to convert early or convert the spare, or spare euros for a new deposit), and never without one. So a conversion for the salaries is in every day's mail from the day
 the balances show the gap until they show it converted; in its last 5 business days it leads, in red. A Saturday,
 or a day with no recommendation, sends nothing. `FX_MAIL_ALWAYS=1` sends every day, Saturday included.
 
@@ -190,6 +203,8 @@ by range, how "free to convert" adds up, the next six conversions) stay on the p
 - the subject: the day and the first two recommendations (`FX יום א' 25.10 · להמיר €1.16M עד יום ה' 5.11 · …`);
 - the recommendations, each with the balances behind it ("להמיר €1.16M עד יום ה' 5.11. שכר נטו של אוקטובר ותשלומי
   הספקים בשקלים של נובמבר: ₪4.91M יוצאים ביום ה' 5.11, ועד אז יהיו ביתרה ₪873K."); urgent ones in red;
+- the next 6 conversions against the deposits, first in, first out, at the mail's setting: covered ("שבת 7.11:
+  €800K, מכוסה מהפיקדונות (€806K)") or short, in red ("יום ה' 7.1: €1.05M, הפיקדונות מכסים €922K: חסרים €128K");
 - the payments in shekels ahead: the day, how many days to it, what it pays, and what covers it (a conversion, or
   the shekels on hand);
 - today's position in one paragraph: the shekels on hand (current and deposits), the euros at Hapoalim and elsewhere,

@@ -179,6 +179,8 @@ export interface NextFixingPlan {
   inflowUntil: number | null;
   freeByFixing: number | null;
   moveToHapoalim: number;
+  /** What can still leave for good once the ladder's deposits are made (spare when there is no ladder). */
+  spareAfterLadder: number;
 }
 /** A deposit maturing on valueDate: the bank's value then, interest included. */
 export interface DepositRelease { amount: number; valueDate: string; label: string }
@@ -214,7 +216,34 @@ export interface ReservePlan {
   later: DepositRelease[];
   /** How much can go into a new deposit for 1, 3 and 6 months (until that day) with every due still met. */
   deposits: { months: number; until: string; eur: number }[];
+  /** The next conversions against the deposits, first in, first out. */
+  coverage: CoverageRow[];
+  /** New deposits for the conversions the deposits don't cover, earliest first. */
+  ladder: LadderLeg[];
 }
+/** A conversion against the deposits: each deposit counts for the first conversion after it pays out, and what one
+ * conversion doesn't take rolls on to the next. */
+export interface CoverageRow {
+  month: string;
+  date: string;
+  /** What it takes, at the setting (today's band, 95% or the worst case). */
+  required: number;
+  /** The deposits paying out after the previous conversion (after today, for the first) and by this one. */
+  released: number;
+  releasedDeposits: DepositRelease[];
+  /** Left over from the deposits of the conversions before it. */
+  carried: number;
+  have: number;
+  /** What the deposits don't cover. */
+  gap: number;
+  /** The business day before the euros have to be in Hapoalim EUR: when a deposit for its gap should pay out. */
+  until: string;
+  /** A deposit can be timed for it: not the next conversion (its gap is the cash to keep), and 14 days or more until
+   * `until`. */
+  timed: boolean;
+}
+/** A new deposit for a conversion's gap: eur until `until`, for the conversion on `date`. */
+export interface LadderLeg { month: string; date: string; until: string; eur: number; gap: number; required: number; have: number }
 export declare function planReserve(input: {
   upcoming: Upcoming[];
   policy?: Policy;
@@ -267,6 +296,7 @@ export type TodayAction =
   | { kind: 'short'; key: string; urgent: boolean; eur: number; date: string; by: string; left: number; shekels: boolean }
   | { kind: 'move'; key: string; urgent: boolean; eur: number; date: string; by: string; left: number }
   | { kind: 'convert-spare'; key: string; urgent: boolean; eur: number }
+  | { kind: 'ladder'; key: string; urgent: boolean; eur: number; legs: LadderLeg[] }
   | { kind: 'deposit'; key: string; urgent: boolean; eur: number; options: { months: number; until: string; eur: number }[] };
 export declare function todayActions(view: PlanView, today: string, opts?: { lead?: number; moveLead?: number; minEur?: number }): { actions: TodayAction[]; ahead: { dues: ShekelDue[]; eur: number } };
 /** Number and date formats for the texts: the page's or the mail's. */

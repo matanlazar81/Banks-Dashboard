@@ -210,6 +210,32 @@ async function testPlan(fx) {
   check(fx.describeKeep(fx.keepCover(fx.planReserve({ upcoming, policy: 'p95', eur: pos, today: TODAY })), words) === '',
     'no deposit released by then (an undated one is backup): nothing more to say');
 
+  // First in, first out, on a ladder like LSports' on 27 Oct 2026: Nov and Dec covered, Jan to Apr short.
+  const dep = (amount, valueDate) => ({ amount, valueDate, blocked: false, label: 'fixed-term' });
+  const LADDER = [dep(402000, '2026-11-03'), dep(202500, '2026-11-03'), dep(201500, '2026-11-03'), dep(403000, '2026-12-03'), dep(203000, '2026-12-03'),
+    dep(202000, '2026-12-03'), dep(504000, '2027-01-04'), dep(404000, '2027-01-04'), dep(505000, '2027-02-01'), dep(404000, '2027-02-01'), dep(405000, '2027-03-05')];
+  const rich = fx.planReserve({ upcoming, policy: 'today', eur: { hapoalim: 3e6, other: 0, deposits: LADDER }, inflowPerDay: 0, today: TODAY, eurFloor: 200000 });
+  const cov = rich.coverage.map((c) => [c.date, c.required, c.released, c.carried, c.gap]);
+  check(same(cov, [
+    ['2026-11-07', 800000, 806000, 0, 0], ['2026-12-07', 800000, 808000, 6000, 0], ['2027-01-07', 1050000, 908000, 14000, 128000],
+    ['2027-02-07', 1050000, 909000, 0, 141000], ['2027-03-07', 1050000, 405000, 0, 645000], ['2027-04-07', 1050000, 0, 0, 1050000],
+  ]), 'FIFO: each deposit counts for the first conversion after it pays out, leftovers roll on (Nov +€6K, Dec +€14K), Jan €128K short', JSON.stringify(cov));
+  check(same(rich.coverage.map((c) => c.until), ['2026-11-04', '2026-12-06', '2027-01-06', '2027-02-04', '2027-03-04', '2027-04-06']),
+    'a deposit for a gap pays out the business day before the euros have to be in Hapoalim (Sat 7 Nov: Thu 5 Nov, so Wed 4 Nov; Sun 7 Feb: Thu 4 Feb)');
+  check(same(rich.ladder.map((l) => [l.until, l.eur]), [['2027-01-06', 130000], ['2027-02-04', 150000], ['2027-03-04', 650000], ['2027-04-06', 1050000]]),
+    'with room, a deposit for each gap, earliest first, rounded up to €10K', JSON.stringify(rich.ladder));
+  // Made, the ladder closes the gaps and leaves every due covered.
+  const total = rich.ladder.reduce((s, l) => s + l.eur, 0);
+  const made = fx.planReserve({ upcoming, policy: 'today', eur: { hapoalim: 3e6 - total, other: 0, deposits: [...LADDER, ...rich.ladder.map((l) => dep(l.eur, l.until))] }, inflowPerDay: 0, today: TODAY, eurFloor: 200000 });
+  check(made.coverage.every((c) => c.gap === 0) && made.next.short === null && made.ladder.length === 0 && near(rich.next.spareAfterLadder, made.next.spare),
+    'once deposited, every conversion is covered, nothing falls short, and what is left to spare is what the plan said');
+  const tight = fx.planReserve({ upcoming, policy: 'today', eur: { hapoalim: 1e6, other: 0, deposits: LADDER }, inflowPerDay: 0, today: TODAY, eurFloor: 200000 });
+  check(same(tight.ladder.map((l) => [l.until, l.eur]), [['2027-01-06', 130000], ['2027-02-04', 150000], ['2027-03-04', 520000]]) && tight.next.spareAfterLadder === 0,
+    'with €800K above the floor: Jan and Feb in full, Mar as far as it goes, Apr waits', JSON.stringify(tight.ladder));
+  const soon = fx.planReserve({ upcoming, policy: 'p95', eur: { hapoalim: 3e6, other: 0, deposits: LADDER }, inflowPerDay: 0, today: TODAY, eurFloor: 200000 });
+  check(soon.coverage[0].gap > 0 && !soon.coverage[0].timed && !soon.ladder.some((l) => l.month === '2026-11') && soon.ladder[0].month === '2026-12',
+    'the next conversion\'s gap is the cash to keep (the keep line), never a deposit, even two weeks out; the ladder starts with the one after');
+
   const flows = [
     { month: '2026-07', kind: 'customer', eur: 4969632 }, { month: '2026-07', kind: 'vendor', eur: -389321 }, { month: '2026-07', kind: 'other', eur: 58695 },
     { month: '2026-07', kind: 'conversion', eur: -2646789 }, { month: '2026-07', kind: 'deposit', eur: -1400000 }, { month: '2026-07', kind: 'transfer', eur: -210194 },
@@ -471,6 +497,24 @@ async function testToday(fx) {
   check(fx.describeAction(allSame, view(TODAY), TODAY, fmt0).body.startsWith('€430K for 1, 3 or 6 months (the longest until 2027-04-21)')
     && fx.describeAction(depo.actions[2], view(TODAY), TODAY, fmt0).body.startsWith('€500K for 1 month (until 2026-11-21)'),
   'a deposit in words: one line when every term holds the same');
+  // A conversion the deposits leave short: the spare euros go into deposits timed for it, before any 1, 3 or 6 months.
+  const legs = [{ month: '2027-01', date: '2027-01-07', until: '2027-01-06', eur: 130000, gap: 128000, required: 1050000, have: 922000 },
+    { month: '2027-02', date: '2027-02-07', until: '2027-02-04', eur: 150000, gap: 141000, required: 1050000, have: 909000 }];
+  const coverage = [{ month: '2027-01', date: '2027-01-07', gap: 128000, timed: true }, { month: '2027-02', date: '2027-02-07', gap: 141000, timed: true }];
+  const withGaps = (next, level = 'middle', ladder = legs) => ({ ...view(TODAY, { next, level, deposits: deps }), plan: { next: { ...NEXT, ...next }, deposits: deps, coverage, ladder } });
+  const lad = fx.todayActions(withGaps({ spare: 500000, spareAfterLadder: 220000 }), TODAY);
+  check(kinds(lad).includes('ladder:') && !kinds(lad).some((k) => k.startsWith('deposit')) && lad.actions.find((a) => a.kind === 'ladder').eur === 280000,
+    'gaps ahead: deposits timed for them (€280K), and no 1, 3 or 6 month deposit while one is open', JSON.stringify(kinds(lad)));
+  const ladHigh = fx.todayActions(withGaps({ spare: 500000, spareAfterLadder: 220000 }, 'high'), TODAY);
+  check(ladHigh.actions.find((a) => a.kind === 'convert-spare').eur === 220000, 'on a high rate, only what the ladder leaves is converted');
+  check(!kinds(fx.todayActions(withGaps({ spare: 40000, spareAfterLadder: 0 }, 'middle', [{ ...legs[0], eur: 40000 }]), TODAY)).some((k) => k.startsWith('ladder') || k.startsWith('deposit')),
+    'under €50K of room: no deposit at all while the gap is open');
+  const lv = withGaps({ spare: 500000 });
+  check(fx.describeAction({ kind: 'ladder', key: 'ladder', urgent: false, eur: 130000, legs: [legs[0]] }, lv, TODAY, fmt0).head === 'Put €130K in a deposit until 2027-01-06'
+    && fx.describeAction({ kind: 'ladder', key: 'ladder', urgent: false, eur: 130000, legs: [legs[0]] }, lv, TODAY, fmt0).body === 'For the 2027-01-07 conversion: it takes €1050K, and the deposits paid out by then hold €922K, €128K short. Every payment before then stays covered.'
+    && fx.describeAction(lad.actions.find((a) => a.kind === 'ladder'), lv, TODAY, fmt0).head === 'Put €280K in deposits for the January and February conversions'
+    && fx.describeAction(lad.actions.find((a) => a.kind === 'ladder'), lv, TODAY, fmt0).body === '€130K until 2027-01-06 for 2027-01-07 (€128K short), €150K until 2027-02-04 for 2027-02-07 (€141K short). Every payment before then stays covered.',
+  'the ladder in words: each deposit, until when, and the conversion it is for');
   const move = { kind: 'move', key: 'move:2026-11-07', urgent: true, eur: 300000, date: '2026-11-07', by: '2026-11-05' };
   const moveSaid = (next) => fx.describeAction(move, view('2026-11-04', { next }), '2026-11-04', fmt0).body;
   check(moveSaid({}) === 'The 2026-11-07 conversion takes its euros from Hapoalim EUR (583400), which holds €981K; keep €1400K there.'
@@ -709,6 +753,21 @@ async function testMail(fx) {
   check(cover.covered && /אין צורך לשמור כסף להמרה של שבת 7\.11: הפיקדון שמשתחרר ביום ג' 3\.11 \(€1\.50M\) מכסה את ה-€[\d.]+[KM] שהיא מוכרת מחשבון האירו בפועלים \(95% מתנודות השער\)\./.test(m.text)
     && !m.text.includes('להשאיר €'),
   'the €1.5M deposit released on Tue 3 Nov covers what Sat 7 Nov takes: the mail says there is nothing to keep, and why');
+  const lines = m.text.split('\n');
+  const covAt = lines.findIndex((l) => l.startsWith('ההמרות הבאות מול הפיקדונות (95% מתנודות השער)'));
+  check(covAt > 0 && /^- שבת 7\.11: €[\d.]+[KM], מכוסה מהפיקדונות \(€1\.50M\)\.$/.test(lines[covAt + 1]) && /^- יום ב' 7\.12: €[\d.]+[KM], הפיקדונות מכסים €[\d.]+K: חסרים €[\d.]+[KM]\.$/.test(lines[covAt + 2])
+    && lines.slice(covAt + 1, covAt + 7).every((l) => l.startsWith('- ')),
+  'the mail lists the next conversions against the deposits: 7 Nov covered by the €1.5M of 3 Nov, 7 Dec short of what is left', lines.slice(covAt, covAt + 7).join(' | '));
+  const hl = [{ month: '2027-01', date: '2027-01-07', until: '2027-01-06', eur: 130000, gap: 128000, required: 1050000, have: 922000 },
+    { month: '2027-02', date: '2027-02-07', until: '2027-02-04', eur: 150000, gap: 141000, required: 1050000, have: 909000 }];
+  const hv = { plan: { next: {} }, rateCheck: null };
+  const one = mail.actionText({ kind: 'ladder', eur: 130000, legs: [hl[0]] }, hv, TODAY);
+  const two = mail.actionText({ kind: 'ladder', eur: 280000, legs: hl }, hv, TODAY);
+  check(one.head === 'להפקיד €130K בפיקדון עד יום ד\' 6.1' && one.body === 'להמרה של יום ה\' 7.1: היא מוכרת €1.05M, והפיקדונות שמשתחררים עד אז מכסים €922K, כלומר חסרים €128K. כל התשלומים עד אז עדיין מכוסים.'
+    && two.head === 'להפקיד €280K בפיקדונות להמרות של ינואר ופברואר'
+    && two.body === '€130K עד יום ד\' 6.1 להמרה של יום ה\' 7.1 (חסרים €128K), €150K עד יום ה\' 4.2 להמרה של יום א\' 7.2 (חסרים €141K). כל התשלומים עד אז עדיין מכוסים.'
+    && !english(`${one.head} ${one.body} ${two.head} ${two.body}`),
+  'the ladder in the mail, in Hebrew: each deposit, until when, and the conversion it is for', JSON.stringify([one, two]));
   const worst = fx.keepCover(fx.planFromPayload(data, 'worst').plan);
   const mw = mail.renderMail(fx, data, { policy: 'worst' });
   check(!worst.covered && worst.fromCash > 0
