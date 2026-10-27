@@ -298,7 +298,7 @@ export type TodayAction =
   | { kind: 'convert-spare'; key: string; urgent: boolean; eur: number }
   | { kind: 'ladder'; key: string; urgent: boolean; eur: number; legs: LadderLeg[] }
   | { kind: 'deposit'; key: string; urgent: boolean; eur: number; options: { months: number; until: string; eur: number }[] };
-export declare function todayActions(view: PlanView, today: string, opts?: { lead?: number; moveLead?: number; minEur?: number }): { actions: TodayAction[]; ahead: { dues: ShekelDue[]; eur: number } };
+export declare function todayActions(view: PlanView, today: string, opts?: { lead?: number; moveLead?: number; minEur?: number; notice?: number }): { actions: TodayAction[]; ahead: { dues: ShekelDue[]; eur: number } };
 /** Number and date formats for the texts: the page's or the mail's. */
 export interface TextFormats { eur: (n: number) => string; ils: (n: number) => string; day: (iso: string) => string; rate: (r: number) => string }
 export declare function describeAction(a: TodayAction, view: PlanView, today: string, fmt: TextFormats): { head: string; body: string };

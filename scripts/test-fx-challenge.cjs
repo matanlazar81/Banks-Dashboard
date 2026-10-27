@@ -468,14 +468,20 @@ async function testToday(fx) {
   });
   const kinds = (r) => r.actions.map((a) => `${a.kind}${a.urgent ? '!' : ''}:${a.key.split(':')[1] || ''}`);
 
+  // A conversion for shekels is said 2 business days before it has to be ready, not earlier: finance converts at once,
+  // and the figure moves until then (asked on 27 Oct 2026). Before that it is only among the payments ahead.
   const ahead21 = fx.todayActions(view(TODAY), TODAY);
-  check(same(kinds(ahead21), ['convert:2026-11-05', 'convert:2026-11-14']),
-    'on 21 Oct: the shekels on hand cover October; 5 Nov and 14 Nov need conversions, announced ahead (not urgent yet)', JSON.stringify(kinds(ahead21)));
+  check(kinds(ahead21).length === 0 && same(ahead21.ahead.dues.filter((d) => d.eur > 0.5).map((d) => d.date), ['2026-11-05', '2026-11-14']),
+    'on 21 Oct: nothing to convert yet; 5 Nov and 14 Nov are only among the payments ahead', JSON.stringify(kinds(ahead21)));
   const week = fx.todayActions(view('2026-11-01'), '2026-11-01');
-  check(same(kinds(week), ['convert!:2026-11-01', 'convert!:2026-11-05', 'convert:2026-11-14']),
-    'on Sun 1 Nov: convert today for the rest of November\'s vendors and by Thu 5 Nov for the net salaries (urgent, first); 14 Nov (ready Thu 12 Nov) not yet', JSON.stringify(kinds(week)));
+  check(same(kinds(week), ['convert!:2026-11-01']),
+    'on Sun 1 Nov: convert today for the rest of November\'s vendors; Thu 5 Nov (4 business days away) not yet', JSON.stringify(kinds(week)));
+  const mon = fx.todayActions(view('2026-11-02'), '2026-11-02');
+  const tue = fx.todayActions(view('2026-11-03'), '2026-11-03');
+  check(!kinds(mon).includes('convert!:2026-11-05') && kinds(tue).includes('convert!:2026-11-05') && !kinds(tue).some((k) => k.endsWith(':2026-11-14')),
+    'Thu 5 Nov\'s conversion is said from Tue 3 Nov (2 business days ahead), in red; Mon 2 Nov is too early', JSON.stringify([kinds(mon), kinds(tue)]));
   const high = fx.todayActions(view(TODAY, { level: 'high' }), TODAY);
-  check(same(kinds(high), ['convert-early:2026-11-05', 'convert:2026-11-14']) && near(high.actions[0].eur, 1.31e6 - 683000),
+  check(same(kinds(high), ['convert-early:2026-11-05']) && near(high.actions[0].eur, 1.31e6 - 683000),
     'a high EUR/ILS: convert early for 5 Nov (before the conversion day), as far as the euros above the EUR vendors\' floor go', JSON.stringify(high.actions.map((a) => [a.kind, a.eur])));
   const small = fx.todayActions({ ...view('2026-11-01'), cash: fx.shekelNeeds({ today: '2026-11-01', ilsNow: 2.99e6, vendorsIls: 3.1e6, spot: 3.5, until: '2026-11-30', payroll: [], conversions: [] }) }, '2026-11-01');
   check(small.actions.length === 0, 'a gap under €50K is no action (here €2K for the rest of November\'s vendors)', JSON.stringify(kinds(small)));
@@ -489,13 +495,13 @@ async function testToday(fx) {
   'euros to move to Hapoalim EUR: urgent in the last business days before the conversion (a Saturday one counts from the Thursday), not before');
   const deps = [{ months: 1, until: '2026-11-21', eur: 500000 }, { months: 3, until: '2027-01-21', eur: 0 }];
   const depo = fx.todayActions(view(TODAY, { next: { spare: 500000 }, deposits: deps }), TODAY);
-  check(same(kinds(fx.todayActions(view(TODAY, { next: { spare: 500000 }, level: 'high' }), TODAY)), ['convert-early:2026-11-05', 'convert:2026-11-14', 'convert-spare:'])
-    && same(kinds(depo), ['convert:2026-11-05', 'convert:2026-11-14', 'deposit:']) && depo.actions[2].options.length === 1,
+  check(same(kinds(fx.todayActions(view(TODAY, { next: { spare: 500000 }, level: 'high' }), TODAY)), ['convert-early:2026-11-05', 'convert-spare:'])
+    && same(kinds(depo), ['deposit:']) && depo.actions[0].options.length === 1,
   'spare euros: convert on a high rate, else a new deposit (the terms that hold at least €50K)');
   const fmt0 = { eur: (n) => `€${Math.round(n / 1000)}K`, ils: (n) => `₪${Math.round(n / 1000)}K`, day: (iso) => iso, rate: (r) => r.toFixed(3) };
   const allSame = { kind: 'deposit', key: 'deposit', urgent: false, eur: 430000, options: [{ months: 1, until: '2026-11-21', eur: 430000 }, { months: 3, until: '2027-01-21', eur: 430000 }, { months: 6, until: '2027-04-21', eur: 430000 }] };
   check(fx.describeAction(allSame, view(TODAY), TODAY, fmt0).body.startsWith('€430K for 1, 3 or 6 months (the longest until 2027-04-21)')
-    && fx.describeAction(depo.actions[2], view(TODAY), TODAY, fmt0).body.startsWith('€500K for 1 month (until 2026-11-21)'),
+    && fx.describeAction(depo.actions[0], view(TODAY), TODAY, fmt0).body.startsWith('€500K for 1 month (until 2026-11-21)'),
   'a deposit in words: one line when every term holds the same');
   // A conversion the deposits leave short: the spare euros go into deposits timed for it, before any 1, 3 or 6 months.
   const legs = [{ month: '2027-01', date: '2027-01-07', until: '2027-01-06', eur: 130000, gap: 128000, required: 1050000, have: 922000 },
@@ -524,10 +530,12 @@ async function testToday(fx) {
   const fmt = { eur: (n) => `€${Math.round(n)}`, ils: (n) => `₪${Math.round(n)}`, day: (iso) => iso, rate: (r) => r.toFixed(3) };
   const v1 = view('2026-11-01');
   const said = week.actions.map((a) => fx.describeAction(a, v1, '2026-11-01', fmt));
+  const nov5 = tue.actions.find((a) => a.key === 'convert:2026-11-05');
+  const said5 = fx.describeAction(nov5, view('2026-11-03'), '2026-11-03', fmt);
   check(said[0].head.startsWith('Convert €') && said[0].head.endsWith(' today') && said[0].body.startsWith('The rest of November\'s ILS vendor payments: ₪2996667 goes out this month, with ₪1000000 on hand')
-    && said[1].head === `Convert €${Math.round(4e6 / 3.5)} by 2026-11-05` && said[1].body === 'October\'s net salaries: ₪4000000 goes out on 2026-11-05, with ₪0 on hand by then.',
-  'each action in words, with the balances behind it', JSON.stringify(said));
-  const lowSaid = fx.describeAction(week.actions[1], view('2026-11-01', { level: 'low' }), '2026-11-01', fmt).body;
+    && said5.head === `Convert €${Math.round(4e6 / 3.5)} by 2026-11-05` && said5.body === 'October\'s net salaries: ₪4000000 goes out on 2026-11-05, with ₪0 on hand by then.',
+  'each action in words, with the balances behind it', JSON.stringify([said, said5]));
+  const lowSaid = fx.describeAction(nov5, view('2026-11-03', { level: 'low' }), '2026-11-03', fmt).body;
   check(/is low against the last 90 days: if it can wait, wait, but no later than 2026-11-05\.$/.test(lowSaid), 'a low EUR/ILS: wait if it can, with the deadline', lowSaid);
   const due = cashOn(TODAY).dues;
   check(fx.describeDue(due[0], TODAY, fmt) === 'Now: the rest of October\'s ILS vendor payments, ₪1000000: covered by the shekels on hand'
