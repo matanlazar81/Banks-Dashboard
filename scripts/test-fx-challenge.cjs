@@ -481,8 +481,8 @@ async function testToday(fx) {
   check(!kinds(mon).includes('convert!:2026-11-05') && kinds(tue).includes('convert!:2026-11-05') && !kinds(tue).some((k) => k.endsWith(':2026-11-14')),
     'Thu 5 Nov\'s conversion is said from Tue 3 Nov (2 business days ahead), in red; Mon 2 Nov is too early', JSON.stringify([kinds(mon), kinds(tue)]));
   const high = fx.todayActions(view(TODAY, { level: 'high' }), TODAY);
-  check(same(kinds(high), ['convert-early:2026-11-05']) && near(high.actions[0].eur, 1.31e6 - 683000),
-    'a high EUR/ILS: convert early for 5 Nov (before the conversion day), as far as the euros above the EUR vendors\' floor go', JSON.stringify(high.actions.map((a) => [a.kind, a.eur])));
+  check(kinds(high).length === 0 && same(kinds(fx.todayActions(view('2026-11-03', { level: 'high' }), '2026-11-03')).filter((k) => k.endsWith(':2026-11-05')), ['convert!:2026-11-05']),
+    'a high EUR/ILS brings no conversion forward: 5 Nov\'s is still said from Tue 3 Nov, not on 21 Oct', JSON.stringify(kinds(high)));
   const small = fx.todayActions({ ...view('2026-11-01'), cash: fx.shekelNeeds({ today: '2026-11-01', ilsNow: 2.99e6, vendorsIls: 3.1e6, spot: 3.5, until: '2026-11-30', payroll: [], conversions: [] }) }, '2026-11-01');
   check(small.actions.length === 0, 'a gap under €50K is no action (here €2K for the rest of November\'s vendors)', JSON.stringify(kinds(small)));
   const short = { first: { eur: 776000, date: '2026-11-07', shekels: false }, eur: 776000, date: '2026-11-07' };
@@ -495,7 +495,7 @@ async function testToday(fx) {
   'euros to move to Hapoalim EUR: urgent in the last business days before the conversion (a Saturday one counts from the Thursday), not before');
   const deps = [{ months: 1, until: '2026-11-21', eur: 500000 }, { months: 3, until: '2027-01-21', eur: 0 }];
   const depo = fx.todayActions(view(TODAY, { next: { spare: 500000 }, deposits: deps }), TODAY);
-  check(same(kinds(fx.todayActions(view(TODAY, { next: { spare: 500000 }, level: 'high' }), TODAY)), ['convert-early:2026-11-05', 'convert-spare:'])
+  check(same(kinds(fx.todayActions(view(TODAY, { next: { spare: 500000 }, level: 'high' }), TODAY)), ['convert-spare:'])
     && same(kinds(depo), ['deposit:']) && depo.actions[0].options.length === 1,
   'spare euros: convert on a high rate, else a new deposit (the terms that hold at least €50K)');
   const fmt0 = { eur: (n) => `€${Math.round(n / 1000)}K`, ils: (n) => `₪${Math.round(n / 1000)}K`, day: (iso) => iso, rate: (r) => r.toFixed(3) };

@@ -292,7 +292,7 @@ export declare function planFromPayload(data: PlanInput, policy?: Policy): PlanV
 
 /** Something to do today (todayActions). urgent: worth a mail whatever was sent before; key: the same on another day. */
 export type TodayAction =
-  | { kind: 'convert' | 'convert-early'; key: string; urgent: boolean; eur: number; by: string; left: number; due: ShekelDue }
+  | { kind: 'convert'; key: string; urgent: boolean; eur: number; by: string; left: number; due: ShekelDue }
   | { kind: 'short'; key: string; urgent: boolean; eur: number; date: string; by: string; left: number; shekels: boolean }
   | { kind: 'move'; key: string; urgent: boolean; eur: number; date: string; by: string; left: number }
   | { kind: 'convert-spare'; key: string; urgent: boolean; eur: number }
