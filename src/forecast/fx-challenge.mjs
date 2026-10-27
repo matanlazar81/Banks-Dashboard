@@ -798,7 +798,9 @@ export function describeAction(a, view, today, fmt) {
     return { head: `Short ${eur(a.eur)} by ${day(a.date)}`, body: `The euros held and expected by then don't cover ${what} and the ${eur(n.eurFloor)} kept for EUR vendors.${fix}` };
   }
   if (a.kind === 'move') {
-    return { head: `Move ${eur(a.eur)} to Hapoalim EUR by ${day(a.by)}`, body: `The ${day(a.date)} conversion takes its euros from Hapoalim EUR (583400), which holds ${eur(n.hapoalim)}; keep ${eur(n.required)} there.` };
+    const fromDeposits = Math.min(n.required, n.maturing || 0);
+    const dep = fromDeposits > 0.5 ? `, ${eur(fromDeposits)} of it from deposits released by then` : '';
+    return { head: `Move ${eur(a.eur)} to Hapoalim EUR by ${day(a.by)}`, body: `The ${day(a.date)} conversion takes its euros from Hapoalim EUR (583400), which holds ${eur(n.hapoalim)}; keep ${eur(n.required)} there${dep}.` };
   }
   if (a.kind === 'convert-spare') {
     return { head: `Convert the ${eur(a.eur)} spare today`, body: `${rateIs}. It brings ${ils(a.eur * rc.rate)}, with every conversion, salary and vendor payment ahead still covered.` };
@@ -825,6 +827,33 @@ export function nothingToday(ahead, today, fmt, { minEur = 50000 } = {}) {
   if (next) return `Nothing to do today. Next: convert ${fmt.eur(next.eur)} by ${fmt.day(next.by)} (${inDays(today, next.by)}) for ${dueWhat(next)}.`;
   const last = ahead.dues[ahead.dues.length - 1];
   return last ? `Nothing to do today: the shekels on hand and the conversions cover the payments to ${fmt.day(last.date)}.` : 'Nothing to do today.';
+}
+
+/**
+ * Where the euros kept for the next conversion come from on the day: the EUR deposits released after today and by
+ * the conversion day (they count for it, paid into Hapoalim EUR), and today's cash for the rest.
+ * Returns { required, deposits (earliest first), fromDeposits, fromCash, covered } (covered: the deposits alone hold it).
+ */
+export function keepCover(plan) {
+  const n = plan.next;
+  const deposits = plan.path.length ? plan.path[0].releasedDeposits : [];
+  const fromDeposits = Math.min(n.required, n.maturing);
+  return { required: n.required, deposits, fromDeposits, fromCash: n.needLiquid, covered: fromDeposits > 0.5 && n.needLiquid < 0.5 };
+}
+
+/** keepCover in words, after "Keep €800K in Hapoalim EUR for Sat 7 Nov.": "The deposit released on Thu 5 Nov (€1.00M)
+ * covers it, so it needs none of today's cash." or "€500K of it comes from the deposit released on Thu 5 Nov, €300K
+ * from today's cash." Empty when no deposit is released by then. */
+export function describeKeep(cover, fmt) {
+  const ds = cover.deposits;
+  if (!(cover.fromDeposits > 0.5) || !ds.length) return '';
+  const last = ds[ds.length - 1].valueDate;
+  const which = ds.length === 1 ? `the deposit released on ${fmt.day(last)}` : `the ${ds.length} deposits released by ${fmt.day(last)}`;
+  if (cover.covered) {
+    const total = ds.reduce((s, d) => s + d.amount, 0);
+    return `${capital(which)} (${fmt.eur(total)}) ${ds.length === 1 ? 'covers' : 'cover'} it, so it needs none of today's cash.`;
+  }
+  return `${fmt.eur(cover.fromDeposits)} of it comes from ${which}, ${fmt.eur(cover.fromCash)} from today's cash.`;
 }
 
 // ── past fixings ──

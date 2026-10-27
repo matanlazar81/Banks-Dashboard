@@ -274,6 +274,19 @@ export interface TextFormats { eur: (n: number) => string; ils: (n: number) => s
 export declare function describeAction(a: TodayAction, view: PlanView, today: string, fmt: TextFormats): { head: string; body: string };
 export declare function describeDue(d: ShekelDue, today: string, fmt: Pick<TextFormats, 'eur' | 'ils' | 'day'>): string;
 export declare function nothingToday(ahead: { dues: ShekelDue[] }, today: string, fmt: Pick<TextFormats, 'eur' | 'day'>, opts?: { minEur?: number }): string;
+/** Where the euros kept for the next conversion come from on the day. */
+export interface KeepCover {
+  required: number;
+  /** The EUR deposits released after today and by the conversion day, earliest first: they count for it. */
+  deposits: DepositRelease[];
+  fromDeposits: number;
+  /** What today's cash still has to hold for it. */
+  fromCash: number;
+  /** The deposits alone hold it. */
+  covered: boolean;
+}
+export declare function keepCover(plan: ReservePlan): KeepCover;
+export declare function describeKeep(cover: KeepCover, fmt: Pick<TextFormats, 'eur' | 'day'>): string;
 
 /** A conversion journal: euros sold (or bought back: negative, with the shekels paid negative too). */
 export interface BookedConversion { date: string; eur: number; ils: number }

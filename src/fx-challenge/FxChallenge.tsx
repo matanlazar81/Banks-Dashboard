@@ -154,6 +154,11 @@ function Kpis({ model }: { model: FxModel }) {
   const { todo } = model;
   const toConvert = todo.dues.filter((d) => d.eur > 0.5);
   const lastDue = todo.dues[todo.dues.length - 1];
+  const keep = model.keep;
+  const one = keep && keep.deposits.length === 1;
+  const coverNote = !keep || !(keep.fromDeposits > 0.5) ? ''
+    : keep.covered ? ` · covered by ${one ? 'a deposit' : `${keep.deposits.length} deposits`}`
+      : ` · ${formatEur(keep.fromDeposits)} from ${one ? 'a deposit' : 'deposits'}`;
   return (
     <div className={`grid grid-cols-2 gap-3 ${cash ? 'lg:grid-cols-5' : 'lg:grid-cols-4'}`}>
       <KpiCard label="EUR/ILS today" value={model.spot} ccy="eur" display={formatRate(model.spot)}
@@ -162,7 +167,7 @@ function Kpis({ model }: { model: FxModel }) {
         display={next && next.atSpot ? `${formatEur(next.atSpot.eur)} → ${formatIls(next.atSpot.ils)}` : undefined}
         note={next ? `${formatDay(next.fixing.date)}${next.fixing.weekend ? ' (weekend)' : ''} at today's rate${next.atSpot ? `, ${next.atSpot.rate}` : ''}` : 'No conversion left in the table'} />
       <KpiCard label="Keep for it" value={plan ? plan.required : null} ccy="eur" display={plan ? formatEur(plan.required) : undefined}
-        note={model.plan ? POLICY_LABEL[model.plan.policy] : 'Needs balances'} />
+        note={model.plan ? `${POLICY_LABEL[model.plan.policy]}${coverNote}` : 'Needs balances'} />
       {cash && plan ? (
         <>
           <KpiCard label="Convert for salaries & vendors" value={todo.eur} ccy="eur" display={eur0(todo.eur)}
@@ -230,6 +235,11 @@ function Recommendation({ model, policy, onPolicy, inflowMonths }: { model: FxMo
         <p className="text-base text-slate-900">
           Keep <strong>{formatEur(n.required)}</strong> in Hapoalim EUR (583400) for {formatDay(n.date)}
           {first.fixing.weekend ? ' (a weekend: the deal sets the day)' : ''}.
+          {model.keep && model.keep.text ? (
+            <span title="A deposit counts if the bank pays it into Hapoalim EUR (583400) by the conversion, rather than rolling it over.">
+              {' '}{model.keep.text}
+            </span>
+          ) : null}
           {model.cash ? null : (
             <>
               {' '}Free to convert now: <strong>{formatEur(n.freeNow)}</strong>
