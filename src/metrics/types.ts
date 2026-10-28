@@ -80,8 +80,9 @@ export interface MetricsPayload {
   /** The projection-year targets saved on the New Bank Dashboard (applied when active). */
   targets?: { year: number; active: boolean; updatedAt: string | null; updatedBy: string | null; assumptions: string[] };
   metrics: Metric[];
-  /** NRR for each month of the year so far, each against the December before it (`from`). */
-  nrrTrend: { month: string; from: string; nrr: number; grr: number; customers: number }[];
+  /** NRR for each month of the year so far against the December before it (`from`): to date (`months` months), and
+   *  the month alone. */
+  nrrTrend: { month: string; from: string; months: number; nrr: number; grr: number; monthNrr: number; monthGrr: number; customers: number }[];
   cloud: { category: string; categories: string[]; capPct: number; accounts: string; years: CloudYear[] };
   /** Payroll / revenue and revenue per employee (absent from servers before this page had them). */
   people?: People;
@@ -106,13 +107,23 @@ export interface ExplainTable {
   more: number;
   total: Record<string, string | number | null> | null;
 }
-/** One customer of the NRR breakdown (?detail=nrr&all=true): its contracted revenue in the base December and now (€). */
+/** One customer of the NRR breakdown (?detail=nrr&all=true), in €: its contracted revenue in the base December and
+ *  in each month of the year to date. */
 export interface NrrCustomer {
   id: string;
   customer: string;
   group: 'churned' | 'contracted' | 'expanded' | 'unchanged' | 'new';
+  /** December's revenue (the base). */
+  dec: number;
+  /** Its revenue in each month of period.months. */
+  months: number[];
+  /** Those months at its December level, and its revenue in them (their sum). */
   then: number;
   now: number;
+  /** Its months capped at its December revenue (GRR). */
+  kept: number;
+  /** The last month's revenue. */
+  last: number;
   /** The part of now still to be collected (unpaid). */
   unpaid: number;
   /** The CRM's churn date (DIM_CUSTOMER.CHURN_DATE, 'YYYY-MM-DD'), or null. */
@@ -122,17 +133,18 @@ export interface Explain {
   item: string;
   title: string;
   subtitle: string;
-  /** NRR: the base December and the month measured ('YYYY-MM'). */
-  period?: { from: string; to: string };
+  /** NRR: the base December, the month measured and the months to date ('YYYY-MM'). */
+  period?: { from: string; to: string; months?: string[] };
   value: { value: number; unit: ExplainUnit };
   formula: string[];
   source: string[];
   summary: { label: string; value: number | null; unit: ExplainUnit; strong?: boolean; sign?: boolean }[];
   notes?: string[];
   tables: ExplainTable[];
-  /** NRR with all=true: every customer, and each month of the year so far (% as on the page). */
+  /** NRR with all=true: every customer, and each month of the year so far (% as on the page): to date, and the month
+   *  alone against December. */
   customers?: NrrCustomer[];
-  series?: { month: string; nrr: number; grr: number }[];
+  series?: { month: string; nrr: number; grr: number; monthNrr: number; monthGrr: number }[];
 }
 
 export interface SavedDoc<T> { ok: true; value: T; updatedAt: string | null; updatedBy: string | null }
