@@ -249,9 +249,10 @@ export default function Metrics() {
             <p className="max-w-5xl text-xs leading-relaxed text-slate-500">
               Revenue and EBITDA come from the P&amp;L Projection (NetSuite for closed months), net cash from the New Bank
               Dashboard (cash in the bank; there is no debt). ARR is MRR × 12 from Snowflake; its forecast is December
-              customer revenue × 12. NRR is counted from 1 January on contracted revenue (Salesforce&apos;s revenue
-              schedule, paid or still to be collected): what the customers who had contracted revenue in December have
-              now, against their December revenue (GRR caps each at its December amount).
+              customer revenue × 12. NRR is counted on revenue from 1 January: what the customers who had revenue in
+              December brought since then (Salesforce&apos;s revenue schedule, paid or still to be collected), against the
+              same months at their December level; Last month is that month alone against December (GRR caps each month
+              at its December amount).
               Cloud is NetSuite 640xxx in closed months and the budget&apos;s cloud share of operating expenses after. All
               figures follow the Plan; the projection year adds the targets saved on the New Bank Dashboard (the same
               figures as both pages&apos; Targets view).

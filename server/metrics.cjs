@@ -8,8 +8,9 @@
 //                         closings (forecast). There is no debt data, so net cash is the cash in the bank.
 //   ARR                   Snowflake MRR × 12 now (actual); December customer revenue × 12 (forecast)
 //   NRR                   Snowflake contracted revenue by customer (Salesforce's revenue schedule, paid or still to
-//                         be collected), from 1 January: the last closed month's revenue of the customers who had
-//                         contracted revenue in December ÷ their December revenue (GRR caps each at it)
+//                         be collected), year to date: the December customers' revenue from January through the last
+//                         closed month ÷ those months at their December level (GRR caps each month at it); last month:
+//                         that month alone against December
 //   Churn                 churned MRR by quarter (Snowflake), and the revenue the forecast loses to churn
 //   Cloud vs cap          cloud (NetSuite 640xxx; forecast: the budget's cloud share of operating
 //                         expenses) against cap % × projected FY revenue
@@ -121,42 +122,68 @@ function cloudYear({ block, details, targetsBase, category, capPct, revenue, wit
 }
 
 // ── NRR ─────────────────────────────────────────────────────────────────────
-// NRR and GRR are counted on contracted revenue by customer (sfContractedRevenue: Salesforce's revenue schedule,
-// what each contract brings in a month, paid or still to be collected), not on what was booked or paid: a
-// customer whose contract runs counts in full. The contracted MRR table (FCT_OPPORTUNITY__MONTHLY, the source of
-// ARR) holds only the current month, so it can't give December's base.
+// NRR and GRR are counted on revenue, year to date: the contracted revenue of the customers billing going into
+// 1 January (their December revenue), from January through the month, against the same months at their December
+// level. Contracted revenue is Salesforce's revenue schedule (sfContractedRevenue): what each contract brings in a
+// month, paid or still to be collected; only months that have happened count. A customer who left counts for what
+// it brought before leaving. At the year's end this is the year's revenue ÷ ARR on 1 January. The month alone
+// against December (the run-rate) is given too.
 /** NRR is counted from 1 January: a month's base is the December before its year, the revenue going into the year. */
 const nrrBase = (mKey) => `${Number(String(mKey).slice(0, 4)) - 1}-12`;
 /** 'Jan–Sep 2026' ('Jan 2026' in January): the year to date through a month. */
 const ytdSpan = (mKey) => (String(mKey).slice(5) === '01' ? monthShort(mKey) : `Jan–${monthShort(mKey)}`);
+/** The months of a month's year through it: '2026-03' → ['2026-01', '2026-02', '2026-03']. */
+const ytdMonths = (mKey) => Array.from({ length: Number(String(mKey).slice(5)) }, (_, i) => `${String(mKey).slice(0, 4)}-${pad2(i + 1)}`);
+const pctOf = (x, d) => Math.round((x / d) * 10000) / 100;
 
-/** NRR and GRR for each month from contracted revenue by customer: [{ month, customer, amount }], each against its
- *  base (nrrBase). */
-function nrrSeries(rows, months) {
+/** Contracted revenue by month and customer ([{ month, customer, amount }]): Map month → Map customer → amount. */
+function revenueByMonth(rows) {
   const by = new Map();
   for (const r of rows) {
     if (!by.has(r.month)) by.set(r.month, new Map());
     const m = by.get(r.month);
     m.set(r.customer, (m.get(r.customer) || 0) + num(r.amount));
   }
+  return by;
+}
+
+/**
+ * NRR and GRR for each month from contracted revenue by customer ([{ month, customer, amount }]):
+ *   nrr, grr            year to date: the December customers' revenue from January through the month ÷ that many
+ *                       months at their December level (GRR caps each customer's month at its December revenue);
+ *   monthNrr, monthGrr  the month alone against December (the run-rate).
+ * months: the months of the year to date whose data is there (a month with no data at all is left out).
+ */
+function nrrSeries(rows, months) {
+  const by = revenueByMonth(rows);
   return months.map((month) => {
     const from = nrrBase(month);
     const before = by.get(from);
     const now = by.get(month);
     if (!before || !now) return null;
+    const toDate = ytdMonths(month).filter((m) => by.has(m));
     let base = 0;
+    let ytd = 0;
     let kept = 0;
-    let gross = 0;
+    let cur = 0;
+    let curKept = 0;
     let customers = 0;
-    for (const [c, v] of before) {
-      if (v <= 0) continue;
-      const cur = Math.max(0, now.get(c) || 0);
-      base += v;
-      kept += cur;
-      gross += Math.min(cur, v);
+    for (const [c, dec] of before) {
+      if (dec <= 0) continue;
+      base += dec;
       customers++;
+      for (const m of toDate) {
+        const v = Math.max(0, by.get(m).get(c) || 0);
+        ytd += v;
+        kept += Math.min(v, dec);
+      }
+      const v = Math.max(0, now.get(c) || 0);
+      cur += v;
+      curKept += Math.min(v, dec);
     }
-    return base > 0 ? { month, from, nrr: Math.round((kept / base) * 10000) / 100, grr: Math.round((gross / base) * 10000) / 100, customers } : null;
+    if (!(base > 0)) return null;
+    const span = base * toDate.length;
+    return { month, from, months: toDate.length, nrr: pctOf(ytd, span), grr: pctOf(kept, span), monthNrr: pctOf(cur, base), monthGrr: pctOf(curKept, base), customers };
   }).filter(Boolean);
 }
 
@@ -164,80 +191,88 @@ function nrrSeries(rows, months) {
 const NRR_GROUPS = [['churned', 'churned'], ['contracted', 'contracted'], ['expanded', 'expanded'], ['flat', 'unchanged'], ['added', 'new']];
 
 /**
- * How one month's NRR is made (pure): the bridge from the base customers' December contracted revenue to theirs
- * now, and the customers behind each step. rows: [{ month, customer, name, amount, unpaid, churnDate }]
- * (sfContractedRevenue). The figures equal nrrSeries' for the month. limit: customers listed per group (the rest
- * are counted). all: also every customer, unchanged ones included ({ id, customer, group, then, now, unpaid,
- * churnDate }), for the Excel; unpaid is the part of now still to be collected.
+ * How one month's NRR is made (pure), year to date: the bridge from the December customers' revenue at their
+ * December level (that many months) to their revenue from January through the month, and the customers behind each
+ * step. rows: [{ month, customer, name, amount, unpaid, churnDate }] (sfContractedRevenue). The figures equal
+ * nrrSeries' for the month. A customer with nothing in the month has churned; what it brought before counts.
+ * limit: customers listed per group (the rest are counted). all: also every customer, unchanged ones included
+ * ({ id, customer, group, dec, months, then, now, kept, last, unpaid, churnDate }: months = its revenue in each month
+ * to date, then = that many months at its December level, now = their sum, kept = its months capped at December,
+ * last = the month's revenue, unpaid = what is still to be collected), for the Excel.
  */
 function nrrDetail(rows, month, { limit = 40, all = false } = {}) {
   const prev = nrrBase(month);
-  const at = (m) => {
-    const out = new Map();
-    for (const r of rows) {
-      if (r.month !== m) continue;
-      const c = out.get(r.customer) || { name: r.name || r.customer, amount: 0, unpaid: 0, churnDate: null };
-      c.amount += num(r.amount);
+  const present = new Set(rows.map((r) => r.month));
+  if (!present.has(prev) || !present.has(month)) return null;
+  const toDate = ytdMonths(month).filter((m) => present.has(m));
+  const k = toDate.length;
+  const cust = new Map();
+  for (const r of rows) {
+    if (r.month !== prev && !toDate.includes(r.month)) continue;
+    const c = cust.get(r.customer) || { name: r.name || r.customer, dec: 0, by: {}, unpaid: 0, churnDate: null };
+    if (r.month === prev) c.dec += num(r.amount);
+    else {
+      c.by[r.month] = (c.by[r.month] || 0) + num(r.amount);
       c.unpaid += num(r.unpaid);
-      if (r.churnDate) c.churnDate = r.churnDate;
-      out.set(r.customer, c);
     }
-    return out;
-  };
-  const before = at(prev);
-  const now = at(month);
-  if (!before.size || !now.size) return null;
-  // The part of a customer's revenue now still to be collected, and its CRM churn date (from either month).
-  const infoOf = (id) => {
-    const [b, n] = [before.get(id), now.get(id)];
-    return { unpaid: n ? round2(Math.max(0, n.unpaid)) : 0, churnDate: (b && b.churnDate) || (n && n.churnDate) || null };
-  };
+    if (r.churnDate) c.churnDate = r.churnDate;
+    cust.set(r.customer, c);
+  }
   const groups = { churned: [], contracted: [], expanded: [], flat: [], added: [] };
   let base = 0;
+  let ytd = 0;
   let kept = 0;
-  let gross = 0;
-  for (const [id, b] of before) {
-    if (b.amount <= 0) continue;
-    const cur = Math.max(0, now.has(id) ? now.get(id).amount : 0);
-    base += b.amount;
-    kept += cur;
-    gross += Math.min(cur, b.amount);
-    const row = { id, customer: b.name, then: round2(b.amount), now: round2(cur), change: round2(cur - b.amount), ...infoOf(id) };
-    if (cur <= 0) groups.churned.push(row);
-    else if (Math.abs(cur - b.amount) < 0.5) groups.flat.push(row);
-    else (cur > b.amount ? groups.expanded : groups.contracted).push(row);
-  }
-  for (const [id, c] of now) {
-    if (c.amount > 0 && !(before.has(id) && before.get(id).amount > 0)) groups.added.push({ id, customer: c.name, then: 0, now: round2(c.amount), change: round2(c.amount), ...infoOf(id) });
+  let cur = 0;
+  for (const [id, c] of cust) {
+    const monthly = toDate.map((m) => Math.max(0, c.by[m] || 0));
+    const total = monthly.reduce((t, v) => t + v, 0);
+    const last = Math.max(0, c.by[month] || 0);
+    const info = { id, customer: c.name, months: monthly.map(round2), last: round2(last), unpaid: round2(Math.max(0, c.unpaid)), churnDate: c.churnDate };
+    if (c.dec > 0) {
+      const keptC = monthly.reduce((t, v) => t + Math.min(v, c.dec), 0);
+      base += c.dec;
+      ytd += total;
+      kept += keptC;
+      cur += last;
+      const row = { ...info, dec: round2(c.dec), then: round2(c.dec * k), now: round2(total), change: round2(total - c.dec * k), kept: round2(keptC) };
+      if (last <= 0) groups.churned.push(row);
+      else if (Math.abs(total - c.dec * k) < 0.5) groups.flat.push(row);
+      else (total > c.dec * k ? groups.expanded : groups.contracted).push(row);
+    } else if (total > 0) {
+      groups.added.push({ ...info, dec: 0, then: 0, now: round2(total), change: round2(total), kept: 0 });
+    }
   }
   if (!(base > 0)) return null;
   const total = (list, f) => round2(sumOf(list, f));
   const expansion = total(groups.expanded, (r) => r.change);
   const contraction = total(groups.contracted, (r) => -r.change);
-  const churn = total(groups.churned, (r) => r.then);
+  const churn = total(groups.churned, (r) => -r.change);
   const P = monthShort(prev);
   const N = monthShort(month);
+  const S = ytdSpan(month);
+  const atDec = k > 1 ? `${k} × ${P}` : P;
   const byImpact = (list) => list.slice().sort((a, b) => Math.abs(b.change) - Math.abs(a.change));
   const table = (title, list, note) => {
     const sorted = byImpact(list);
     return {
       title: `${title} (${list.length})`, note,
-      columns: [{ key: 'customer', label: 'Customer', unit: 'text' }, { key: 'then', label: P, unit: 'eur' }, { key: 'now', label: N, unit: 'eur' }, { key: 'change', label: 'Change', unit: 'eur' }],
-      rows: sorted.slice(0, limit), more: Math.max(0, sorted.length - limit),
+      columns: [{ key: 'customer', label: 'Customer', unit: 'text' }, { key: 'then', label: atDec, unit: 'eur' }, { key: 'now', label: S, unit: 'eur' }, { key: 'change', label: 'Change', unit: 'eur' }],
+      rows: sorted.slice(0, limit).map(({ customer, then, now, change }) => ({ customer, then, now, change })), more: Math.max(0, sorted.length - limit),
       total: { customer: 'Total', then: total(list, (r) => r.then), now: total(list, (r) => r.now), change: total(list, (r) => r.change) },
     };
   };
   const counted = [...groups.churned, ...groups.contracted, ...groups.expanded, ...groups.flat];
   const churnDated = groups.churned.filter((r) => r.churnDate).length;
+  const months = k === 1 ? 'month' : `${k} months`;
   const out = {
-    item: 'nrr', title: `NRR, ${ytdSpan(month)}`, subtitle: `The customers going into 1 January: ${P} → ${N} (contracted revenue)`,
-    period: { from: prev, to: month },
-    value: { value: Math.round((kept / base) * 10000) / 100, unit: 'pct' },
+    item: 'nrr', title: `NRR, ${S}`, subtitle: `The customers going into 1 January: their revenue ${S} against ${atDec}`,
+    period: { from: prev, to: month, months: toDate },
+    value: { value: pctOf(ytd, base * k), unit: 'pct' },
     formula: [
-      `NRR is counted from 1 January on contracted revenue: the ${N} revenue of the customers who had contracted revenue in ${P}, ÷ their ${P} revenue.`,
-      'Contracted revenue is what each contract brings in the month in Salesforce\'s revenue schedule, paid or still to be collected. Nothing is forecast.',
-      `GRR = the same with each customer capped at its ${P} revenue, so growth doesn't count: only what was kept.`,
-      `Customers with no contracted revenue in ${P} (new this year) are left out (listed at the end, not counted).`,
+      `NRR is counted on revenue from 1 January: the contracted revenue of the customers who had revenue in ${P}, ${S}, ÷ the same ${months} at their ${P} level (${atDec}).`,
+      'Customers who left count for what they brought before leaving. Contracted revenue is what each contract brings in the month in Salesforce\'s revenue schedule, paid or still to be collected; only months that have happened count.',
+      `GRR = the same with each customer's month capped at its ${P} revenue, so growth doesn't count: only what was kept.`,
+      `Customers with no revenue in ${P} (new this year) are left out (listed at the end, not counted). At the year's end this is the year's revenue ÷ ARR on 1 January.`,
     ],
     source: [
       'Snowflake FCT_OPPORTUNITY_MONTHLY_REVENUE__SCD_DAILY__FINANCE: Salesforce\'s revenue schedule by opportunity and month, in € (REVENUE_AMOUNT_EUR, paid and unpaid), summed by customer.',
@@ -245,28 +280,30 @@ function nrrDetail(rows, month, { limit = 40, all = false } = {}) {
       'Read when the page loads and kept for 30 minutes; Refresh reads it again.',
     ],
     summary: [
-      { label: `Customers with contracted revenue in ${P}`, value: counted.length, unit: 'int' },
-      { label: `Their contracted revenue, ${P}`, value: round2(base), unit: 'eur' },
+      { label: `Customers with revenue in ${P}`, value: counted.length, unit: 'int' },
+      { label: `${k === 1 ? '1 month' : `${k} months`} at their ${P} level`, value: round2(base * k), unit: 'eur' },
       { label: `+ Expansion (${groups.expanded.length} customers)`, value: expansion, unit: 'eur', sign: true },
       { label: `− Contraction (${groups.contracted.length} customers)`, value: -contraction, unit: 'eur', sign: true },
-      { label: `− Churned (${groups.churned.length} customers, nothing in ${N})`, value: -churn, unit: 'eur', sign: true },
-      { label: `= Their contracted revenue, ${N}`, value: round2(kept), unit: 'eur', strong: true },
-      { label: `Of which still to be collected, ${N}`, value: total(counted, (r) => r.unpaid), unit: 'eur' },
-      { label: `NRR = ${N} ÷ ${P}`, value: Math.round((kept / base) * 10000) / 100, unit: 'pct', strong: true },
-      { label: `GRR (each capped at its ${P} revenue)`, value: Math.round((gross / base) * 10000) / 100, unit: 'pct' },
-      { label: `Not counted: ${groups.added.length} new customers, revenue ${N}`, value: total(groups.added, (r) => r.now), unit: 'eur' },
+      { label: `− Churned (${groups.churned.length} customers, nothing in ${N}; what they brought before counts)`, value: -churn, unit: 'eur', sign: true },
+      { label: `= Their revenue, ${S}`, value: round2(ytd), unit: 'eur', strong: true },
+      { label: `Of which still to be collected, ${S}`, value: total(counted, (r) => r.unpaid), unit: 'eur' },
+      { label: `NRR = ${S} ÷ ${atDec}`, value: pctOf(ytd, base * k), unit: 'pct', strong: true },
+      { label: `GRR (each month capped at its ${P} revenue)`, value: pctOf(kept, base * k), unit: 'pct' },
+      { label: `${N} alone ÷ ${P} (the run-rate)`, value: pctOf(cur, base), unit: 'pct' },
+      { label: `Not counted: ${groups.added.length} new customers, revenue ${S}`, value: total(groups.added, (r) => r.now), unit: 'eur' },
     ],
     notes: groups.churned.length ? [`Churned customers with a churn date in the CRM (DIM_CUSTOMER__FINANCE.CHURN_DATE): ${churnDated} of ${groups.churned.length}.`] : [],
     tables: [
-      table('Churned', groups.churned, `Contracted revenue in ${P}, none in ${N}.`),
-      table('Contracted', groups.contracted, `Less in ${N} than in ${P}.`),
-      table('Expanded', groups.expanded, `More in ${N} than in ${P}.`),
-      table('New this year (not counted)', groups.added, `No contracted revenue in ${P}: outside NRR.`),
+      table('Churned', groups.churned, `Revenue in ${P}, none in ${N}: ${S} counts what they brought before leaving.`),
+      table('Contracted', groups.contracted, `Less in ${S} than ${atDec}.`),
+      table('Expanded', groups.expanded, `More in ${S} than ${atDec}.`),
+      table('New this year (not counted)', groups.added, `No revenue in ${P}: outside NRR.`),
     ],
   };
   if (all) {
     out.customers = NRR_GROUPS.flatMap(([g, group]) => byImpact(groups[g]).map((r) => ({
-      id: r.id, customer: r.customer, group, then: r.then, now: r.now, unpaid: r.unpaid, churnDate: r.churnDate,
+      id: r.id, customer: r.customer, group, dec: r.dec, months: r.months, then: r.then, now: r.now, kept: r.kept, last: r.last,
+      unpaid: r.unpaid, churnDate: r.churnDate,
     })));
   }
   return out;
@@ -597,7 +634,7 @@ async function sfEmployeeSpans(sf, company) {
 /**
  * The Metrics payload from its inputs (pure; unit-tested).
  *   cash, pnl: the projection payloads (Plan); pnlDetails: the P&L's server-side details
- *   extras: { arr, churnQuarters, nrr: [{ month, from, nrr, grr, customers }] (from: the December base),
+ *   extras: { arr, churnQuarters, nrr: [{ month, from, months, nrr, grr, monthNrr, monthGrr, customers }] (nrrSeries),
  *             employees: [{ start, end, type }], company }
  *   failed: names of the extras that could not be read
  *   targets: the saved targets store ({ years: { 'YYYY': targets }, updatedAt, updatedBy }) or null;
@@ -670,10 +707,14 @@ function buildMetrics({ nowMs, cash, pnl, pnlDetails, settings, extras, failed =
       fy: [decRunRate(pY), decRunRate(pT)],
     },
     {
+      // Year to date: the December customers' revenue since 1 January against their December level; last month: that
+      // month alone against December (the run-rate).
       key: 'nrr', label: 'NRR', unit: 'pct',
-      note: nrrLast ? `Contracted revenue since 1 Jan ${nrrLast.month.slice(0, 4)} (${monthShort(nrrBase(nrrLast.month))} → ${monthShort(nrrLast.month)}); GRR ${nrrLast.grr}%` : 'Contracted revenue since 1 January',
-      lastMonth: null,
-      ytd: nrrLast ? cell(nrrLast.nrr, 'actual', ytdSpan(nrrLast.month), { grr: nrrLast.grr, customers: nrrLast.customers, detail: 'nrr' }) : null,
+      note: nrrLast
+        ? `Revenue of the December customers against their December level; GRR ${nrrLast.grr}% to date, ${nrrLast.monthGrr ?? nrrLast.grr}% in ${monthShort(nrrLast.month)}`
+        : 'Revenue of the December customers against their December level',
+      lastMonth: nrrLast ? cell(nrrLast.monthNrr ?? nrrLast.nrr, 'actual', `${monthShort(nrrLast.month)} vs ${monthShort(nrrBase(nrrLast.month))}`, { grr: nrrLast.monthGrr ?? nrrLast.grr, customers: nrrLast.customers, detail: 'nrr' }) : null,
+      ytd: nrrLast ? cell(nrrLast.nrr, 'actual', `${ytdSpan(nrrLast.month)} vs ${(nrrLast.months || 1) > 1 ? `${nrrLast.months} × ` : ''}${monthShort(nrrBase(nrrLast.month))}`, { grr: nrrLast.grr, customers: nrrLast.customers, detail: 'nrr' }) : null,
       fy: [null, null],
     },
     {
@@ -748,11 +789,13 @@ async function buildDetail(item, ctx) {
     const d = nrrDetail(rows, last.month, { all: !!ctx.all });
     if (d) {
       d.tables.push({
-        title: `NRR month by month, ${last.month.slice(0, 4)}`, note: `Each month against ${monthShort(last.from)}, the revenue going into 1 January.`,
-        columns: [{ key: 'month', label: 'Month', unit: 'text' }, { key: 'nrr', label: 'NRR', unit: 'pct' }, { key: 'grr', label: 'GRR', unit: 'pct' }],
-        rows: series.map((s) => ({ month: monthShort(s.month), nrr: s.nrr, grr: s.grr })), more: 0, total: null,
+        title: `NRR month by month, ${last.month.slice(0, 4)}`,
+        note: `To date: January through the month against that many months at the ${monthShort(last.from)} level. The month alone: that month against ${monthShort(last.from)} (the run-rate).`,
+        columns: [{ key: 'month', label: 'Month', unit: 'text' }, { key: 'nrr', label: 'NRR to date', unit: 'pct' }, { key: 'grr', label: 'GRR to date', unit: 'pct' },
+          { key: 'monthNrr', label: 'NRR, the month alone', unit: 'pct' }, { key: 'monthGrr', label: 'GRR, the month alone', unit: 'pct' }],
+        rows: series.map((s) => ({ month: monthShort(s.month), nrr: s.nrr, grr: s.grr, monthNrr: s.monthNrr, monthGrr: s.monthGrr })), more: 0, total: null,
       });
-      if (ctx.all) d.series = series.map((s) => ({ month: s.month, nrr: s.nrr, grr: s.grr }));
+      if (ctx.all) d.series = series.map((s) => ({ month: s.month, nrr: s.nrr, grr: s.grr, monthNrr: s.monthNrr, monthGrr: s.monthGrr }));
     }
     return d;
   }

@@ -14,7 +14,7 @@ The FX Challenge was briefly a second tab here; it is its own page now (`docs/fx
 | `metrics.html` | the page (a small bundle, never loads the old dashboard) |
 | `GET /api/metrics` | the pack (`server/metrics.cjs`); `?refresh=true` reads ARR, NRR, churn and employees again |
 | `GET /api/metrics?detail=<item>` | what one figure is made of: `nrr`, `churn-quarter`, `churn-ytd`, `churn-forecast` |
-| `GET /api/metrics?detail=nrr&all=true` | the same, plus every customer (id, group, December and now, the part still to collect, CRM churn date) and each month: what NRR's Excel is built from |
+| `GET /api/metrics?detail=nrr&all=true` | the same, plus every customer (id, group, December and each month to date, the part still to collect, CRM churn date) and each month's figures: what NRR's Excel is built from |
 | `GET/PUT /api/metrics/settings` | the cloud cap (`server/metrics-settings.cjs`) |
 | `GET/PUT /api/metrics/deposits` | the old deposit tracker: no longer on the page, kept mounted for finance-it's route file |
 | finance-it | sidebar item → iframe of `<bank-dashboard static base>/metrics.html` (see Deploying) |
@@ -27,7 +27,7 @@ The FX Challenge was briefly a second tab here; it is its own page now (`docs/fx
 | EBITDA | same, P&L operating profit | (A) | (A+F) | (F) |
 | Net cash | the NetSuite bank balance at the last month-end (A) | change since 1 January (A) | December closing, New Bank Dashboard (F) | December closing (F) |
 | ARR | MRR × 12 now (Snowflake, A) | – | December customer revenue (after pipeline and churn) × 12 (F) | same (F) |
-| NRR | – | contracted revenue from 1 January to the last closed month (A), with GRR | – | – |
+| NRR | the last closed month alone against December (A, the run-rate) | revenue from 1 January to the last closed month against the same months at the December level (A), with GRR | – | – |
 | Churn | churned MRR of the last full quarter (A) | churned MRR this year so far (A) | revenue the forecast loses to churn (F) | – (not projected) |
 
 There is no debt data, so **net cash is the cash in the bank**.
@@ -41,16 +41,19 @@ Targets view on both projection pages (`src/forecast/targets.mjs`):
 The page says so next to the Plan name (hover for the assumptions), and so does the export. A save on the New
 Bank Dashboard shows at the next load. With no targets saved, the column is the Plan.
 
-**NRR** is counted from 1 January on **contracted revenue**: what each contract brings in a month in
-Salesforce's revenue schedule, paid or still to be collected. It is not what was booked or paid that month: a
-customer whose contract runs counts in full, and nothing is forecast. The base is the customers who had
-contracted revenue in December of the year before, i.e. going into 1 January:
-- **NRR** = their contracted revenue in the last closed month ÷ their December revenue;
+**NRR** is counted on **revenue, year to date**. The base is the customers who had contracted revenue in
+December of the year before, i.e. going into 1 January:
+- **NRR (Year to date)** = their contracted revenue from January through the last closed month ÷ the same months
+  at their December level (e.g. Jan–Sep ÷ 9 × December, ¾ of their ARR on 1 January);
+- customers who left count for what they brought before leaving;
 - customers with none in December (new this year) are not counted;
-- **GRR** caps each customer at their December amount, so it measures only what was kept.
+- **GRR** caps each customer's month at its December amount, so it measures only what was kept;
+- **Last month** is that month alone against December, the run-rate: where the December customers stand now.
 
-In January the base is still the December before, so it measures one month. At the year's end (December
-against December) it is the full year. On 1 January itself it would be 100%: nothing has changed yet.
+Contracted revenue is what each contract brings in a month in Salesforce's revenue schedule, paid or still to be
+collected. Only months that have happened count; nothing is forecast. In January both columns measure one month.
+At the year's end NRR is the year's revenue ÷ ARR on 1 January. A month with no data at all is left out of the
+months to date.
 
 **Source**: Snowflake `FCT_OPPORTUNITY_MONTHLY_REVENUE__SCD_DAILY__FINANCE`, the revenue schedule by
 opportunity and month in € (`REVENUE_AMOUNT_EUR` = paid + unpaid; the unpaid part is shown), summed by
@@ -65,7 +68,8 @@ unexplained dash.
 
 Until October 2026, NRR was counted on the monthly revenue of `FCT_CUSTOMER__MONTHLY__FINANCE`, which is neither
 the schedule nor its paid part. That counted a customer with a running contract but nothing booked that month
-as churned, and one-off revenue swelled the December base.
+as churned, and one-off revenue swelled the December base. It then compared one month with December only (the
+run-rate, now the Last month column).
 
 The page shows NRR in the Year to date column; the API also returns each month of the year so far
 (`nrrTrend`).
@@ -126,31 +130,34 @@ the figure, how it is calculated, where the data comes from, and the items behin
 to the figure in the cell.
 
 - **NRR**:
-  - the bridge: the December customers' contracted revenue then, + expansion, − contraction, − churned, =
-    theirs now (and how much of it is still to be collected), then NRR and GRR;
+  - the bridge: the December customers' revenue at their December level for the months to date, + expansion,
+    − contraction, − churned (what they brought before leaving counts), = their revenue since 1 January (and
+    how much of it is still to be collected), then NRR, GRR and the last month alone;
   - the customers in each group, by name, with this year's new customers listed but not counted;
   - how many churned customers have a churn date in the CRM;
-  - NRR and GRR month by month this year, each against the same December.
+  - NRR and GRR month by month this year: to date, and the month alone, each against the same December.
   - Source: Snowflake contracted revenue by customer and month (the same rows as the figure).
   - **Excel** (top of the window) downloads `lsports-nrr-<month>.xlsx` for review, e.g. by the CRO. The
     calculation is live formulas over the customer rows (`src/metrics/nrrWorkbook.ts`), so every step can be
     checked or changed:
     - **Summary**:
       - how it is calculated and the source;
-      - the bridge (December contracted revenue, expansion, contraction, churned, unchanged, revenue now and
-        how much of it is still to be collected), each step with its number of customers;
+      - the bridge (the months to date at the December level, expansion, contraction, churned, unchanged, the
+        revenue since 1 January and how much of it is still to be collected), each step with its number of
+        customers; then NRR, GRR and the last month alone (the run-rate);
       - NRR, GRR and the figure on the page;
       - the new customers not counted;
       - the churned customers with a churn date in the CRM;
       - what is worth checking: an account that moved to another customer ID shows as churned and again as
         new, and a churned customer with no CRM churn date ended its contracts without being marked churned.
     - **Customers**: every customer, unchanged and new ones included, with:
-      - its group, December and current contracted revenue, the change, whether it counts and the amount
-        kept for GRR;
+      - its group, its December revenue and its revenue in each month to date, their sum, the months at its
+        December level, the change, whether it counts and the amount kept for GRR (each month capped at
+        December);
       - the part of its current revenue still to be collected, its CRM churn date and its Snowflake customer ID.
 
       The sheet has a filter and totals.
-    - **Month by month**: NRR and GRR for each month of the year so far.
+    - **Month by month**: NRR and GRR for each month of the year so far, to date and the month alone.
 - **Churn, last full quarter** and **year so far**: every opportunity marked churned in Snowflake
   (`DIM_OPPORTUNITY__FINANCE`) with its customer, churn month, currency and MRR, by quarter. Amounts in
   another currency are added as they are, as the figure does, and the window says so.
