@@ -122,17 +122,20 @@ function actionText(a, v, today) {
     return { head: `להעביר ${eur(a.eur)} לחשבון האירו בפועלים עד ${day(a.by)}`, body: `ההמרה של ${day(a.date)} יורדת מחשבון האירו בפועלים (583400), שבו ${eur(n.hapoalim)}; צריך שיהיו בו ${eur(n.required)}${dep}.` };
   }
   if (a.kind === 'ladder') {
+    // With the bank's deals, a deposit can be for one part of a conversion (part): the one leaving on l.settle.
     const legs = a.legs;
     const tail = 'כל התשלומים עד אז עדיין מכוסים.';
     if (legs.length === 1) {
       const l = legs[0];
-      return { head: `להפקיד ${eur(l.eur)} בפיקדון עד ${day(l.until)}`, body: `להמרה של ${day(l.date)}: היא מוכרת ${eur(l.required)}, והפיקדונות שמשתחררים עד אז מכסים ${eur(l.have)}, כלומר חסרים ${eur(l.gap)}. ${tail}` };
+      const what = l.part ? `לחלק של ההמרה של ${day(l.date)} שיורד ב${day(l.settle)}: ${eur(l.required)}` : `להמרה של ${day(l.date)}: היא מוכרת ${eur(l.required)}`;
+      return { head: `להפקיד ${eur(l.eur)} בפיקדון עד ${day(l.until)}`, body: `${what}, והפיקדונות שמשתחררים עד אז מכסים ${eur(l.have)}, כלומר חסרים ${eur(l.gap)}. ${tail}` };
     }
     const first = monthName(legs[0].month);
     const last = monthName(legs[legs.length - 1].month);
+    const months = new Set(legs.map((l) => l.month)).size;
     return {
-      head: `להפקיד ${eur(a.eur)} בפיקדונות להמרות של ${legs.length === 2 ? `${first} ו${last}` : `${first} עד ${last}`}`,
-      body: `${legs.map((l) => `${eur(l.eur)} עד ${day(l.until)} להמרה של ${day(l.date)} (חסרים ${eur(l.gap)})`).join(', ')}. ${tail}`,
+      head: `להפקיד ${eur(a.eur)} בפיקדונות ${months === 1 ? `להמרה של ${first}` : `להמרות של ${months === 2 ? `${first} ו${last}` : `${first} עד ${last}`}`}`,
+      body: `${legs.map((l) => `${eur(l.eur)} עד ${day(l.until)} להמרה של ${day(l.date)} (${l.part ? `לחלק שיורד ב${day(l.settle)}, ` : ''}חסרים ${eur(l.gap)})`).join(', ')}. ${tail}`,
     };
   }
   // A new deposit: one line when every term holds the same.
@@ -162,25 +165,31 @@ function keepLine(cover, date, policy) {
 const dayAfter = (iso) => new Date(Date.parse(`${String(iso).slice(0, 10)}T12:00:00Z`) + 86400000).toISOString().slice(0, 10);
 
 /** A conversion against the deposits, first in, first out (plan.coverage): "יום ה' 7.1: €1.05M, הפיקדונות מכסים €922K:
- * חסרים €128K". Short, it says why. A deposit paying out after the bank takes the euros but by the 7th counts for the
- * next conversion ("הפיקדון שמשתחרר ביום ו' 5.3 (€405K) מגיע אחרי שהבנק לוקח את האירו ביום ה' 4.3, ולכן נספר להמרה של
- * יום ד' 7.4"). With no deposit at all, the days one would have to pay out in: the earlier ones went to the earlier
- * conversions. */
+ * חסרים €128K". With the bank's deals it may leave in parts, each on its value day: "יום א' 7.3: €1.05M (€600K ביום ו'
+ * 5.3, €450K ביום ב' 8.3), הפיקדונות מכסים €810K: חסרים €240K ביום ב' 8.3". Short, it says why. A deposit paying out after
+ * the last euros leave but by the 7th counts for the next conversion ("הפיקדון שמשתחרר ביום ו' 5.3 (€405K) מגיע אחרי שהבנק
+ * לוקח את האירו ביום ה' 4.3, ולכן נספר להמרה של יום ד' 7.4"). With no deposit at all, the days one would have to pay out
+ * in: the earlier ones went to the earlier conversions. */
 function coverText(c, first, next) {
-  const head = `${day(c.date)}: ${eur(c.required)}`;
+  const legs = c.legs && c.legs.length ? c.legs : [{ settle: c.takes, required: c.required, gap: c.gap }];
+  const parts = legs.length > 1 ? ` (${legs.map((l) => `${eur(l.required)} ב${day(l.settle)}`).join(', ')})` : '';
+  const head = `${day(c.date)}: ${eur(c.required)}${parts}`;
   if (!(c.gap >= 0.5)) return `${head}, מכוסה מהפיקדונות (${eur(c.have)})`;
+  const lastOut = legs[legs.length - 1].settle;
+  const missing = legs.length > 1 ? `חסרים ${legs.filter((l) => l.gap >= 0.5).map((l) => `${eur(l.gap)} ב${day(l.settle)}`).join(' ו-')}` : `חסרים ${eur(c.gap)}`;
   const late = c.late || [];
   let why = '';
   if (late.length) {
     const total = late.reduce((s, d) => s + d.amount, 0);
     const last = late[late.length - 1].valueDate;
     const which = late.length === 1 ? `הפיקדון שמשתחרר ב${day(last)} (${eur(total)}) מגיע` : `${late.length} פיקדונות שמשתחררים עד ${day(last)} (${eur(total)}) מגיעים`;
-    why = `${which} אחרי שהבנק לוקח את האירו ב${day(c.takes)}, ולכן ${late.length === 1 ? 'נספר' : 'נספרים'} ${next ? `להמרה של ${day(next.date)}` : 'להמרה שאחריה'}`;
+    why = `${which} אחרי שהבנק לוקח את האירו ב${day(lastOut)}, ולכן ${late.length === 1 ? 'נספר' : 'נספרים'} ${next ? `להמרה של ${day(next.date)}` : 'להמרה שאחריה'}`;
   }
-  if (c.have >= 0.5) return `${head}, הפיקדונות מכסים ${eur(c.have)}: חסרים ${eur(c.gap)}${why ? ` (${why})` : ''}`;
-  if (why) return `${head}, ${why}: חסרים ${eur(c.gap)}`;
-  const span = first || !c.from ? `עד ${day(c.takes)}` : `בין ${day(dayAfter(c.from))} ל${day(c.takes)}`;
-  return `${head}, אין פיקדון שמשתחרר ${span} (היום שהבנק לוקח את האירו): חסרים ${eur(c.gap)}`;
+  const covered = c.required - c.gap;
+  if (covered >= 0.5) return `${head}, הפיקדונות מכסים ${eur(covered)}: ${missing}${why ? ` (${why})` : ''}`;
+  if (why) return `${head}, ${why}: ${missing}`;
+  const span = first || !c.from ? `עד ${day(lastOut)}` : `בין ${day(dayAfter(c.from))} ל${day(lastOut)}`;
+  return `${head}, אין פיקדון שמשתחרר ${span}${legs.length > 1 ? '' : ' (היום שהבנק לוקח את האירו)'}: ${missing}`;
 }
 
 /** A payment day in the list: "יום ה' 5.11, בעוד 15 ימים: שכר נטו …, ₪4.92M: להמיר €1.21M". */
@@ -407,7 +416,7 @@ const actionsOf = (mail) => mail.actions.map((a) => ({ key: a.key, eur: Math.rou
 /**
  * The page's Send now: today's mail, read fresh, sent at once with or without a recommendation, to the page's list (or
  * FX_MAIL_TO). It counts as today's mail, so the 10:00 check doesn't send it again today.
- * deps: env, reads, tableFile, mailFile, markerFile, clock(), nodemailer, by (who asked).
+ * deps: env, reads, tableFile, positionsFile, mailFile, markerFile, clock(), nodemailer, by (who asked).
  * Returns { ok: true, recipients, subject, at } or { ok: false, status, error }.
  */
 async function sendNow(deps = {}) {
@@ -421,7 +430,7 @@ async function sendNow(deps = {}) {
   const fx = await fxs.loadFxModule();
   let data;
   try {
-    data = await fxs.readFxChallenge({ reads: deps.reads || fxs.defaultNsReads(), tableDoc: readDoc(deps.tableFile || fxs.TABLE_FILE), clock: () => now });
+    data = await fxs.readFxChallenge({ reads: deps.reads || fxs.defaultNsReads(), tableDoc: readDoc(deps.tableFile || fxs.TABLE_FILE), positionsDoc: readDoc(deps.positionsFile || fxs.POSITIONS_FILE), clock: () => now });
   } catch (e) {
     return { ok: false, status: 502, error: `NetSuite could not be read (${String((e && e.message) || e).slice(0, 200)}).` };
   }
@@ -438,7 +447,7 @@ async function sendNow(deps = {}) {
 
 /**
  * Reads, writes and sends (or prints) the mail; returns the exit code. deps (tests): env, clock(), reads (the
- * NetSuite reads, as readFxChallenge takes them), tableFile, mailFile (the page's list), markerFile, nodemailer.
+ * NetSuite reads, as readFxChallenge takes them), tableFile, positionsFile, mailFile (the page's list), markerFile, nodemailer.
  */
 async function main(argv = process.argv.slice(2), deps = {}) {
   const env = deps.env || process.env;
@@ -474,7 +483,7 @@ async function main(argv = process.argv.slice(2), deps = {}) {
   let data = null;
   let failure = null;
   try {
-    data = await fxs.readFxChallenge({ reads: deps.reads || fxs.defaultNsReads(), tableDoc: readDoc(deps.tableFile || fxs.TABLE_FILE), clock: () => now });
+    data = await fxs.readFxChallenge({ reads: deps.reads || fxs.defaultNsReads(), tableDoc: readDoc(deps.tableFile || fxs.TABLE_FILE), positionsDoc: readDoc(deps.positionsFile || fxs.POSITIONS_FILE), clock: () => now });
   } catch (e) {
     failure = e;
   }

@@ -19,6 +19,61 @@ export declare function bandIndex(bounds: number[], rate: number): number;
 export interface Conversion { band: number; eur: number; rate: number; ils: number; vsSpotIls: number }
 export declare function conversionAt(row: FxRow, bounds: number[], rate: number): Conversion;
 
+// ── the bank's deals (Hapoalim's position reports) ──
+/** An EUR/ILS option from the options report: fixed on `expiry`, settled (euros out, shekels in) on `settle`. */
+export interface PositionOption {
+  deal: string;
+  /** VANILLA, EKO (European knock-out), as the report names it. */
+  kind: string;
+  side: 'buy' | 'sell';
+  type: 'put' | 'call';
+  /** € the option is for. */
+  eur: number;
+  strike: number;
+  /** An EKO's knock-out level (a put lapses at or below it); null without one. */
+  trigger: number | null;
+  expiry: string;
+  settle: string;
+}
+/** A forward from the forwards report: `amount` of `currency` bought or sold against `counter` on `settle`. */
+export interface PositionForward {
+  deal: string;
+  side: 'buy' | 'sell';
+  currency: string;
+  amount: number;
+  counter: string;
+  rate: number;
+  settle: string;
+  /** The counter currency: + received (a sale), − paid (a purchase). */
+  counterAmount: number;
+}
+/** The bank's deals as saved on the page (GET/PUT /api/fx-challenge/positions): each report's day, and its deals. */
+export interface Positions {
+  asOf: { options: string | null; forwards: string | null };
+  options: PositionOption[];
+  forwards: PositionForward[];
+}
+export declare function optionEur(o: PositionOption, rate: number): number;
+export declare function reportDay(v: unknown): string | null;
+export type PositionReport =
+  | { kind: 'options'; asOf: string | null; options: PositionOption[]; skipped: number; problems: string[] }
+  | { kind: 'forwards'; asOf: string | null; forwards: PositionForward[]; skipped: number; problems: string[] }
+  | { kind: null; asOf: string | null; skipped: number; problems: string[] };
+export declare function parsePositionReport(rows: unknown[][]): PositionReport;
+/** The options of one month that settle on one day. */
+export interface PositionLeg { expiry: string; settle: string; options: PositionOption[] }
+export declare function positionLegs(positions: Pick<Positions, 'options'> | null): Record<string, PositionLeg[]>;
+/** A part of a conversion: the euros it sells (net) and the shekels it brings, settled on `settle`. */
+export interface ConversionLeg { expiry: string; settle: string; eur: number; ils: number }
+export declare function legsAt(legs: PositionLeg[], rate: number): ConversionLeg[];
+export declare function conversionLegs(legs: PositionLeg[] | null | undefined, rate: number | null, eur: number): ConversionLeg[] | null;
+export declare function rateSelling(row: FxRow, bounds: number[], spot: number | null, eur: number): number | null;
+/** The forwards netted by value day: euros (+ bought, − sold) and shekels (+ received, − paid). */
+export interface ForwardFlow { date: string; eur: number; ils: number }
+export declare function forwardFlows(positions: Pick<Positions, 'forwards'> | null): ForwardFlow[];
+export declare function dealsVsTable(table: FxTable, legsByMonth: Record<string, PositionLeg[]>): { month: string; bands: { band: number; table: number; deals: number }[] }[];
+export declare function valueDayBefore(iso: string): string;
+
 export interface Fixing {
   month: string;
   date: string;
@@ -148,10 +203,13 @@ export declare function daysUntil(from: string, to: string): number;
 export declare function duesAhead(cash: CashPlan | null): { dues: ShekelDue[]; eur: number };
 export declare function dueWhat(due: Pick<ShekelDue, 'items'>): string;
 
-export interface Upcoming { month: string; date: string; days: number; conv: Conversion; risk: FixingRisk }
+/** A fixing ahead; legs: its parts from the bank's deals at the amount kept (null or absent without deals). */
+export interface Upcoming { month: string; date: string; days: number; conv: Conversion; risk: FixingRisk; legs?: ConversionLeg[] | null }
 export interface NextFixingPlan {
   month: string;
   date: string;
+  /** The day its first euros leave (the deals' value day, else the business day before the 7th). */
+  takes?: string;
   required: number;
   todayAmount: number;
   hapoalim: number;
@@ -219,6 +277,22 @@ export interface ReservePlan {
   /** New deposits for the conversions the deposits don't cover, earliest first. */
   ladder: LadderLeg[];
 }
+/** A part of a conversion against the deposits: what it takes on its value day, the deposits paying out since the part
+ * before (after today, for the first), what is left from earlier, and its gap. */
+export interface CoverageLeg {
+  settle: string;
+  /** Its fixing day (the deals'); null without deals. */
+  expiry: string | null;
+  required: number;
+  released: number;
+  releasedDeposits: DepositRelease[];
+  carried: number;
+  have: number;
+  gap: number;
+  /** When a deposit for its gap should pay out: the value day before `settle` (the business day before, without deals). */
+  until: string;
+  timed: boolean;
+}
 /** A conversion against the deposits: each deposit counts for the first conversion after it pays out, and what one
  * conversion doesn't take rolls on to the next. */
 export interface CoverageRow {
@@ -227,30 +301,34 @@ export interface CoverageRow {
   /** Deposits count for it when they pay out after this day: the day the bank took the previous conversion's euros
    * (today, for the first). */
   from: string;
-  /** The day the bank takes the euros: the business day before the 7th. */
+  /** The day its first euros leave: the deals' value day of its first part, else the business day before the 7th. */
   takes: string;
+  /** Its parts come from the bank's deals (else one part, the business day before the 7th). */
+  deals: boolean;
+  /** Its parts by value day (one without deals): March 2027's €600K on Fri 5 Mar and €450K on Mon 8 Mar. */
+  legs: CoverageLeg[];
   /** What it takes, at the setting (today's band, 95% or the worst case). */
   required: number;
   /** The deposits paying out after the day the bank took the previous conversion's euros (after today, for the
    * first) and by the day it takes this one's. */
   released: number;
   releasedDeposits: DepositRelease[];
-  /** Deposits paying out after the bank takes this conversion's euros but by its 7th: they count for the next one
-   * (Fri 5 Mar for Sun 7 Mar, whose euros go on Thu 4 Mar). */
+  /** Deposits paying out after its last euros leave but by its 7th: they count for the next one. */
   late: DepositRelease[];
   /** Left over from the deposits of the conversions before it. */
   carried: number;
   have: number;
-  /** What the deposits don't cover. */
+  /** What the deposits don't cover: its parts' gaps added up. */
   gap: number;
-  /** When a deposit for its gap should pay out: the business day before the bank takes the euros. */
+  /** When a deposit for its (first short part's) gap should pay out. */
   until: string;
   /** A deposit can be timed for it: not the next conversion (its gap is the cash to keep), and 14 days or more until
    * `until`. */
   timed: boolean;
 }
-/** A new deposit for a conversion's gap: eur until `until`, for the conversion on `date`. */
-export interface LadderLeg { month: string; date: string; until: string; eur: number; gap: number; required: number; have: number }
+/** A new deposit for a conversion's gap: eur until `until`, for the conversion on `date`; with the deals, for its part
+ * leaving on `settle` (part: the conversion leaves in more than one part), whose amount is `required`. */
+export interface LadderLeg { month: string; date: string; settle?: string; part?: boolean; until: string; eur: number; gap: number; required: number; have: number }
 export declare function planReserve(input: {
   upcoming: Upcoming[];
   policy?: Policy;
@@ -260,6 +338,7 @@ export declare function planReserve(input: {
   horizon?: number;
   shekels?: { date: string; eur: number }[];
   eurFloor?: number;
+  forwards?: ForwardFlow[];
 }): ReservePlan | null;
 
 /** What GET /api/fx-challenge answers that the recommendation needs. */
@@ -272,6 +351,22 @@ export interface PlanInput {
   inflowMonths: string[];
   payroll?: { journals: PayrollCredit[]; projection: PayrollProjection | null } | null;
   ilsVendors?: IlsVendorMonth[] | null;
+  /** The bank's deals saved on the page; null while none are. */
+  positions?: (Positions & { savedAt?: string | null; savedBy?: string | null }) | null;
+}
+/** What the page says about the saved deals: their days, what they cover, the next conversions without deals (their
+ * euros leave the business day before the 7th), the forwards ahead and where the deals and the table disagree. */
+export interface DealsView {
+  asOf: { options: string | null; forwards: string | null };
+  savedAt: string | null;
+  savedBy: string | null;
+  options: number;
+  forwards: number;
+  from: string | null;
+  to: string | null;
+  missing: string[];
+  flows: ForwardFlow[];
+  mismatches: { month: string; bands: { band: number; table: number; deals: number }[] }[];
 }
 export interface ScheduleItem {
   fixing: Fixing;
@@ -294,6 +389,8 @@ export interface PlanView {
   /** Shekels for the payroll and the vendors; null without a payroll figure. */
   cash: CashPlan | null;
   plan: ReservePlan | null;
+  /** The bank's deals; null while none are saved. */
+  deals: DealsView | null;
 }
 export declare function planFromPayload(data: PlanInput, policy?: Policy): PlanView;
 

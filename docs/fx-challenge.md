@@ -20,6 +20,7 @@ briefly a tab of the Metrics page before it got its own sidebar item.
 | `fx-challenge.html` | the page (a small bundle, never loads the old dashboard) |
 | `GET /api/fx-challenge` | what the page shows (`server/fx-challenge.cjs`); `?refresh=true` reads NetSuite again |
 | `GET/PUT /api/fx-challenge/table` | the conversion table, saved for everyone (`null` = the default) |
+| `GET/PUT /api/fx-challenge/positions` | the bank's deals, read on the page from its two position reports, saved for everyone (`null` = none: the euros leave the business day before the 7th) |
 | `GET/PUT /api/fx-challenge/mail` | who gets the daily mail, saved for everyone (`null` = the server's `FX_MAIL_TO`) |
 | `POST /api/fx-challenge/mail/send` | the page's **Send now**: the daily mail at once, to the saved list |
 | finance-it | sidebar item → iframe of `<bank-dashboard static base>/fx-challenge.html`; every `/api/fx-challenge` route is mounted once, by prefix (`createFxChallengeRouter`), so new ones need no finance-it change (see Deploying) |
@@ -59,20 +60,38 @@ briefly a tab of the Metrics page before it got its own sidebar item.
     each deposit's date and value. Deposits maturing after the last fixing shown are listed under the table.
     They count only if the bank pays them out rather than rolling them over.
 - **The conversions against your deposits (first in, first out)** (`planReserve`'s `coverage` and `ladder`): the next
-  6 conversions at the setting, each against the EUR deposits paying out before the bank takes its euros. The bank
-  takes them the business day before the 7th (`conversionTakes`): NetSuite's "Conversion" journals show October
-  2026's, for Wed 7 Oct, on Tue 6 Oct, and in 2026 a 7th on a weekend went through on the Wednesday or Thursday
-  before. Each deposit counts for the first conversion whose euros the bank takes after it pays out, and what one
-  conversion doesn't take rolls on to the next ("Left from earlier"). So a deposit paying out on the 7th itself, or
-  on Fri 5 Mar for Sun 7 Mar (taken Thu 4 Mar, as Sun 7 Jun 2026's euros went on Thu 4 Jun), counts for the
-  conversion after: it is that conversion's `late` deposit, and the page (hover "Deposits paid out before it") and
-  the mail name it as the reason. What the deposits don't cover is the
-  conversion's gap ("€128K short"): the euros on hand or coming in fill it, or a new deposit timed for it. **New
-  deposit for it** is that deposit: it pays out the business day before the bank takes the euros (Thu 7 Jan: taken
-  Wed 6 Jan, so Tue 5 Jan; Sun 7 Feb: taken Thu 4 Feb, so Wed 3 Feb), holds the gap rounded up to €10K, and is never
-  more than the dues before it pays out leave room for (each new deposit locks its euros away from them), earliest
-  gap first, from today's euros above the floor. The next conversion's gap is the cash to keep (the keep line, which
-  counts the same deposits), and a deposit is only timed when it pays out 14 days or more from today.
+  6 conversions at the setting, each against the EUR deposits paying out before its euros leave. **The euros leave**
+  on the bank's value days: with its deals (below), each part's own (March 2027: €600K on Fri 5 Mar, €450K on Mon 8
+  Mar); without them, the business day before the 7th (`conversionTakes`, from NetSuite's "Conversion" journals:
+  October 2026's, for Wed 7 Oct, on Tue 6 Oct). A conversion is covered part by part: each deposit counts for the
+  first part whose euros leave after it pays out (on its value day or before), and what a part doesn't take rolls on
+  to the next ("Left from earlier"). A deposit paying out after a conversion's last euros left but by the 7th counts
+  for the next conversion: it is that conversion's `late` deposit, and the page (hover "Deposits paid out before it")
+  and the mail name it as the reason. What the deposits don't cover is the part's gap ("€240K short (Mon 8 Mar)"): the
+  euros on hand or coming in fill it, or a new deposit timed for it. **New deposit for it** is that deposit: it pays
+  out the euro value day before the part's (Monday to Friday: Fri 5 Mar for the part of Mon 8 Mar; without the deals,
+  the business day before the day the bank takes the euros), holds the gap rounded up to €10K, and is never more than
+  the dues before it pays out leave room for (each new deposit locks its euros away from them), earliest gap first,
+  from today's euros above the floor. The next conversion's gap is the cash to keep (the keep line, which counts the
+  same deposits), and a deposit is only timed when it pays out 14 days or more from today.
+- **The bank's deals (when the euros leave)**: Hapoalim's two position reports for 583400, uploaded here
+  (**Upload the bank's reports**, one or both) and saved for everyone:
+  - `OTCPositionDetails.xlsx` ("פירוט עסקאות FX OPTION"): the options behind the table. Each is fixed on its expiry day
+    (תאריך פקיעה) and settled on its value day (תאריך פרעון), two business days later, Fridays included: the euros
+    leave and the shekels come in then. A call LSports sold is exercised above its strike, a put it bought below it
+    (an EKO put lapses at or below its trigger), a put it sold has it buy euros below its strike (`optionEur`). The
+    options of 30 Oct 2026 give the table exactly, band by band, from November 2026 to December 2027 (`dealsVsTable`
+    says where they would not), so the table still sets the amounts and the deals set the days: each conversion's
+    amount kept is split between its parts as the deals split it at the rate whose band sells that amount
+    (`rateSelling`, `conversionLegs`). The shekels side counts each part's shekels on its day (Wed 4 Nov 2026 for
+    Sat 7 Nov, before the net salaries of the 5th).
+  - `FXPositionDetails.xlsx` ("פירוט עסקאות FX"): the forwards. Netted by value day (`forwardFlows`): on 2 Nov and 2
+    Dec 2026 the €1.75M sold was bought back the same day, so only shekels come in (₪670,750 and ₪672,450), and the
+    USD pair brings ₪241,450 on 31 Dec. Their shekels count on the shekels side; euros a forward sells or buys count
+    among the dues.
+  - The page reads the files itself (`parsePositionReport`, with the Excel library the exports use): the header row by
+    its titles, the report's day from "תאריך הפקה". Only the deals are kept: no account number, no valuation. Each
+    report replaces its own deals; months without deals keep the business day before the 7th, and the card says which.
 - **What to do today** (`todayActions`, the first lines of the recommendation and of the daily mail): from today's
   balances and rate, urgent ones first (in red):
   - **Convert** for a payment in shekels that the shekels on hand (and the conversions before it) don't cover, by the
@@ -175,6 +194,7 @@ a warning, and the rest still shows.
 | Conversions | the Hapoalim "Conversion" / המרה journals (EUR 11001 ↔ ILS 10002, euros bought back included), from 20 December 2025, or before the table's first month if it is earlier |
 | Payroll | NetSuite's payroll journals (what each owes: net salaries, tax, pension, social security), four months back; the Salary Projection's Total payroll by month, from the figures its page saved (`data/salary-projection-cache.json`) |
 | ILS vendor payments | NetSuite's books: vendor payments and checks out of the ILS accounts (book 2; bank and credit card type, so the Masav batches count), four months back, the credit cards' apart |
+| The bank's deals | Hapoalim's position reports (options and forwards), uploaded on the page and saved in `data/fx-challenge-positions.json`; not read from NetSuite |
 
 The RESTlet gives what the bank imports last fetched: Bank Hapoalim and its deposits (several times a day),
 PKO (each morning's statement), PayPal (01:00 and 13:00) and Payhound (about every 20 minutes). Leumi and
@@ -211,11 +231,14 @@ by range, how "free to convert" adds up, the next six conversions) stay on the p
 - the recommendations, each with the balances behind it ("להמיר €1.16M עד יום ה' 5.11. שכר נטו של אוקטובר ותשלומי
   הספקים בשקלים של נובמבר: ₪4.91M יוצאים ביום ה' 5.11, ועד אז יהיו ביתרה ₪873K."); urgent ones in red;
 - the next 6 conversions against the deposits, first in, first out, at the mail's setting: covered ("שבת 7.11:
-  €800K, מכוסה מהפיקדונות (€806K)") or short, in red ("יום ה' 7.1: €1.05M, הפיקדונות מכסים €922K: חסרים €128K").
-  A short one says why: a deposit that pays out after the bank takes the euros ("יום א' 7.3: €1.05M, הפיקדון שמשתחרר
-  ביום ו' 5.3 (€405K) מגיע אחרי שהבנק לוקח את האירו ביום ה' 4.3, ולכן נספר להמרה של יום ד' 7.4: חסרים €1.05M"), or
-  the days in which none pays out ("אין פיקדון שמשתחרר בין יום ו' 5.2 ליום ה' 4.3"), the earlier ones going to the
-  earlier conversions;
+  €800K, מכוסה מהפיקדונות (€806K)") or short, in red ("יום ה' 7.1: €1.05M, הפיקדונות מכסים €922K: חסרים €128K"). With
+  the bank's deals a conversion in parts says them ("יום א' 7.3: €1.05M (€600K ביום ו' 5.3, €450K ביום ב' 8.3), הפיקדונות
+  מכסים €810K: חסרים €240K ביום ב' 8.3").
+  A short one says why: a deposit that pays out after its last euros leave but by the 7th (without the deals, where
+  they leave the business day before: "יום א' 7.3: €1.05M, הפיקדון שמשתחרר ביום ו' 5.3 (€405K) מגיע אחרי שהבנק לוקח את
+  האירו ביום ה' 4.3, ולכן נספר להמרה של יום ד' 7.4: חסרים €1.05M"), or the days in which none pays out ("אין פיקדון
+  שמשתחרר בין יום ו' 5.2 ליום ה' 4.3"), the earlier ones going to the earlier conversions. A new deposit for one part
+  says so ("€240K עד יום ו' 5.3 להמרה של יום א' 7.3 (לחלק שיורד ביום ב' 8.3, חסרים €240K)");
 - the payments in shekels ahead: the day, how many days to it, what it pays, and what covers it (a conversion, or
   the shekels on hand);
 - today's position in one paragraph: the shekels on hand (current and deposits), the euros at Hapoalim and elsewhere,
@@ -267,6 +290,9 @@ The scheduled run behaves like this:
 - The table is shared by everyone who can open the page. It is stored in `data/fx-challenge-table.json`
   (git-ignored).
 - Every save is appended to `data/fx-challenge-table-history.jsonl`, with who and when.
+- The bank's deals likewise: `data/fx-challenge-positions.json` (git-ignored), with `-history.jsonl` next to it, and
+  validated on the server (`validatePositions`: known fields only, sides, put or call, amounts, rates and days, a
+  value day on or after the fixing, up to 3,000 deals each).
 - Saves are validated (the same rules as the page), JSON only, same-origin, and carry finance-it's CSRF
   token (`server/json-store.cjs`).
 - While the page was a Metrics tab, the table was saved in the Metrics settings. That copy is not read: paste

@@ -2,16 +2,16 @@
 // conversion table), simulated at any rate, and how much EUR to keep for them (GET /api/fx-challenge; the logic is
 // src/forecast/fx-challenge.mjs, the same as the server's tests).
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Loader2, RefreshCw } from 'lucide-react';
+import { Loader2, RefreshCw, Upload } from 'lucide-react';
 import { ErrorCard, Segmented, Skeleton, Warnings } from '../new-dashboard/PageParts.tsx';
 import { KpiCard } from '../new-dashboard/KpiStrip.tsx';
 import { readParam, writeParam } from '../new-dashboard/urlParams.ts';
 import {
-  parseTable, POLICIES, POLICY_LABEL, tableToText,
-  type CashPlan, type DepositRelease, type FxTable, type OtherConversion, type OutcomeRange, type PathPoint, type Policy, type RateCheck, type ReservePlan,
+  parsePositionReport, parseTable, POLICIES, POLICY_LABEL, tableToText,
+  type CashPlan, type DepositRelease, type FxTable, type OtherConversion, type OutcomeRange, type PathPoint, type Policy, type Positions, type RateCheck, type ReservePlan,
 } from '../forecast/fx-challenge.mjs';
 import { formatEur, monthName } from '../metrics/model.ts';
-import { fetchFx, fetchMail, saveMail, saveTable, sendMailNow } from './api.ts';
+import { fetchFx, fetchMail, readSheetRows, saveMail, savePositions, saveTable, sendMailNow } from './api.ts';
 import { buildFxModel, formatDay, formatIls, formatPct0, formatRate, type FxModel, type ScheduleRow } from './fxModel.ts';
 import type { FxPayload, MailSettings } from './types.ts';
 
@@ -126,6 +126,7 @@ export default function FxChallenge() {
             <Kpis model={model} />
             <Recommendation model={model} policy={policy} onPolicy={setPolicy} inflowMonths={data.inflowMonths} />
             {model.plan && model.plan.coverage.length > 0 && <CoverageCard model={model} plan={model.plan} />}
+            <DealsCard data={data} model={model} onSaved={reload} />
             {model.cash && <ShekelsCard cash={model.cash} spot={model.spot} policy={policy} inflowMonths={data.inflowMonths} />}
             <Simulation model={model} rateText={rateText} onRate={setRateText} />
             <TableCard data={data} model={model} onSaved={reload} />
@@ -356,10 +357,11 @@ function Recommendation({ model, policy, onPolicy, inflowMonths }: { model: FxMo
 }
 
 const COVER_TIP = {
-  released: "EUR deposits paying out by the day the bank takes the euros (the business day before the 7th: October's went through on Tue 6 Oct for Wed 7 Oct), and after it took the previous conversion's (after today, for the first), at the bank's value then, interest included. Hover a figure for each deposit and its date. They count only if the bank pays them out rather than rolling them over.",
+  leaves: "When the euros leave Hapoalim EUR (583400): with the bank's deals, each part's value day, two business days after it is fixed (March 2027: €600K on Fri 5 Mar, €450K on Mon 8 Mar); without them, the business day before the 7th.",
+  released: "EUR deposits paying out by the day the euros leave (each part's, with the bank's deals), and after the previous conversion's left (after today, for the first), at the bank's value then, interest included. Hover a figure for each deposit and its date. They count only if the bank pays them out rather than rolling them over.",
   carried: "What the deposits of the conversions before it left over: it rolls on to this one.",
-  result: 'The deposits paid out before it, plus what is left from earlier, against what it takes. Short: the euros on hand or coming in have to fill the rest, or a new deposit timed for it.',
-  ladder: "A new deposit that pays out the business day before the bank takes the euros from Hapoalim EUR (583400), for the gap rounded up to €10K, as much as the payments before it leave room for; earliest first. A conversion less than two weeks away takes the rest from today's cash (the keep line above).",
+  result: 'The deposits paid out before it, plus what is left from earlier, against what it takes, part by part. Short: the euros on hand or coming in have to fill the rest, or a new deposit timed for it.',
+  ladder: "A new deposit that pays out the value day before the euros leave (the business day before, without the bank's deals), for the gap rounded up to €10K, as much as the payments before it leave room for; earliest first. A conversion less than two weeks away takes the rest from today's cash (the keep line above).",
 };
 
 /** The next conversions against the deposits, first in, first out, and the new deposits timed for their gaps. */
@@ -373,6 +375,7 @@ function CoverageCard({ model, plan }: { model: FxModel; plan: ReservePlan }) {
             <tr className="border-b border-slate-200">
               <Th left tip={PATH_TIP.fixing}>Conversion day</Th>
               <Th tip={KEEP_TIP[plan.policy]}>It takes ({POLICY_LABEL[plan.policy].toLowerCase()})</Th>
+              <Th tip={COVER_TIP.leaves}>The euros leave</Th>
               <Th tip={COVER_TIP.released}>Deposits paid out before it</Th>
               <Th tip={COVER_TIP.carried}>Left from earlier</Th>
               <Th tip={COVER_TIP.result}>Covered?</Th>
@@ -381,28 +384,37 @@ function CoverageCard({ model, plan }: { model: FxModel; plan: ReservePlan }) {
           </thead>
           <tbody>
             {plan.coverage.map((c) => {
-              const leg = plan.ladder.find((l) => l.month === c.month);
+              const legs = plan.ladder.filter((l) => l.month === c.month);
               const over = c.have - c.required;
-              // Deposits paying out after the bank takes the euros but by the 7th: too late here, they count for the next.
+              const lastOut = c.legs[c.legs.length - 1].settle;
+              // Deposits paying out after the last euros leave but by the 7th: too late here, they count for the next.
               const late = c.late && c.late.length
-                ? [`Paid out after the bank takes the euros on ${formatDay(c.takes, true)}, so counted for the next conversion:`, ...depositLines(c.late)]
+                ? [`Paid out after the euros leave on ${formatDay(lastOut, true)}, so counted for the next conversion:`, ...depositLines(c.late)]
                 : [];
               const tip = [...depositLines(c.releasedDeposits), ...late].join('\n');
+              const shortParts = c.legs.filter((l) => l.gap >= 0.5);
               return (
                 <tr key={c.month} className="border-b border-slate-100">
-                  <td className="px-2 py-1.5 text-left text-slate-700" title={`The bank takes the euros on ${formatDay(c.takes, true)}, the business day before.`}>
-                    <span className={HINT}>{formatDay(c.date)}{c.month.slice(0, 4) !== year0 ? ` ${c.month.slice(0, 4)}` : ''}</span>
-                  </td>
+                  <td className="px-2 py-1.5 text-left text-slate-700">{formatDay(c.date)}{c.month.slice(0, 4) !== year0 ? ` ${c.month.slice(0, 4)}` : ''}</td>
                   <td className={TD}>{formatEur(c.required)}</td>
+                  <td className={`${TD} whitespace-nowrap text-slate-700`}
+                    title={c.deals
+                      ? c.legs.map((l) => `${formatEur(l.required)} leaves on ${formatDay(l.settle, true)}${l.expiry ? `, fixed on ${formatDay(l.expiry, true)}` : ''}`).join('\n')
+                      : "No deals from the bank for this month: the business day before the 7th."}>
+                    <span className={HINT}>{c.legs.length > 1 ? c.legs.map((l) => `${formatDay(l.settle)} ${formatEur(l.required)}`).join(' · ') : formatDay(c.takes)}</span>
+                    {!c.deals && <span className="text-slate-400"> (assumed)</span>}
+                  </td>
                   <td className={`${TD} text-slate-600`} title={tip || undefined}>
                     {c.released > 0.5 ? <span className={HINT}>{formatEur(c.released)}</span> : late.length ? <span className={HINT}>– (one too late)</span> : '–'}
                   </td>
                   <td className={`${TD} text-slate-600`}>{c.carried > 0.5 ? formatEur(c.carried) : '–'}</td>
                   <td className={`${TD} whitespace-nowrap font-medium ${c.gap >= 0.5 ? 'text-rose-700' : 'text-emerald-700'}`}>
-                    {c.gap >= 0.5 ? `${formatEur(c.gap)} short` : `covered${over >= 500 ? ` (+${formatEur(over)})` : ''}`}
+                    {c.gap >= 0.5
+                      ? `${formatEur(c.gap)} short${c.legs.length > 1 ? ` (${shortParts.map((l) => formatDay(l.settle)).join(', ')})` : ''}`
+                      : `covered${over >= 500 ? ` (+${formatEur(over)})` : ''}`}
                   </td>
                   <td className={`${TD} whitespace-nowrap text-slate-700`}>
-                    {leg ? `${formatEur(leg.eur)} until ${formatDay(leg.until)}` : c.gap >= 0.5 && !c.timed ? "from today's cash" : '–'}
+                    {legs.length ? legs.map((l) => `${formatEur(l.eur)} until ${formatDay(l.until)}`).join(', ') : c.gap >= 0.5 && !c.timed ? "from today's cash" : '–'}
                   </td>
                 </tr>
               );
@@ -411,11 +423,139 @@ function CoverageCard({ model, plan }: { model: FxModel; plan: ReservePlan }) {
         </table>
       </div>
       <p className="mt-1 text-[11px] text-slate-500">
-        The bank takes a conversion&apos;s euros the business day before the 7th (hover a day), so each deposit counts for the first
-        conversion it pays out in time for, and what one conversion doesn&apos;t take rolls on to the next. A conversion the deposits
-        don&apos;t cover is short: the euros on hand or coming in fill the rest, or a new deposit that pays out the business day before
-        the bank takes them (the last column, also under what to do today). Hover a header for what it means.
+        The euros leave on the bank&apos;s value days: with its deals (the card below), each part&apos;s own, two business days after it is
+        fixed; without them, the business day before the 7th. Each deposit counts for the first part it pays out in time for, and
+        what one doesn&apos;t take rolls on to the next. A conversion the deposits don&apos;t cover is short: the euros on hand or coming in
+        fill the rest, or a new deposit that pays out the value day before (the last column, also under what to do today). Hover
+        a header for what it means.
       </p>
+    </Card>
+  );
+}
+
+interface ReadReport { name: string; kind: 'options' | 'forwards' | null; asOf: string | null; count: number; skipped: number; problems: string[] }
+
+/** The bank's deals: Hapoalim's two position reports, read here and saved for everyone. They say when each conversion's
+ * euros leave (each part's value day) and when the forwards' shekels come in; the table still says how many euros. */
+function DealsCard({ data, model, onSaved }: { data: FxPayload; model: FxModel; onSaved: () => Promise<void> }) {
+  const saved = data.positions || null;
+  const d = model.deals;
+  const [draft, setDraft] = useState<{ value: Positions; reports: ReadReport[] } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  // Each report read replaces its own deals; the other report's stay as saved.
+  async function read(files: File[]) {
+    if (!files.length) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const value: Positions = {
+        asOf: { options: saved ? saved.asOf.options : null, forwards: saved ? saved.asOf.forwards : null },
+        options: saved ? saved.options : [],
+        forwards: saved ? saved.forwards : [],
+      };
+      const reports: ReadReport[] = [];
+      for (const f of files) {
+        const r = parsePositionReport(await readSheetRows(f));
+        if (r.kind === 'options') { value.options = r.options; value.asOf.options = r.asOf; }
+        if (r.kind === 'forwards') { value.forwards = r.forwards; value.asOf.forwards = r.asOf; }
+        const count = r.kind === 'options' ? r.options.length : r.kind === 'forwards' ? r.forwards.length : 0;
+        reports.push({ name: f.name, kind: r.kind, asOf: r.asOf, count, skipped: r.skipped, problems: r.problems });
+      }
+      setDraft({ value, reports });
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function save(value: Positions) {
+    setBusy(true);
+    setErr(null);
+    try {
+      await savePositions(value);
+      await onSaved();
+      setDraft(null);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const KIND = { options: 'the options report', forwards: 'the forwards report' } as const;
+  const usable = !!draft && draft.reports.some((r) => r.kind && r.count > 0);
+  return (
+    <Card title="The bank's deals (when the euros leave)"
+      aside={(
+        <div className="flex items-center gap-2 text-[11px] text-slate-500">
+          {saved && <span>Saved{saved.savedAt ? ` ${new Date(saved.savedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}` : ''}{saved.savedBy ? ` by ${saved.savedBy}` : ''}</span>}
+          <label className={`${BUTTON} cursor-pointer`} title="Hapoalim's OTCPositionDetails.xlsx (the options) and FXPositionDetails.xlsx (the forwards), one or both">
+            {busy ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}Upload the bank&apos;s reports
+            <input type="file" accept=".xlsx,.xls" multiple className="hidden" disabled={busy}
+              onChange={(e: { currentTarget: HTMLInputElement }) => { const files = Array.from(e.currentTarget.files || []); e.currentTarget.value = ''; void read(files); }} />
+          </label>
+        </div>
+      )}>
+      {draft && (
+        <div className="mb-3 space-y-2 rounded-md border border-sky-200 bg-sky-50/50 p-3 text-xs text-slate-700">
+          <ul className="space-y-1">
+            {draft.reports.map((r) => (
+              <li key={r.name}>
+                <span className="font-medium">{r.name}</span>:{' '}
+                {r.kind ? `${KIND[r.kind]} of ${r.asOf ? formatDay(r.asOf, true) : 'an unknown day'}, ${r.count} ${r.kind === 'options' ? 'EUR/ILS options' : 'forwards'}${r.skipped ? ` (${r.skipped} in other currencies left out)` : ''}` : 'not one of the bank\'s position reports'}
+                {r.problems.length > 0 && (
+                  <ul className="list-disc pl-5 text-rose-700">
+                    {r.problems.slice(0, 4).map((p) => <li key={p}>{p}</li>)}
+                    {r.problems.length > 4 && <li>…and {r.problems.length - 4} more.</li>}
+                  </ul>
+                )}
+              </li>
+            ))}
+          </ul>
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" className={BUTTON} disabled={busy || !usable} onClick={() => void save(draft.value)}>
+              {busy && <Loader2 size={12} className="animate-spin" />}Save for everyone
+            </button>
+            <button type="button" className={BUTTON} disabled={busy} onClick={() => setDraft(null)}>Cancel</button>
+            <span className="text-slate-500">Saved for everyone, each save kept in the history. Only the deals are kept: no account number or valuation.</span>
+          </div>
+        </div>
+      )}
+      {err && <p className="mb-2 text-xs text-rose-700">{err}</p>}
+      {d ? (
+        <div className="space-y-1.5 text-xs text-slate-700">
+          <p>
+            {d.options > 0 && <>{d.options} options{d.asOf.options ? ` as of ${formatDay(d.asOf.options, true)}` : ''}{d.from && d.to ? `, fixed ${monthName(d.from)} – ${monthName(d.to)}` : ''}</>}
+            {d.options > 0 && d.forwards > 0 && '; '}
+            {d.forwards > 0 && <>{d.forwards} forwards{d.asOf.forwards ? ` as of ${formatDay(d.asOf.forwards, true)}` : ''}</>}.
+            {' '}Each conversion&apos;s euros leave on its deals&apos; value days (the conversions above), and its shekels come in then.
+          </p>
+          {d.flows.length > 0 && (
+            <p title="The forwards netted by value day. A sale bought back the same day moves only shekels.">
+              <span className={HINT}>Forwards ahead</span>:{' '}
+              {d.flows.map((f) => `${formatIls(Math.abs(f.ils))} ${f.ils >= 0 ? 'in' : 'out'}${Math.abs(f.eur) >= 0.5 ? `, ${formatEur(Math.abs(f.eur))} ${f.eur > 0 ? 'in' : 'out'}` : ''} on ${formatDay(f.date)}`).join(' · ')}
+              {d.flows.every((f) => Math.abs(f.eur) < 0.5) ? ' (no euros move)' : ''}
+            </p>
+          )}
+          {d.missing.length > 0 && (
+            <p className="text-amber-700">No deals for {d.missing.map((m) => monthName(m)).join(', ')}: {d.missing.length === 1 ? 'its' : 'their'} euros are taken the business day before the 7th.</p>
+          )}
+          {d.mismatches.length > 0 && (
+            <p className="text-amber-700" title={d.mismatches.map((m) => `${monthName(m.month)}: ${m.bands.map((b) => `${model.labels[b.band]} table ${formatEur(b.table)}, deals ${formatEur(b.deals)}`).join('; ')}`).join('\n')}>
+              <span className={HINT}>The deals and the table disagree for {d.mismatches.map((m) => monthName(m.month)).join(', ')}</span>: the table&apos;s amounts are used, the deals set the days.
+            </p>
+          )}
+          {d.mismatches.length === 0 && d.options > 0 && <p className="text-slate-500">The deals give the table&apos;s amounts in every band.</p>}
+        </div>
+      ) : (
+        <p className="text-xs text-slate-600">
+          Upload Hapoalim&apos;s two position reports (OTCPositionDetails.xlsx and FXPositionDetails.xlsx, &quot;פירוט עסקאות&quot;): each
+          conversion&apos;s euros then leave on its deals&apos; own value days, and the forwards&apos; shekels count when they come in. Until
+          then, the plan takes the euros the business day before the 7th.
+        </p>
+      )}
     </Card>
   );
 }
