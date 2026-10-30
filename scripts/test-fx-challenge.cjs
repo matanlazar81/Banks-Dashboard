@@ -226,6 +226,18 @@ async function testPlan(fx) {
   check(same(rich.coverage.map((c) => [c.takes, c.until]), [['2026-11-05', '2026-11-04'], ['2026-12-06', '2026-12-03'], ['2027-01-06', '2027-01-05'],
     ['2027-02-04', '2027-02-03'], ['2027-03-04', '2027-03-03'], ['2027-04-06', '2027-04-05']]),
   'the bank takes the euros the business day before the 7th (Thu 7 Jan: Wed 6 Jan; Sun 7 Feb: Thu 4 Feb); a deposit for a gap pays out the business day before that (Tue 5 Jan, Wed 3 Feb)');
+  const lateOf = rich.coverage.map((c) => [c.from, c.late.map((d) => [d.valueDate, d.amount])]);
+  check(same(lateOf, [['2026-10-21', []], ['2026-11-05', []], ['2026-12-06', []], ['2027-01-06', []], ['2027-02-04', [['2027-03-05', 405000]]], ['2027-03-04', []]]),
+    'each conversion counts deposits paying out after the bank took the previous one\'s euros; Fri 5 Mar pays out after Thu 4 Mar, before Sun 7 Mar: March\'s late one', JSON.stringify(lateOf));
+  const mail = require(path.join(ROOT, 'scripts', 'fx-challenge-mail.cjs'));
+  const said = rich.coverage.map((c, i, all) => mail.coverText(c, i === 0, all[i + 1]));
+  check(said[4] === 'יום א\' 7.3: €1.05M, הפיקדון שמשתחרר ביום ו\' 5.3 (€405K) מגיע אחרי שהבנק לוקח את האירו ביום ה\' 4.3, ולכן נספר להמרה של יום ד\' 7.4: חסרים €1.05M'
+    && said[2] === 'יום ה\' 7.1: €1.05M, הפיקדונות מכסים €922K: חסרים €128K' && said[0] === 'שבת 7.11: €800K, מכוסה מהפיקדונות (€806K)',
+  'the mail says why March gets nothing from the deposits: the one of Fri 5 Mar pays out after the bank takes the euros on Thu 4 Mar, so it counts for April', JSON.stringify(said));
+  const bare = fx.planReserve({ upcoming, policy: 'today', eur: { hapoalim: 3e6, other: 0, deposits: LADDER.slice(0, -1) }, inflowPerDay: 0, today: TODAY, eurFloor: 200000 });
+  const saidBare = bare.coverage.map((c, i, all) => mail.coverText(c, i === 0, all[i + 1]));
+  check(saidBare[4] === 'יום א\' 7.3: €1.05M, אין פיקדון שמשתחרר בין יום ו\' 5.2 ליום ה\' 4.3 (היום שהבנק לוקח את האירו): חסרים €1.05M',
+    'with no deposit at all for March, the mail says which days one would have to pay out in (the earlier ones go to the earlier conversions)', saidBare[4]);
   check(same(rich.ladder.map((l) => [l.until, l.eur]), [['2027-01-05', 130000], ['2027-02-03', 150000], ['2027-03-03', 1050000], ['2027-04-05', 650000]]),
     'with room, a deposit for each gap, earliest first, rounded up to €10K', JSON.stringify(rich.ladder));
   // Made, the ladder closes the gaps and leaves every due covered.

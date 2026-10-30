@@ -159,12 +159,28 @@ function keepLine(cover, date, policy) {
   return `להשאיר ${eur(cover.fromCash)} בפועלים ${conversion} (${policy}): היא מוכרת ${eur(cover.required)}, ו-${eur(cover.fromDeposits)} מזה מגיעים ${which}.`;
 }
 
+const dayAfter = (iso) => new Date(Date.parse(`${String(iso).slice(0, 10)}T12:00:00Z`) + 86400000).toISOString().slice(0, 10);
+
 /** A conversion against the deposits, first in, first out (plan.coverage): "יום ה' 7.1: €1.05M, הפיקדונות מכסים €922K:
- * חסרים €128K". */
-function coverText(c) {
+ * חסרים €128K". Short, it says why. A deposit paying out after the bank takes the euros but by the 7th counts for the
+ * next conversion ("הפיקדון שמשתחרר ביום ו' 5.3 (€405K) מגיע אחרי שהבנק לוקח את האירו ביום ה' 4.3, ולכן נספר להמרה של
+ * יום ד' 7.4"). With no deposit at all, the days one would have to pay out in: the earlier ones went to the earlier
+ * conversions. */
+function coverText(c, first, next) {
   const head = `${day(c.date)}: ${eur(c.required)}`;
   if (!(c.gap >= 0.5)) return `${head}, מכוסה מהפיקדונות (${eur(c.have)})`;
-  return c.have >= 0.5 ? `${head}, הפיקדונות מכסים ${eur(c.have)}: חסרים ${eur(c.gap)}` : `${head}, אין פיקדון שמשתחרר לפניה: חסרים ${eur(c.gap)}`;
+  const late = c.late || [];
+  let why = '';
+  if (late.length) {
+    const total = late.reduce((s, d) => s + d.amount, 0);
+    const last = late[late.length - 1].valueDate;
+    const which = late.length === 1 ? `הפיקדון שמשתחרר ב${day(last)} (${eur(total)}) מגיע` : `${late.length} פיקדונות שמשתחררים עד ${day(last)} (${eur(total)}) מגיעים`;
+    why = `${which} אחרי שהבנק לוקח את האירו ב${day(c.takes)}, ולכן ${late.length === 1 ? 'נספר' : 'נספרים'} ${next ? `להמרה של ${day(next.date)}` : 'להמרה שאחריה'}`;
+  }
+  if (c.have >= 0.5) return `${head}, הפיקדונות מכסים ${eur(c.have)}: חסרים ${eur(c.gap)}${why ? ` (${why})` : ''}`;
+  if (why) return `${head}, ${why}: חסרים ${eur(c.gap)}`;
+  const span = first || !c.from ? `עד ${day(c.takes)}` : `בין ${day(dayAfter(c.from))} ל${day(c.takes)}`;
+  return `${head}, אין פיקדון שמשתחרר ${span} (היום שהבנק לוקח את האירו): חסרים ${eur(c.gap)}`;
 }
 
 /** A payment day in the list: "יום ה' 5.11, בעוד 15 ימים: שכר נטו …, ₪4.92M: להמיר €1.21M". */
@@ -233,7 +249,7 @@ function renderMail(fx, data, { policy = 'today', link = null } = {}) {
     // The conversions against the deposits, first in, first out: which ones the deposits leave short.
     if (plan.coverage && plan.coverage.length) {
       parts.push(heading(`ההמרות הבאות מול הפיקדונות (${POLICY[plan.policy]})`));
-      parts.push(list(plan.coverage.map((c) => { const s = `${coverText(c)}.`; return { html: esc(s), text: s, style: c.gap >= 0.5 ? 'color:#be123c;' : 'color:#64748b;' }; })));
+      parts.push(list(plan.coverage.map((c, i, all) => { const s = `${coverText(c, i === 0, all[i + 1])}.`; return { html: esc(s), text: s, style: c.gap >= 0.5 ? 'color:#be123c;' : 'color:#64748b;' }; })));
     }
     if (todo.ahead.dues.length) {
       parts.push(heading('תשלומים בשקלים בתקופה הקרובה'));
@@ -501,4 +517,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { main, sendNow, renderMail, failureMail, mailDecision, parseArgs, parseRecipients, smtpFrom, mailConfig, scheduleState, israelHour, formatDay: day, actionText, MARKER_FILE };
+module.exports = { main, sendNow, renderMail, failureMail, mailDecision, parseArgs, parseRecipients, smtpFrom, mailConfig, scheduleState, israelHour, formatDay: day, actionText, coverText, MARKER_FILE };

@@ -64,7 +64,9 @@ briefly a tab of the Metrics page before it got its own sidebar item.
   2026's, for Wed 7 Oct, on Tue 6 Oct, and in 2026 a 7th on a weekend went through on the Wednesday or Thursday
   before. Each deposit counts for the first conversion whose euros the bank takes after it pays out, and what one
   conversion doesn't take rolls on to the next ("Left from earlier"). So a deposit paying out on the 7th itself, or
-  on Fri 5 Mar for Sun 7 Mar (taken Thu 4 Mar), counts for the conversion after. What the deposits don't cover is the
+  on Fri 5 Mar for Sun 7 Mar (taken Thu 4 Mar, as Sun 7 Jun 2026's euros went on Thu 4 Jun), counts for the
+  conversion after: it is that conversion's `late` deposit, and the page (hover "Deposits paid out before it") and
+  the mail name it as the reason. What the deposits don't cover is the
   conversion's gap ("€128K short"): the euros on hand or coming in fill it, or a new deposit timed for it. **New
   deposit for it** is that deposit: it pays out the business day before the bank takes the euros (Thu 7 Jan: taken
   Wed 6 Jan, so Tue 5 Jan; Sun 7 Feb: taken Thu 4 Feb, so Wed 3 Feb), holds the gap rounded up to €10K, and is never
@@ -209,7 +211,11 @@ by range, how "free to convert" adds up, the next six conversions) stay on the p
 - the recommendations, each with the balances behind it ("להמיר €1.16M עד יום ה' 5.11. שכר נטו של אוקטובר ותשלומי
   הספקים בשקלים של נובמבר: ₪4.91M יוצאים ביום ה' 5.11, ועד אז יהיו ביתרה ₪873K."); urgent ones in red;
 - the next 6 conversions against the deposits, first in, first out, at the mail's setting: covered ("שבת 7.11:
-  €800K, מכוסה מהפיקדונות (€806K)") or short, in red ("יום ה' 7.1: €1.05M, הפיקדונות מכסים €922K: חסרים €128K");
+  €800K, מכוסה מהפיקדונות (€806K)") or short, in red ("יום ה' 7.1: €1.05M, הפיקדונות מכסים €922K: חסרים €128K").
+  A short one says why: a deposit that pays out after the bank takes the euros ("יום א' 7.3: €1.05M, הפיקדון שמשתחרר
+  ביום ו' 5.3 (€405K) מגיע אחרי שהבנק לוקח את האירו ביום ה' 4.3, ולכן נספר להמרה של יום ד' 7.4: חסרים €1.05M"), or
+  the days in which none pays out ("אין פיקדון שמשתחרר בין יום ו' 5.2 ליום ה' 4.3"), the earlier ones going to the
+  earlier conversions;
 - the payments in shekels ahead: the day, how many days to it, what it pays, and what covers it (a conversion, or
   the shekels on hand);
 - today's position in one paragraph: the shekels on hand (current and deposits), the euros at Hapoalim and elsewhere,

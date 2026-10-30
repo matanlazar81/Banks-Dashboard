@@ -383,14 +383,19 @@ function CoverageCard({ model, plan }: { model: FxModel; plan: ReservePlan }) {
             {plan.coverage.map((c) => {
               const leg = plan.ladder.find((l) => l.month === c.month);
               const over = c.have - c.required;
+              // Deposits paying out after the bank takes the euros but by the 7th: too late here, they count for the next.
+              const late = c.late && c.late.length
+                ? [`Paid out after the bank takes the euros on ${formatDay(c.takes, true)}, so counted for the next conversion:`, ...depositLines(c.late)]
+                : [];
+              const tip = [...depositLines(c.releasedDeposits), ...late].join('\n');
               return (
                 <tr key={c.month} className="border-b border-slate-100">
                   <td className="px-2 py-1.5 text-left text-slate-700" title={`The bank takes the euros on ${formatDay(c.takes, true)}, the business day before.`}>
                     <span className={HINT}>{formatDay(c.date)}{c.month.slice(0, 4) !== year0 ? ` ${c.month.slice(0, 4)}` : ''}</span>
                   </td>
                   <td className={TD}>{formatEur(c.required)}</td>
-                  <td className={`${TD} text-slate-600`} title={c.releasedDeposits.length ? depositLines(c.releasedDeposits).join('\n') : undefined}>
-                    {c.released > 0.5 ? <span className={HINT}>{formatEur(c.released)}</span> : '–'}
+                  <td className={`${TD} text-slate-600`} title={tip || undefined}>
+                    {c.released > 0.5 ? <span className={HINT}>{formatEur(c.released)}</span> : late.length ? <span className={HINT}>– (one too late)</span> : '–'}
                   </td>
                   <td className={`${TD} text-slate-600`}>{c.carried > 0.5 ? formatEur(c.carried) : '–'}</td>
                   <td className={`${TD} whitespace-nowrap font-medium ${c.gap >= 0.5 ? 'text-rose-700' : 'text-emerald-700'}`}>
