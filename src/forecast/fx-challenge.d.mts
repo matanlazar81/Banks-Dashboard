@@ -157,7 +157,19 @@ export interface EurPosition { hapoalim: number; other: number; deposits: EurDep
 export declare function eurPosition(rows: BalanceRow[]): EurPosition;
 
 export interface FlowRow { month: string; kind: 'customer' | 'vendor' | 'conversion' | 'deposit' | 'transfer' | 'refund' | 'other'; eur: number }
-export declare function typicalInflow(flows: FlowRow[], months: string[]): { perMonth: number; perDay: number; months: { month: string; net: number }[] } | null;
+export declare function typicalInflow(flows: FlowRow[], months: string[], opts?: { vendors?: boolean }): { perMonth: number; perDay: number; months: { month: string; net: number }[] } | null;
+/** EUR vendor payments on a day (fetchEurVendorDays): paid, positive. */
+export interface VendorDay { date: string; eur: number }
+export declare const VENDOR_PARTS: readonly { from: number; to: number }[];
+/** The EUR vendor payments ahead on their days: each part of the month at its average over `months`. */
+export interface EurVendorsAhead {
+  months: string[];
+  /** 1st–7th, 8th–20th, 21st–end: the average a month. */
+  parts: { from: number; to: number; eur: number }[];
+  /** Each part's payments, on its first day (the part today is in: what is left of it, today). */
+  dues: { date: string; eur: number; part: number }[];
+}
+export declare function eurVendorsAhead(input: { days: VendorDay[]; months: string[]; today: string; until: string }): EurVendorsAhead | null;
 
 // ── shekels for the payroll and the vendors ──
 /** A payroll journal's credit to a payable or current account, in shekels (fetchPayrollLiabilities). */
@@ -257,16 +269,19 @@ export interface NextFixingPlan {
   needLiquidWithBackup: number;
   /** The conversions for shekels (payroll and vendors) due by the fixing, in euros at today's rate. */
   shekelsBefore: number;
+  /** The EUR vendor payments expected before its first euros leave (0 when the plan has none on their days). */
+  vendorsBefore: number;
   /** The euros kept for the EUR vendors at all times. */
   eurFloor: number;
   /** What can leave the euro accounts for good today (converted, say) with every due met as the typical inflow comes
    * in: the smallest spare of all the dues, never more than today's euros above the floor. */
   spare: number;
-  /** The due with the smallest spare (euros held then, less what is due and the floor), and whether it is for shekels. */
-  tightest: { date: string; spare: number; shekels: boolean } | null;
-  /** When a due falls short: the largest gap (by how much, on which day, whether it is a conversion for shekels), and
-   * the first day a gap opens. */
-  short: { eur: number; date: string; shekels: boolean; first: { eur: number; date: string; shekels: boolean } } | null;
+  /** The due with the smallest spare (euros held then, less what is due and the floor), and whether it is for shekels
+   * or the EUR vendors. */
+  tightest: { date: string; spare: number; shekels: boolean; vendors?: boolean } | null;
+  /** When a due falls short: the largest gap (by how much, on which day, whether it is a conversion for shekels or the
+   * EUR vendor payments), and the first day a gap opens. */
+  short: { eur: number; date: string; shekels: boolean; vendors?: boolean; first: { eur: number; date: string; shekels: boolean; vendors?: boolean } } | null;
   freeNow: number;
   freeNowWithBackup: number;
   shortfall: number;
@@ -293,6 +308,10 @@ export interface PathPoint {
   /** The conversions for shekels due by this fixing, in total, and this row's (since the previous one). */
   forShekels: number;
   shekels: number;
+  /** The EUR vendor payments expected by this fixing, in total, and this row's (0 when the plan has none on their days);
+   * available is less them too. */
+  forVendors: number;
+  vendors: number;
   available: number;
   surplus: number;
   /** What can be converted before this fixing, in total, and still cover it and every later one. */
@@ -380,6 +399,8 @@ export declare function planReserve(input: {
   shekels?: { date: string; eur: number }[];
   eurFloor?: number;
   forwards?: ForwardFlow[];
+  /** The EUR vendor payments ahead on their days (eurVendorsAhead's dues). */
+  eurOut?: { date: string; eur: number }[];
 }): ReservePlan | null;
 
 /** What GET /api/fx-challenge answers that the recommendation needs. */
@@ -392,6 +413,8 @@ export interface PlanInput {
   inflowMonths: string[];
   payroll?: { journals: PayrollCredit[]; projection: PayrollProjection | null } | null;
   ilsVendors?: IlsVendorMonth[] | null;
+  /** NetSuite's EUR vendor payments by day (fetchEurVendorDays); null when not read. */
+  eurVendors?: VendorDay[] | null;
   /** The bank's deals saved on the page; null while none are. */
   positions?: (Positions & { savedAt?: string | null; savedBy?: string | null }) | null;
 }
@@ -445,13 +468,15 @@ export interface PlanView {
   deals: DealsView | null;
   /** The deals' options by month and part (positionLegs), for the parts selling at another rate; null without deals. */
   dealLegs: Record<string, PositionLeg[]> | null;
+  /** The EUR vendor payments the plan expects on their days; null without NetSuite's payments by day. */
+  eurVendors: EurVendorsAhead | null;
 }
 export declare function planFromPayload(data: PlanInput, policy?: Policy): PlanView;
 
 /** Something to do today (todayActions). urgent: worth a mail whatever was sent before; key: the same on another day. */
 export type TodayAction =
   | { kind: 'convert'; key: string; urgent: boolean; eur: number; by: string; left: number; due: ShekelDue }
-  | { kind: 'short'; key: string; urgent: boolean; eur: number; date: string; by: string; left: number; shekels: boolean }
+  | { kind: 'short'; key: string; urgent: boolean; eur: number; date: string; by: string; left: number; shekels: boolean; vendors?: boolean }
   | { kind: 'move'; key: string; urgent: boolean; eur: number; date: string; on?: string[]; by: string; left: number }
   | { kind: 'ladder'; key: string; urgent: boolean; eur: number; legs: LadderLeg[] }
   | { kind: 'deposit'; key: string; urgent: boolean; eur: number; options: { months: number; until: string; eur: number }[] };

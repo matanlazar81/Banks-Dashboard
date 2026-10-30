@@ -1,5 +1,5 @@
 // Response shapes of GET /api/fx-challenge and GET/PUT /api/fx-challenge/table (server/fx-challenge.cjs).
-import type { BalanceRow, BookedConversion, FlowRow, FxTable, IlsVendorMonth, PayrollCredit, PayrollProjection, Positions, RatePoint } from '../forecast/fx-challenge.mjs';
+import type { BalanceRow, BookedConversion, FlowRow, FxTable, IlsVendorMonth, PayrollCredit, PayrollProjection, Positions, RatePoint, VendorDay } from '../forecast/fx-challenge.mjs';
 
 /** GET /api/fx-challenge: what the page simulates on. */
 export interface FxPayload {
@@ -25,6 +25,8 @@ export interface FxPayload {
   payroll: { journals: PayrollCredit[]; projection: PayrollProjection | null } | null;
   /** Vendor payments out of the ILS accounts by month (the credit cards' apart); null when not read. */
   ilsVendors: IlsVendorMonth[] | null;
+  /** EUR vendor payments by day, to plan them on their days; null when not read, absent from servers before them. */
+  eurVendors?: VendorDay[] | null;
   warnings: string[];
 }
 export type FxResponse = FxPayload | { ok: false; status: 'error'; error: string };

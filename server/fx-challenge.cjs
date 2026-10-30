@@ -379,7 +379,7 @@ function createFxMailSendHandler(deps = {}) {
 /**
  * The FX Challenge payload.
  *   reads     { rates(days), books(), mail (null when the RESTlet is not configured), flows(fromMonth), conversions(fromDay),
- *               payroll(fromMonth), ilsVendors(fromMonth), salary() } (the last three optional)
+ *               payroll(fromMonth), ilsVendors(fromMonth), salary(), eurVendors(fromMonth) } (the last four optional)
  *   cached    (key, fn) → promise, the handler's memo
  *   tableDoc  the saved table document ({ value: table | null, updatedAt, updatedBy }) or null
  *   positionsDoc  the saved deals' document (the same shape), or null
@@ -407,6 +407,7 @@ async function readFxChallenge({ reads, cached = (k, fn) => fn(), tableDoc = nul
     reads.payroll ? cached(`fx:payroll:${flowsFrom}`, () => reads.payroll(flowsFrom)) : Promise.resolve(null),
     reads.ilsVendors ? cached(`fx:ils-vendors:${flowsFrom}`, () => reads.ilsVendors(flowsFrom)) : Promise.resolve(null),
     reads.salary ? Promise.resolve().then(() => reads.salary()) : Promise.resolve(null),
+    reads.eurVendors ? cached(`fx:eur-vendors:${flowsFrom}`, () => reads.eurVendors(flowsFrom)) : Promise.resolve(null),
   ]);
   const val = (i, what) => {
     if (settled[i].status === 'fulfilled') return settled[i].value;
@@ -447,6 +448,8 @@ async function readFxChallenge({ reads, cached = (k, fn) => fn(), tableDoc = nul
   const journals = val(5, 'payroll journals');
   const ilsVendors = val(6, 'ILS vendor payments');
   const projection = val(7, 'the Salary Projection');
+  const eurVendors = val(8, 'EUR vendor payments by day');
+  if (reads.eurVendors && !Array.isArray(eurVendors)) warnings.push("The EUR vendor payments by day could not be read, so they count as spread evenly over each month.");
   if ((reads.payroll || reads.salary) && !(journals && journals.length) && !projection) {
     warnings.push("Neither the Salary Projection's figures nor NetSuite's payroll journals could be read, so salaries and vendors are left out of the plan.");
   }
@@ -467,6 +470,7 @@ async function readFxChallenge({ reads, cached = (k, fn) => fn(), tableDoc = nul
     conversions: conversions || [],
     payroll: (journals && journals.length) || projection ? { journals: journals || [], projection: projection || null } : null,
     ilsVendors: Array.isArray(ilsVendors) ? ilsVendors : null,
+    eurVendors: Array.isArray(eurVendors) ? eurVendors : null,
     warnings,
   };
 }
@@ -486,6 +490,7 @@ function nsReads({ ns, queue, env = () => process.env }) {
     payroll: (from) => queue(() => ns().fetchPayrollLiabilities({ from })),
     ilsVendors: (from) => queue(() => ns().fetchIlsVendorPayments({ from })),
     salary: () => readSalaryProjection(),
+    eurVendors: (from) => queue(() => ns().fetchEurVendorDays({ from })),
   };
 }
 

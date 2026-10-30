@@ -2882,6 +2882,37 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
       .map((v) => ({ month: v.month, ils: cents(v.ils), cards: cents(v.cards), other: cents(v.other) }));
   }
 
+  // EUR vendor payments (vendor payments and checks) out of the EUR bank accounts by day, deposit accounts left out,
+  // from `from` (YYYY-MM): when they go out, for the FX Challenge's EUR payments ahead (most in the first week of the
+  // month: in September 2026 €624K of €846K by the 7th). A dividend is left out, as in fetchIlsVendorPayments.
+  // Returns [{ date, eur }] (paid, positive).
+  async function fetchEurVendorDays({ from } = {}) {
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(String(from || ''))) throw new Error(`fetchEurVendorDays: bad month ${from}`);
+    const rows = await suiteqlAll(`
+      SELECT TO_CHAR(t.trandate, 'YYYY-MM-DD') AS d, SUM(tal.amount) AS eur
+      FROM transactionaccountingline tal
+      JOIN transaction t ON t.id = tal.transaction
+      JOIN account a ON a.id = tal.account
+      JOIN currency c ON c.id = a.currency
+      WHERE tal.posting = 'T' AND tal.accountingbook = 1 AND t.subsidiary = ${subsidiaryId}
+        AND a.accttype = 'Bank' AND c.symbol = 'EUR' AND LOWER(BUILTIN.DF(a.id)) NOT LIKE '%deposit%'
+        AND t.type IN ('VendPymt', 'Check')
+        AND t.trandate >= TO_DATE('${from}-01', 'YYYY-MM-DD')
+        AND NOT EXISTS (
+          SELECT 1 FROM PreviousTransactionLineLink ptl
+          JOIN transactionaccountingline e ON e.transaction = ptl.previousdoc AND e.posting = 'T'
+          JOIN account ea ON ea.id = e.account
+          WHERE ptl.nextdoc = t.id AND ea.accttype = 'Equity')
+        AND NOT EXISTS (
+          SELECT 1 FROM transactionaccountingline e2
+          JOIN account ea2 ON ea2.id = e2.account
+          WHERE e2.transaction = t.id AND e2.posting = 'T' AND ea2.accttype = 'Equity')
+      GROUP BY TO_CHAR(t.trandate, 'YYYY-MM-DD')
+    `);
+    return rows.map((r) => ({ date: String(r.d || ''), eur: Math.round(-(parseFloat(r.eur) || 0) * 100) / 100 }))
+      .filter((r) => r.eur > 0).sort((a, b) => a.date.localeCompare(b.date));
+  }
+
   // GET a RESTlet with the same token (TBA). `script` / `deploy`: the script and deployment ids (numbers, or
   // customscript_… / customdeploy_…). Returns its JSON.
   async function restletGet(script, deploy, timeoutMs = 30000) {
@@ -3066,7 +3097,7 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
     return Number.isFinite(impact) && impact > 0;
   }
 
-  return { suiteql, suiteqlAll, fetchPnlActuals, fetchAccountIds, fetchAccountByDepartment, fetchVendorSpend, fetchFxConversions, fetchAgingData, fetchCollectionData, buildCollectionJson, fetchClientAnomalies, fetchAllSOsByBillingPeriod, fetchRevenueData, fetchMRRData, fetchBankBalance, fetchVendorBills, fetchVendorPaymentHistory, fetchBankAccountList, fetchBankAccountListAsOf, fetchSalaryData, fetchVendorActuals, fetchRevenueActuals, fetchCustomerCashReceipts, fetchCashflowHistory, fetchExpenseCategoryData, fetchPaymentsByCategory, fetchCashflowBreakdown, fetchCashflowTransactions, fetchExpenseTransactions, fetchSalaryBreakdown, fetchInvoiceBasedProjection, fetchMonthlyRevaluation, fetchVendorBillsByAccount, fetchNSBudget, fetchCurrencyDefenseBudget, fetchPaidVendorsYearly, fetchBankClassifiedYearly, fetchDividendDistributions, fetchVendorPaymentsDetail, fetchLatestFxRate, hasPostedMonthEndReval, fetchEurIlsRates, fetchEurBalancesBooks, fetchEurFlows, fetchHapoalimConversions, fetchPayrollLiabilities, fetchIlsVendorPayments, restletGet };
+  return { suiteql, suiteqlAll, fetchPnlActuals, fetchAccountIds, fetchAccountByDepartment, fetchVendorSpend, fetchFxConversions, fetchAgingData, fetchCollectionData, buildCollectionJson, fetchClientAnomalies, fetchAllSOsByBillingPeriod, fetchRevenueData, fetchMRRData, fetchBankBalance, fetchVendorBills, fetchVendorPaymentHistory, fetchBankAccountList, fetchBankAccountListAsOf, fetchSalaryData, fetchVendorActuals, fetchRevenueActuals, fetchCustomerCashReceipts, fetchCashflowHistory, fetchExpenseCategoryData, fetchPaymentsByCategory, fetchCashflowBreakdown, fetchCashflowTransactions, fetchExpenseTransactions, fetchSalaryBreakdown, fetchInvoiceBasedProjection, fetchMonthlyRevaluation, fetchVendorBillsByAccount, fetchNSBudget, fetchCurrencyDefenseBudget, fetchPaidVendorsYearly, fetchBankClassifiedYearly, fetchDividendDistributions, fetchVendorPaymentsDetail, fetchLatestFxRate, hasPostedMonthEndReval, fetchEurIlsRates, fetchEurBalancesBooks, fetchEurFlows, fetchHapoalimConversions, fetchPayrollLiabilities, fetchIlsVendorPayments, fetchEurVendorDays, restletGet };
 }
 
 
