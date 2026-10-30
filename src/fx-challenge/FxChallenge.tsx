@@ -7,12 +7,12 @@ import { ErrorCard, Segmented, Skeleton, Warnings } from '../new-dashboard/PageP
 import { KpiCard } from '../new-dashboard/KpiStrip.tsx';
 import { readParam, writeParam } from '../new-dashboard/urlParams.ts';
 import {
-  parsePositionReport, parseTable, POLICIES, POLICY_LABEL, tableToText,
+  bandLabels, parsePositionReport, parseTable, POLICIES, POLICY_LABEL, tableToText,
   type CashPlan, type DepositRelease, type FxTable, type OtherConversion, type OutcomeRange, type PathPoint, type Policy, type Positions, type RateCheck, type ReservePlan,
 } from '../forecast/fx-challenge.mjs';
 import { formatEur, monthName } from '../metrics/model.ts';
 import { fetchFx, fetchMail, readSheetRows, saveMail, savePositions, saveTable, sendMailNow } from './api.ts';
-import { buildFxModel, formatDay, formatIls, formatPct0, formatRate, type FxModel, type ScheduleRow } from './fxModel.ts';
+import { buildFxModel, formatDay, formatIls, formatPct0, formatRate, formatTableRate, type FxModel, type ScheduleRow } from './fxModel.ts';
 import type { FxPayload, MailSettings } from './types.ts';
 
 type Phase = 'loading' | 'ready' | 'error';
@@ -77,7 +77,7 @@ const chance = (p: number) => (p < 0.005 ? '<1%' : `${Math.round(p * 100)}%`);
 /** A conversion's outcomes, one line each, for a hover. */
 const outcomeTip = (date: string, list: OutcomeRange[] | null | undefined) => (list ? [
   `If EUR/ILS on ${formatDay(date, true)} is:`,
-  ...list.filter((o) => o.p >= 0.005).map((o) => `${rangeLabel(o)}: ${chance(o.p)} → ${formatEur(o.eur)} at ${o.rate}`),
+  ...list.filter((o) => o.p >= 0.005).map((o) => `${rangeLabel(o)}: ${chance(o.p)} → ${o.eur ? `${formatEur(o.eur)} at ${formatTableRate(o.rate)}` : 'nothing sold'}`),
 ].join('\n') : undefined);
 
 export default function FxChallenge() {
@@ -169,7 +169,7 @@ function Kpis({ model }: { model: FxModel }) {
         note={model.spotBand !== null ? `Band ${model.labels[model.spotBand]} · ${formatDay(model.spotDate)}` : 'No rate from NetSuite'} />
       <KpiCard label="Next conversion" value={next && next.atSpot ? next.atSpot.eur : null} ccy="eur"
         display={next && next.atSpot ? `${formatEur(next.atSpot.eur)} → ${formatIls(next.atSpot.ils)}` : undefined}
-        note={next ? `${formatDay(next.fixing.date)}${next.fixing.weekend ? ' (weekend)' : ''} at today's rate${next.atSpot ? `, ${next.atSpot.rate}` : ''}` : 'No conversion left in the table'} />
+        note={next ? `${formatDay(next.fixing.date)}${next.fixing.weekend ? ' (weekend)' : ''} at today's rate${next.atSpot ? `, ${formatTableRate(next.atSpot.rate)}` : ''}` : 'No conversion left in the table'} />
       <KpiCard label="Keep for it" value={keepEur} ccy="eur" display={keepEur !== null ? eur0(keepEur) : undefined}
         note={model.plan ? `${POLICY_LABEL[model.plan.policy]}${coverNote}` : 'Needs balances'} />
       {cash && plan ? (
@@ -260,7 +260,7 @@ function Recommendation({ model, policy, onPolicy, inflowMonths }: { model: FxMo
         <div className="space-y-1.5">
           <p className="text-[13px]">
             What the {formatDay(n.date)} conversion sells depends on EUR/ILS that day. At today&apos;s {formatRate(model.spot)}: {formatEur(n.todayAmount)} at
-            {' '}{first.atSpot.rate} ({formatIls(first.atSpot.ils)}). On average (expected): <strong>{formatEur(first.risk.expectedEur)}</strong>.
+            {' '}{formatTableRate(first.atSpot.rate)} ({formatIls(first.atSpot.ils)}). On average (expected): <strong>{formatEur(first.risk.expectedEur)}</strong>.
           </p>
           <Outcomes s={first} spotBand={model.spotBand} />
         </div>
@@ -433,10 +433,22 @@ function CoverageCard({ model, plan }: { model: FxModel; plan: ReservePlan }) {
   );
 }
 
-interface ReadReport { name: string; kind: 'options' | 'forwards' | null; asOf: string | null; count: number; skipped: number; problems: string[] }
+interface ReadReport {
+  name: string;
+  kind: 'options' | 'forwards' | null;
+  asOf: string | null;
+  count: number;
+  skipped: number;
+  problems: string[];
+  /** Why it is left out: another report of its kind in the same upload is used, or no deal could be read from it. */
+  unused: string | null;
+  /** The saved report's day, when this one is older: saving it puts back older deals. */
+  older: string | null;
+}
 
-/** The bank's deals: Hapoalim's two position reports, read here and saved for everyone. They say when each conversion's
- * euros leave (each part's value day) and when the forwards' shekels come in; the table still says how many euros. */
+/** The bank's deals: Hapoalim's two position reports, read here and saved for everyone. The months their options cover
+ * take their amounts from them (the conversion table shows it), each conversion's euros leave on its parts' value days,
+ * and the forwards' shekels count when they come in; the saved table fills the other months. */
 function DealsCard({ data, model, onSaved }: { data: FxPayload; model: FxModel; onSaved: () => Promise<void> }) {
   const saved = data.positions || null;
   const d = model.deals;
@@ -444,7 +456,8 @@ function DealsCard({ data, model, onSaved }: { data: FxPayload; model: FxModel; 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  // Each report read replaces its own deals; the other report's stay as saved.
+  // Each report read replaces its own deals (the newest, when several of a kind are picked); the other report's stay as
+  // saved. One older than the saved one is flagged before it can be saved.
   async function read(files: File[]) {
     if (!files.length) return;
     setBusy(true);
@@ -456,12 +469,25 @@ function DealsCard({ data, model, onSaved }: { data: FxPayload; model: FxModel; 
         forwards: saved ? saved.forwards : [],
       };
       const reports: ReadReport[] = [];
+      const used: { options?: ReadReport; forwards?: ReadReport } = {};
       for (const f of files) {
         const r = parsePositionReport(await readSheetRows(f));
-        if (r.kind === 'options') { value.options = r.options; value.asOf.options = r.asOf; }
-        if (r.kind === 'forwards') { value.forwards = r.forwards; value.asOf.forwards = r.asOf; }
         const count = r.kind === 'options' ? r.options.length : r.kind === 'forwards' ? r.forwards.length : 0;
-        reports.push({ name: f.name, kind: r.kind, asOf: r.asOf, count, skipped: r.skipped, problems: r.problems });
+        const report: ReadReport = { name: f.name, kind: r.kind, asOf: r.asOf, count, skipped: r.skipped, problems: r.problems, unused: null, older: null };
+        reports.push(report);
+        if (!r.kind) continue;
+        if (!count && r.problems.length) { report.unused = 'left out: no deal could be read from it'; continue; }
+        const prev = used[r.kind];
+        if (prev && (prev.asOf || '') >= (r.asOf || '')) { report.unused = `left out: ${prev.name} is used, one report of each kind`; continue; }
+        if (prev) prev.unused = `left out: ${f.name} is newer`;
+        used[r.kind] = report;
+        if (r.kind === 'options') { value.options = r.options; value.asOf.options = r.asOf; }
+        else { value.forwards = r.forwards; value.asOf.forwards = r.asOf; }
+      }
+      for (const kind of ['options', 'forwards'] as const) {
+        const report = used[kind];
+        const was = saved ? saved.asOf[kind] : null;
+        if (report && was && report.asOf && report.asOf < was) report.older = was;
       }
       setDraft({ value, reports });
     } catch (e) {
@@ -474,7 +500,8 @@ function DealsCard({ data, model, onSaved }: { data: FxPayload; model: FxModel; 
     setBusy(true);
     setErr(null);
     try {
-      await savePositions(value);
+      // Reports with no deal left (all fixed and paid) clear what was saved.
+      await savePositions(value.options.length || value.forwards.length ? value : null);
       await onSaved();
       setDraft(null);
     } catch (e) {
@@ -485,9 +512,11 @@ function DealsCard({ data, model, onSaved }: { data: FxPayload; model: FxModel; 
   }
 
   const KIND = { options: 'the options report', forwards: 'the forwards report' } as const;
-  const usable = !!draft && draft.reports.some((r) => r.kind && r.count > 0);
+  const usable = !!draft && draft.reports.some((r) => r.kind && !r.unused);
+  const older = !!draft && draft.reports.some((r) => r.older);
+  const savedLabels = bandLabels(data.table.bounds);
   return (
-    <Card title="The bank's deals (when the euros leave)"
+    <Card title="The bank's deals (how many euros, and when they leave)"
       aside={(
         <div className="flex items-center gap-2 text-[11px] text-slate-500">
           {saved && <span>Saved{saved.savedAt ? ` ${new Date(saved.savedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}` : ''}{saved.savedBy ? ` by ${saved.savedBy}` : ''}</span>}
@@ -505,6 +534,15 @@ function DealsCard({ data, model, onSaved }: { data: FxPayload; model: FxModel; 
               <li key={r.name}>
                 <span className="font-medium">{r.name}</span>:{' '}
                 {r.kind ? `${KIND[r.kind]} of ${r.asOf ? formatDay(r.asOf, true) : 'an unknown day'}, ${r.count} ${r.kind === 'options' ? 'EUR/ILS options' : 'forwards'}${r.skipped ? ` (${r.skipped} in other currencies left out)` : ''}` : 'not one of the bank\'s position reports'}
+                {r.unused && <span className="text-slate-500"> ({r.unused})</span>}
+                {r.older && (
+                  <p className="font-medium text-amber-700">
+                    Older than the one saved, of {formatDay(r.older, true)}: saving it puts back the deals as they were on {formatDay(r.asOf, true)}.
+                  </p>
+                )}
+                {r.kind && !r.asOf && !r.unused && (
+                  <p className="text-amber-700">The report&apos;s day (תאריך הפקה) was not found, so it can&apos;t be checked against the one saved: make sure it is the latest.</p>
+                )}
                 {r.problems.length > 0 && (
                   <ul className="list-disc pl-5 text-rose-700">
                     {r.problems.slice(0, 4).map((p) => <li key={p}>{p}</li>)}
@@ -516,7 +554,7 @@ function DealsCard({ data, model, onSaved }: { data: FxPayload; model: FxModel; 
           </ul>
           <div className="flex flex-wrap items-center gap-2">
             <button type="button" className={BUTTON} disabled={busy || !usable} onClick={() => void save(draft.value)}>
-              {busy && <Loader2 size={12} className="animate-spin" />}Save for everyone
+              {busy && <Loader2 size={12} className="animate-spin" />}{older ? 'Save anyway' : 'Save for everyone'}
             </button>
             <button type="button" className={BUTTON} disabled={busy} onClick={() => setDraft(null)}>Cancel</button>
             <span className="text-slate-500">Saved for everyone, each save kept in the history. Only the deals are kept: no account number or valuation.</span>
@@ -530,7 +568,7 @@ function DealsCard({ data, model, onSaved }: { data: FxPayload; model: FxModel; 
             {d.options > 0 && <>{d.options} options{d.asOf.options ? ` as of ${formatDay(d.asOf.options, true)}` : ''}{d.from && d.to ? `, fixed ${monthName(d.from)} – ${monthName(d.to)}` : ''}</>}
             {d.options > 0 && d.forwards > 0 && '; '}
             {d.forwards > 0 && <>{d.forwards} forwards{d.asOf.forwards ? ` as of ${formatDay(d.asOf.forwards, true)}` : ''}</>}.
-            {' '}Each conversion&apos;s euros leave on its deals&apos; value days (the conversions above), and its shekels come in then.
+            {d.options > 0 && <>{' '}They give those months&apos; amounts (the conversion table below) and the days each conversion&apos;s euros leave (the conversions above); its shekels come in then.</>}
           </p>
           {d.flows.length > 0 && (
             <p title="The forwards netted by value day. A sale bought back the same day moves only shekels.">
@@ -540,20 +578,24 @@ function DealsCard({ data, model, onSaved }: { data: FxPayload; model: FxModel; 
             </p>
           )}
           {d.missing.length > 0 && (
-            <p className="text-amber-700">No deals for {d.missing.map((m) => monthName(m)).join(', ')}: {d.missing.length === 1 ? 'its' : 'their'} euros are taken the business day before the 7th.</p>
-          )}
-          {d.mismatches.length > 0 && (
-            <p className="text-amber-700" title={d.mismatches.map((m) => `${monthName(m.month)}: ${m.bands.map((b) => `${model.labels[b.band]} table ${formatEur(b.table)}, deals ${formatEur(b.deals)}`).join('; ')}`).join('\n')}>
-              <span className={HINT}>The deals and the table disagree for {d.mismatches.map((m) => monthName(m.month)).join(', ')}</span>: the table&apos;s amounts are used, the deals set the days.
+            <p className="text-amber-700">
+              No deals for {d.missing.map((m) => monthName(m)).join(', ')}: the saved table gives {d.missing.length === 1 ? 'its' : 'their'} amounts,
+              {' '}and {d.missing.length === 1 ? 'its' : 'their'} euros are taken the business day before the 7th.
             </p>
           )}
-          {d.mismatches.length === 0 && d.options > 0 && <p className="text-slate-500">The deals give the table&apos;s amounts in every band.</p>}
+          {d.mismatches.length > 0 && (
+            <p className="text-slate-600" title={d.mismatches.map((m) => `${monthName(m.month)}: ${m.bands.map((b) => `${savedLabels[b.band]} saved table ${formatEur(b.table)}, deals ${formatEur(b.deals)}`).join('; ')}`).join('\n')}>
+              <span className={HINT}>The saved table differs from the deals for {d.mismatches.map((m) => monthName(m.month)).join(', ')}</span>: the deals&apos; amounts are used, so the saved table needs no update.
+            </p>
+          )}
+          {d.mismatches.length === 0 && d.options > 0 && <p className="text-slate-500">The saved table agrees with the deals in every band.</p>}
         </div>
       ) : (
         <p className="text-xs text-slate-600">
-          Upload Hapoalim&apos;s two position reports (OTCPositionDetails.xlsx and FXPositionDetails.xlsx, &quot;פירוט עסקאות&quot;): each
-          conversion&apos;s euros then leave on its deals&apos; own value days, and the forwards&apos; shekels count when they come in. Until
-          then, the plan takes the euros the business day before the 7th.
+          Upload Hapoalim&apos;s two position reports (OTCPositionDetails.xlsx and FXPositionDetails.xlsx, &quot;פירוט עסקאות&quot;): the
+          months their options cover then take their amounts from them, each conversion&apos;s euros leave on its deals&apos; own value
+          days, and the forwards&apos; shekels count when they come in. Until then, the table gives the amounts and the plan takes the
+          euros the business day before the 7th.
         </p>
       )}
     </Card>
@@ -821,8 +863,8 @@ function Outcomes({ s, spotBand }: { s: ScheduleRow; spotBand: number | null }) 
               <tr key={o.bands[0]} className={`border-b border-slate-100 ${today ? 'bg-sky-50 font-medium text-slate-900' : o.p < 0.01 ? 'text-slate-400' : 'text-slate-700'}`}>
                 <td className="px-2 py-1.5 text-left">{rangeLabel(o)}{today ? ' (today)' : ''}</td>
                 <td className={TD}>{chance(o.p)}</td>
-                <td className={TD}>{formatEur(o.eur)}</td>
-                <td className={TD}>{o.rate}</td>
+                <td className={TD}>{o.eur ? formatEur(o.eur) : 'nothing'}</td>
+                <td className={TD}>{o.eur ? formatTableRate(o.rate) : '–'}</td>
                 <td className={TD}>{formatIls(o.ils)}</td>
               </tr>
             );
@@ -878,7 +920,7 @@ function Simulation({ model, rateText, onRate }: { model: FxModel; rateText: str
                   {monthName(s.fixing.month)} <span className="text-slate-400">· {formatDay(s.fixing.date)}{s.fixing.weekend ? ' (weekend)' : ''}</span>
                 </td>
                 <td className={`${TD} font-medium text-slate-900`}>{s.atSim ? formatEur(s.atSim.eur) : '–'}</td>
-                <td className={TD}>{s.atSim ? s.atSim.rate : '–'}</td>
+                <td className={TD}>{s.atSim ? formatTableRate(s.atSim.rate) : '–'}</td>
                 <td className={TD}>{s.atSim ? formatIls(s.atSim.ils) : '–'}</td>
                 <td className={`${TD} ${s.atSim && s.atSim.vsSpotIls < 0 ? 'text-rose-700' : 'text-emerald-700'}`}>{s.atSim ? formatIls(s.atSim.vsSpotIls) : '–'}</td>
                 <td className={`${TD} text-slate-500`} title={outcomeTip(s.fixing.date, s.outcomes)}>{s.risk ? <span className={HINT}>{formatEur(s.risk.expectedEur)}</span> : '–'}</td>
@@ -906,11 +948,17 @@ function Simulation({ model, rateText, onRate }: { model: FxModel; rateText: str
 }
 
 // ── the conversion table ──
+/** The table the plan uses: the months the bank's deals cover worked out from them, the others as saved. Editing changes
+ * the saved table. */
 function TableCard({ data, model, onSaved }: { data: FxPayload; model: FxModel; onSaved: () => Promise<void> }) {
   const [editing, setEditing] = useState(false);
-  const { table } = data;
+  const { table } = model;
   const max = Math.max(1, ...table.rows.flatMap((r) => r.cells.map((c) => Math.abs(c.eurK))));
   const saved = data.tableSaved;
+  const d = model.deals;
+  const fromDeals = new Set(d ? d.months : []);
+  const newEdges = table.bounds.filter((b) => !data.table.bounds.includes(b));
+  const dealsTip = d ? `From the bank's deals${d.asOf.options ? ` of ${formatDay(d.asOf.options, true)}` : ''}: in each band, the euros their options sell with EUR/ILS in its middle, at their blended rate.` : '';
   return (
     <Card title={`The conversion table (${table.pair}, € thousands sold / rate, converted on the ${table.fixingDay}th)`}
       aside={(
@@ -919,7 +967,7 @@ function TableCard({ data, model, onSaved }: { data: FxPayload; model: FxModel; 
           <button type="button" className={BUTTON} onClick={() => setEditing((v) => !v)}>{editing ? 'Close' : 'Edit table'}</button>
         </div>
       )}>
-      {editing && <EditTable table={table} saved={!!saved} onSaved={onSaved} onClose={() => setEditing(false)} />}
+      {editing && <EditTable table={data.table} saved={!!saved} dealMonths={d ? d.months : []} onSaved={onSaved} onClose={() => setEditing(false)} />}
       <div className="overflow-x-auto">
         <table className="min-w-full border-separate border-spacing-0.5 text-[11px]">
           <thead>
@@ -938,14 +986,17 @@ function TableCard({ data, model, onSaved }: { data: FxPayload; model: FxModel; 
           <tbody>
             {[...table.rows].sort((a, b) => a.month.localeCompare(b.month)).map((r) => {
               const past = model.past.some((p) => p.month === r.month);
+              const deal = fromDeals.has(r.month);
               return (
                 <tr key={r.month} className={past ? 'opacity-45' : ''}>
-                  <td className="whitespace-nowrap px-1.5 py-1 text-left text-slate-700">{monthName(r.month)}</td>
+                  <td className="whitespace-nowrap px-1.5 py-1 text-left text-slate-700" title={deal ? dealsTip : undefined}>
+                    {deal ? <span className={HINT}>{monthName(r.month)}</span> : monthName(r.month)}
+                  </td>
                   {r.cells.map((c, i) => (
                     <td key={i} className={`whitespace-nowrap rounded px-1.5 py-1 text-center tabular-nums text-slate-800 ${i === model.simBand ? 'ring-2 ring-sky-700' : ''}`}
                       style={{ backgroundColor: `rgba(14, 116, 144, ${(0.06 + 0.42 * Math.abs(c.eurK) / max).toFixed(3)})` }}
-                      title={`${monthName(r.month)}, ${model.labels[i]}: sell ${formatEur(-c.eurK * 1000)} at ${c.rate} = ${formatIls(-c.eurK * 1000 * c.rate)}`}>
-                      {-c.eurK} · {c.rate}
+                      title={`${monthName(r.month)}, ${model.labels[i]}: ${c.eurK ? `sell ${formatEur(-c.eurK * 1000)} at ${c.rate} = ${formatIls(-c.eurK * 1000 * c.rate)}` : 'nothing sold'}${deal ? " (the bank's deals)" : ''}`}>
+                      {c.eurK ? `${-c.eurK} · ${formatTableRate(c.rate)}` : '0'}
                     </td>
                   ))}
                 </tr>
@@ -954,12 +1005,21 @@ function TableCard({ data, model, onSaved }: { data: FxPayload; model: FxModel; 
           </tbody>
         </table>
       </div>
-      <p className="mt-1.5 text-[11px] text-slate-500">The highlighted column is the band at the simulated rate; • marks today&apos;s band. Past conversions are dimmed.</p>
+      <p className="mt-1.5 text-[11px] text-slate-500">
+        The highlighted column is the band at the simulated rate; • marks today&apos;s band. Past conversions are dimmed.
+        {d && d.from && d.to && (
+          <>
+            {' '}{d.from === d.to ? monthName(d.from) : `${monthName(d.from)} – ${monthName(d.to)}`} come{d.from === d.to ? 's' : ''} from the bank&apos;s deals
+            (underlined; hover a month for how), the other months from the saved table
+            {newEdges.length ? `, and the deals add ${newEdges.join(', ')} to the bands` : ''}.
+          </>
+        )}
+      </p>
     </Card>
   );
 }
 
-function EditTable({ table, saved, onSaved, onClose }: { table: FxTable; saved: boolean; onSaved: () => Promise<void>; onClose: () => void }) {
+function EditTable({ table, saved, dealMonths, onSaved, onClose }: { table: FxTable; saved: boolean; dealMonths: string[]; onSaved: () => Promise<void>; onClose: () => void }) {
   const [text, setText] = useState('');
   const [day, setDay] = useState(String(table.fixingDay));
   const [saving, setSaving] = useState(false);
@@ -987,6 +1047,12 @@ function EditTable({ table, saved, onSaved, onClose }: { table: FxTable; saved: 
         Paste the range from Excel: the header row of bands (&lt;3.3, 3.3-3.4, … &gt;4.295), then one row per month (10/2026, then
         &quot;-500 / 3.62&quot; per band). It is checked before it can be saved, and saved for everyone (each save is kept in the history).
       </p>
+      {dealMonths.length > 0 && (
+        <p className="text-amber-700">
+          The bank&apos;s deals give the amounts for {dealMonths.length === 1 ? monthName(dealMonths[0]) : `${monthName(dealMonths[0])} – ${monthName(dealMonths[dealMonths.length - 1])}`}:
+          {' '}what you save here counts for the other months only. To change those, upload the bank&apos;s new reports.
+        </p>
+      )}
       <textarea aria-label="The conversion table, pasted from Excel" value={text} onChange={(e: { target: { value: string } }) => setText(e.target.value)}
         rows={6} spellCheck={false} className="w-full rounded border border-slate-300 bg-white p-2 font-mono text-[11px] focus:border-sky-500 focus:outline-none" />
       <div className="flex flex-wrap items-center gap-2">
@@ -1141,7 +1207,7 @@ function PastFixings({ model }: { model: FxModel }) {
               <tr key={p.month} className="border-b border-slate-100 align-top">
                 <td className="whitespace-nowrap px-2 py-1.5 text-left text-slate-700">{monthName(p.month)} · {formatDay(p.date)}</td>
                 <td className={TD}>{p.spot ? formatRate(p.spot.rate) : '–'}</td>
-                <td className={`${TD} whitespace-nowrap ${p.inTable ? '' : 'text-slate-400'}`}>{p.conv ? `${formatEur(p.conv.eur)} @ ${p.conv.rate}` : p.inTable ? '–' : 'not in the table'}</td>
+                <td className={`${TD} whitespace-nowrap ${p.inTable ? '' : 'text-slate-400'}`}>{p.conv ? `${formatEur(p.conv.eur)} @ ${formatTableRate(p.conv.rate)}` : p.inTable ? '–' : 'not in the table'}</td>
                 <td className={`${TD} whitespace-nowrap ${!p.booked ? 'text-slate-400' : !p.inTable ? 'text-slate-700' : p.match ? 'text-emerald-700' : 'text-amber-700'}`}>
                   {p.booked ? `${formatDay(p.booked.date)}: ${formatEur(p.booked.eur)} → ${formatIls(p.booked.ils)} @ ${p.booked.rate ? p.booked.rate.toFixed(3) : '–'}${p.inTable ? (p.match ? ' ✓' : ' (differs)') : ''}` : 'Nothing booked near it'}
                 </td>

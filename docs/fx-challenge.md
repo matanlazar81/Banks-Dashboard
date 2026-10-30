@@ -20,7 +20,7 @@ briefly a tab of the Metrics page before it got its own sidebar item.
 | `fx-challenge.html` | the page (a small bundle, never loads the old dashboard) |
 | `GET /api/fx-challenge` | what the page shows (`server/fx-challenge.cjs`); `?refresh=true` reads NetSuite again |
 | `GET/PUT /api/fx-challenge/table` | the conversion table, saved for everyone (`null` = the default) |
-| `GET/PUT /api/fx-challenge/positions` | the bank's deals, read on the page from its two position reports, saved for everyone (`null` = none: the euros leave the business day before the 7th) |
+| `GET/PUT /api/fx-challenge/positions` | the bank's deals, read on the page from its two position reports, saved for everyone; they give the amounts and days of the months they cover (`null` = none: the table's amounts, the euros leaving the business day before the 7th) |
 | `GET/PUT /api/fx-challenge/mail` | who gets the daily mail, saved for everyone (`null` = the server's `FX_MAIL_TO`) |
 | `POST /api/fx-challenge/mail/send` | the page's **Send now**: the daily mail at once, to the saved list |
 | finance-it | sidebar item → iframe of `<bank-dashboard static base>/fx-challenge.html`; every `/api/fx-challenge` route is mounted once, by prefix (`createFxChallengeRouter`), so new ones need no finance-it change (see Deploying) |
@@ -28,11 +28,15 @@ briefly a tab of the Metrics page before it got its own sidebar item.
 ## The page
 
 - **The table** is the one received in October 2026 (fixings October 2026 to December 2027) until someone
-  saves another.
+  saves another. With the bank's deals saved (below), the months they cover come from the deals instead
+  (`tableWithDeals`), so the table needs no update by hand when the deals change.
   - To change it: Edit table, then paste the range from Excel (the header row of bands, then `10/2026` and
-    `-500 / 3.62` per band). The page checks it, then Save for everyone.
+    `-500 / 3.62` per band). The page checks it, then Save for everyone. It counts for the months the deals don't
+    cover (the editor says which they do).
   - "Back to the table received in October 2026" removes the saved one.
   - Bands are lower-inclusive (a rate on an edge counts in the band above); the deals decide the edges.
+  - The card shows the table the plan uses: the deals' months underlined (hover one for how), their rates to three
+    decimals (3.669 for the 3.67 of the table received).
 - **Simulate**: type a rate or use the slider or presets. The schedule shows each remaining fixing at that
   rate (euros, rate, shekels, shekels against that rate) beside its risk from today's rate.
 - **Risk of a fixing**: EUR/ILS on the day is lognormal around today's rate (no drift), with the annual
@@ -40,7 +44,7 @@ briefly a tab of the Metrics page before it got its own sidebar item.
   That gives each band's chance, the expected euros, the 95% amount (enough for 19 fixings in 20) and the
   table's worst case.
 - **What the next conversion can sell** (`outcomeRanges`): a table of the EUR/ILS ranges on its day (neighbouring
-  bands that sell the same amount merged), each with its chance, the euros sold, the rate and the shekels; today's
+  bands that sell the same amount, or nothing, merged), each with its chance, the euros sold, the rate and the shekels; today's
   range is highlighted. Hovering an expected figure anywhere on the page shows the same chances for that month.
 - **What to keep, what is free** (`planReserve`), for the next fixing:
   - Keep: today's band, the 95% amount (the default) or the worst case (`?reserve=today|worst`).
@@ -74,24 +78,34 @@ briefly a tab of the Metrics page before it got its own sidebar item.
   the dues before it pays out leave room for (each new deposit locks its euros away from them), earliest gap first,
   from today's euros above the floor. The next conversion's gap is the cash to keep (the keep line, which counts the
   same deposits), and a deposit is only timed when it pays out 14 days or more from today.
-- **The bank's deals (when the euros leave)**: Hapoalim's two position reports for 583400, uploaded here
+- **The bank's deals (how many euros, and when they leave)**: Hapoalim's two position reports for 583400, uploaded here
   (**Upload the bank's reports**, one or both) and saved for everyone:
   - `OTCPositionDetails.xlsx` ("פירוט עסקאות FX OPTION"): the options behind the table. Each is fixed on its expiry day
     (תאריך פקיעה) and settled on its value day (תאריך פרעון), two business days later, Fridays included: the euros
     leave and the shekels come in then. A call LSports sold is exercised above its strike, a put it bought below it
-    (an EKO put lapses at or below its trigger), a put it sold has it buy euros below its strike (`optionEur`). The
-    options of 30 Oct 2026 give the table exactly, band by band, from November 2026 to December 2027 (`dealsVsTable`
-    says where they would not), so the table still sets the amounts and the deals set the days: each conversion's
-    amount kept is split between its parts as the deals split it at the rate whose band sells that amount
-    (`rateSelling`, `conversionLegs`). The shekels side counts each part's shekels on its day (Wed 4 Nov 2026 for
-    Sat 7 Nov, before the net salaries of the 5th).
+    (an EKO put lapses at or below its trigger), a put it sold has it buy euros below its strike (`optionEur`).
+  - **The amounts** (`tableWithDeals`): each month the options cover is worked out from them, band by band: the euros
+    they sell with EUR/ILS in the middle of the band, at their blended rate (four decimals). The bands are the saved
+    table's plus every strike and trigger, so a new deal's level gets a band of its own (the saved months keep their
+    cells on both sides). The other months (the past ones, any the deals don't reach) come from the saved table. The
+    options of 30 Oct 2026 give the table received exactly, band by band, from November 2026 to December 2027 (the
+    same euros; the rates within 0.005 of its two decimals), and the card says where the saved table differs from the
+    deals (`dealsVsTable`): for information, since the deals are used.
+  - **The days**: each conversion's amount kept is split between its parts as the deals split it at the rate whose
+    band sells that amount (`rateSelling`, `conversionLegs`). The shekels side counts each part's shekels on its day
+    (Wed 4 Nov 2026 for Sat 7 Nov, before the net salaries of the 5th).
   - `FXPositionDetails.xlsx` ("פירוט עסקאות FX"): the forwards. Netted by value day (`forwardFlows`): on 2 Nov and 2
     Dec 2026 the €1.75M sold was bought back the same day, so only shekels come in (₪670,750 and ₪672,450), and the
     USD pair brings ₪241,450 on 31 Dec. Their shekels count on the shekels side; euros a forward sells or buys count
     among the dues.
   - The page reads the files itself (`parsePositionReport`, with the Excel library the exports use): the header row by
     its titles, the report's day from "תאריך הפקה". Only the deals are kept: no account number, no valuation. Each
-    report replaces its own deals; months without deals keep the business day before the 7th, and the card says which.
+    report replaces its own deals; months without deals keep the saved table's amounts and the business day before
+    the 7th, and the card says which.
+  - Before saving, the card shows what each file is. A report older than the one saved is flagged ("Older than the one
+    saved, of …: saving it puts back the deals as they were on …") and the button reads **Save anyway**; one whose
+    day isn't found is flagged too. With two reports of a kind in one upload, the newer is used and the other is
+    said to be left out. Reports with no deal left (all fixed and paid) clear the saved deals.
 - **What to do today** (`todayActions`, the first lines of the recommendation and of the daily mail): from today's
   balances and rate, urgent ones first (in red):
   - **Convert** for a payment in shekels that the shekels on hand (and the conversions before it) don't cover, by the
