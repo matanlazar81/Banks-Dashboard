@@ -418,14 +418,14 @@ async function testDeals(fx) {
     'a new deposit for March\'s Mon 8 Mar part, paying out on Fri 5 Mar', JSON.stringify(leg));
   const mail = require(path.join(ROOT, 'scripts', 'fx-challenge-mail.cjs'));
   const line = mail.coverText(c, false, plan.coverage[5]);
-  check(line === 'יום א\' 7.3: €1.05M (€600K ביום ו\' 5.3, €450K ביום ב\' 8.3), הפיקדונות מכסים €810K: חסרים €240K ביום ב\' 8.3',
-    'the mail\'s line for March: its two parts, what the deposits cover, and the part that is short', line);
+  check(line === 'יום ו\' 5.3 ויום ב\' 8.3: €1.05M (€600K ו-€450K), הפיקדונות מכסים €810K: חסרים €240K ביום ב\' 8.3' && same(c.on, ['2027-03-05', '2027-03-08']),
+    'the mail\'s line for March, by its conversion days (when the euros leave): its two parts, what the deposits cover, and the part that is short', line);
   const hv = { plan: { next: {} }, rateCheck: null };
   const said = mail.actionText({ kind: 'ladder', eur: 240000, legs: [leg] }, hv, TODAY);
-  check(said.head === 'להפקיד €240K בפיקדון עד יום ו\' 5.3' && said.body === 'לחלק של ההמרה של יום א\' 7.3 שיורד ביום ב\' 8.3: €450K, והפיקדונות שמשתחררים עד אז מכסים €210K, כלומר חסרים €240K. כל התשלומים עד אז עדיין מכוסים.',
-    'the mail\'s deposit for a part: until when, and the part it is for', JSON.stringify(said));
+  check(said.head === 'להפקיד €240K בפיקדון עד יום ו\' 5.3' && said.body === 'להמרה של יום ב\' 8.3 (חלק מההמרה של מרץ): היא מוכרת €450K, והפיקדונות שמשתחררים עד אז מכסים €210K, כלומר חסרים €240K. כל התשלומים עד אז עדיין מכוסים.',
+    'the mail\'s deposit for a part: until when, and the conversion day it is for', JSON.stringify(said));
   const en = fx.describeAction({ kind: 'ladder', eur: 240000, legs: [leg] }, { plan: { next: {} }, rateCheck: null }, TODAY, { eur: (n) => `€${Math.round(n / 1000)}K`, day: (d) => d });
-  check(en.body.startsWith('For the part of the 2027-03-07 conversion that leaves on 2027-03-08: €450K'), 'the page says the same', en.body);
+  check(en.body.startsWith('For the 2027-03-08 conversion (part of March\'s): it takes €450K'), 'the page says the same', en.body);
 
   // From the payload: the saved deals give the legs, the forwards' shekels, and what the page says about them.
   const data = {
@@ -491,7 +491,7 @@ async function testDeals(fx) {
   check(paidOne.schedule[0].fixing.month === '2027-03' && paidOne.plan.next.required === 450000 && same(c8.legs.map((l) => [l.settle, Math.round(l.required)]), [['2027-03-08', 450000]]),
     'Mon 8 Mar: the €900K paid on Fri 5 Mar is gone from the balances, so only the €450K part is kept for', JSON.stringify(c8.legs.map((l) => [l.settle, l.required])));
   check(fx.planFromPayload(onDay('2027-03-09', fixedDays), 'p95').schedule[0].fixing.month === '2027-04', 'Tue 9 Mar: March is done, April is next');
-  check(mail.coverText(c8, true, null).startsWith('יום א\' 7.3: €450K (ביום ב\' 8.3), '), 'the mail says the day even for one part', mail.coverText(c8, true, null));
+  check(mail.coverText(c8, true, null).startsWith('יום ב\' 8.3: €450K, '), 'the mail\'s line by the day the euros leave, in one part too', mail.coverText(c8, true, null));
 
   console.log('\nDEALS: any number of report files');
   check(o.account === '000000' && f.account === '000000' && !JSON.stringify(o).includes('12-000'), 'each report\'s account by its own number (as NetSuite names it), not the bank or branch', o.account);
@@ -761,7 +761,7 @@ async function testToday(fx) {
   check(fx.describeAction({ kind: 'ladder', key: 'ladder', urgent: false, eur: 130000, legs: [legs[0]] }, lv, TODAY, fmt0).head === 'Put €130K in a deposit until 2027-01-06'
     && fx.describeAction({ kind: 'ladder', key: 'ladder', urgent: false, eur: 130000, legs: [legs[0]] }, lv, TODAY, fmt0).body === 'For the 2027-01-07 conversion: it takes €1050K, and the deposits paid out by then hold €922K, €128K short. Every payment before then stays covered.'
     && fx.describeAction(lad.actions.find((a) => a.kind === 'ladder'), lv, TODAY, fmt0).head === 'Put €280K in deposits for the January and February conversions'
-    && fx.describeAction(lad.actions.find((a) => a.kind === 'ladder'), lv, TODAY, fmt0).body === '€130K until 2027-01-06 for 2027-01-07 (€128K short), €150K until 2027-02-04 for 2027-02-07 (€141K short). Every payment before then stays covered.',
+    && fx.describeAction(lad.actions.find((a) => a.kind === 'ladder'), lv, TODAY, fmt0).body === '€130K until 2027-01-06 for the 2027-01-07 conversion (€128K short), €150K until 2027-02-04 for the 2027-02-07 conversion (€141K short). Every payment before then stays covered.',
   'the ladder in words: each deposit, until when, and the conversion it is for');
   const move = { kind: 'move', key: 'move:2026-11-07', urgent: true, eur: 300000, date: '2026-11-07', by: '2026-11-05' };
   const moveSaid = (next) => fx.describeAction(move, view('2026-11-04', { next }), '2026-11-04', fmt0).body;

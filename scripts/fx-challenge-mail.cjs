@@ -71,6 +71,8 @@ function day(iso, withYear = false) {
   return `${WEEKDAYS[d.getUTCDay()]} ${d.getUTCDate()}.${d.getUTCMonth() + 1}${withYear ? `.${d.getUTCFullYear()}` : ''}`;
 }
 const monthName = (mKey) => MONTHS[Number(String(mKey).slice(5, 7)) - 1] || mKey;
+/** A conversion's days: "יום ד' 4.11", or "יום ו' 4.12 ויום ב' 7.12" when it leaves in parts. */
+const days = (list) => list.map((d) => day(d)).join(' ו');
 /** "היום", "מחר", "בעוד 15 ימים". */
 function inDays(from, to) {
   const n = Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000);
@@ -119,23 +121,23 @@ function actionText(a, v, today) {
   if (a.kind === 'move') {
     const fromDeposits = Math.min(n.required, n.maturing || 0);
     const dep = fromDeposits > 0.5 ? `, מזה ${eur(fromDeposits)} מפיקדונות שמשתחררים עד אז` : '';
-    return { head: `להעביר ${eur(a.eur)} לחשבון האירו בפועלים עד ${day(a.by)}`, body: `ההמרה של ${day(a.date)} יורדת מחשבון האירו בפועלים (583400), שבו ${eur(n.hapoalim)}; צריך שיהיו בו ${eur(n.required)}${dep}.` };
+    return { head: `להעביר ${eur(a.eur)} לחשבון האירו בפועלים עד ${day(a.by)}`, body: `ההמרה של ${days(a.on || [a.date])} יורדת מחשבון האירו בפועלים (583400), שבו ${eur(n.hapoalim)}; צריך שיהיו בו ${eur(n.required)}${dep}.` };
   }
   if (a.kind === 'ladder') {
-    // With the bank's deals, a deposit can be for one part of a conversion (part): the one leaving on l.settle.
+    // Each deposit is for one conversion day: with the bank's deals, one part's (a part is a conversion on its own day).
     const legs = a.legs;
     const tail = 'כל התשלומים עד אז עדיין מכוסים.';
+    const of = (l) => `${day(l.on || l.date)}${l.part ? ` (חלק מההמרה של ${monthName(l.month)})` : ''}`;
     if (legs.length === 1) {
       const l = legs[0];
-      const what = l.part ? `לחלק של ההמרה של ${day(l.date)} שיורד ב${day(l.settle)}: ${eur(l.required)}` : `להמרה של ${day(l.date)}: היא מוכרת ${eur(l.required)}`;
-      return { head: `להפקיד ${eur(l.eur)} בפיקדון עד ${day(l.until)}`, body: `${what}, והפיקדונות שמשתחררים עד אז מכסים ${eur(l.have)}, כלומר חסרים ${eur(l.gap)}. ${tail}` };
+      return { head: `להפקיד ${eur(l.eur)} בפיקדון עד ${day(l.until)}`, body: `להמרה של ${of(l)}: היא מוכרת ${eur(l.required)}, והפיקדונות שמשתחררים עד אז מכסים ${eur(l.have)}, כלומר חסרים ${eur(l.gap)}. ${tail}` };
     }
     const first = monthName(legs[0].month);
     const last = monthName(legs[legs.length - 1].month);
     const months = new Set(legs.map((l) => l.month)).size;
     return {
       head: `להפקיד ${eur(a.eur)} בפיקדונות ${months === 1 ? `להמרה של ${first}` : `להמרות של ${months === 2 ? `${first} ו${last}` : `${first} עד ${last}`}`}`,
-      body: `${legs.map((l) => `${eur(l.eur)} עד ${day(l.until)} להמרה של ${day(l.date)} (${l.part ? `לחלק שיורד ב${day(l.settle)}, ` : ''}חסרים ${eur(l.gap)})`).join(', ')}. ${tail}`,
+      body: `${legs.map((l) => `${eur(l.eur)} עד ${day(l.until)} להמרה של ${of(l)} (חסרים ${eur(l.gap)})`).join(', ')}. ${tail}`,
     };
   }
   // A new deposit: one line when every term holds the same.
@@ -146,11 +148,12 @@ function actionText(a, v, today) {
   return { head: `להפקיד ${eur(a.eur)} בפיקדון חדש`, body: `${options}, וכל התשלומים עד אז עדיין מכוסים לפי התקבולים הרגילים.` };
 }
 
-/** What to keep in Hapoalim EUR for the next conversion (fx.keepCover): nothing when the deposits released by then
- * cover what it takes ("אין צורך לשמור כסף להמרה של שבת 7.11: …"), else the rest, with what the deposits bring. */
-function keepLine(cover, date, policy) {
+/** What to keep in Hapoalim EUR for the next conversion (fx.keepCover), on its day(s) `on`: nothing when the deposits
+ * released by then cover what it takes ("אין צורך לשמור כסף להמרה של יום ד' 4.11: …"), else the rest, with what the
+ * deposits bring. */
+function keepLine(cover, on, policy) {
   const ds = cover.deposits;
-  const conversion = `להמרה של ${day(date)}`;
+  const conversion = `להמרה של ${days(on)}`;
   if (!(cover.fromDeposits > 0.5) || !ds.length) return `להשאיר ${eur(cover.required)} בפועלים ${conversion} (${policy}).`;
   const last = ds[ds.length - 1].valueDate;
   if (cover.covered) {
@@ -164,17 +167,16 @@ function keepLine(cover, date, policy) {
 
 const dayAfter = (iso) => new Date(Date.parse(`${String(iso).slice(0, 10)}T12:00:00Z`) + 86400000).toISOString().slice(0, 10);
 
-/** A conversion against the deposits, first in, first out (plan.coverage): "יום ה' 7.1: €1.05M, הפיקדונות מכסים €922K:
- * חסרים €128K". With the bank's deals it may leave in parts, each on its value day: "יום א' 7.3: €1.05M (€600K ביום ו'
- * 5.3, €450K ביום ב' 8.3), הפיקדונות מכסים €810K: חסרים €240K ביום ב' 8.3". Short, it says why. A deposit paying out after
- * the last euros leave but by the 7th counts for the next conversion ("הפיקדון שמשתחרר ביום ו' 5.3 (€405K) מגיע אחרי שהבנק
- * לוקח את האירו ביום ה' 4.3, ולכן נספר להמרה של יום ד' 7.4"). With no deposit at all, the days one would have to pay out
- * in: the earlier ones went to the earlier conversions. */
+/** A conversion against the deposits, first in, first out (plan.coverage), by its conversion day: with the bank's deals
+ * the day its euros leave ("יום ד' 6.1: €1.05M, הפיקדונות מכסים €922K: חסרים €128K"), in parts each part's ("יום ו' 5.3
+ * ויום ב' 8.3: €1.05M (€600K ו-€450K), הפיקדונות מכסים €810K: חסרים €240K ביום ב' 8.3"); without them, the 7th. Short, it
+ * says why. A deposit paying out after the last euros leave but by the 7th counts for the next conversion ("הפיקדון
+ * שמשתחרר ביום ו' 5.3 (€405K) מגיע אחרי שהבנק לוקח את האירו ביום ה' 4.3, ולכן נספר להמרה של יום ד' 7.4"). With no deposit
+ * at all, the days one would have to pay out in: the earlier ones went to the earlier conversions. */
 function coverText(c, first, next) {
   const legs = c.legs && c.legs.length ? c.legs : [{ settle: c.takes, required: c.required, gap: c.gap }];
-  // With the deals, the day its euros leave even when in one part ("שבת 7.11: €1.10M (ביום ד' 4.11)").
-  const parts = legs.length > 1 ? ` (${legs.map((l) => `${eur(l.required)} ב${day(l.settle)}`).join(', ')})` : c.deals ? ` (ב${day(legs[0].settle)})` : '';
-  const head = `${day(c.date)}: ${eur(c.required)}${parts}`;
+  const parts = legs.length > 1 ? ` (${legs.map((l) => eur(l.required)).join(' ו-')})` : '';
+  const head = `${days(c.on || [c.date])}: ${eur(c.required)}${parts}`;
   if (!(c.gap >= 0.5)) return `${head}, מכוסה מהפיקדונות (${eur(c.have)})`;
   const lastOut = legs[legs.length - 1].settle;
   const missing = legs.length > 1 ? `חסרים ${legs.filter((l) => l.gap >= 0.5).map((l) => `${eur(l.gap)} ב${day(l.settle)}`).join(' ו-')}` : `חסרים ${eur(c.gap)}`;
@@ -184,13 +186,13 @@ function coverText(c, first, next) {
     const total = late.reduce((s, d) => s + d.amount, 0);
     const last = late[late.length - 1].valueDate;
     const which = late.length === 1 ? `הפיקדון שמשתחרר ב${day(last)} (${eur(total)}) מגיע` : `${late.length} פיקדונות שמשתחררים עד ${day(last)} (${eur(total)}) מגיעים`;
-    why = `${which} אחרי שהבנק לוקח את האירו ב${day(lastOut)}, ולכן ${late.length === 1 ? 'נספר' : 'נספרים'} ${next ? `להמרה של ${day(next.date)}` : 'להמרה שאחריה'}`;
+    why = `${which} אחרי שהבנק לוקח את האירו ב${day(lastOut)}, ולכן ${late.length === 1 ? 'נספר' : 'נספרים'} ${next ? `להמרה של ${days(next.on || [next.date])}` : 'להמרה שאחריה'}`;
   }
   const covered = c.required - c.gap;
   if (covered >= 0.5) return `${head}, הפיקדונות מכסים ${eur(covered)}: ${missing}${why ? ` (${why})` : ''}`;
   if (why) return `${head}, ${why}: ${missing}`;
   const span = first || !c.from ? `עד ${day(lastOut)}` : `בין ${day(dayAfter(c.from))} ל${day(lastOut)}`;
-  return `${head}, אין פיקדון שמשתחרר ${span}${legs.length > 1 ? '' : ' (היום שהבנק לוקח את האירו)'}: ${missing}`;
+  return `${head}, אין פיקדון שמשתחרר ${span}${legs.length > 1 || c.deals ? '' : ' (היום שהבנק לוקח את האירו)'}: ${missing}`;
 }
 
 /** A payment day in the list: "יום ה' 5.11, בעוד 15 ימים: שכר נטו …, ₪4.92M: להמיר €1.21M". */
@@ -268,7 +270,7 @@ function renderMail(fx, data, { policy = 'today', link = null } = {}) {
     // Today's balances, in one paragraph.
     const shekels = cash && cash.onHand ? `${ils(cash.onHand.total)} בשקלים (${ils(cash.onHand.current)} בעו"ש ו-${ils(cash.onHand.deposits)} בפיקדונות), ` : '';
     const status = `${shekels}${eur(n.hapoalim)} בחשבון האירו בפועלים ו-${eur(n.other)} בחשבונות אחרים. `
-      + `${keepLine(fx.keepCover(plan), n.date, POLICY[plan.policy])}`
+      + `${keepLine(fx.keepCover(plan), plan.coverage && plan.coverage[0] ? plan.coverage[0].on : [n.date], POLICY[plan.policy])}`
       + `${cash ? '' : ` פנוי להמרה עכשיו: ${eur(n.freeNow)}.`}`
       + `${rc ? ` ${rateIs(rc)}.` : ''}`;
     parts.push(heading('המצב היום'));
