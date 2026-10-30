@@ -2,9 +2,9 @@
 // The FX Challenge page (Business Tools → FX Challenge, fx-challenge.html):
 //   GET /api/fx-challenge          what the page simulates on; ?refresh=true reads NetSuite again
 //   GET/PUT /api/fx-challenge/table  the conversion table, saved for everyone (none saved = the default)
-//   GET/PUT /api/fx-challenge/positions  the bank's deals (its two position reports, read on the page), saved for
-//                                    everyone: when each conversion's euros leave (none saved = the business day
-//                                    before the 7th)
+//   GET/PUT /api/fx-challenge/positions  the bank's deals (its position reports, any number, read on the page), saved
+//                                    for everyone: how many euros each conversion sells and when they leave (none
+//                                    saved = the table's amounts, the business day before the 7th)
 //   GET/PUT /api/fx-challenge/mail   who gets the daily mail, saved for everyone (none saved = FX_MAIL_TO)
 //   POST /api/fx-challenge/mail/send the page's Send now: the daily mail, at once
 // createFxChallengeRouter serves them all behind the one prefix.
@@ -196,14 +196,29 @@ function forwardIn(f, at, errors) {
     counterAmount: numIn(f.counterAmount, -POSITION_LIMITS.ils, POSITION_LIMITS.ils, `${at}.counterAmount`, errors),
   };
 }
-/** PUT body { value: { asOf: { options, forwards }, options, forwards } } → { ok, value, errors }; { value: null } clears
- * them (the euros leave the business day before the 7th again). */
+/** A report the deals came from (mergePositionReports): its file, kind, account (its own number), day and deal numbers. */
+function reportIn(r, at, errors) {
+  if (!keysOnly(r, ['name', 'kind', 'account', 'asOf', 'deals'], at, errors)) return null;
+  const deals = Array.isArray(r.deals) && r.deals.length <= POSITION_LIMITS.deals
+    ? r.deals.map((d, i) => textIn(String(d ?? ''), 30, `${at}.deals[${i + 1}]`, errors))
+    : (errors.push(`${at}.deals: up to ${POSITION_LIMITS.deals} deal numbers`), []);
+  return {
+    name: r.name === null || r.name === undefined ? null : textIn(String(r.name), 200, `${at}.name`, errors),
+    kind: r.kind === 'options' || r.kind === 'forwards' ? r.kind : (errors.push(`${at}.kind: options or forwards`), null),
+    account: r.account === null || r.account === undefined ? null : /^\d{1,12}$/.test(String(r.account)) ? String(r.account) : (errors.push(`${at}.account: its number`), null),
+    asOf: r.asOf === null || r.asOf === undefined ? null : dayIn(r.asOf, `${at}.asOf`, errors),
+    deals,
+  };
+}
+
+/** PUT body { value: { asOf: { options, forwards }, options, forwards, reports? } } → { ok, value, errors }; { value: null }
+ * clears them (the table's amounts, and the euros leave the business day before the 7th again). */
 function validatePositions(body) {
   const errors = [];
   if (!keysOnly(body, ['value'], 'body', errors)) return { ok: false, value: null, errors };
   if (body.value === null) return { ok: true, value: null, errors: [] };
   const p = body.value;
-  if (!keysOnly(p, ['asOf', 'options', 'forwards'], 'positions', errors)) return { ok: false, value: null, errors };
+  if (!keysOnly(p, ['asOf', 'options', 'forwards', 'reports'], 'positions', errors)) return { ok: false, value: null, errors };
   const asOf = { options: null, forwards: null };
   if (p.asOf !== null && typeof p.asOf === 'object' && keysOnly(p.asOf, ['options', 'forwards'], 'positions.asOf', errors)) {
     for (const k of ['options', 'forwards']) asOf[k] = p.asOf[k] === null || p.asOf[k] === undefined ? null : dayIn(p.asOf[k], `positions.asOf.${k}`, errors);
@@ -213,6 +228,10 @@ function validatePositions(body) {
     return v.map((x, i) => fn(x, `positions.${what}[${i + 1}]`, errors)).filter(Boolean);
   };
   const value = { asOf, options: list(p.options, 'options', optionIn), forwards: list(p.forwards, 'forwards', forwardIn) };
+  if (p.reports !== undefined) {
+    if (!Array.isArray(p.reports) || p.reports.length > 50) errors.push('positions.reports: up to 50 reports');
+    else value.reports = p.reports.map((r, i) => reportIn(r, `positions.reports[${i + 1}]`, errors)).filter(Boolean);
+  }
   if (!value.options.length && !value.forwards.length) errors.push('positions: no deals');
   return errors.length ? { ok: false, value: null, errors: errors.slice(0, 20) } : { ok: true, value, errors: [] };
 }

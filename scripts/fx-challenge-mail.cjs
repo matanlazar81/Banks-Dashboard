@@ -172,7 +172,8 @@ const dayAfter = (iso) => new Date(Date.parse(`${String(iso).slice(0, 10)}T12:00
  * in: the earlier ones went to the earlier conversions. */
 function coverText(c, first, next) {
   const legs = c.legs && c.legs.length ? c.legs : [{ settle: c.takes, required: c.required, gap: c.gap }];
-  const parts = legs.length > 1 ? ` (${legs.map((l) => `${eur(l.required)} ב${day(l.settle)}`).join(', ')})` : '';
+  // With the deals, the day its euros leave even when in one part ("שבת 7.11: €1.10M (ביום ד' 4.11)").
+  const parts = legs.length > 1 ? ` (${legs.map((l) => `${eur(l.required)} ב${day(l.settle)}`).join(', ')})` : c.deals ? ` (ב${day(legs[0].settle)})` : '';
   const head = `${day(c.date)}: ${eur(c.required)}${parts}`;
   if (!(c.gap >= 0.5)) return `${head}, מכוסה מהפיקדונות (${eur(c.have)})`;
   const lastOut = legs[legs.length - 1].settle;

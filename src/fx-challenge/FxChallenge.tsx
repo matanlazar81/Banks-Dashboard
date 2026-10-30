@@ -7,12 +7,13 @@ import { ErrorCard, Segmented, Skeleton, Warnings } from '../new-dashboard/PageP
 import { KpiCard } from '../new-dashboard/KpiStrip.tsx';
 import { readParam, writeParam } from '../new-dashboard/urlParams.ts';
 import {
-  bandLabels, parsePositionReport, parseTable, POLICIES, POLICY_LABEL, tableToText,
-  type CashPlan, type DepositRelease, type FxTable, type OtherConversion, type OutcomeRange, type PathPoint, type Policy, type Positions, type RateCheck, type ReservePlan,
+  bandLabels, mergePositionReports, parsePositionReport, parseTable, POLICIES, POLICY_LABEL, tableToText,
+  type CashPlan, type DepositRelease, type Fixing, type FxTable, type OtherConversion, type OutcomeRange, type PathPoint, type Policy, type PositionReport, type Positions,
+  type RateCheck, type ReservePlan,
 } from '../forecast/fx-challenge.mjs';
 import { formatEur, monthName } from '../metrics/model.ts';
 import { fetchFx, fetchMail, readSheetRows, saveMail, savePositions, saveTable, sendMailNow } from './api.ts';
-import { buildFxModel, formatDay, formatIls, formatPct0, formatRate, formatTableRate, type FxModel, type ScheduleRow } from './fxModel.ts';
+import { buildFxModel, conversionDays, formatDay, formatDays, formatIls, formatPct0, formatRate, formatTableRate, type FxModel, type ScheduleRow } from './fxModel.ts';
 import type { FxPayload, MailSettings } from './types.ts';
 
 type Phase = 'loading' | 'ready' | 'error';
@@ -74,9 +75,11 @@ const eur0 = (v: number) => (Math.abs(v) < 0.5 ? '€0' : formatEur(v));
 /** "below 3.3", "3.3 – 3.49", "4.295 or more": a range of EUR/ILS (a rate on an edge belongs to the range above). */
 const rangeLabel = (o: OutcomeRange) => (o.lo === null ? `below ${o.hi}` : o.hi === null ? `${o.lo} or more` : `${o.lo} – ${o.hi}`);
 const chance = (p: number) => (p < 0.005 ? '<1%' : `${Math.round(p * 100)}%`);
+/** When EUR/ILS decides a conversion: "on Mon 2 & Tue 3 Nov" (the bank's deals' fixing days), else "on Sat 7 Nov 2026". */
+const fixedWhen = (f: Fixing) => `on ${f.fixedOn ? formatDays(f.fixedOn) : formatDay(f.date, true)}`;
 /** A conversion's outcomes, one line each, for a hover. */
-const outcomeTip = (date: string, list: OutcomeRange[] | null | undefined) => (list ? [
-  `If EUR/ILS on ${formatDay(date, true)} is:`,
+const outcomeTip = (f: Fixing, list: OutcomeRange[] | null | undefined) => (list ? [
+  `If EUR/ILS ${fixedWhen(f)} is:`,
   ...list.filter((o) => o.p >= 0.005).map((o) => `${rangeLabel(o)}: ${chance(o.p)} → ${o.eur ? `${formatEur(o.eur)} at ${formatTableRate(o.rate)}` : 'nothing sold'}`),
 ].join('\n') : undefined);
 
@@ -169,7 +172,7 @@ function Kpis({ model }: { model: FxModel }) {
         note={model.spotBand !== null ? `Band ${model.labels[model.spotBand]} · ${formatDay(model.spotDate)}` : 'No rate from NetSuite'} />
       <KpiCard label="Next conversion" value={next && next.atSpot ? next.atSpot.eur : null} ccy="eur"
         display={next && next.atSpot ? `${formatEur(next.atSpot.eur)} → ${formatIls(next.atSpot.ils)}` : undefined}
-        note={next ? `${formatDay(next.fixing.date)}${next.fixing.weekend ? ' (weekend)' : ''} at today's rate${next.atSpot ? `, ${formatTableRate(next.atSpot.rate)}` : ''}` : 'No conversion left in the table'} />
+        note={next ? `${next.fixing.fixedOn ? `Fixed ${formatDays(next.fixing.fixedOn)}` : `${formatDay(next.fixing.date)}${next.fixing.weekend ? ' (weekend)' : ''}`}${next.fixedAt ? ` at EUR/ILS ${formatRate(next.fixedAt.rate)}` : " at today's rate"}${next.atSpot ? `, ${formatTableRate(next.atSpot.rate)}` : ''}` : 'No conversion left in the table'} />
       <KpiCard label="Keep for it" value={keepEur} ccy="eur" display={keepEur !== null ? eur0(keepEur) : undefined}
         note={model.plan ? `${POLICY_LABEL[model.plan.policy]}${coverNote}` : 'Needs balances'} />
       {cash && plan ? (
@@ -197,7 +200,7 @@ const KEEP_TIP: Record<Policy, string> = {
   worst: "The largest amount in that month's row of the table, whatever the rate. It is paid from Hapoalim EUR (583400).",
 };
 const PATH_TIP = {
-  fixing: "The conversion day, the 7th of each month: that day's EUR/ILS picks the band of the table. On a weekend the deal sets the day.",
+  fixing: "The conversion day in the table, the 7th of each month: that day's EUR/ILS picks the band. With the bank's deals, EUR/ILS is fixed a few days before and the euros leave on their value days (the schedule below shows them).",
   expected: "What the conversion sells on average: each band's euros, weighted by the chance that EUR/ILS lands in it that day, from today's rate. The bank sells one cell; this is for planning. Hover a figure for the chances.",
   released: 'EUR deposits that mature after the previous conversion (after today, for the first) and by this one, at the bank\'s value at maturity with interest. Hover a figure for each deposit and its date. They count only if the bank pays them out rather than rolling them over; a blocked deposit is left out.',
   available: "What you would hold on the day if nothing else is converted: today's liquid euros, plus the typical inflow and the deposits released by then, less what the earlier conversions take (at the amount kept) and the conversions for salaries and vendors by then.",
@@ -228,7 +231,10 @@ function Recommendation({ model, policy, onPolicy, inflowMonths }: { model: FxMo
   }
   const n = plan.next;
   const keep = model.keep;
-  const weekend = first.fixing.weekend ? ' (a weekend: the deal sets the day)' : '';
+  // With the bank's deals, the conversion by its month and days; without, by the table's day.
+  const deals = !!first.fixing.fixedOn;
+  const when = deals ? `the ${monthName(first.fixing.month)} conversion (${conversionDays(first.fixing, first.fixedAt)})`
+    : `${formatDay(n.date)}${first.fixing.weekend ? ' (a weekend: the deal sets the day)' : ''}`;
   // Deposits from NetSuite's books have no dates, so none of them shows as released on a day.
   const undated = !!model.position && model.position.deposits.length > 0 && model.position.deposits.every((d) => !d.valueDate);
   const later = plan.later.reduce((s, d) => s + d.amount, 0);
@@ -242,11 +248,11 @@ function Recommendation({ model, policy, onPolicy, inflowMonths }: { model: FxMo
           {keep && keep.text ? (
             <>
               {keep.covered ? <><strong>Nothing to keep</strong> for</> : <>Keep <strong>{eur0(keep.fromCash)}</strong> in Hapoalim EUR (583400) for</>}
-              {' '}{formatDay(n.date)}{weekend}:{' '}
+              {' '}{when}:{' '}
               <span title="A deposit counts if the bank pays it into Hapoalim EUR (583400) by the conversion, rather than rolling it over.">{keep.text}</span>.
             </>
           ) : (
-            <>Keep <strong>{formatEur(n.required)}</strong> in Hapoalim EUR (583400) for {formatDay(n.date)}{weekend}.</>
+            <>Keep <strong>{formatEur(n.required)}</strong> in Hapoalim EUR (583400) for {when}.</>
           )}
           {model.cash ? null : (
             <>
@@ -258,10 +264,19 @@ function Recommendation({ model, policy, onPolicy, inflowMonths }: { model: FxMo
         {model.cash && <CashLines model={model} plan={plan} />}
         {model.rateCheck && <RateLine rc={model.rateCheck} free={model.cash ? n.spare : n.freeNow} />}
         <div className="space-y-1.5">
-          <p className="text-[13px]">
-            What the {formatDay(n.date)} conversion sells depends on EUR/ILS that day. At today&apos;s {formatRate(model.spot)}: {formatEur(n.todayAmount)} at
-            {' '}{formatTableRate(first.atSpot.rate)} ({formatIls(first.atSpot.ils)}). On average (expected): <strong>{formatEur(first.risk.expectedEur)}</strong>.
-          </p>
+          {first.fixedAt ? (
+            <p className="text-[13px]">
+              The {monthName(first.fixing.month)} conversion was fixed {fixedWhen(first.fixing)}: at NetSuite&apos;s EUR/ILS of {formatDay(first.fixedAt.date)},
+              {' '}{formatRate(first.fixedAt.rate)}, it sells {formatEur(first.atSpot.eur)} at {formatTableRate(first.atSpot.rate)} ({formatIls(first.atSpot.ils)})
+              {n.todayAmount < first.atSpot.eur - 0.5 ? <>, of which {formatEur(first.atSpot.eur - n.todayAmount)} is already paid</> : null}.
+            </p>
+          ) : (
+            <p className="text-[13px]">
+              What the {deals ? monthName(first.fixing.month) : formatDay(n.date)} conversion sells depends on EUR/ILS {deals ? fixedWhen(first.fixing) : 'that day'}. At
+              {' '}today&apos;s {formatRate(model.spot)}: {formatEur(n.todayAmount)} at {formatTableRate(first.atSpot.rate)} ({formatIls(first.atSpot.ils)}). On average
+              {' '}(expected): <strong>{formatEur(first.risk.expectedEur)}</strong>.
+            </p>
+          )}
           <Outcomes s={first} spotBand={model.spotBand} />
         </div>
         <ul className="list-disc space-y-1 pl-5 text-[13px]">
@@ -310,7 +325,7 @@ function Recommendation({ model, policy, onPolicy, inflowMonths }: { model: FxMo
                       </button>
                     </td>
                     <td className={TD}>{formatEur(p.required)}</td>
-                    <td className={`${TD} text-slate-500`} title={outcomeTip(p.date, model.schedule.find((x) => x.fixing.month === p.month)?.outcomes)}>
+                    <td className={`${TD} text-slate-500`} title={(() => { const s = model.schedule.find((x) => x.fixing.month === p.month); return s ? outcomeTip(s.fixing, s.outcomes) : undefined; })()}>
                       <span className={HINT}>{formatEur(p.expected)}</span>
                     </td>
                     <td className={`${TD} text-slate-600`} title={p.releasedDeposits.length ? releaseTip(p) : undefined}>
@@ -433,63 +448,45 @@ function CoverageCard({ model, plan }: { model: FxModel; plan: ReservePlan }) {
   );
 }
 
-interface ReadReport {
-  name: string;
-  kind: 'options' | 'forwards' | null;
-  asOf: string | null;
-  count: number;
-  skipped: number;
-  problems: string[];
-  /** Why it is left out: another report of its kind in the same upload is used, or no deal could be read from it. */
-  unused: string | null;
-  /** The saved report's day, when this one is older: saving it puts back older deals. */
-  older: string | null;
+/** A button that picks Excel files (several at once). */
+function PickFiles({ label, title, busy, onFiles }: { label: string; title?: string; busy: boolean; onFiles: (files: File[]) => void }) {
+  return (
+    <label className={`${BUTTON} cursor-pointer`} title={title}>
+      {busy ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}{label}
+      <input type="file" accept=".xlsx,.xls" multiple className="hidden" disabled={busy}
+        onChange={(e: { currentTarget: HTMLInputElement }) => { const files = Array.from(e.currentTarget.files || []); e.currentTarget.value = ''; onFiles(files); }} />
+    </label>
+  );
 }
 
-/** The bank's deals: Hapoalim's two position reports, read here and saved for everyone. The months their options cover
- * take their amounts from them (the conversion table shows it), each conversion's euros leave on its parts' value days,
- * and the forwards' shekels count when they come in; the saved table fills the other months. */
+const KIND_WORD = { options: 'Options', forwards: 'Forwards' } as const;
+/** "Options of account 583400, Fri 30 Oct 2026": a report by its kind, account and day. */
+const reportLabel = (r: { kind: 'options' | 'forwards'; account: string | null; asOf: string | null }) =>
+  `${KIND_WORD[r.kind]}${r.account ? ` of account ${r.account}` : ''}, ${r.asOf ? formatDay(r.asOf, true) : 'day unknown'}`;
+
+/** The bank's deals: Hapoalim's position reports (any number: the options and the forwards, of one account or more),
+ * read here and saved for everyone. The months their options cover take their amounts from them (the conversion table
+ * shows it), each conversion's euros leave on its parts' value days, and the forwards' shekels count when they come in;
+ * the saved table fills the other months. */
 function DealsCard({ data, model, onSaved }: { data: FxPayload; model: FxModel; onSaved: () => Promise<void> }) {
   const saved = data.positions || null;
   const d = model.deals;
-  const [draft, setDraft] = useState<{ value: Positions; reports: ReadReport[] } | null>(null);
+  const [reads, setReads] = useState<{ name: string; report: PositionReport }[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // What saving would keep: each file's deals in place of its account's saved report, the other saved reports as they are.
+  const merged = useMemo(() => (reads ? mergePositionReports(saved, reads) : null), [reads, saved]);
 
-  // Each report read replaces its own deals (the newest, when several of a kind are picked); the other report's stay as
-  // saved. One older than the saved one is flagged before it can be saved.
+  // Files picked are added to those already read (picked again, a file replaces its earlier read), so they can be
+  // picked together or one by one before saving.
   async function read(files: File[]) {
     if (!files.length) return;
     setBusy(true);
     setErr(null);
     try {
-      const value: Positions = {
-        asOf: { options: saved ? saved.asOf.options : null, forwards: saved ? saved.asOf.forwards : null },
-        options: saved ? saved.options : [],
-        forwards: saved ? saved.forwards : [],
-      };
-      const reports: ReadReport[] = [];
-      const used: { options?: ReadReport; forwards?: ReadReport } = {};
-      for (const f of files) {
-        const r = parsePositionReport(await readSheetRows(f));
-        const count = r.kind === 'options' ? r.options.length : r.kind === 'forwards' ? r.forwards.length : 0;
-        const report: ReadReport = { name: f.name, kind: r.kind, asOf: r.asOf, count, skipped: r.skipped, problems: r.problems, unused: null, older: null };
-        reports.push(report);
-        if (!r.kind) continue;
-        if (!count && r.problems.length) { report.unused = 'left out: no deal could be read from it'; continue; }
-        const prev = used[r.kind];
-        if (prev && (prev.asOf || '') >= (r.asOf || '')) { report.unused = `left out: ${prev.name} is used, one report of each kind`; continue; }
-        if (prev) prev.unused = `left out: ${f.name} is newer`;
-        used[r.kind] = report;
-        if (r.kind === 'options') { value.options = r.options; value.asOf.options = r.asOf; }
-        else { value.forwards = r.forwards; value.asOf.forwards = r.asOf; }
-      }
-      for (const kind of ['options', 'forwards'] as const) {
-        const report = used[kind];
-        const was = saved ? saved.asOf[kind] : null;
-        if (report && was && report.asOf && report.asOf < was) report.older = was;
-      }
-      setDraft({ value, reports });
+      const got: { name: string; report: PositionReport }[] = [];
+      for (const f of files) got.push({ name: f.name, report: parsePositionReport(await readSheetRows(f)) });
+      setReads((prev) => [...(prev || []).filter((r) => !got.some((g) => g.name === r.name)), ...got]);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -500,10 +497,9 @@ function DealsCard({ data, model, onSaved }: { data: FxPayload; model: FxModel; 
     setBusy(true);
     setErr(null);
     try {
-      // Reports with no deal left (all fixed and paid) clear what was saved.
-      await savePositions(value.options.length || value.forwards.length ? value : null);
+      await savePositions(value);
       await onSaved();
-      setDraft(null);
+      setReads(null);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -511,53 +507,63 @@ function DealsCard({ data, model, onSaved }: { data: FxPayload; model: FxModel; 
     }
   }
 
-  const KIND = { options: 'the options report', forwards: 'the forwards report' } as const;
-  const usable = !!draft && draft.reports.some((r) => r.kind && !r.unused);
-  const older = !!draft && draft.reports.some((r) => r.older);
+  const usable = !!merged && merged.files.some((f) => f.used);
+  const older = !!merged && merged.files.some((f) => f.used && f.older);
   const savedLabels = bandLabels(data.table.bounds);
+  const pickTitle = "Hapoalim's position reports: OTCPositionDetails.xlsx (the options) and FXPositionDetails.xlsx (the forwards), of one account or more. Pick several at once, or add them one by one before saving.";
   return (
     <Card title="The bank's deals (how many euros, and when they leave)"
       aside={(
         <div className="flex items-center gap-2 text-[11px] text-slate-500">
           {saved && <span>Saved{saved.savedAt ? ` ${new Date(saved.savedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}` : ''}{saved.savedBy ? ` by ${saved.savedBy}` : ''}</span>}
-          <label className={`${BUTTON} cursor-pointer`} title="Hapoalim's OTCPositionDetails.xlsx (the options) and FXPositionDetails.xlsx (the forwards), one or both">
-            {busy ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}Upload the bank&apos;s reports
-            <input type="file" accept=".xlsx,.xls" multiple className="hidden" disabled={busy}
-              onChange={(e: { currentTarget: HTMLInputElement }) => { const files = Array.from(e.currentTarget.files || []); e.currentTarget.value = ''; void read(files); }} />
-          </label>
+          <PickFiles label="Upload the bank's reports" title={pickTitle} busy={busy} onFiles={(files) => void read(files)} />
         </div>
       )}>
-      {draft && (
+      {merged && (
         <div className="mb-3 space-y-2 rounded-md border border-sky-200 bg-sky-50/50 p-3 text-xs text-slate-700">
           <ul className="space-y-1">
-            {draft.reports.map((r) => (
-              <li key={r.name}>
-                <span className="font-medium">{r.name}</span>:{' '}
-                {r.kind ? `${KIND[r.kind]} of ${r.asOf ? formatDay(r.asOf, true) : 'an unknown day'}, ${r.count} ${r.kind === 'options' ? 'EUR/ILS options' : 'forwards'}${r.skipped ? ` (${r.skipped} in other currencies left out)` : ''}` : 'not one of the bank\'s position reports'}
-                {r.unused && <span className="text-slate-500"> ({r.unused})</span>}
-                {r.older && (
+            {merged.files.map((f) => (
+              <li key={f.name}>
+                <span className="font-medium">{f.name}</span>:{' '}
+                {f.kind
+                  ? `${reportLabel({ kind: f.kind, account: f.account, asOf: f.asOf })}: ${f.count} ${f.kind === 'options' ? 'EUR/ILS options' : 'forwards'}${f.skipped ? ` (${f.skipped} in other currencies left out)` : ''}`
+                  : "not one of the bank's position reports"}
+                {f.kind && !f.used && f.why && <span className="text-slate-500"> (left out: {f.why})</span>}
+                {f.used && (
+                  <span className="text-slate-500">
+                    {f.replaces.length ? ` (replaces the one saved${f.replaces.some((r) => r.asOf) ? `, of ${f.replaces.map((r) => (r.asOf ? formatDay(r.asOf, true) : 'an unknown day')).join(' and ')}` : ''})` : saved ? ' (added to the ones saved)' : ''}
+                  </span>
+                )}
+                {f.older && (
                   <p className="font-medium text-amber-700">
-                    Older than the one saved, of {formatDay(r.older, true)}: saving it puts back the deals as they were on {formatDay(r.asOf, true)}.
+                    Older than the one saved, of {formatDay(f.older, true)}: saving it puts back the deals as they were on {formatDay(f.asOf, true)}.
                   </p>
                 )}
-                {r.kind && !r.asOf && !r.unused && (
+                {f.used && !f.asOf && (
                   <p className="text-amber-700">The report&apos;s day (תאריך הפקה) was not found, so it can&apos;t be checked against the one saved: make sure it is the latest.</p>
                 )}
-                {r.problems.length > 0 && (
+                {f.kind && f.problems.length > 0 && (
                   <ul className="list-disc pl-5 text-rose-700">
-                    {r.problems.slice(0, 4).map((p) => <li key={p}>{p}</li>)}
-                    {r.problems.length > 4 && <li>…and {r.problems.length - 4} more.</li>}
+                    {f.problems.slice(0, 4).map((p) => <li key={p}>{p}</li>)}
+                    {f.problems.length > 4 && <li>…and {f.problems.length - 4} more.</li>}
                   </ul>
                 )}
               </li>
             ))}
           </ul>
+          {usable && merged.kept.length > 0 && (
+            <p className="text-slate-600">Kept as saved: {merged.kept.map((k) => `${reportLabel(k)} (${k.deals.length} deals)`).join('; ')}.</p>
+          )}
           <div className="flex flex-wrap items-center gap-2">
-            <button type="button" className={BUTTON} disabled={busy || !usable} onClick={() => void save(draft.value)}>
+            <button type="button" className={BUTTON} disabled={busy || !usable || !merged.value} onClick={() => { if (merged.value) void save(merged.value); }}>
               {busy && <Loader2 size={12} className="animate-spin" />}{older ? 'Save anyway' : 'Save for everyone'}
             </button>
-            <button type="button" className={BUTTON} disabled={busy} onClick={() => setDraft(null)}>Cancel</button>
-            <span className="text-slate-500">Saved for everyone, each save kept in the history. Only the deals are kept: no account number or valuation.</span>
+            <PickFiles label="Add more files" title={pickTitle} busy={busy} onFiles={(files) => void read(files)} />
+            <button type="button" className={BUTTON} disabled={busy} onClick={() => setReads(null)}>Cancel</button>
+            <span className="text-slate-500">
+              Each report replaces its account&apos;s saved one of its kind; other accounts&apos; stay. Saved for everyone, each save kept in the
+              history. Only the deals and the account&apos;s own number are kept: no branch, no valuation.
+            </span>
           </div>
         </div>
       )}
@@ -565,11 +571,17 @@ function DealsCard({ data, model, onSaved }: { data: FxPayload; model: FxModel; 
       {d ? (
         <div className="space-y-1.5 text-xs text-slate-700">
           <p>
-            {d.options > 0 && <>{d.options} options{d.asOf.options ? ` as of ${formatDay(d.asOf.options, true)}` : ''}{d.from && d.to ? `, fixed ${monthName(d.from)} – ${monthName(d.to)}` : ''}</>}
+            {d.options > 0 && <>{d.options} options{d.from && d.to ? `, fixed ${monthName(d.from)} – ${monthName(d.to)}` : ''}</>}
             {d.options > 0 && d.forwards > 0 && '; '}
-            {d.forwards > 0 && <>{d.forwards} forwards{d.asOf.forwards ? ` as of ${formatDay(d.asOf.forwards, true)}` : ''}</>}.
+            {d.forwards > 0 && <>{d.forwards} forwards</>}.
             {d.options > 0 && <>{' '}They give those months&apos; amounts (the conversion table below) and the days each conversion&apos;s euros leave (the conversions above); its shekels come in then.</>}
           </p>
+          {d.reports.length > 0 && (
+            <p className="text-slate-600">
+              From {d.reports.length === 1 ? 'one report' : `${d.reports.length} reports`}:{' '}
+              {d.reports.map((r) => `${reportLabel(r)} (${r.count} deal${r.count === 1 ? '' : 's'}${r.name ? `, ${r.name}` : ''})`).join('; ')}.
+            </p>
+          )}
           {d.flows.length > 0 && (
             <p title="The forwards netted by value day. A sale bought back the same day moves only shekels.">
               <span className={HINT}>Forwards ahead</span>:{' '}
@@ -592,10 +604,10 @@ function DealsCard({ data, model, onSaved }: { data: FxPayload; model: FxModel; 
         </div>
       ) : (
         <p className="text-xs text-slate-600">
-          Upload Hapoalim&apos;s two position reports (OTCPositionDetails.xlsx and FXPositionDetails.xlsx, &quot;פירוט עסקאות&quot;): the
-          months their options cover then take their amounts from them, each conversion&apos;s euros leave on its deals&apos; own value
-          days, and the forwards&apos; shekels count when they come in. Until then, the table gives the amounts and the plan takes the
-          euros the business day before the 7th.
+          Upload Hapoalim&apos;s position reports (OTCPositionDetails.xlsx and FXPositionDetails.xlsx, &quot;פירוט עסקאות&quot;, of one account
+          or more): the months their options cover then take their amounts from them, each conversion&apos;s euros leave on its deals&apos;
+          own value days, and the forwards&apos; shekels count when they come in. Until then, the table gives the amounts and the plan
+          takes the euros the business day before the 7th.
         </p>
       )}
     </Card>
@@ -849,7 +861,7 @@ function Outcomes({ s, spotBand }: { s: ScheduleRow; spotBand: number | null }) 
       <table className="text-xs">
         <thead>
           <tr className="border-b border-slate-200">
-            <Th left tip="EUR/ILS on the conversion day, by the table's ranges; neighbouring columns that sell the same amount are merged. A rate exactly on an edge counts in the range above.">If EUR/ILS on {formatDay(s.fixing.date)} is…</Th>
+            <Th left tip="EUR/ILS on the day it is fixed, by the table's ranges; neighbouring columns that sell the same amount are merged. A rate exactly on an edge counts in the range above.">If EUR/ILS {fixedWhen(s.fixing)} is…</Th>
             <Th tip="How likely EUR/ILS is to be in that range on the day, from today's rate and how much EUR/ILS usually moves (the volatility above). An estimate, not a forecast.">Chance</Th>
             <Th tip="The euros the bank converts if the rate lands in that range.">It sells</Th>
             <Th tip="The deal's rate for that amount.">At</Th>
@@ -903,27 +915,27 @@ function Simulation({ model, rateText, onRate }: { model: FxModel; rateText: str
         <table className="min-w-full text-xs">
           <thead>
             <tr className="border-b border-slate-200">
-              <Th left tip="Each month left in the table, and its conversion day (the 7th; weekends flagged).">Conversion day</Th>
-              <Th tip="The euros that conversion sells if EUR/ILS is at the simulated rate on the day: the table's cell for that band.">Sold at {formatRate(model.simRate)}</Th>
+              <Th left tip="Each month left, and when: with the bank's deals, the days its parts are fixed (EUR/ILS then picks what they sell) and paid (the euros leave, the shekels come in); without, the table's day (the 7th; weekends flagged). A month stays until its last part is paid.">Conversion day</Th>
+              <Th tip="The euros that conversion sells if EUR/ILS is at the simulated rate on the day: the table's cell for that band. Once fixed, what it was fixed at, whatever the rate.">Sold at {formatRate(model.simRate)}</Th>
               <Th tip="The deals' blended rate in that cell.">Rate</Th>
               <Th tip="The euros sold times the cell's rate.">₪ received</Th>
               <Th tip="Against selling the same euros at the simulated rate itself: what the deal gains, or loses, over converting at that rate.">₪ vs that rate</Th>
               <Th tip="What the conversion sells on average: each band's euros weighted by its chance, from today's rate (not the simulated one). Hover a figure for the chances.">Expected €</Th>
-              <Th tip="Enough for 19 conversions in 20, from today's rate.">95% €</Th>
-              <Th tip="The largest amount in that month's row of the table.">Worst €</Th>
+              <Th tip="Enough for 19 conversions in 20, from today's rate to the day it is fixed.">95% €</Th>
+              <Th tip="The largest amount in that month's row of the table; once fixed, what it was fixed at.">Worst €</Th>
             </tr>
           </thead>
           <tbody>
             {model.schedule.map((s) => (
               <tr key={s.fixing.month} className="border-b border-slate-100">
                 <td className="px-2 py-1.5 text-left text-slate-700">
-                  {monthName(s.fixing.month)} <span className="text-slate-400">· {formatDay(s.fixing.date)}{s.fixing.weekend ? ' (weekend)' : ''}</span>
+                  {monthName(s.fixing.month)} <span className="text-slate-400">· {conversionDays(s.fixing, s.fixedAt)}</span>
                 </td>
                 <td className={`${TD} font-medium text-slate-900`}>{s.atSim ? formatEur(s.atSim.eur) : '–'}</td>
                 <td className={TD}>{s.atSim ? formatTableRate(s.atSim.rate) : '–'}</td>
                 <td className={TD}>{s.atSim ? formatIls(s.atSim.ils) : '–'}</td>
                 <td className={`${TD} ${s.atSim && s.atSim.vsSpotIls < 0 ? 'text-rose-700' : 'text-emerald-700'}`}>{s.atSim ? formatIls(s.atSim.vsSpotIls) : '–'}</td>
-                <td className={`${TD} text-slate-500`} title={outcomeTip(s.fixing.date, s.outcomes)}>{s.risk ? <span className={HINT}>{formatEur(s.risk.expectedEur)}</span> : '–'}</td>
+                <td className={`${TD} text-slate-500`} title={outcomeTip(s.fixing, s.outcomes)}>{s.risk ? <span className={HINT}>{formatEur(s.risk.expectedEur)}</span> : '–'}</td>
                 <td className={`${TD} text-slate-500`}>{s.risk ? formatEur(s.risk.p95Eur) : '–'}</td>
                 <td className={`${TD} text-slate-500`}>{s.risk ? formatEur(s.risk.worstEur) : '–'}</td>
               </tr>
