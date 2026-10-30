@@ -61,14 +61,22 @@ briefly a tab of the Metrics page before it got its own sidebar item.
   - EUR deposits that mature before the fixing count for it; later ones are the backup (broken early only
     if needed). Without the mail's balances there are no dates, so every deposit is backup.
   - The keep line (and the mail's) is what today's cash has to keep: what the conversion takes, less the deposits
-    released by then (`keepCover`, `describeKeep`). "Nothing to keep for Sat 7 Nov: the deposit released on Thu 5 Nov
+    released by then (`keepCover`, `describeKeep`), and the EUR vendor payments Hapoalim EUR makes itself in the
+    conversion's month before its euros leave (`hapoalimVendors`: the same account pays them; its first-week run goes
+    on the month's first Tuesday, about €161K a month in August to October 2026; earlier ones are met by the inflow
+    before then). "Nothing to keep for Sat 7 Nov: the deposit released on Thu 5 Nov
     (€1.00M) covers the €800K it takes from Hapoalim EUR (583400)", or "Keep €300K in Hapoalim EUR (583400) for Sat 7
-    Nov: it takes €800K, and the deposit released on Thu 5 Nov brings €500K of it". The **Keep for it** card shows
-    the same amount (€0 when covered), with what the conversion takes and what covers it under it.
+    Nov: it takes €800K, and the deposit released on Thu 5 Nov brings €500K of it", or "Keep €460K … for the conversion
+    of Wed 4 Nov: it takes €1.10M, the 3 deposits released by Tue 3 Nov bring €806K of it, and about €166K of EUR
+    vendor payments leave Hapoalim EUR before it". The **Keep for it** card shows the same amount (€0 when covered),
+    with what the conversion takes and what covers it under it.
   - Free to convert now = liquid euros less what the reserve still needs (and the EUR vendor payments expected
     before it, when they are planned on their days). It is also shown with the backup
     covering a jump above today's band, and by the fixing with the typical inflow (customers less EUR
-    payments, before conversions, deposits and transfers, last 3 closed months).
+    payments, before conversions, deposits and transfers, last 3 closed months). The inflow comes in on business days
+    only, **Sunday to Friday** (`receiptDaysBetween`: nothing on a Saturday, finance's rule of 30 Oct 2026), each with
+    the month's over its 26 of them (`perBusinessDay`), up to the day before a due: from a Friday to the Sunday after,
+    nothing.
   - The path shows the next 6 fixings if nothing else is converted. Its **Deposits released** column is the EUR
     deposits maturing after the previous fixing (after today, for the first) and by that one; hover a figure for
     each deposit's date and value. Deposits maturing after the last fixing shown are listed under the table.
@@ -133,9 +141,12 @@ briefly a tab of the Metrics page before it got its own sidebar item.
     business day it has to be ready: said from 2 business days (Sunday to Thursday) before that day, in red, and not
     earlier (`notice`), whatever the rate. Finance converts at once, and the figure moves until then; before that,
     the payment is only in the payments ahead. (An early conversion on a high EUR/ILS was dropped on 27 Oct 2026.)
-  - **Short**: the euros held and expected fall short of a due (urgent in its last 5 business days).
+  - **Short**: the euros held and expected don't meet a due even with the EUR floor spent (`runsOut`: they run out;
+    urgent in its last 5 business days). A dip into the floor alone is no recommendation (the euros kept for EUR vendors
+    are a buffer: the payments are met), so it sends no mail; the mail's payments section and the page say how deep
+    it goes, what is still held and when the euros are back above it.
   - **Move** euros to Hapoalim EUR in the last 3 business days before the bank takes the euros (the business day
-    before the 7th), when it holds less than to keep there.
+    before the 7th), when it holds less than to keep there, its own EUR vendor payments before then included.
   - **Deposits for the conversions the deposits leave short** (`ladder`): "Put €440K in deposits for the January to
     March conversions: €130K until Wed 6 Jan for Thu 7 Jan (€128K short), …". It comes before any other use of spare
     euros.
@@ -170,10 +181,14 @@ briefly a tab of the Metrics page before it got its own sidebar item.
     EUR vendor payments (the flows' vendor kind) are **kept in the euro accounts at all times** (the EUR floor: a
     month of them, the average of the 3 closed months), and **planned on the days they go out** (`eurVendorsAhead`,
     from `fetchEurVendorDays`: NetSuite's EUR vendor payments and checks by day, deposit accounts and dividends left
-    out). Most go out in the first week of the month, the days the conversions take their euros (July to September
-    2026: €476K of €683K a month by the 7th, €89K from the 8th to the 20th, €119K from the 21st). Each part of the
-    month (1st–7th, 8th–20th, 21st–end, `VENDOR_PARTS`) is expected at its average of the 3 closed months, due on its
-    first day; the part today is in, less what it has paid since it began, today. The typical inflow then leaves
+    out). Most go out in the first week of the month, the days the conversions take their euros: two runs, PKO EUR's
+    (€400–440K, around the 3rd; in June 2026 it went on the 30th of the month before) and Hapoalim EUR's (€145–180K,
+    on the first Tuesday). Each part of the month (1st–7th, 8th–20th, 21st–end, `VENDOR_PARTS`) is expected at its
+    average over the last 3 months in which it is over and booked (`VENDOR_BOOKED_DAYS`, 3 days after it ends), back
+    to the month before the 3 closed months: on 30 Oct 2026 the first week's and the 8th–20th's August to October
+    (€589K and €94K), the last part's July to September (€119K). Each is due on its first day; the part today is in,
+    less what it has paid since it began, today. With each day's Hapoalim EUR share (`fetchEurVendorDays`' `hapoalim`,
+    account 11001), the share Hapoalim pays before a conversion stays there (the keep line). The typical inflow then leaves
     them out (`typicalInflow(…, { vendors: false })`). Without NetSuite's payments by day, they stay in the typical
     inflow, spread evenly over the month, and the page says so. NetSuite's open EUR vendor bills are not used: few
     are entered ahead of payment (on 30 Oct 2026, 7 open, none due from November).
@@ -194,14 +209,20 @@ briefly a tab of the Metrics page before it got its own sidebar item.
     plan's **Salaries & vendors** column), the EUR vendor payments on their days (`eurOut`, the **EUR vendors**
     column), and the EUR floor is kept. At every due (each conversion at the amount kept, each conversion for
     shekels, each part of the month's EUR vendor payments) the spare is the euros held then (today's, the typical
-    inflow and the deposits maturing by then, less what fell due before), less what is due and the floor. **Free to
-    convert now** also leaves the EUR vendor payments before the next conversion (`vendorsBefore`).
+    inflow on the business days before it and the deposits maturing by then, less what fell due before), less what is
+    due and the floor. **Free to convert now** also leaves the EUR vendor payments before the next conversion
+    (`vendorsBefore`).
     - **Spare now** (converted for good) is the smallest spare of all dues to the end of the 6th conversion's
       month, never more than today's euros above the floor.
     - **A new deposit maturing on a day** can hold the smallest spare of the dues before that day (euros in a
       deposit come back), never more than today's euros above the floor. It is rounded down to €10K.
-    - **Short**: the first day a gap opens, and the largest gap; on a vendor day, it says it is for the EUR
-      vendor payments ("the EUR vendor payments expected then").
+    - **Below the floor** (`short`): the first day the euros fall under the floor, the deepest point, what is still
+      held then (`left`) and the first day they are back at the floor (`back`) as the inflow and the deposits come in.
+      Nothing is spare then, and no new deposit is advised ("Nothing is spare: every payment is met, but on Sun 1 Nov
+      the euros dip €152K below the €683K kept for EUR vendors (€532K held), back above it by Mon 2 Nov").
+    - **Runs out** (`runsOut`): the first day the euros don't meet a due even with the floor spent: the **Short**
+      recommendation; on a vendor day, it says it is for the EUR vendor payments ("the EUR vendor payments expected
+      then").
     - A new deposit's advice says the EUR vendors stay covered ("Every payment before then, the EUR vendors'
       included, stays covered"; "כל התשלומים עד אז, כולל הספקים באירו, עדיין מכוסים").
   - The rate check then speaks of the spare instead of the free euros.
@@ -242,7 +263,7 @@ a warning, and the rest still shows.
 | Conversions | the Hapoalim "Conversion" / המרה journals (EUR 11001 ↔ ILS 10002, euros bought back included), from 20 December 2025, or before the table's first month if it is earlier |
 | Payroll | NetSuite's payroll journals (what each owes: net salaries, tax, pension, social security), four months back; the Salary Projection's Total payroll by month, from the figures its page saved (`data/salary-projection-cache.json`) |
 | ILS vendor payments | NetSuite's books: vendor payments and checks out of the ILS accounts (book 2; bank and credit card type, so the Masav batches count), four months back, the credit cards' apart |
-| EUR vendor payments by day | NetSuite's books: vendor payments and checks out of the EUR bank accounts (primary book, deposit accounts and dividends left out), four months back, by day (`fetchEurVendorDays`) |
+| EUR vendor payments by day | NetSuite's books: vendor payments and checks out of the EUR bank accounts (primary book, deposit accounts and dividends left out), four months back, by day, with what Hapoalim EUR (11001) paid of each day's (`fetchEurVendorDays`) |
 | The bank's deals | Hapoalim's position reports (options and forwards), uploaded on the page and saved in `data/fx-challenge-positions.json`; not read from NetSuite |
 
 The RESTlet gives what the bank imports last fetched: Bank Hapoalim and its deposits (several times a day),
@@ -288,22 +309,28 @@ by range, how "free to convert" adds up, the next six conversions) stay on the p
   האירו ביום ה' 4.3, ולכן נספר להמרה של יום ד' 7.4: חסרים €1.05M"), or the days in which none pays out ("אין פיקדון
   שמשתחרר בין יום ו' 5.2 ליום ה' 4.3"), the earlier ones going to the earlier conversions. A new deposit names the
   conversion day it is for, and the month when it is one of its parts ("€240K עד יום ו' 5.3 להמרה של יום ב' 8.3 (חלק
-  מההמרה של מרץ)"); the keep line too ("להשאיר … להמרה של יום ד' 4.11");
+  מההמרה של מרץ)"); the keep line too ("להשאיר … להמרה של יום ד' 4.11"), with Hapoalim EUR's own EUR vendor payments
+  before it ("…, ועוד כ-€166K יוצאים מפועלים לספקים באירו לפני כן");
 - **the payments in euros expected in the next 35 days** ("תשלומים צפויים באירו עד יום ו' 4.12", `eurPaymentsAhead`):
-  - first, what the recommendation assumes for the EUR vendors (`vendorsLine`): "ההמלצה מניחה שהתשלומים לספקים באירו
-    יוצאים כמו ב-3 החודשים האחרונים (יולי–ספטמבר): כ-€476K בשבוע הראשון של החודש (1–7), באותם ימים שבהם הבנק לוקח את
-    האירו להמרה, כ-€89K מה-8 עד ה-20 וכ-€119K מה-21 ועד סוף החודש. בנוסף נשמרים תמיד €683K בחשבונות האירו." When
-    NetSuite's payments by day could not be read, it says they count as spread over the month;
+  - first, what the recommendation assumes for the EUR vendors (`vendorsLine`), each part as in its last three months:
+    "ההמלצה מניחה שהתשלומים לספקים באירו יוצאים כמו ב-3 הפעמים האחרונות של כל חלק בחודש: כ-€589K בשבוע הראשון של החודש
+    (1–7, אוגוסט–אוקטובר), באותם ימים שבהם הבנק לוקח את האירו להמרה, כ-€94K מה-8 עד ה-20 (אוגוסט–אוקטובר) וכ-€119K
+    מה-21 ועד סוף החודש (יולי–ספטמבר). בנוסף נשמרים תמיד €683K בחשבונות האירו." (the months once, when every part's
+    are the same). When NetSuite's payments by day could not be read, it says they count as spread over the month;
   - then every euro expected to leave, by day (`paymentText`; on one day in the plan's order, the shekels first, then
     the EUR vendors, then the conversion): the EUR vendors, each
-    part of the month on its first day ("יום א' 1.11: ספקים באירו (1–7.11), כ-€476K"; the part today is in, what is
+    part of the month on its first day ("יום א' 1.11: ספקים באירו (1–7.11), כ-€589K"; the part today is in, what is
     left of it: "יתרת 21–31.10"); the bank's conversions, each part on the day its euros leave (without the deals, the
     7th: "יום ד' 4.11: ההמרה של נובמבר בבנק, €1.10M", "(חלק 2 מ-2)"); the euros converted for shekels ("יום ה' 5.11:
     המרה לשקלים (שכר נטו, ספקים בשקלים), €1.13M"); and a forward that sells euros;
-  - last, the total by kind against what covers it, and whether it does (`paymentsTotal`, the plan's shortfall over
-    every due it sees): "סה"כ עד יום ו' 4.12: €4.63M (…). מול זה: €1.80M באירו היום, €1.61M מפיקדונות שמשתחררים עד אז
-    ותקבולים רגילים של כ-€4.53M בחודש. לפי זה כל התשלומים מכוסים ונשארים לפחות €683K." Short, it says by how much and
-    on which day, and whether today's recommendations fix it (one under €50K has none);
+  - last, the total by kind against what covers it, and whether it does (`paymentsTotal`, over every due the plan
+    sees): "סה"כ עד יום ו' 4.12: €3.60M (…). מול זה: €1.13M באירו היום, €1.61M מפיקדונות שמשתחררים עד אז ותקבולים רגילים
+    של כ-€4.53M בחודש." and then one of:
+    - covered: "לפי זה כל התשלומים מכוסים ונשארים לפחות €683K.";
+    - a dip into the floor: "לפי זה התשלומים מכוסים, אבל ביום א' 1.11 היתרה באירו יורדת €152K מתחת ל-€683K שנשמרים
+      תמיד (נשארים €532K) וחוזרת מעליהם עד יום ב' 2.11: עד אז לא להפקיד ולא להמיר מעבר למתוכנן.";
+    - euros that run out: by how much and on which day, and whether today's recommendations fix it (one under €50K
+      has none);
 - the payments in shekels ahead: the day, how many days to it, what it pays, and what covers it (a conversion, or
   the shekels on hand);
 - today's position in one paragraph: the shekels on hand (current and deposits), the euros at Hapoalim and elsewhere,

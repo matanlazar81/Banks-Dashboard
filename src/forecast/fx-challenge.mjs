@@ -425,6 +425,15 @@ export function valueDayBefore(iso) {
   return new Date(t).toISOString().slice(0, 10);
 }
 
+/** Receipt days (Sunday to Friday, the bank's week: nothing comes in on a Saturday; finance's rule, 30 Oct 2026) after
+ * `from` and before `to`: the days the typical inflow comes in, up to the day before. From Fri 30 Oct 2026 to Sun 1 Nov
+ * none; to Wed 4 Nov three. */
+export function receiptDaysBetween(from, to) {
+  let n = 0;
+  for (let t = utc(from) + DAY_MS; t < utc(to); t += DAY_MS) if (new Date(t).getUTCDay() !== 6) n += 1;
+  return n;
+}
+
 /**
  * Every row's fixing: date (the table's day, the 7th), weekday (a weekend fixing may move to a business day), days from
  * today, and whether it is past, the next one, or later. With the bank's deals for its month (positionLegs), the days
@@ -602,7 +611,11 @@ export function eurPosition(rows) {
  * refund | other. Transfers are internal: between EUR accounts they net to nothing, to another currency they are
  * conversions. */
 const INTERNAL = new Set(['conversion', 'deposit', 'transfer']);
-/** vendors: false leaves the vendor payments out, when the plan takes them on their days (eurVendorsAhead). */
+/** Receipt days a year (Sunday to Friday). */
+const RECEIPT_DAYS_A_YEAR = 313;
+/** vendors: false leaves the vendor payments out, when the plan takes them on their days (eurVendorsAhead). The money
+ * comes in on business days only (Sunday to Friday, none on a Saturday): perBusinessDay is the month's over its 26 of
+ * them. */
 export function typicalInflow(flows, months, { vendors = true } = {}) {
   const per = months.map((m) => ({
     month: m,
@@ -610,7 +623,7 @@ export function typicalInflow(flows, months, { vendors = true } = {}) {
   }));
   if (!per.length) return null;
   const perMonth = per.reduce((s, p) => s + p.net, 0) / per.length;
-  return { perMonth, perDay: perMonth / 30.4, months: per };
+  return { perMonth, perBusinessDay: (perMonth * 12) / RECEIPT_DAYS_A_YEAR, months: per };
 }
 
 // ── shekels for the payroll and the vendors ──
@@ -682,29 +695,45 @@ const otherOf = (v) => (v.other !== undefined ? Number(v.other) || 0 : Number(v.
 /** The parts of a month the EUR vendor payments go out in: most in the first week (the payment run), the rest after. */
 export const VENDOR_PARTS = Object.freeze([{ from: 1, to: 7 }, { from: 8, to: 20 }, { from: 21, to: 31 }]);
 
+/** Days after a part of the month ends before its payments count: by then NetSuite has them booked. */
+const VENDOR_BOOKED_DAYS = 3;
+
 /**
- * The EUR vendor payments ahead, on the days they go out, from NetSuite's by day (fetchEurVendorDays): each part of the
- * month (1st–7th, 8th–20th, 21st–end) at its average over `months`, due on its first day; the part today is in, less
- * what it has paid this month so far, due today. July to September 2026: €476K, €89K and €119K a month, the first week's
- * run on the days the conversions take their euros. Returns { months, parts: [{ from, to, eur }], dues: [{ date, eur,
- * part }] } up to `until`; null without months.
+ * The EUR vendor payments ahead, on the days they go out, from NetSuite's by day (fetchEurVendorDays: [{ date, eur,
+ * hapoalim }], hapoalim the part paid from Hapoalim EUR): each part of the month (1st–7th, 8th–20th, 21st–end) at its
+ * average over the last `months.length` months in which it is over, VENDOR_BOOKED_DAYS since (on 30 Oct 2026 the first
+ * week's and the 8th–20th's August to October, the last part's July to September), back to the month before the first
+ * of `months` (what NetSuite is read for); due on its first day. The part today is in, less what it has paid so far, due
+ * today. August to October 2026: €589K in the first week (€161K of it from Hapoalim EUR, on the first Tuesday), on the
+ * days the conversions take their euros. Returns { months, parts: [{ from, to, eur, hapoalim, months }], dues: [{ date,
+ * eur, hapoalim, part, rest }] } up to `until`; null without months.
  */
 export function eurVendorsAhead({ days, months, today, until }) {
   const n = (months || []).length;
   if (!n) return null;
+  const valid = (days || []).filter((d) => d && isIso(d.date));
   const partOf = (iso) => { const d = +iso.slice(8, 10); return VENDOR_PARTS.findIndex((p) => d >= p.from && d <= p.to); };
-  const parts = VENDOR_PARTS.map((p) => ({ from: p.from, to: p.to, eur: 0 }));
-  for (const d of days || []) if (d && isIso(d.date) && months.includes(d.date.slice(0, 7))) parts[partOf(d.date)].eur += (Number(d.eur) || 0) / n;
+  const sumOf = (list, key) => list.reduce((s, d) => s + Math.max(0, Number(d[key]) || 0), 0);
+  const since = prevMonth(months[0]);
+  const booked = isoAddDays(today, -VENDOR_BOOKED_DAYS);
+  const parts = VENDOR_PARTS.map((p, i) => {
+    const used = [];
+    for (let m = today.slice(0, 7); m >= since && used.length < n; m = prevMonth(m)) if (fixingDate(m, p.to) < booked) used.unshift(m);
+    const paid = valid.filter((d) => used.includes(d.date.slice(0, 7)) && partOf(d.date) === i);
+    const k = used.length || 1;
+    return { from: p.from, to: p.to, eur: sumOf(paid, 'eur') / k, hapoalim: Math.min(sumOf(paid, 'eur'), sumOf(paid, 'hapoalim')) / k, months: used };
+  });
   const dues = [];
   for (let m = today.slice(0, 7); `${m}-01` <= until; m = nextMonth(m)) {
     parts.forEach((p, i) => {
       const start = fixingDate(m, p.from);
       if (fixingDate(m, p.to) < today || start > until) return;
       // The part today is in: what is left of it, today.
-      const paid = start <= today ? (days || []).filter((d) => d && d.date >= start && d.date <= today).reduce((s, d) => s + (Number(d.eur) || 0), 0) : 0;
-      const eur = Math.max(0, p.eur - paid);
+      const sofar = start <= today ? valid.filter((d) => d.date >= start && d.date <= today) : [];
+      const eur = Math.max(0, p.eur - sumOf(sofar, 'eur'));
+      const hapoalim = Math.min(eur, Math.max(0, p.hapoalim - sumOf(sofar, 'hapoalim')));
       // rest: what is left of the part today is in (it began before today, or paid some today).
-      if (eur >= 0.5) dues.push({ date: start <= today ? today : start, eur, part: i, rest: start < today || paid >= 0.5 });
+      if (eur >= 0.5) dues.push({ date: start <= today ? today : start, eur, hapoalim, part: i, rest: start < today || sumOf(sofar, 'eur') >= 0.5 });
     });
   }
   return { months, parts, dues };
@@ -869,7 +898,8 @@ const addMonthsIso = (iso, n) => {
  * What to keep for the next fixings and what is free to convert.
  *   upcoming   the next fixings, each { month, date, days, conv (at today's rate), risk }
  *   eur        { hapoalim, other, deposits: [{ amount, valueDate, blocked }] } (eurPosition)
- *   inflowPerDay  typical net EUR per day, or null when unknown
+ *   inflowPerBusinessDay  typical net EUR per business day (Sunday to Friday: none comes in on a Saturday), or null
+ *              when unknown
  *   shekels    the euros to convert for the payroll and the vendors, [{ date, eur }] (shekelNeeds)
  *   eurFloor   the euros kept for the EUR vendors at all times
  *   forwards   the forward deals' euros by value day, [{ date, eur (+ bought, − sold) }] (forwardFlows)
@@ -877,14 +907,16 @@ const addMonthsIso = (iso, n) => {
  * A fixing with `legs` (conversionLegs: the bank's deals, at the amount kept) takes its euros on each part's value day;
  * without, all of them the business day before the 7th. `paid`: the euros of its parts already paid (their value day
  * before today, so gone from the balances), left out of what it still takes.
- *   eurOut     the EUR vendor payments ahead on their days, [{ date, eur }] (eurVendorsAhead); with them the typical
- *              inflow leaves the vendor payments out
+ *   eurOut     the EUR vendor payments ahead on their days, [{ date, eur, hapoalim }] (eurVendorsAhead; hapoalim: the
+ *              part paid from Hapoalim EUR, which has to stay there before a conversion); with them the typical inflow
+ *              leaves the vendor payments out
  */
-export function planReserve({ upcoming, policy = 'p95', eur, inflowPerDay = null, today, horizon = 6, shekels = [], eurFloor = 0, forwards = [], eurOut = [] }) {
+export function planReserve({ upcoming, policy = 'p95', eur, inflowPerBusinessDay = null, today, horizon = 6, shekels = [], eurFloor = 0, forwards = [], eurOut = [] }) {
   const fx = (upcoming || []).slice(0, horizon);
   if (!fx.length || !eur) return null;
   const outEur = (eurOut || []).filter((x) => x && x.eur >= 0.5 && x.date >= today);
   const vendorsBy = (date) => outEur.filter((x) => x.date <= date).reduce((s, x) => s + x.eur, 0);
+  const hapoalimVendorsBy = (date) => outEur.filter((x) => x.date <= date).reduce((s, x) => s + Math.min(x.eur, Math.max(0, Number(x.hapoalim) || 0)), 0);
   const reqOf = (f) => Math.max(0, requirementOf(policy, f.conv, f.risk) - (f.paid || 0));
   // A conversion's parts, by the day each part's euros leave: the deals' (legs, scaled to the amount kept `req`), each
   // with the day a deposit for it has to pay out (the value day before); else one part, the business day before the 7th.
@@ -908,7 +940,9 @@ export function planReserve({ upcoming, policy = 'p95', eur, inflowPerDay = null
   const usable = (eur.deposits || []).filter((d) => d.amount > 0 && !d.blocked);
   const maturingBy = (date) => usable.filter((d) => d.valueDate && d.valueDate > today && d.valueDate <= date).reduce((s, d) => s + d.amount, 0);
   const daysTo = (date) => Math.round((utc(date) - utc(today)) / DAY_MS);
-  const inflowTo = (f) => (inflowPerDay == null ? 0 : inflowPerDay * Math.max(0, f.days - 1));
+  // The typical inflow up to the day before `date`, on business days only (Sunday to Friday).
+  const inflowBy = (date) => (inflowPerBusinessDay == null ? 0 : inflowPerBusinessDay * receiptDaysBetween(today, date));
+  const inflowTo = (f) => inflowBy(f.date);
 
   const f0 = fx[0];
   const required = reqOf(f0);
@@ -925,7 +959,10 @@ export function planReserve({ upcoming, policy = 'p95', eur, inflowPerDay = null
   // the EUR vendor payments before its first euros leave.
   const shekelsBefore = shekelsBy(f0.date);
   const vendorsBefore = vendorsBy(f0By);
-  const inflowUntil = inflowPerDay == null ? null : inflowTo(f0);
+  // Of them, those Hapoalim EUR pays in the conversion's month (its first week's run, just before the euros leave): the
+  // conversion's account has to hold them too. Earlier ones are met by the inflow before then, as the plan counts it.
+  const hapoalimVendors = hapoalimVendorsBy(f0By) - hapoalimVendorsBy(isoAddDays(`${f0By.slice(0, 7)}-01`, -1));
+  const inflowUntil = inflowPerBusinessDay == null ? null : inflowTo(f0);
 
   // The deposits that mature after `from` and by `to`, earliest first: what each fixing gains from them.
   const releasedBetween = (from, to) => usable
@@ -959,7 +996,7 @@ export function planReserve({ upcoming, policy = 'p95', eur, inflowPerDay = null
     return {
       month: f.month, date: f.date, required: req, expected: f.risk.expectedEur,
       released: releasedDeposits.reduce((s, d) => s + d.amount, 0), releasedDeposits,
-      inflow, inflowDays: inflowPerDay == null ? 0 : Math.max(0, f.days - 1), depositsBy, earlier, forShekels, shekels: shekelsHere,
+      inflow, inflowDays: inflowPerBusinessDay == null ? 0 : receiptDaysBetween(today, f.date), depositsBy, earlier, forShekels, shekels: shekelsHere,
       forVendors, vendors: vendorsHere, available, surplus: available - req - keep, convertibleBefore: 0, limitedBy: f.month,
     };
   });
@@ -971,11 +1008,11 @@ export function planReserve({ upcoming, policy = 'p95', eur, inflowPerDay = null
     path[i].convertibleBefore = Math.max(0, floor);
     path[i].limitedBy = floorMonth;
   }
-  const shown = inflowPerDay == null ? path.slice(0, 1) : path;
+  const shown = inflowPerBusinessDay == null ? path.slice(0, 1) : path;
 
   const next = {
     month: f0.month, date: f0.date, required, todayAmount, hapoalim, other, liquid, maturing, backup,
-    needLiquid, needLiquidWithBackup, shekelsBefore, vendorsBefore, eurFloor: keep,
+    needLiquid, needLiquidWithBackup, shekelsBefore, vendorsBefore, hapoalimVendors, eurFloor: keep,
     // On today's balances only: what is held now, less what the reserve still needs from it and the EUR vendor payments
     // before it.
     freeNow: Math.max(0, liquid - needLiquid - vendorsBefore),
@@ -983,9 +1020,9 @@ export function planReserve({ upcoming, policy = 'p95', eur, inflowPerDay = null
     shortfall: Math.max(0, needLiquid + vendorsBefore - liquid),
     inflowUntil,
     // With typical inflows: what can be converted before the fixing, in total, as the euros come in.
-    freeByFixing: inflowPerDay == null ? null : path[0].convertibleBefore,
-    // The euros have to be in the Hapoalim account on the day.
-    moveToHapoalim: Math.min(other, Math.max(0, required - maturing - hapoalim)),
+    freeByFixing: inflowPerBusinessDay == null ? null : path[0].convertibleBefore,
+    // The euros have to be in the Hapoalim account on the day, after the EUR vendor payments it makes before then.
+    moveToHapoalim: Math.min(other, Math.max(0, required - maturing + hapoalimVendors - hapoalim)),
   };
 
   // Every due from today, in order: each fixing at the amount kept (with the deals, each part on its value day), each
@@ -1006,10 +1043,21 @@ export function planReserve({ upcoming, policy = 'p95', eur, inflowPerDay = null
   ].sort((a, b) => a.date.localeCompare(b.date) || Number(b.shekels) - Number(a.shekels) || Number(b.vendors) - Number(a.vendors));
   let due = 0;
   const checkpoints = dues.map((d) => {
-    const held = liquid + (inflowPerDay == null ? 0 : inflowPerDay * Math.max(0, daysTo(d.date) - 1)) + maturingBy(d.date) - due;
+    const held = liquid + inflowBy(d.date) + maturingBy(d.date) - due;
     due += d.eur;
-    return { date: d.date, shekels: d.shekels, vendors: d.vendors, spare: held - d.eur - keep };
+    // left: the euros held once it is paid; spare: what of them is above the EUR floor.
+    return { date: d.date, shekels: d.shekels, vendors: d.vendors, left: held - d.eur, spare: held - d.eur - keep };
   });
+  // The first day after `date` on which the euros held, every due by then paid, are at the EUR floor again, as the
+  // typical inflow and the deposits come in; null when not by the last conversion.
+  const backAbove = (date) => {
+    for (let t = utc(date) + DAY_MS; t <= utc(lastFixing); t += DAY_MS) {
+      const d = new Date(t).toISOString().slice(0, 10);
+      const paid = dues.filter((x) => x.date <= d).reduce((s, x) => s + x.eur, 0);
+      if (liquid + inflowBy(d) + maturingBy(d) - paid >= keep) return d;
+    }
+    return null;
+  };
   // Euros converted now are gone at every later due; euros in a deposit come back when it matures. So what can leave
   // the accounts for good is the smallest spare of all, and what can go into a deposit maturing on a day is the
   // smallest spare before that day; neither more than today's euros above the floor. Deposits round down to €10K.
@@ -1017,11 +1065,19 @@ export function planReserve({ upcoming, policy = 'p95', eur, inflowPerDay = null
   const lowest = checkpoints.reduce((lo, c) => (!lo || c.spare < lo.spare ? c : lo), null);
   next.spare = Math.max(0, Math.min(cap, lowest ? lowest.spare : cap));
   next.tightest = lowest ? { date: lowest.date, spare: lowest.spare, shekels: lowest.shekels, vendors: lowest.vendors } : null;
-  // Short: the largest gap, and the first day one opens (the urgent one).
+  // Short: the euros fall below the EUR floor; the largest gap, and the first day one opens. The floor is a buffer:
+  // while the euros held stay above zero the payments are met (left: what is held at the lowest), and they are back
+  // above it on `back`.
   const firstGap = checkpoints.find((c) => c.spare < 0);
   next.short = lowest && lowest.spare < 0
-    ? { eur: -lowest.spare, date: lowest.date, shekels: lowest.shekels, vendors: lowest.vendors, first: { eur: -firstGap.spare, date: firstGap.date, shekels: firstGap.shekels, vendors: firstGap.vendors } }
+    ? {
+      eur: -lowest.spare, date: lowest.date, shekels: lowest.shekels, vendors: lowest.vendors, left: lowest.left, back: backAbove(lowest.date),
+      first: { eur: -firstGap.spare, date: firstGap.date, shekels: firstGap.shekels, vendors: firstGap.vendors },
+    }
     : null;
+  // Runs out: on its first day, the euros held don't meet a due at all, floor and all.
+  const out = checkpoints.find((c) => c.left < 0);
+  next.runsOut = out ? { eur: -out.left, date: out.date, shekels: out.shekels, vendors: out.vendors } : null;
   const deposits = [1, 3, 6].map((months) => {
     const until = addMonthsIso(today, months);
     const most = Math.min(cap, ...checkpoints.filter((c) => c.date < until).map((c) => c.spare));
@@ -1147,7 +1203,7 @@ export function planFromPayload(data, policy = 'p95') {
     : null;
   const plan = position && upcoming.length
     ? planReserve({
-      upcoming, policy, eur: position, inflowPerDay: inflow ? inflow.perDay : null, today,
+      upcoming, policy, eur: position, inflowPerBusinessDay: inflow ? inflow.perBusinessDay : null, today,
       shekels: cash ? cash.needs : [], eurFloor: cash ? cash.vendors.eur : 0, forwards: flows, eurOut: eurVendors ? eurVendors.dues : [],
     })
     : null;
@@ -1243,7 +1299,8 @@ function cashPlanOf(data, today, spot, upcoming, schedule, policy, forwards = []
  *                  `notice` business days before it has to be ready (finance converts at once; asked on 27 Oct 2026,
  *                  as the figure moves until then), urgent. Never earlier, whatever the rate (finance asked the same
  *                  day for no early conversion on a high EUR/ILS)
- *   short          the euros held and expected fall short of a due: urgent within `lead` business days
+ *   short          the euros held and expected don't meet a due, the floor kept for EUR vendors spent too (a dip into the
+ *                  floor alone is none): urgent within `lead` business days
  *   move           the conversion day is within `moveLead` business days and Hapoalim EUR holds less than to keep there
  *   ladder         a conversion the deposits don't cover (first in, first out): spare euros into deposits that pay out
  *                  just before it, earliest first
@@ -1265,10 +1322,13 @@ export function todayActions(view, today, { lead = 5, moveLead = 3, minEur = 500
     // Earlier it is only among the payments ahead.
     if (left <= notice) actions.push({ kind: 'convert', key: `convert:${d.date}`, urgent: left < lead, eur: d.eur, by: d.by, left, due: d });
   }
-  if (n.short && n.short.first.eur >= minEur) {
-    const by = businessDayOnOrBefore(n.short.first.date);
+  // Short only when the euros run out: a dip into the floor kept for EUR vendors leaves the payments met (the mail and
+  // the page say how deep, and when it is back).
+  const out = n.runsOut;
+  if (out && out.eur >= minEur) {
+    const by = businessDayOnOrBefore(out.date);
     const left = businessDaysBetween(today, by);
-    actions.push({ kind: 'short', key: `short:${n.short.first.date}`, urgent: left < lead, eur: n.short.first.eur, date: n.short.first.date, by, left, shekels: n.short.first.shekels, vendors: !!n.short.first.vendors });
+    actions.push({ kind: 'short', key: `short:${out.date}`, urgent: left < lead, eur: out.eur, date: out.date, by, left, shekels: out.shekels, vendors: !!out.vendors });
   }
   // The euros have to be in Hapoalim EUR by the day the first of them leave (the deals' value day, else the day before).
   const fixingBy = n.takes || conversionTakes(n.date);
@@ -1350,15 +1410,18 @@ export function describeAction(a, view, today, fmt) {
     return { head: `Convert ${eur(a.eur)} ${now ? 'today' : `by ${day(a.by)}`}`, body };
   }
   if (a.kind === 'short') {
+    // The euros run out (the floor kept for EUR vendors spent too): a dip into the floor alone is no action.
     const what = a.shekels ? 'the conversion for shekels due then' : a.vendors ? 'the EUR vendor payments expected then' : `the ${day(a.date)} conversion`;
     const fix = n.backup > 0 ? ` Be ready to break up to ${eur(Math.min(a.eur, n.backup))} of the deposits maturing later.` : ' Keep every spare euro until then.';
-    return { head: `Short ${eur(a.eur)} by ${day(a.date)}`, body: `The euros held and expected by then don't cover ${what} and the ${eur(n.eurFloor)} kept for EUR vendors.${fix}` };
+    const floor = n.eurFloor > 0.5 ? `, even with the ${eur(n.eurFloor)} kept for EUR vendors spent` : '';
+    return { head: `Short ${eur(a.eur)} by ${day(a.date)}`, body: `The euros held and expected by then don't cover ${what}${floor}.${fix}` };
   }
   if (a.kind === 'move') {
     const fromDeposits = Math.min(n.required, n.maturing || 0);
     const dep = fromDeposits > 0.5 ? `, ${eur(fromDeposits)} of it from deposits released by then` : '';
+    const vendors = n.hapoalimVendors >= 0.5 ? `, and about ${eur(n.hapoalimVendors)} more for the EUR vendor payments it makes before then` : '';
     const on = (a.on || [a.date]).map(day).join(' & ');
-    return { head: `Move ${eur(a.eur)} to Hapoalim EUR by ${day(a.by)}`, body: `The ${on} conversion takes its euros from Hapoalim EUR (583400), which holds ${eur(n.hapoalim)}; keep ${eur(n.required)} there${dep}.` };
+    return { head: `Move ${eur(a.eur)} to Hapoalim EUR by ${day(a.by)}`, body: `The ${on} conversion takes its euros from Hapoalim EUR (583400), which holds ${eur(n.hapoalim)}; keep ${eur(n.required)} there${dep}${vendors}.` };
   }
   if (a.kind === 'ladder') {
     // Each deposit is for one conversion day: with the deals, one part's (a part is a conversion on its own day).
@@ -1407,33 +1470,40 @@ export function nothingToday(ahead, today, fmt, { minEur = 50000 } = {}) {
 /**
  * Where the euros kept for the next conversion come from: the EUR deposits paying out after today and by the day the
  * bank takes the euros (the business day before the 7th; they count for it, paid into Hapoalim EUR), and today's cash
- * for the rest. The same figures as the first conversion of the coverage.
- * Returns { required, deposits (earliest first), fromDeposits, fromCash, covered } (covered: the deposits alone hold it).
+ * for the rest, with the EUR vendor payments Hapoalim EUR makes before then (plan.next.hapoalimVendors: they leave the
+ * same account). The same figures as the first conversion of the coverage.
+ * Returns { required, deposits (earliest first), fromDeposits, vendors, fromCash (what to keep in Hapoalim EUR),
+ * depositsCover (the deposits alone hold the conversion), covered (nothing to keep) }.
  */
 export function keepCover(plan) {
+  const vendors = plan.next.hapoalimVendors || 0;
   // The first conversion of the coverage: the deposits paying out by the day the bank takes the euros.
   const c = plan.coverage && plan.coverage[0];
-  if (!c) return { required: plan.next.required, deposits: [], fromDeposits: 0, fromCash: plan.next.required, covered: false };
+  if (!c) return { required: plan.next.required, deposits: [], fromDeposits: 0, vendors, fromCash: plan.next.required + vendors, depositsCover: false, covered: false };
   // What the deposits cover of it: a deposit paying out between its parts covers the later part only.
   const fromDeposits = Math.max(0, c.required - c.gap);
-  return { required: c.required, deposits: c.releasedDeposits, fromDeposits, fromCash: c.gap, covered: fromDeposits > 0.5 && c.gap < 0.5 };
+  const depositsCover = fromDeposits > 0.5 && c.gap < 0.5;
+  return { required: c.required, deposits: c.releasedDeposits, fromDeposits, vendors, fromCash: c.gap + vendors, depositsCover, covered: depositsCover && vendors < 0.5 };
 }
 
 /** Why the amount to keep (keepCover's fromCash) is what it is, when deposits released by then hold some of the
- * conversion: "the 3 deposits released by Tue 3 Nov (€806K) cover the €800K it takes from Hapoalim EUR (583400)" (so
- * nothing to keep), or "it takes €800K, and the deposit released on Thu 5 Nov brings €500K of it" (keep the rest).
- * Empty when no deposit is released by then. */
+ * conversion or Hapoalim EUR pays EUR vendors before it: "the 3 deposits released by Tue 3 Nov (€806K) cover the €800K
+ * it takes from Hapoalim EUR (583400)" (so nothing to keep), "it takes €800K, and the deposit released on Thu 5 Nov
+ * brings €500K of it" (keep the rest), "…, and about €161K of EUR vendor payments leave Hapoalim EUR before it" (keep
+ * those too). Empty when neither. */
 export function describeKeep(cover, fmt) {
   const ds = cover.deposits;
-  if (!(cover.fromDeposits > 0.5) || !ds.length) return '';
+  const vendors = cover.vendors >= 0.5 ? `about ${fmt.eur(cover.vendors)} of EUR vendor payments leave Hapoalim EUR before it` : '';
+  if (!(cover.fromDeposits > 0.5) || !ds.length) return vendors ? `it takes ${fmt.eur(cover.required)}, and ${vendors}` : '';
   const last = ds[ds.length - 1].valueDate;
   const one = ds.length === 1;
   const which = one ? `the deposit released on ${fmt.day(last)}` : `the ${ds.length} deposits released by ${fmt.day(last)}`;
-  if (cover.covered) {
+  if (cover.depositsCover) {
     const total = ds.reduce((s, d) => s + d.amount, 0);
-    return `${which} (${fmt.eur(total)}) ${one ? 'covers' : 'cover'} the ${fmt.eur(cover.required)} it takes from Hapoalim EUR (583400)`;
+    return `${which} (${fmt.eur(total)}) ${one ? 'covers' : 'cover'} the ${fmt.eur(cover.required)} it takes from Hapoalim EUR (583400)${vendors ? `, but ${vendors}` : ''}`;
   }
-  return `it takes ${fmt.eur(cover.required)}, and ${which} ${one ? 'brings' : 'bring'} ${fmt.eur(cover.fromDeposits)} of it`;
+  const brings = `${which} ${one ? 'brings' : 'bring'} ${fmt.eur(cover.fromDeposits)} of it`;
+  return vendors ? `it takes ${fmt.eur(cover.required)}, ${brings}, and ${vendors}` : `it takes ${fmt.eur(cover.required)}, and ${brings}`;
 }
 
 // ── past fixings ──

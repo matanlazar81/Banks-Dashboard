@@ -152,15 +152,15 @@ async function testPlan(fx) {
     'a deposit maturing before the fixing covers it (€1M), a later one is backup, a blocked one counts for nothing');
   check(b.moveToHapoalim === 0, 'nothing to move when Hapoalim and the maturing deposit cover it');
 
-  const c = fx.planReserve({ upcoming, policy: 'today', eur: pos, today: TODAY, inflowPerDay: 100000 });
-  check(c.next.required === 800000 && near(c.next.freeNow, 507150.74) && c.next.inflowUntil === 1600000 && near(c.next.freeByFixing, 2107150.74),
-    'today\'s band only: €507K free now; with €100K a day of inflow (16 days), €2.11M by the fixing');
-  check(c.path.length === 6 && near(c.path[0].surplus, 1307150.74 + 1600000 - 800000) && near(c.path[1].available, 1307150.74 + 100000 * 46 - 800000),
+  const c = fx.planReserve({ upcoming, policy: 'today', eur: pos, today: TODAY, inflowPerBusinessDay: 100000 });
+  check(c.next.required === 800000 && near(c.next.freeNow, 507150.74) && c.next.inflowUntil === 1400000 && near(c.next.freeByFixing, 1907150.74),
+    'today\'s band only: €507K free now; with €100K a business day of inflow (14 of them, Sunday to Friday, to the 6th), €1.91M by the fixing');
+  check(c.path.length === 6 && near(c.path[0].surplus, 1307150.74 + 1400000 - 800000) && near(c.path[1].available, 1307150.74 + 100000 * 39 - 800000),
     'the path: euros by each fixing, with inflows and maturing deposits, less the earlier fixings');
   const suffixMin = (p, i) => Math.max(0, Math.min(...p.slice(i).map((x) => x.surplus)));
   check(c.path.every((x, i) => near(x.convertibleBefore, suffixMin(c.path, i))) && near(c.next.freeByFixing, c.path[0].convertibleBefore),
     'what can be converted before a fixing is the smallest spare from it on (euros converted then are gone later too)');
-  const dry = fx.planReserve({ upcoming, policy: 'p95', eur: pos, today: TODAY, inflowPerDay: 0 });
+  const dry = fx.planReserve({ upcoming, policy: 'p95', eur: pos, today: TODAY, inflowPerBusinessDay: 0 });
   check(dry.path[0].surplus > dry.path[5].surplus && dry.path[0].convertibleBefore === suffixMin(dry.path, 0) && dry.next.freeByFixing === 0,
     'with nothing coming in, a later fixing caps what can be converted before the first (here nothing)');
   const none = fx.planReserve({ upcoming, policy: 'p95', eur: pos, today: TODAY });
@@ -176,7 +176,7 @@ async function testPlan(fx) {
     { amount: 900000, valueDate: '2027-06-01', blocked: false, label: 'after April' },
     { amount: 100000, valueDate: TODAY, blocked: false, label: 'today' },
   ] };
-  const r = fx.planReserve({ upcoming, policy: 'today', eur: dated, today: TODAY, inflowPerDay: 0 });
+  const r = fx.planReserve({ upcoming, policy: 'today', eur: dated, today: TODAY, inflowPerBusinessDay: 0 });
   check(r.path[0].released === 800000 && same(r.path[0].releasedDeposits.map((x) => x.label), ['October', 'on the day']) && r.path[0].released === r.next.maturing,
     'the first fixing gains the deposits maturing by its day, earliest first (the same as "maturing by then")');
   check(r.path[1].released === 200000 && r.path[1].releasedDeposits[0].valueDate === '2026-11-08' && r.path.slice(2).every((p) => p.released === 0 && !p.releasedDeposits.length),
@@ -186,10 +186,10 @@ async function testPlan(fx) {
   const consistent = r.path.every((p) => { held += p.released; const ok = near(p.available, held); held -= p.required; return ok; });
   check(consistent, 'euros by each fixing = today\'s liquid euros + the deposits released by then − the earlier fixings (no inflow here)');
   // The parts the page shows add up to each figure, and the tightest later conversion is named.
-  const parts = fx.planReserve({ upcoming, policy: 'p95', eur: dated, today: TODAY, inflowPerDay: 100000 });
+  const parts = fx.planReserve({ upcoming, policy: 'p95', eur: dated, today: TODAY, inflowPerBusinessDay: 100000 });
   check(parts.path.every((p) => near(p.available, parts.next.liquid + p.inflow + p.depositsBy - p.earlier) && near(p.inflow, 100000 * p.inflowDays))
-    && parts.path[0].earlier === 0 && near(parts.path[1].earlier, parts.path[0].required) && parts.path[0].inflowDays === 16 && parts.path[0].depositsBy === 800000,
-  'euros by then = cash today + inflow (100K a day × days to the day before) + deposits by then − the earlier conversions');
+    && parts.path[0].earlier === 0 && near(parts.path[1].earlier, parts.path[0].required) && parts.path[0].inflowDays === 14 && parts.path[0].depositsBy === 800000,
+  'euros by then = cash today + inflow (100K a business day × the business days to the day before) + deposits by then − the earlier conversions');
   check(c.path.every((p) => p.limitedBy === p.month), 'with money coming in, each day is limited by its own spare');
   check(dry.path[0].limitedBy === dry.path[5].month && near(dry.path[0].convertibleBefore, Math.max(0, dry.path[5].surplus)),
     'with nothing coming in, the last conversion is the tight one, and it is named');
@@ -208,7 +208,7 @@ async function testPlan(fx) {
   'a deposit released by the conversion holding all of it (€1M for €800K): nothing to keep, and why');
   check(fx.describeKeep(fx.keepCover(r), words) === 'it takes €800K, and the deposit released on 2026-10-25 brings €300K of it',
     'a deposit paying out on the conversion day itself is too late: the bank takes the euros the business day before (Thu 5 Nov for Sat 7 Nov)');
-  const both = fx.keepCover(fx.planReserve({ upcoming, policy: 'today', eur: { ...dated, deposits: dated.deposits.map((d) => (d.label === 'on the day' ? { ...d, valueDate: '2026-11-04' } : d)) }, today: TODAY, inflowPerDay: 0 }));
+  const both = fx.keepCover(fx.planReserve({ upcoming, policy: 'today', eur: { ...dated, deposits: dated.deposits.map((d) => (d.label === 'on the day' ? { ...d, valueDate: '2026-11-04' } : d)) }, today: TODAY, inflowPerBusinessDay: 0 }));
   check(fx.describeKeep(both, words) === 'the 2 deposits released by 2026-11-04 (€800K) cover the €800K it takes from Hapoalim EUR (583400)',
     'several deposits paying out in time: added up, by the last one\'s date');
   check(fx.describeKeep(fx.keepCover(fx.planReserve({ upcoming, policy: 'p95', eur: pos, today: TODAY })), words) === '',
@@ -218,7 +218,7 @@ async function testPlan(fx) {
   const dep = (amount, valueDate) => ({ amount, valueDate, blocked: false, label: 'fixed-term' });
   const LADDER = [dep(402000, '2026-11-03'), dep(202500, '2026-11-03'), dep(201500, '2026-11-03'), dep(403000, '2026-12-03'), dep(203000, '2026-12-03'),
     dep(202000, '2026-12-03'), dep(504000, '2027-01-04'), dep(404000, '2027-01-04'), dep(505000, '2027-02-01'), dep(404000, '2027-02-01'), dep(405000, '2027-03-05')];
-  const rich = fx.planReserve({ upcoming, policy: 'today', eur: { hapoalim: 3e6, other: 0, deposits: LADDER }, inflowPerDay: 0, today: TODAY, eurFloor: 200000 });
+  const rich = fx.planReserve({ upcoming, policy: 'today', eur: { hapoalim: 3e6, other: 0, deposits: LADDER }, inflowPerBusinessDay: 0, today: TODAY, eurFloor: 200000 });
   const cov = rich.coverage.map((c) => [c.date, c.required, c.released, c.carried, c.gap]);
   check(same(cov, [
     ['2026-11-07', 800000, 806000, 0, 0], ['2026-12-07', 800000, 808000, 6000, 0], ['2027-01-07', 1050000, 908000, 14000, 128000],
@@ -235,7 +235,7 @@ async function testPlan(fx) {
   check(said[4] === 'יום א\' 7.3: €1.05M, הפיקדון שמשתחרר ביום ו\' 5.3 (€405K) מגיע אחרי שהבנק לוקח את האירו ביום ה\' 4.3, ולכן נספר להמרה של יום ד\' 7.4: חסרים €1.05M'
     && said[2] === 'יום ה\' 7.1: €1.05M, הפיקדונות מכסים €922K: חסרים €128K' && said[0] === 'שבת 7.11: €800K, מכוסה מהפיקדונות (€806K)',
   'the mail says why March gets nothing from the deposits: the one of Fri 5 Mar pays out after the bank takes the euros on Thu 4 Mar, so it counts for April', JSON.stringify(said));
-  const bare = fx.planReserve({ upcoming, policy: 'today', eur: { hapoalim: 3e6, other: 0, deposits: LADDER.slice(0, -1) }, inflowPerDay: 0, today: TODAY, eurFloor: 200000 });
+  const bare = fx.planReserve({ upcoming, policy: 'today', eur: { hapoalim: 3e6, other: 0, deposits: LADDER.slice(0, -1) }, inflowPerBusinessDay: 0, today: TODAY, eurFloor: 200000 });
   const saidBare = bare.coverage.map((c, i, all) => mail.coverText(c, i === 0, all[i + 1]));
   check(saidBare[4] === 'יום א\' 7.3: €1.05M, אין פיקדון שמשתחרר בין יום ו\' 5.2 ליום ה\' 4.3 (היום שהבנק לוקח את האירו): חסרים €1.05M',
     'with no deposit at all for March, the mail says which days one would have to pay out in (the earlier ones go to the earlier conversions)', saidBare[4]);
@@ -243,13 +243,13 @@ async function testPlan(fx) {
     'with room, a deposit for each gap, earliest first, rounded up to €10K', JSON.stringify(rich.ladder));
   // Made, the ladder closes the gaps and leaves every due covered.
   const total = rich.ladder.reduce((s, l) => s + l.eur, 0);
-  const made = fx.planReserve({ upcoming, policy: 'today', eur: { hapoalim: 3e6 - total, other: 0, deposits: [...LADDER, ...rich.ladder.map((l) => dep(l.eur, l.until))] }, inflowPerDay: 0, today: TODAY, eurFloor: 200000 });
+  const made = fx.planReserve({ upcoming, policy: 'today', eur: { hapoalim: 3e6 - total, other: 0, deposits: [...LADDER, ...rich.ladder.map((l) => dep(l.eur, l.until))] }, inflowPerBusinessDay: 0, today: TODAY, eurFloor: 200000 });
   check(made.coverage.every((c) => c.gap === 0) && made.next.short === null && made.ladder.length === 0,
     'once deposited, every conversion is covered and nothing falls short');
-  const tight = fx.planReserve({ upcoming, policy: 'today', eur: { hapoalim: 1e6, other: 0, deposits: LADDER }, inflowPerDay: 0, today: TODAY, eurFloor: 200000 });
+  const tight = fx.planReserve({ upcoming, policy: 'today', eur: { hapoalim: 1e6, other: 0, deposits: LADDER }, inflowPerBusinessDay: 0, today: TODAY, eurFloor: 200000 });
   check(same(tight.ladder.map((l) => [l.until, l.eur]), [['2027-01-05', 130000], ['2027-02-03', 150000], ['2027-03-03', 520000]]),
     'with €800K above the floor: Jan and Feb in full, Mar as far as it goes, Apr waits', JSON.stringify(tight.ladder));
-  const soon = fx.planReserve({ upcoming, policy: 'p95', eur: { hapoalim: 3e6, other: 0, deposits: LADDER }, inflowPerDay: 0, today: TODAY, eurFloor: 200000 });
+  const soon = fx.planReserve({ upcoming, policy: 'p95', eur: { hapoalim: 3e6, other: 0, deposits: LADDER }, inflowPerBusinessDay: 0, today: TODAY, eurFloor: 200000 });
   check(soon.coverage[0].gap > 0 && !soon.coverage[0].timed && !soon.ladder.some((l) => l.month === '2026-11') && soon.ladder[0].month === '2026-12',
     'the next conversion\'s gap is the cash to keep (the keep line), never a deposit, even two weeks out; the ladder starts with the one after');
 
@@ -259,7 +259,7 @@ async function testPlan(fx) {
     { month: '2026-08', kind: 'customer', eur: 4537969 }, { month: '2026-08', kind: 'vendor', eur: -814475 }, { month: '2026-08', kind: 'refund', eur: -49575 },
   ];
   const inflow = fx.typicalInflow(flows, ['2026-07', '2026-08']);
-  check(near(inflow.months[0].net, 4969632 - 389321 + 58695) && near(inflow.perMonth, (4639006 + 3673919) / 2) && near(inflow.perDay, inflow.perMonth / 30.4, 1e-6),
+  check(near(inflow.months[0].net, 4969632 - 389321 + 58695) && near(inflow.perMonth, (4639006 + 3673919) / 2) && near(inflow.perBusinessDay, (inflow.perMonth * 12) / 313, 1e-6),
     'the typical inflow leaves out conversions, deposits and transfers');
 }
 
@@ -406,7 +406,7 @@ async function testDeals(fx) {
   const dep = (amount, valueDate) => ({ amount, valueDate, blocked: false, label: 'fixed-term' });
   const LADDER = [dep(402000, '2026-11-03'), dep(202500, '2026-11-03'), dep(201500, '2026-11-03'), dep(403000, '2026-12-03'), dep(203000, '2026-12-03'),
     dep(202000, '2026-12-03'), dep(504000, '2027-01-04'), dep(404000, '2027-01-04'), dep(505000, '2027-02-01'), dep(404000, '2027-02-01'), dep(405000, '2027-03-05'), dep(405000, '2027-03-05')];
-  const plan = fx.planReserve({ upcoming: up, policy: 'today', eur: { hapoalim: 3e6, other: 0, deposits: LADDER }, inflowPerDay: 0, today: TODAY, eurFloor: 200000 });
+  const plan = fx.planReserve({ upcoming: up, policy: 'today', eur: { hapoalim: 3e6, other: 0, deposits: LADDER }, inflowPerBusinessDay: 0, today: TODAY, eurFloor: 200000 });
   const c = plan.coverage[4];
   check(c.deals && same(c.legs.map((l) => [l.settle, l.required, l.have, l.gap, l.until]), [['2027-03-05', 600000, 810000, 0, '2027-03-04'], ['2027-03-08', 450000, 210000, 240000, '2027-03-05']])
     && c.gap === 240000 && c.takes === '2027-03-05' && c.late.length === 0,
@@ -550,15 +550,23 @@ async function testDeals(fx) {
 // The EUR vendor payments on their days: made-up days, with the real shape (most in the first week).
 function testEurVendors(fx) {
   console.log('\nEUR VENDORS: the payments on the days they go out');
-  const days = [['07-02', 200000], ['07-10', 60000], ['07-25', 90000], ['08-04', 500000], ['08-18', 90000], ['08-31', 120000],
-    ['09-03', 620000], ['09-08', 60000], ['09-28', 150000], ['10-04', 550000], ['10-20', 85000], ['10-21', 100000]].map(([d, eur]) => ({ date: `2026-${d}`, eur }));
+  const mail = require(path.join(ROOT, 'scripts', 'fx-challenge-mail.cjs'));
+  // [day, paid, of it from Hapoalim EUR]
+  const days = [['07-02', 200000, 50000], ['07-10', 60000], ['07-25', 90000], ['08-04', 500000, 150000], ['08-18', 90000], ['08-31', 120000],
+    ['09-03', 620000, 180000], ['09-08', 60000], ['09-28', 150000], ['10-04', 550000, 160000], ['10-20', 85000], ['10-21', 100000]]
+    .map(([d, eur, hapoalim]) => ({ date: `2026-${d}`, eur, hapoalim: hapoalim || 0 }));
   const months = ['2026-07', '2026-08', '2026-09'];
   const ev = fx.eurVendorsAhead({ days, months, today: TODAY, until: '2026-11-30' });
-  check(same(ev.parts.map((p) => [p.from, p.to, Math.round(p.eur)]), [[1, 7, 440000], [8, 20, 70000], [21, 31, 120000]]),
-    'each part of the month (1st–7th, 8th–20th, 21st–end) at its average of the three months', JSON.stringify(ev.parts));
-  check(same(ev.dues.map((d) => [d.date, Math.round(d.eur), d.part]), [['2026-10-21', 20000, 2], ['2026-11-01', 440000, 0], ['2026-11-08', 70000, 1], ['2026-11-21', 120000, 2]])
+  check(same(ev.parts.map((p) => [p.from, p.to, Math.round(p.eur), Math.round(p.hapoalim), p.months.join()]), [
+    [1, 7, 556667, 163333, '2026-08,2026-09,2026-10'], [8, 20, 70000, 0, '2026-07,2026-08,2026-09'], [21, 31, 120000, 0, '2026-07,2026-08,2026-09']]),
+  'each part of the month at its average over its last three months: on 21 Oct the first week\'s August to October (October\'s is over and booked), '
+    + 'the 8th–20th\'s and the rest July to September (October\'s 8th–20th ended yesterday: not booked yet), with what Hapoalim EUR paid of them', JSON.stringify(ev.parts));
+  check(same(ev.dues.map((d) => [d.date, Math.round(d.eur), Math.round(d.hapoalim), d.part]), [['2026-10-21', 20000, 0, 2], ['2026-11-01', 556667, 163333, 0], ['2026-11-08', 70000, 0, 1], ['2026-11-21', 120000, 0, 2]])
     && fx.eurVendorsAhead({ days, months: [], today: TODAY, until: '2026-11-30' }) === null,
   'each on its first day; the part today is in, less what it has paid so far (€100K of €120K), today', JSON.stringify(ev.dues));
+  const nov1 = fx.eurVendorsAhead({ days, months: ['2026-08', '2026-09', '2026-10'], today: '2026-11-01', until: '2026-11-30' });
+  check(same(nov1.parts.map((p) => p.months.join()), ['2026-08,2026-09,2026-10', '2026-08,2026-09,2026-10', '2026-07,2026-08,2026-09']),
+    'on 1 Nov, October\'s last part (to the 31st) is not booked yet: that part still takes July to September, a month before the closed months', JSON.stringify(nov1.parts.map((p) => p.months)));
   const flows = [{ month: '2026-09', kind: 'customer', eur: 3e6 }, { month: '2026-09', kind: 'vendor', eur: -6e5 }, { month: '2026-09', kind: 'conversion', eur: -2e6 }];
   check(fx.typicalInflow(flows, ['2026-09']).perMonth === 2.4e6 && fx.typicalInflow(flows, ['2026-09'], { vendors: false }).perMonth === 3e6,
     'the typical inflow leaves the vendor payments out when they are planned on their days');
@@ -566,7 +574,7 @@ function testEurVendors(fx) {
   const t = fx.cloneTable(fx.DEFAULT_TABLE);
   const up = fx.fixings(t, TODAY).filter((x) => x.status !== 'past').slice(0, 2)
     .map((x) => ({ month: x.month, date: x.date, days: x.days, conv: fx.conversionAt(x.row, t.bounds, 3.45), risk: fx.fixingRisk(x.row, t.bounds, 3.45, 0.08, x.days / 365) }));
-  const input = { upcoming: up, policy: 'today', eur: { hapoalim: 2.5e6, other: 0, deposits: [] }, inflowPerDay: 0, today: TODAY };
+  const input = { upcoming: up, policy: 'today', eur: { hapoalim: 2.5e6, other: 0, deposits: [] }, inflowPerBusinessDay: 0, today: TODAY };
   const without = fx.planReserve(input);
   const withV = fx.planReserve({ ...input, eurOut: [{ date: '2026-11-01', eur: 440000 }, { date: '2026-12-01', eur: 1.5e6 }] });
   check(without.next.freeNow === 1.7e6 && without.next.vendorsBefore === 0 && withV.next.vendorsBefore === 440000 && withV.next.freeNow === 1.26e6,
@@ -582,18 +590,59 @@ function testEurVendors(fx) {
   };
   const before = fx.planFromPayload(data, 'today');
   const v = fx.planFromPayload({ ...data, eurVendors: days }, 'today');
-  check(before.eurVendors === null && near(before.inflow.perMonth, 0.8e6, 1) && near(v.inflow.perMonth, 1e6, 1) && v.eurVendors && v.plan.next.vendorsBefore === 460000,
-    'from the payload: with NetSuite\'s payments by day, the inflow leaves them out and the plan takes them on their days; without, as before', JSON.stringify([before.inflow.perMonth, v.inflow.perMonth, v.plan.next.vendorsBefore]));
+  check(before.eurVendors === null && near(before.inflow.perMonth, 0.8e6, 1) && near(v.inflow.perMonth, 1e6, 1) && v.eurVendors && near(v.plan.next.vendorsBefore, 576667, 1)
+    && near(v.plan.next.hapoalimVendors, 163333, 1) && before.plan.next.hapoalimVendors === 0,
+  'from the payload: with NetSuite\'s payments by day, the inflow leaves them out and the plan takes them on their days (Hapoalim EUR\'s apart); without, as before',
+  JSON.stringify([before.inflow.perMonth, v.inflow.perMonth, v.plan.next.vendorsBefore, v.plan.next.hapoalimVendors]));
+
+  // Receipts come in Sunday to Friday (finance's rule): none on a Saturday.
+  check(fx.receiptDaysBetween('2026-10-30', '2026-11-01') === 0 && fx.receiptDaysBetween('2026-10-30', '2026-11-04') === 3 && fx.receiptDaysBetween('2026-10-31', '2026-11-02') === 1
+    && fx.receiptDaysBetween('2026-11-04', '2026-11-04') === 0 && near(fx.typicalInflow([{ month: '2026-09', kind: 'customer', eur: 313000 }], ['2026-09']).perBusinessDay, 12000, 1e-6),
+  'receipt days: Sunday to Friday, after today and before the day (Fri 30 Oct to Sun 1 Nov: none; to Wed 4 Nov: three); a month\'s inflow over its 26 of them');
+
+  // 30 Oct 2026, as the balances were: €1.13M (€521K at Hapoalim), €806K of deposits by Tue 3 Nov, €683K kept, €174K a
+  // business day coming in, and the first week's EUR vendors (€589K, €161K of it from Hapoalim) on Sun 1 Nov.
+  const oct30 = {
+    upcoming: up, policy: 'today', today: '2026-10-30', inflowPerBusinessDay: 173800, eurFloor: 683000,
+    eur: { hapoalim: 521000, other: 605000, deposits: [{ amount: 806000, valueDate: '2026-11-03', label: 'EUR fixed-term' }] },
+    eurOut: [{ date: '2026-10-30', eur: 6000, hapoalim: 5000 }, { date: '2026-11-01', eur: 589000, hapoalim: 161000 }, { date: '2026-11-08', eur: 94000, hapoalim: 0 }],
+  };
+  const dipped = fx.planReserve(oct30);
+  check(dipped.next.short && dipped.next.short.date === '2026-11-01' && dipped.next.short.eur === 152000 && dipped.next.short.left === 531000 && dipped.next.short.back === '2026-11-02'
+    && dipped.next.runsOut === null && dipped.next.spare === 0 && !dipped.ladder.length,
+  'Sun 1 Nov: nothing comes in on the Saturday before, so the first week\'s EUR vendors take the euros €152K below the €683K kept (€531K held); '
+    + 'back above it by Mon 2 Nov (Sunday\'s receipts); nothing runs out, nothing is spare, no deposit', JSON.stringify(dipped.next.short));
+  const quiet = fx.todayActions({ plan: dipped, cash: null, rateCheck: null }, '2026-10-30');
+  const dry = fx.planReserve({ ...oct30, eur: { ...oct30.eur, hapoalim: 100000, other: 0 } });
+  const urgent = fx.todayActions({ plan: dry, cash: null, rateCheck: null }, '2026-10-30');
+  check(quiet.actions.length === 0 && dry.next.runsOut && dry.next.runsOut.eur === 495000 && dry.next.runsOut.date === '2026-11-01' && dry.next.runsOut.vendors
+    && same(urgent.actions.map((a) => [a.kind, a.urgent, a.eur, a.date]), [['short', true, 495000, '2026-11-01']]),
+  'the dip alone is no recommendation; euros that run out (€100K held: €495K short on Sun 1 Nov, the floor spent too) are, urgent', JSON.stringify(urgent.actions));
+  // Hapoalim EUR pays €161K of the first week itself, before the euros leave for the conversion: it keeps them too.
+  const kept = fx.keepCover(dipped);
+  const words = { eur: (x) => `€${Math.round(x / 1000)}K`, day: (iso) => iso };
+  check(dipped.next.hapoalimVendors === 161000 && kept.depositsCover && !kept.covered && kept.vendors === 161000 && kept.fromCash === 161000
+    && fx.describeKeep(kept, words) === 'the deposit released on 2026-11-03 (€806K) covers the €800K it takes from Hapoalim EUR (583400), but about €161K of EUR vendor payments leave Hapoalim EUR before it'
+    && mail.keepLine(kept, ['2026-11-07'], 'לפי השער היום') === 'להשאיר €161K בפועלים להמרה של שבת 7.11 (לפי השער היום): הפיקדון שמשתחרר ביום ג\' 3.11 (€806K) מכסה את ה-€800K שהיא מוכרת, אבל כ-€161K יוצאים מפועלים לספקים באירו לפני כן.',
+  'the deposit covers the conversion, but Hapoalim EUR\'s own EUR vendor payments in its month, before its euros leave, stay there: keep €161K (October\'s last €5K is met by the inflow before then; page and mail)', JSON.stringify(kept));
+  const thin = fx.planReserve({ ...oct30, eur: { ...oct30.eur, hapoalim: 100000, deposits: [{ amount: 500000, valueDate: '2026-11-03', label: 'EUR fixed-term' }] } });
+  const part = fx.keepCover(thin);
+  check(thin.next.moveToHapoalim === 361000 && part.fromCash === 461000
+    && fx.describeKeep(part, words) === 'it takes €800K, the deposit released on 2026-11-03 brings €500K of it, and about €161K of EUR vendor payments leave Hapoalim EUR before it'
+    && mail.keepLine(part, ['2026-11-07'], 'לפי השער היום') === 'להשאיר €461K בפועלים להמרה של שבת 7.11 (לפי השער היום): היא מוכרת €800K, ו-€500K מזה מגיעים מהפיקדון שמשתחרר ביום ג\' 3.11, ועוד כ-€161K יוצאים מפועלים לספקים באירו לפני כן.'
+    && mail.actionText({ kind: 'move', eur: 361000, date: '2026-11-07', on: ['2026-11-07'], by: '2026-11-05' }, { plan: thin, rateCheck: null }, '2026-10-30').body.endsWith('ועוד כ-€161K לספקים באירו שיוצאים ממנו לפני כן.'),
+  'a deposit covering part of it: keep the rest and Hapoalim\'s own EUR vendors (€300K + €161K); with €100K there, move €361K from the other accounts', JSON.stringify(part));
 
   check(same(ev.dues.map((d) => d.rest), [true, false, false, false]) && fx.eurVendorsAhead({ days, months, today: '2026-10-23', until: '2026-10-31' }).dues[0].rest
     && !fx.eurVendorsAhead({ days, months, today: '2026-11-01', until: '2026-11-30' }).dues[0].rest,
   'a part already paying (it began before today, or paid some today) is its rest; one that starts today is whole');
 
-  const mail = require(path.join(ROOT, 'scripts', 'fx-challenge-mail.cjs'));
   const line = mail.vendorsLine(v.eurVendors, 683000);
-  check(line === 'ההמלצה מניחה שהתשלומים לספקים באירו יוצאים כמו ב-3 החודשים האחרונים (יולי–ספטמבר): כ-€440K בשבוע הראשון של החודש (1–7), באותם ימים שבהם הבנק לוקח את האירו להמרה, כ-€70K מה-8 עד ה-20 וכ-€120K מה-21 ועד סוף החודש. בנוסף נשמרים תמיד €683K בחשבונות האירו.'
+  const sameMonths = { months, parts: [440000, 70000, 120000].map((eur) => ({ eur, hapoalim: 0, months })) };
+  check(line === 'ההמלצה מניחה שהתשלומים לספקים באירו יוצאים כמו ב-3 הפעמים האחרונות של כל חלק בחודש: כ-€557K בשבוע הראשון של החודש (1–7, אוגוסט–אוקטובר), באותם ימים שבהם הבנק לוקח את האירו להמרה, כ-€70K מה-8 עד ה-20 (יולי–ספטמבר) וכ-€120K מה-21 ועד סוף החודש (יולי–ספטמבר). בנוסף נשמרים תמיד €683K בחשבונות האירו.'
+    && mail.vendorsLine(sameMonths, 0) === 'ההמלצה מניחה שהתשלומים לספקים באירו יוצאים כמו ב-3 החודשים האחרונים (יולי–ספטמבר): כ-€440K בשבוע הראשון של החודש (1–7), באותם ימים שבהם הבנק לוקח את האירו להמרה, כ-€70K מה-8 עד ה-20 וכ-€120K מה-21 ועד סוף החודש.'
     && mail.vendorsLine(null, 0) === 'התשלומים לספקים באירו לא נקראו היום לפי ימים, ולכן הם בחשבון כממוצע לאורך החודש.',
-  'the mail says, in Hebrew, what the recommendation expects for the EUR vendors (or that they count as spread over the month)', line);
+  'the mail says, in Hebrew, what the recommendation expects for the EUR vendors, each part as in its last three months (the months once when the same), or that they count as spread over the month', line);
 
   // Every euro expected to leave, by day: the EUR vendors, the bank's conversions (each part), the euros converted for
   // shekels and the forwards that sell euros.
@@ -625,16 +674,20 @@ function testEurVendors(fx) {
   check(same(said, ['יום ד\' 21.10: ספקים באירו (יתרת 21–31.10), כ-€20K', 'יום א\' 1.11: ספקים באירו (1–7.11), כ-€440K', 'יום ד\' 4.11: ההמרה של נובמבר בבנק, €1.10M',
     'יום ב\' 7.12: ההמרה של דצמבר בבנק (חלק 2 מ-2), €450K', 'יום ה\' 5.11: המרה לשקלים (שכר נטו, ספקים בשקלים), €1.13M', 'יום א\' 15.11: פורוורד, מכירת €200K']),
   'each payment in the mail\'s words', JSON.stringify(said));
-  const pv = (next) => ({ plan: { next: { liquid: 1.8e6, eurFloor: 683000, short: null, ...next } }, inflow: { perMonth: 4.53e6 },
+  const pv = (next) => ({ plan: { next: { liquid: 1.8e6, eurFloor: 683000, short: null, runsOut: null, ...next } }, inflow: { perMonth: 4.53e6 },
     position: { deposits: [{ amount: 1.5e6, valueDate: '2026-11-03' }, { amount: 110000, valueDate: '2026-11-25' }, { amount: 900000, valueDate: '2026-11-26' }, { amount: 400000, valueDate: '2026-11-10', blocked: true }] } });
-  const gap = { eur: 38000, date: '2026-11-05', first: { eur: 38000, date: '2026-11-05' } };
-  const totals = [mail.paymentsTotal(ahead, pv({}), TODAY), mail.paymentsTotal(ahead, pv({ short: gap }), TODAY), mail.paymentsTotal(ahead, pv({ short: gap }), TODAY, true),
+  const dip = { eur: 146000, date: '2026-11-01', left: 537000, back: '2026-11-02', first: { eur: 146000, date: '2026-11-01' } };
+  const gone = { eur: 120000, date: '2026-12-01' };
+  const totals = [mail.paymentsTotal(ahead, pv({}), TODAY), mail.paymentsTotal(ahead, pv({ short: dip }), TODAY), mail.paymentsTotal(ahead, pv({ short: { ...dip, back: null } }), TODAY),
+    mail.paymentsTotal(ahead, pv({ short: dip, runsOut: gone }), TODAY, true), mail.paymentsTotal(ahead, pv({ short: dip, runsOut: { ...gone, eur: 30000 } }), TODAY),
     mail.paymentsTotal(ahead, { ...pv({ eurFloor: 0 }), inflow: null, position: { deposits: [] } }, TODAY)];
   check(totals[0] === 'סה"כ עד יום ד\' 25.11: €3.13M (ספקים באירו €650K, המרות בבנק €1.10M, המרות לשקלים €1.18M, פורוורדים €200K). מול זה: €1.80M באירו היום, €1.61M מפיקדונות שמשתחררים עד אז ותקבולים רגילים של כ-€4.53M בחודש. לפי זה כל התשלומים מכוסים ונשארים לפחות €683K.'
-    && totals[1].endsWith('לפי זה חסרים €38K ביום ה\' 5.11 כדי שיישארו €683K (סכום קטן, ולכן אין עליו המלצה).')
-    && totals[2].endsWith('לפי זה חסרים €38K ביום ה\' 5.11 כדי שיישארו €683K: ההמלצות למעלה אומרות איך להשלים.')
-    && totals[3].endsWith('מול זה: €1.80M באירו היום. לפי זה כל התשלומים מכוסים.'),
-  'the total, by kind, against today\'s euros, the deposits paying out by then (not a blocked one) and the typical inflow; covered or how short, and whether today\'s recommendations fix it', JSON.stringify(totals));
+    && totals[1].endsWith('לפי זה התשלומים מכוסים, אבל ביום א\' 1.11 היתרה באירו יורדת €146K מתחת ל-€683K שנשמרים תמיד (נשארים €537K) וחוזרת מעליהם עד יום ב\' 2.11: עד אז לא להפקיד ולא להמיר מעבר למתוכנן.')
+    && totals[2].endsWith('(נשארים €537K): בינתיים לא להפקיד ולא להמיר מעבר למתוכנן.')
+    && totals[3].endsWith('לפי זה חסרים €120K ביום ג\' 1.12, גם אחרי ה-€683K השמורים: ההמלצות למעלה אומרות איך להשלים.')
+    && totals[4].endsWith('לפי זה חסרים €30K ביום ג\' 1.12, גם אחרי ה-€683K השמורים (סכום קטן, ולכן אין עליו המלצה).')
+    && totals[5].endsWith('מול זה: €1.80M באירו היום. לפי זה כל התשלומים מכוסים.'),
+  'the total, by kind, against today\'s euros, the deposits paying out by then (not a blocked one) and the typical inflow: covered; a dip into the floor (how deep, what is held, when it is back); or euros that run out, and whether today\'s recommendations fix it', JSON.stringify(totals));
   const hv = { plan: { next: { backup: 0, eurFloor: 0 } }, rateCheck: null };
   const short = mail.actionText({ kind: 'short', eur: 240000, date: '2026-12-01', by: '2026-12-01', shekels: false, vendors: true }, hv, TODAY);
   const leg = { month: '2026-12', date: '2026-12-07', on: '2026-12-06', until: '2026-12-03', eur: 240000, gap: 240000, required: 800000, have: 560000 };
@@ -662,7 +715,7 @@ async function testPlanFromPayload(fx) {
   const left = fx.fixings(t, TODAY).filter((f) => f.status !== 'past');
   const upcoming = left.map((f) => ({ month: f.month, date: f.date, days: f.days, conv: fx.conversionAt(f.row, t.bounds, 3.4778), risk: fx.fixingRisk(f.row, t.bounds, 3.4778, 0.08, f.days / 365) }));
   const inflow = fx.typicalInflow(data.flows, data.inflowMonths);
-  const direct = fx.planReserve({ upcoming, policy: 'p95', eur: fx.eurPosition(rows), inflowPerDay: inflow.perDay, today: TODAY });
+  const direct = fx.planReserve({ upcoming, policy: 'p95', eur: fx.eurPosition(rows), inflowPerBusinessDay: inflow.perBusinessDay, today: TODAY });
   check(same(v.plan, direct) && v.schedule.length === 14 && v.schedule[0].outcomes.length === 9 && v.spotBand === 2,
     'the same plan as built by hand from the fixings, the risk and the euros');
   check(v.sigma === 0.08 && v.sigmaFromHistory && fx.planFromPayload({ ...data, rates: { ...data.rates, sigma: null } }).sigma === fx.FALLBACK_SIGMA, 'NetSuite\'s volatility, or the fallback without it');
@@ -753,7 +806,7 @@ async function testCash(fx) {
   const two = fx.fixings(t, TODAY).filter((f) => f.status !== 'past').slice(0, 2)
     .map((f) => ({ month: f.month, date: f.date, days: f.days, conv: fx.conversionAt(f.row, t.bounds, 3.45), risk: fx.fixingRisk(f.row, t.bounds, 3.45, 0.08, f.days / 365) }));
   const shekels = [{ date: '2026-11-05', eur: 500000 }, { date: '2026-12-05', eur: 500000 }];
-  const plan = fx.planReserve({ upcoming: two, policy: 'today', eur: { hapoalim: 3e6, other: 0, deposits: [] }, inflowPerDay: 0, today: TODAY, shekels, eurFloor: 200000 });
+  const plan = fx.planReserve({ upcoming: two, policy: 'today', eur: { hapoalim: 3e6, other: 0, deposits: [] }, inflowPerBusinessDay: 0, today: TODAY, shekels, eurFloor: 200000 });
   check(near(plan.path[0].available, 2.5e6) && near(plan.path[0].surplus, 1.5e6) && near(plan.path[1].forShekels, 1e6) && near(plan.path[1].shekels, 500000)
     && near(plan.path[1].available, 1.2e6) && near(plan.path[1].surplus, 0.2e6) && near(plan.path[0].convertibleBefore, 0.2e6),
   'the plan takes the conversions for shekels and keeps the EUR floor: euros by then and the spare before each conversion');
@@ -762,11 +815,11 @@ async function testCash(fx) {
   'spare now: the smallest spare of all the dues (7 Dec), not more than today\'s euros above the floor');
   check(same(plan.deposits.map((d) => [d.months, d.until, d.eur]), [[1, '2026-11-21', 1500000], [3, '2027-01-21', 200000], [6, '2027-04-21', 200000]]),
     'new deposits: a month can hold what the dues before it leave (€1.5M), longer ones only what every due leaves', JSON.stringify(plan.deposits));
-  const tight = fx.planReserve({ upcoming: two, policy: 'today', eur: { hapoalim: 1e6, other: 0, deposits: [] }, inflowPerDay: 0, today: TODAY, shekels, eurFloor: 200000 });
+  const tight = fx.planReserve({ upcoming: two, policy: 'today', eur: { hapoalim: 1e6, other: 0, deposits: [] }, inflowPerBusinessDay: 0, today: TODAY, shekels, eurFloor: 200000 });
   check(tight.next.spare === 0 && near(tight.next.short.first.eur, 500000) && tight.next.short.first.date === '2026-11-07'
     && near(tight.next.short.eur, 1.8e6) && tight.next.short.date === '2026-12-07' && tight.deposits.every((d) => d.eur === 0),
   'short: a gap opens on 7 Nov (€500K) and grows to €1.8M by 7 Dec without inflows, so nothing is spare and no deposit');
-  const plain = fx.planReserve({ upcoming: two, policy: 'today', eur: { hapoalim: 3e6, other: 0, deposits: [] }, inflowPerDay: 0, today: TODAY });
+  const plain = fx.planReserve({ upcoming: two, policy: 'today', eur: { hapoalim: 3e6, other: 0, deposits: [] }, inflowPerBusinessDay: 0, today: TODAY });
   check(plain.path[1].forShekels === 0 && near(plain.path[1].available, 3e6 - 800000) && near(plain.next.spare, 3e6 - 1.6e6), 'without shekels or a floor, the plan is as before');
 
   // From the payload, as the page and the mail see it.
@@ -827,11 +880,14 @@ async function testToday(fx) {
     'a high EUR/ILS brings no conversion forward: 5 Nov\'s is still said from Tue 3 Nov, not on 21 Oct', JSON.stringify(kinds(high)));
   const small = fx.todayActions({ ...view('2026-11-01'), cash: fx.shekelNeeds({ today: '2026-11-01', ilsNow: 2.99e6, vendorsIls: 3.1e6, spot: 3.5, until: '2026-11-30', payroll: [], conversions: [] }) }, '2026-11-01');
   check(small.actions.length === 0, 'a gap under €50K is no action (here €2K for the rest of November\'s vendors)', JSON.stringify(kinds(small)));
-  const short = { first: { eur: 776000, date: '2026-11-07', shekels: false }, eur: 776000, date: '2026-11-07' };
-  check(kinds(fx.todayActions(view(TODAY, { next: { short } }), TODAY)).includes('short:2026-11-07')
-    && kinds(fx.todayActions(view('2026-11-01', { next: { short } }), '2026-11-01')).includes('short!:2026-11-07')
-    && !kinds(fx.todayActions(view(TODAY, { next: { short: { ...short, first: { ...short.first, eur: 13000 } } } }), TODAY)).some((k) => k.startsWith('short')),
-  'a shortfall: said when it opens, urgent in its last week; under €50K not at all');
+  const runsOut = { eur: 776000, date: '2026-11-07', shekels: false };
+  const dip = { first: { eur: 300000, date: '2026-11-07', shekels: false }, eur: 300000, date: '2026-11-07', left: 383000, back: '2026-11-09' };
+  check(kinds(fx.todayActions(view(TODAY, { next: { short: dip, runsOut } }), TODAY)).includes('short:2026-11-07')
+    && kinds(fx.todayActions(view('2026-11-01', { next: { short: dip, runsOut } }), '2026-11-01')).includes('short!:2026-11-07')
+    && !kinds(fx.todayActions(view(TODAY, { next: { short: dip, runsOut: { ...runsOut, eur: 13000 } } }), TODAY)).some((k) => k.startsWith('short')),
+  'a shortfall (the euros run out): said when it opens, urgent in its last week; under €50K not at all');
+  check(!kinds(fx.todayActions(view('2026-11-01', { next: { short: dip, runsOut: null } }), '2026-11-01')).some((k) => k.startsWith('short') || k.startsWith('deposit')),
+    'a dip into the floor kept for EUR vendors alone is no shortfall (and no new deposit either)');
   check(same(kinds(fx.todayActions(view('2026-11-04', { next: { moveToHapoalim: 300000 } }), '2026-11-04')).filter((k) => k.startsWith('move')), ['move!:2026-11-07'])
     && !kinds(fx.todayActions(view(TODAY, { next: { moveToHapoalim: 300000 } }), TODAY)).some((k) => k.startsWith('move')),
   'euros to move to Hapoalim EUR: urgent in the last business days before the conversion (a Saturday one counts from the Thursday), not before');
@@ -1150,7 +1206,7 @@ async function testMail(fx) {
   'the mail lists every euro expected to leave in the next 35 days, by day, with what is assumed for the EUR vendors and the total against what covers it', ms.join(' | '));
   check(/^- יום ד' 21\.10: המרה לשקלים \(ספקים בשקלים\), €[\d.]+K\.$/.test(mcs[1]) && /^- יום ה' 5\.11: המרה לשקלים \(שכר נטו, ספקים בשקלים\), €[\d.]+M\.$/.test(mcs[2])
     && /^- שבת 7\.11: ההמרה של נובמבר בבנק/.test(mcs[3]) && mc.actions.some((a) => a.kind === 'short')
-    && /לפי זה חסרים €[\d.]+K ביום ב' 7\.12 כדי שיישארו €200K: ההמלצות למעלה אומרות איך להשלים\.$/.test(mcs[mcs.length - 1]) && !english(mcs.join(' ')),
+    && /לפי זה חסרים €[\d.]+K ביום ב' 7\.12, גם אחרי ה-€200K השמורים: ההמלצות למעלה אומרות איך להשלים\.$/.test(mcs[mcs.length - 1]) && !english(mcs.join(' ')),
   'with the payroll: the euros converted for shekels on their days too, and a gap the recommendations above fix', mcs.join(' | '));
   const none = mail.renderMail(fx, { ...data, balances: null }, {});
   check(/· אין היום המלצה$/.test(none.subject) && clean(none.html) && none.text.includes('היתרות'), 'without balances: no recommendation, and why');
@@ -1397,6 +1453,7 @@ async function testNetSuiteReads() {
   console.log('\nNETSUITE: the reads\' mapping (fetch stubbed)');
   const { createNetSuiteClient } = require(path.join(ROOT, 'netsuite-api.cjs'));
   const seen = [];
+  let hapQuery = '';
   const reply = (items) => ({ ok: true, status: 200, json: async () => ({ items, hasMore: false }), text: async () => JSON.stringify({ items }) });
   const realFetch = global.fetch;
   global.fetch = async (url, opts) => {
@@ -1410,6 +1467,10 @@ async function testNetSuiteReads() {
       { id: 354114, m: '2026-09', num: '180013', name: '180013 Withholdind tax - Payroll', ils: '-1741757.41' },
       { id: 5, m: '2026-09', num: '2500', name: '2500 Something debited', ils: '20' },
     ]);
+    if (/AS hap/.test(q)) {
+      hapQuery = q;
+      return reply([{ d: '2026-10-04', eur: '-399130', hap: '0' }, { d: '2026-10-06', eur: '-156815.72', hap: '-156755.72' }, { d: '2026-10-07', eur: '12.5', hap: '0' }]);
+    }
     if (/'VendPymt', 'Check'/.test(q)) {
       return /'Bank', 'CredCard'/.test(q) && /PreviousTransactionLineLink[\s\S]*accttype = 'Equity'/.test(q) ? reply([
         { m: '2026-09', name: '17005 6364 - AMEX - NIS', ils: '-2496282.81' }, { m: '2026-09', name: '17018 4491 - Isracard - NIS', ils: '-33666.12' },
@@ -1446,6 +1507,11 @@ async function testNetSuiteReads() {
     check(same(owed.map((r) => [r.id, r.account, r.ils]), [[354114, '200000', 4066621.1], [354114, '180013', 1741757.41]])
       && same(paid, [{ month: '2026-08', ils: 1864828.4, cards: 1475947.66, other: 388880.74 }, { month: '2026-09', ils: 6988480.55, cards: 2529948.93, other: 4458531.62 }]) && badMonth,
     'payroll journals: what they owe (credits, positive; a debit left out); ILS vendor payments as paid, the credit cards apart from transfers and Masav (a credit card account that clears the batches), payments of equity (dividends) left out; the month is checked', JSON.stringify(paid));
+    const eurDays = await ns.fetchEurVendorDays({ from: '2026-06' });
+    let badAccount = false;
+    try { await ns.fetchEurVendorDays({ from: '2026-06', hapoalimAccount: "11001' OR 1=1" }); } catch { badAccount = true; }
+    check(same(eurDays, [{ date: '2026-10-04', eur: 399130, hapoalim: 0 }, { date: '2026-10-06', eur: 156815.72, hapoalim: 156755.72 }]) && badAccount && /acctnumber = '11001'/.test(hapQuery),
+      'EUR vendor payments by day, paid (positive), with what Hapoalim EUR (11001) paid of them; a refund left out; the account number is checked', JSON.stringify(eurDays));
     const books = await ns.fetchEurBalancesBooks();
     check(books[0].eur === 979709.61 && books[0].number === '11001', 'books: the EUR balance per account');
     await ns.restletGet('customscript_ph_rl_balances', 'customdeploy_ph_rl_balances');

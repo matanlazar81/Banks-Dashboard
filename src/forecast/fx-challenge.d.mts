@@ -97,6 +97,8 @@ export interface ForwardFlow { date: string; eur: number; ils: number }
 export declare function forwardFlows(positions: Pick<Positions, 'forwards'> | null): ForwardFlow[];
 export declare function dealsVsTable(table: FxTable, legsByMonth: Record<string, PositionLeg[]>): { month: string; bands: { band: number; table: number; deals: number }[] }[];
 export declare function valueDayBefore(iso: string): string;
+/** Receipt days (Sunday to Friday) after `from` and before `to`: the days the typical inflow comes in. */
+export declare function receiptDaysBetween(from: string, to: string): number;
 
 export interface Fixing {
   month: string;
@@ -157,18 +159,19 @@ export interface EurPosition { hapoalim: number; other: number; deposits: EurDep
 export declare function eurPosition(rows: BalanceRow[]): EurPosition;
 
 export interface FlowRow { month: string; kind: 'customer' | 'vendor' | 'conversion' | 'deposit' | 'transfer' | 'refund' | 'other'; eur: number }
-export declare function typicalInflow(flows: FlowRow[], months: string[], opts?: { vendors?: boolean }): { perMonth: number; perDay: number; months: { month: string; net: number }[] } | null;
+export declare function typicalInflow(flows: FlowRow[], months: string[], opts?: { vendors?: boolean }): { perMonth: number; perBusinessDay: number; months: { month: string; net: number }[] } | null;
 /** EUR vendor payments on a day (fetchEurVendorDays): paid, positive. */
-export interface VendorDay { date: string; eur: number }
+export interface VendorDay { date: string; eur: number; /** Of it, paid from Hapoalim EUR (583400). */ hapoalim?: number }
 export declare const VENDOR_PARTS: readonly { from: number; to: number }[];
 /** The EUR vendor payments ahead on their days: each part of the month at its average over `months`. */
 export interface EurVendorsAhead {
   months: string[];
-  /** 1st–7th, 8th–20th, 21st–end: the average a month. */
-  parts: { from: number; to: number; eur: number }[];
+  /** 1st–7th, 8th–20th, 21st–end: the average a month over the months it is over (`months`), and of it what
+   * Hapoalim EUR paid. */
+  parts: { from: number; to: number; eur: number; hapoalim: number; months: string[] }[];
   /** Each part's payments, on its first day (the part today is in: what is left of it, today; rest when it began
    * before today or paid some today). */
-  dues: { date: string; eur: number; part: number; rest: boolean }[];
+  dues: { date: string; eur: number; hapoalim: number; part: number; rest: boolean }[];
 }
 /** A payment in euros ahead (eurPaymentsAhead). */
 export type EurPayment =
@@ -284,6 +287,8 @@ export interface NextFixingPlan {
   shekelsBefore: number;
   /** The EUR vendor payments expected before its first euros leave (0 when the plan has none on their days). */
   vendorsBefore: number;
+  /** Of them, those paid from Hapoalim EUR: they have to stay there too until the conversion's euros leave. */
+  hapoalimVendors: number;
   /** The euros kept for the EUR vendors at all times. */
   eurFloor: number;
   /** What can leave the euro accounts for good today (converted, say) with every due met as the typical inflow comes
@@ -292,9 +297,15 @@ export interface NextFixingPlan {
   /** The due with the smallest spare (euros held then, less what is due and the floor), and whether it is for shekels
    * or the EUR vendors. */
   tightest: { date: string; spare: number; shekels: boolean; vendors?: boolean } | null;
-  /** When a due falls short: the largest gap (by how much, on which day, whether it is a conversion for shekels or the
-   * EUR vendor payments), and the first day a gap opens. */
-  short: { eur: number; date: string; shekels: boolean; vendors?: boolean; first: { eur: number; date: string; shekels: boolean; vendors?: boolean } } | null;
+  /** When the euros fall below the floor kept for EUR vendors: the largest gap (by how much, on which day, whether it is
+   * a conversion for shekels or the EUR vendor payments), the euros still held then (left: above zero, the payments are
+   * met), the first day they are back at the floor (null: not by the last conversion), and the first day a gap opens. */
+  short: {
+    eur: number; date: string; shekels: boolean; vendors?: boolean; left: number; back: string | null;
+    first: { eur: number; date: string; shekels: boolean; vendors?: boolean };
+  } | null;
+  /** When the euros run out, the floor spent too: the first day, and by how much. */
+  runsOut: { eur: number; date: string; shekels: boolean; vendors?: boolean } | null;
   freeNow: number;
   freeNowWithBackup: number;
   shortfall: number;
@@ -312,8 +323,9 @@ export interface PathPoint {
   /** EUR deposits maturing after the previous fixing (after today, for the first) and by this one. */
   released: number;
   releasedDeposits: DepositRelease[];
-  /** The parts of available: typical inflow up to the day before (inflowDays days), deposits matured by the day,
-   * and what the earlier conversions take. available = today's liquid euros + inflow + depositsBy − earlier. */
+  /** The parts of available: typical inflow up to the day before (inflowDays business days, Sunday to Friday),
+   * deposits matured by the day, and what the earlier conversions take. available = today's liquid euros + inflow +
+   * depositsBy − earlier. */
   inflow: number;
   inflowDays: number;
   depositsBy: number;
@@ -406,14 +418,15 @@ export declare function planReserve(input: {
   upcoming: Upcoming[];
   policy?: Policy;
   eur: EurPosition;
-  inflowPerDay?: number | null;
+  /** Typical net EUR per business day (Sunday to Friday: none on a Saturday). */
+  inflowPerBusinessDay?: number | null;
   today: string;
   horizon?: number;
   shekels?: { date: string; eur: number }[];
   eurFloor?: number;
   forwards?: ForwardFlow[];
-  /** The EUR vendor payments ahead on their days (eurVendorsAhead's dues). */
-  eurOut?: { date: string; eur: number }[];
+  /** The EUR vendor payments ahead on their days (eurVendorsAhead's dues; hapoalim: paid from Hapoalim EUR). */
+  eurOut?: { date: string; eur: number; hapoalim?: number }[];
 }): ReservePlan | null;
 
 /** What GET /api/fx-challenge answers that the recommendation needs. */
@@ -508,9 +521,13 @@ export interface KeepCover {
    * it. */
   deposits: DepositRelease[];
   fromDeposits: number;
-  /** What today's cash still has to hold for it. */
+  /** The EUR vendor payments Hapoalim EUR makes before the euros leave. */
+  vendors: number;
+  /** What today's cash in Hapoalim EUR still has to hold for it: what the deposits don't cover, and those payments. */
   fromCash: number;
-  /** The deposits alone hold it. */
+  /** The deposits alone hold the conversion. */
+  depositsCover: boolean;
+  /** Nothing to keep: the deposits hold it, and Hapoalim EUR pays no EUR vendors before it. */
   covered: boolean;
 }
 export declare function keepCover(plan: ReservePlan): KeepCover;
