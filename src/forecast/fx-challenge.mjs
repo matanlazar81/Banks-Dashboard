@@ -222,8 +222,15 @@ export function conversionLegs(legs, rate, eur) {
   return selling.map((l) => ({ ...l, eur: l.eur * k, ils: l.ils * k }));
 }
 
+/** A band's middle rate; an open-ended band's is 0.05 inside its edge. */
+function bandMiddle(bounds, i) {
+  const lo = i ? bounds[i - 1] : null;
+  const hi = i < bounds.length ? bounds[i] : null;
+  return lo === null ? hi - 0.05 : hi === null ? lo + 0.05 : (lo + hi) / 2;
+}
+
 /** The EUR/ILS at which a table row sells `eur`: today's rate when its band does, else the middle of the band nearest
- * today's that does (an open-ended band: 0.05 inside its edge); null when none does. */
+ * today's that does; null when none does. */
 export function rateSelling(row, bounds, spot, eur) {
   if (!(spot > 0)) return null;
   const sells = (i) => Math.abs(-row.cells[i].eurK * 1000 - eur) < 0.5;
@@ -231,10 +238,36 @@ export function rateSelling(row, bounds, spot, eur) {
   if (sells(here)) return spot;
   let best = null;
   row.cells.forEach((_, i) => { if (sells(i) && (best === null || Math.abs(i - here) < Math.abs(best - here))) best = i; });
-  if (best === null) return null;
-  const lo = best ? bounds[best - 1] : null;
-  const hi = best < bounds.length ? bounds[best] : null;
-  return lo === null ? hi - 0.05 : hi === null ? lo + 0.05 : (lo + hi) / 2;
+  return best === null ? null : bandMiddle(bounds, best);
+}
+
+/**
+ * The table the plan uses once the bank's deals are saved: each month they cover worked out from them, band by band (the
+ * euros the deals sell at the middle of the band, at their blended rate), the other months from the saved table. The
+ * bands are the saved table's plus every strike and trigger of the deals, so a new deal's level gets a band of its own
+ * (the saved months keep their cells across it). On 30 Oct 2026 this is the table finance received, its rates to four
+ * decimals (€800K at 3.6688 rather than 3.67). Without deals, the saved table as it is.
+ */
+export function tableWithDeals(table, legsByMonth) {
+  const months = Object.keys(legsByMonth || {}).filter((m) => legsByMonth[m] && legsByMonth[m].length);
+  if (!months.length) return table;
+  const levels = new Set(table.bounds);
+  for (const m of months) for (const l of legsByMonth[m]) for (const o of l.options) { levels.add(o.strike); if (o.trigger) levels.add(o.trigger); }
+  const bounds = [...levels].filter((x) => x > 0).sort((a, b) => a - b);
+  const mids = Array.from({ length: bounds.length + 1 }, (_, i) => bandMiddle(bounds, i));
+  const rows = new Map(table.rows.map((r) => [r.month, { month: r.month, cells: mids.map((x) => ({ ...r.cells[bandIndex(table.bounds, x)] })) }]));
+  for (const m of months) {
+    rows.set(m, {
+      month: m,
+      cells: mids.map((x) => {
+        const at = legsAt(legsByMonth[m], x);
+        const eur = at.reduce((s, l) => s + l.eur, 0);
+        const ils = at.reduce((s, l) => s + l.ils, 0);
+        return { eurK: -Math.round(eur) / 1000 || 0, rate: Math.round((Math.abs(eur) >= 0.5 ? ils / eur : x) * 10000) / 10000 };
+      }),
+    });
+  }
+  return { pair: table.pair, fixingDay: table.fixingDay, bounds, rows: [...rows.values()].sort((a, b) => a.month.localeCompare(b.month)) };
 }
 
 /** The forwards netted by value day: [{ date, eur (+ bought, − sold), ils (+ received, − paid) }], earliest first. On 2 Nov
@@ -260,10 +293,7 @@ export function dealsVsTable(table, legsByMonth) {
     if (!legs) continue;
     const bands = [];
     row.cells.forEach((c, i) => {
-      const lo = i ? b[i - 1] : null;
-      const hi = i < b.length ? b[i] : null;
-      const rate = lo === null ? hi - 0.05 : hi === null ? lo + 0.05 : (lo + hi) / 2;
-      const deals = legsAt(legs, rate).reduce((s, l) => s + l.eur, 0);
+      const deals = legsAt(legs, bandMiddle(b, i)).reduce((s, l) => s + l.eur, 0);
       if (Math.abs(deals - -c.eurK * 1000) > 500) bands.push({ band: i, table: -c.eurK * 1000, deals });
     });
     if (bands.length) out.push({ month: row.month, bands });
@@ -427,9 +457,9 @@ export function fixingRisk(row, bounds, spot, sigma, years, quantile = 0.95) {
 }
 
 /**
- * A conversion's outcomes by EUR/ILS range: neighbouring bands that sell the same euros at the same rate are merged,
- * with their chances added (probs from fixingRisk). lo and hi are the range's edges, null where it is open-ended; a
- * rate on an edge belongs to the range above it.
+ * A conversion's outcomes by EUR/ILS range: neighbouring bands that sell the same euros at the same rate (or nothing,
+ * whatever their rate) are merged, with their chances added (probs from fixingRisk). lo and hi are the range's edges,
+ * null where it is open-ended; a rate on an edge belongs to the range above it.
  */
 export function outcomeRanges(row, bounds, probs) {
   const out = [];
@@ -437,7 +467,7 @@ export function outcomeRanges(row, bounds, probs) {
     const eur = -c.eurK * 1000;
     const hi = i < bounds.length ? bounds[i] : null;
     const last = out[out.length - 1];
-    if (last && last.eur === eur && last.rate === c.rate) {
+    if (last && last.eur === eur && (last.rate === c.rate || eur === 0)) {
       last.hi = hi;
       last.p += probs[i] || 0;
       last.bands.push(i);
@@ -921,9 +951,13 @@ export function planReserve({ upcoming, policy = 'p95', eur, inflowPerDay = null
  * The recommendation at today's rate from GET /api/fx-challenge's answer: the conversions left (each at today's rate,
  * with its risk and what it can sell by range), LSports' euros, the typical inflow and the plan. The page adds the
  * simulated rate on top of it (src/fx-challenge/fxModel.ts); the daily mail sends it (scripts/fx-challenge-mail.cjs).
+ * With the bank's deals saved, the months they cover take their amounts from them (tableWithDeals: the view's `table`)
+ * and each conversion's parts leave on the deals' value days; the saved table fills the other months.
  */
 export function planFromPayload(data, policy = 'p95') {
-  const { table, today } = data;
+  const { today } = data;
+  const deals = data.positions && data.positions.options && data.positions.options.length ? positionLegs(data.positions) : null;
+  const table = deals ? tableWithDeals(data.table, deals) : data.table;
   const bounds = table.bounds;
   const spot = data.rates.spot ? data.rates.spot.rate : null;
   const sigmaFromHistory = !!(data.rates.sigma && data.rates.sigma > 0);
@@ -936,7 +970,6 @@ export function planFromPayload(data, policy = 'p95') {
   const position = data.balances ? eurPosition(data.balances.rows) : null;
   const inflow = typicalInflow(data.flows, data.inflowMonths);
   // The bank's deals: when each conversion's parts leave, at the amount kept (the rate whose band sells it).
-  const deals = data.positions && data.positions.options && data.positions.options.length ? positionLegs(data.positions) : null;
   const upcoming = schedule.flatMap((s) => {
     if (!(s.atSpot && s.risk)) return [];
     const item = { month: s.fixing.month, date: s.fixing.date, days: s.fixing.days, conv: s.atSpot, risk: s.risk };
@@ -955,22 +988,22 @@ export function planFromPayload(data, policy = 'p95') {
     })
     : null;
   return {
-    all, spot, spotDate: data.rates.spot ? data.rates.spot.date : null, spotBand: spot ? bandIndex(bounds, spot) : null,
+    table, all, spot, spotDate: data.rates.spot ? data.rates.spot.date : null, spotBand: spot ? bandIndex(bounds, spot) : null,
     sigma, sigmaFromHistory, rateCheck: rateCheck(data.rates.series, today), schedule, position, inflow, cash, plan,
     deals: dealsView(data, deals, upcoming, flows),
   };
 }
 
-/** What the page says about the bank's deals: as of when, the months they cover, the next conversions without deals
- * (their euros leave the business day before the 7th), the forwards ahead and where the deals and the table disagree.
- * null when no deals are saved. */
+/** What the page says about the bank's deals: as of when, the months they cover (their amounts and days come from them),
+ * the next conversions without deals (the saved table's amounts, the business day before the 7th), the forwards ahead
+ * and where the saved table differs from the deals. null when no deals are saved. */
 function dealsView(data, deals, upcoming, flows) {
   const p = data.positions;
   if (!p) return null;
   const months = deals ? Object.keys(deals).sort() : [];
   return {
     asOf: p.asOf || { options: null, forwards: null }, savedAt: p.savedAt || null, savedBy: p.savedBy || null,
-    options: (p.options || []).length, forwards: (p.forwards || []).length, from: months[0] || null, to: months[months.length - 1] || null,
+    options: (p.options || []).length, forwards: (p.forwards || []).length, months, from: months[0] || null, to: months[months.length - 1] || null,
     missing: upcoming.slice(0, 6).filter((u) => !(deals && deals[u.month])).map((u) => u.month),
     flows, mismatches: deals ? dealsVsTable(data.table, deals) : [],
   };

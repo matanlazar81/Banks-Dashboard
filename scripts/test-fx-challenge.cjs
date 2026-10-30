@@ -442,6 +442,26 @@ async function testDeals(fx) {
   check(fx.planFromPayload({ ...data, positions: null }).deals === null && !fx.planFromPayload({ ...data, positions: null }).plan.coverage[4].deals,
     'no deals saved: every conversion the business day before the 7th');
 
+  console.log('\nDEALS: the amounts from the deals (the table no longer updated by hand)');
+  const eff = fx.tableWithDeals(t, legs);
+  const marEff = eff.rows.find((r) => r.month === '2027-03');
+  check(same(eff.bounds, t.bounds) && eff.rows.length === t.rows.length && same(marEff.cells[2], { eurK: -1050, rate: 3.5874 }) && same(marEff.cells[1], { eurK: -850, rate: 3.5256 })
+    && same(marEff.cells[0], { eurK: 0, rate: 3.25 }) && same(eff.rows.find((r) => r.month === '2027-02'), t.rows.find((r) => r.month === '2027-02')),
+  'March worked out from its deals band by band (3.4–3.49: €1.05M at their blended 3.5874; below 3.3 nothing), the other months as saved', JSON.stringify(marEff.cells.slice(0, 3)));
+  check(fx.tableWithDeals(t, null) === t && fx.tableWithDeals(t, {}) === t, 'without deals, the saved table as it is');
+  const april = { deal: '1009', kind: 'VANILLA', side: 'buy', type: 'put', eur: 100000, strike: 3.65, trigger: null, expiry: '2027-04-05', settle: '2027-04-07' };
+  const split = fx.tableWithDeals(t, fx.positionLegs({ options: [...o.options, april] }));
+  const febSplit = split.rows.find((r) => r.month === '2027-02').cells;
+  const febSaved = t.rows.find((r) => r.month === '2027-02').cells;
+  check(split.bounds.length === t.bounds.length + 1 && split.bounds[7] === 3.65 && febSplit.length === 15 && same(febSplit[7], febSaved[7]) && same(febSplit[8], febSaved[7])
+    && same(febSplit[9], febSaved[8]) && same(split.rows.find((r) => r.month === '2027-04').cells.map((c) => c.eurK), [...Array(8).fill(-100), ...Array(7).fill(0)]),
+  'a new strike (3.65) splits its band: the saved months keep their cells on both sides, April sells €100K below it', JSON.stringify(split.bounds));
+  const zeros = fx.outcomeRanges({ month: 'x', cells: [{ eurK: 0, rate: 3.25 }, { eurK: 0, rate: 3.35 }, { eurK: -100, rate: 3.6 }] }, [3.3, 3.4], [0.2, 0.3, 0.5]);
+  check(zeros.length === 2 && zeros[0].eur === 0 && zeros[0].hi === 3.4 && near(zeros[0].p, 0.5, 1e-12), 'bands that sell nothing are one outcome, whatever their rate');
+  check(same(v.table.rows.find((r) => r.month === '2027-03'), marEff) && same(fx.planFromPayload({ ...data, positions: null }).table, t)
+    && v.schedule.find((s) => s.fixing.month === '2027-03').outcomes[0].eur === 0,
+  'the plan uses it: March\'s outcomes from its deals (nothing below 3.3); without deals the saved table');
+
   console.log('\nDEALS: the saved deals (PUT /api/fx-challenge/positions)');
   const value = { asOf: { options: o.asOf, forwards: f.asOf }, options: o.options, forwards: f.forwards };
   const ok = fxs.validatePositions({ value });

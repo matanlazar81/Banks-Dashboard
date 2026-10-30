@@ -68,6 +68,9 @@ export interface ConversionLeg { expiry: string; settle: string; eur: number; il
 export declare function legsAt(legs: PositionLeg[], rate: number): ConversionLeg[];
 export declare function conversionLegs(legs: PositionLeg[] | null | undefined, rate: number | null, eur: number): ConversionLeg[] | null;
 export declare function rateSelling(row: FxRow, bounds: number[], spot: number | null, eur: number): number | null;
+/** The table with the months the deals cover worked out from them (bands: the saved table's plus every strike and
+ * trigger); the saved table's months otherwise. The saved table itself without deals. */
+export declare function tableWithDeals(table: FxTable, legsByMonth: Record<string, PositionLeg[]> | null): FxTable;
 /** The forwards netted by value day: euros (+ bought, − sold) and shekels (+ received, − paid). */
 export interface ForwardFlow { date: string; eur: number; ils: number }
 export declare function forwardFlows(positions: Pick<Positions, 'forwards'> | null): ForwardFlow[];
@@ -354,14 +357,17 @@ export interface PlanInput {
   /** The bank's deals saved on the page; null while none are. */
   positions?: (Positions & { savedAt?: string | null; savedBy?: string | null }) | null;
 }
-/** What the page says about the saved deals: their days, what they cover, the next conversions without deals (their
- * euros leave the business day before the 7th), the forwards ahead and where the deals and the table disagree. */
+/** What the page says about the saved deals: their days, what they cover, the next conversions without deals (the saved
+ * table's amounts, the business day before the 7th), the forwards ahead and where the saved table differs from the deals
+ * (bands of the saved table's bounds; the deals are used). */
 export interface DealsView {
   asOf: { options: string | null; forwards: string | null };
   savedAt: string | null;
   savedBy: string | null;
   options: number;
   forwards: number;
+  /** The months the deals cover: their amounts and days come from them. */
+  months: string[];
   from: string | null;
   to: string | null;
   missing: string[];
@@ -376,6 +382,8 @@ export interface ScheduleItem {
   outcomes: OutcomeRange[] | null;
 }
 export interface PlanView {
+  /** The table the plan uses: the saved one, with the months the bank's deals cover worked out from them. */
+  table: FxTable;
   all: Fixing[];
   spot: number | null;
   spotDate: string | null;

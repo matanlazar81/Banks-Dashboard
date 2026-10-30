@@ -2,7 +2,7 @@
 // The recommendation itself (planFromPayload, todayActions and their words) is shared with the daily mail.
 import {
   bandIndex, bandLabels, conversionAt, describeAction, describeDue, describeKeep, keepCover, nothingToday, pastConversions, planFromPayload, todayActions,
-  type CashPlan, type Conversion, type DealsView, type EurPosition, type KeepCover, type PastMonth, type PastTotals, type Policy, type RateCheck, type ReservePlan,
+  type CashPlan, type Conversion, type DealsView, type EurPosition, type FxTable, type KeepCover, type PastMonth, type PastTotals, type Policy, type RateCheck, type ReservePlan,
   type ScheduleItem, type ShekelDue, type TodayAction,
 } from '../forecast/fx-challenge.mjs';
 import { formatEur } from '../metrics/model.ts';
@@ -25,6 +25,8 @@ export interface TodayView {
 export interface FxModel {
   /** Today in Israel (YYYY-MM-DD). */
   today: string;
+  /** The table the plan uses: the saved one, with the months the bank's deals cover worked out from them. */
+  table: FxTable;
   labels: string[];
   /** Today's EUR/ILS (NetSuite), and the rate being simulated (today's unless one is typed). */
   spot: number | null;
@@ -57,9 +59,9 @@ export interface FxModel {
 }
 
 export function buildFxModel(data: FxPayload, simRate: number | null, policy: Policy): FxModel {
-  const { table } = data;
-  const bounds = table.bounds;
   const base = planFromPayload(data, policy);
+  const table = base.table;
+  const bounds = table.bounds;
   const sim = simRate && simRate > 0 ? simRate : base.spot;
   const schedule: ScheduleRow[] = base.schedule.map((s) => ({ ...s, atSim: sim ? conversionAt(s.fixing.row, bounds, sim) : null }));
 
@@ -80,6 +82,7 @@ export function buildFxModel(data: FxPayload, simRate: number | null, policy: Po
 
   return {
     today: data.today,
+    table,
     labels: bandLabels(bounds),
     spot: base.spot,
     spotDate: base.spotDate,
@@ -124,6 +127,9 @@ export function formatIls(n: number | null | undefined): string {
 
 /** EUR/ILS with three decimals. */
 export const formatRate = (r: number | null | undefined) => (r === null || r === undefined || !Number.isFinite(r) ? '–' : r.toFixed(3));
+
+/** A conversion's rate as the table gives it (3.67), or to three decimals when the bank's deals give it (3.669). */
+export const formatTableRate = (r: number | null | undefined) => (r === null || r === undefined || !Number.isFinite(r) ? '–' : String(+r.toFixed(3)));
 
 /** "Sat 7 Nov" (or "Sat 7 Nov 2027" with the year). */
 export function formatDay(iso: string | null | undefined, withYear = false): string {
