@@ -2,6 +2,9 @@
 // The FX Challenge page (Business Tools → FX Challenge, fx-challenge.html):
 //   GET /api/fx-challenge          what the page simulates on; ?refresh=true reads NetSuite again
 //   GET/PUT /api/fx-challenge/table  the conversion table, saved for everyone (none saved = the default)
+//   GET/PUT /api/fx-challenge/positions  the bank's deals (its two position reports, read on the page), saved for
+//                                    everyone: when each conversion's euros leave (none saved = the business day
+//                                    before the 7th)
 //   GET/PUT /api/fx-challenge/mail   who gets the daily mail, saved for everyone (none saved = FX_MAIL_TO)
 //   POST /api/fx-challenge/mail/send the page's Send now: the daily mail, at once
 // createFxChallengeRouter serves them all behind the one prefix.
@@ -21,8 +24,8 @@
 //                four months back, and the Salary Projection's Total payroll by month (the figures its page saved)
 //   ilsVendors   vendor payments out of the ILS accounts by month, four months back, the credit cards' (billed on
 //                the 10th of the next month) apart from the rest: the shekels kept for vendors
-// The table is the saved one (data/fx-challenge-table.json) or the default. The daily mail
-// (scripts/fx-challenge-mail.cjs) reads the same, uncached.
+// The table is the saved one (data/fx-challenge-table.json) or the default; the deals are the saved ones
+// (data/fx-challenge-positions.json), or none. The daily mail (scripts/fx-challenge-mail.cjs) reads the same, uncached.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const fs = require('fs');
@@ -33,6 +36,8 @@ const { keysOnly, numIn, textIn } = require('./metrics-settings.cjs');
 
 const ROOT = path.join(__dirname, '..');
 const TABLE_FILE = path.join(ROOT, 'data', 'fx-challenge-table.json');
+/** The bank's deals, as read from its position reports on the page (no account number, no valuation). */
+const POSITIONS_FILE = path.join(ROOT, 'data', 'fx-challenge-positions.json');
 /** The daily mail's recipients as saved on the page, and when it last went (scripts/fx-challenge-mail.cjs). */
 const MAIL_FILE = path.join(ROOT, 'data', 'fx-challenge-mail.json');
 const MAIL_SENT_FILE = path.join(ROOT, 'data', 'fx-challenge-mail-last.json');
@@ -156,6 +161,62 @@ function validateTable(body) {
   return errors.length || !value ? { ok: false, value: null, errors } : { ok: true, value, errors: [] };
 }
 
+// ── the bank's deals ────────────────────────────────────────────────────────
+// What parsePositionReport (src/forecast/fx-challenge.mjs) reads from the bank's two reports on the page: the options
+// (EUR/ILS) and the forwards, with each report's day. Saved whole; either list may be empty.
+const POSITION_LIMITS = { deals: 3000, eur: 1e9, rate: 20, ils: 1e11 };
+const dayIn = (v, where, errors) => (isIso(v) ? v : (errors.push(`${where}: YYYY-MM-DD`), null));
+function optionIn(o, at, errors) {
+  if (!keysOnly(o, ['deal', 'kind', 'side', 'type', 'eur', 'strike', 'trigger', 'expiry', 'settle'], at, errors)) return null;
+  const v = {
+    deal: textIn(String(o.deal ?? ''), 30, `${at}.deal`, errors),
+    kind: textIn(String(o.kind ?? ''), 20, `${at}.kind`, errors),
+    side: o.side === 'buy' || o.side === 'sell' ? o.side : (errors.push(`${at}.side: buy or sell`), null),
+    type: o.type === 'put' || o.type === 'call' ? o.type : (errors.push(`${at}.type: put or call`), null),
+    eur: numIn(o.eur, 1, POSITION_LIMITS.eur, `${at}.eur`, errors),
+    strike: numIn(o.strike, 0.0001, POSITION_LIMITS.rate, `${at}.strike`, errors),
+    trigger: o.trigger === null ? null : numIn(o.trigger, 0.0001, POSITION_LIMITS.rate, `${at}.trigger`, errors),
+    expiry: dayIn(o.expiry, `${at}.expiry`, errors),
+    settle: dayIn(o.settle, `${at}.settle`, errors),
+  };
+  if (v.expiry && v.settle && v.settle < v.expiry) errors.push(`${at}.settle: on or after the expiry`);
+  return v;
+}
+function forwardIn(f, at, errors) {
+  if (!keysOnly(f, ['deal', 'side', 'currency', 'amount', 'counter', 'rate', 'settle', 'counterAmount'], at, errors)) return null;
+  const ccy = (c, where) => (typeof c === 'string' && /^[A-Z]{3}$/.test(c) ? c : (errors.push(`${where}: a currency code`), null));
+  return {
+    deal: textIn(String(f.deal ?? ''), 30, `${at}.deal`, errors),
+    side: f.side === 'buy' || f.side === 'sell' ? f.side : (errors.push(`${at}.side: buy or sell`), null),
+    currency: ccy(f.currency, `${at}.currency`),
+    amount: numIn(f.amount, 1, POSITION_LIMITS.ils, `${at}.amount`, errors),
+    counter: ccy(f.counter, `${at}.counter`),
+    rate: numIn(f.rate, 0.0001, 100, `${at}.rate`, errors),
+    settle: dayIn(f.settle, `${at}.settle`, errors),
+    counterAmount: numIn(f.counterAmount, -POSITION_LIMITS.ils, POSITION_LIMITS.ils, `${at}.counterAmount`, errors),
+  };
+}
+/** PUT body { value: { asOf: { options, forwards }, options, forwards } } → { ok, value, errors }; { value: null } clears
+ * them (the euros leave the business day before the 7th again). */
+function validatePositions(body) {
+  const errors = [];
+  if (!keysOnly(body, ['value'], 'body', errors)) return { ok: false, value: null, errors };
+  if (body.value === null) return { ok: true, value: null, errors: [] };
+  const p = body.value;
+  if (!keysOnly(p, ['asOf', 'options', 'forwards'], 'positions', errors)) return { ok: false, value: null, errors };
+  const asOf = { options: null, forwards: null };
+  if (p.asOf !== null && typeof p.asOf === 'object' && keysOnly(p.asOf, ['options', 'forwards'], 'positions.asOf', errors)) {
+    for (const k of ['options', 'forwards']) asOf[k] = p.asOf[k] === null || p.asOf[k] === undefined ? null : dayIn(p.asOf[k], `positions.asOf.${k}`, errors);
+  } else if (p.asOf !== null && p.asOf !== undefined) errors.push('positions.asOf: { options, forwards }');
+  const list = (v, what, fn) => {
+    if (!Array.isArray(v) || v.length > POSITION_LIMITS.deals) { errors.push(`positions.${what}: up to ${POSITION_LIMITS.deals} deals`); return []; }
+    return v.map((x, i) => fn(x, `positions.${what}[${i + 1}]`, errors)).filter(Boolean);
+  };
+  const value = { asOf, options: list(p.options, 'options', optionIn), forwards: list(p.forwards, 'forwards', forwardIn) };
+  if (!value.options.length && !value.forwards.length) errors.push('positions: no deals');
+  return errors.length ? { ok: false, value: null, errors: errors.slice(0, 20) } : { ok: true, value, errors: [] };
+}
+
 // ── the daily mail's recipients ─────────────────────────────────────────────
 // Kept on the page and saved for everyone; until a list is saved, the checkout's FX_MAIL_TO. lsports.eu addresses only:
 // the mail carries LSports' balances. An empty list sends to nobody.
@@ -254,7 +315,7 @@ function createFxMailHandler(deps = {}) {
  * POST /api/fx-challenge/mail/send: the page's Send now. The daily mail, read fresh, goes at once to the list as saved
  * (or FX_MAIL_TO), with or without a recommendation (sendNow in scripts/fx-challenge-mail.cjs); it counts as today's
  * mail. JSON and same-origin, as a save; one at a time, and once a minute at most.
- *   deps: reads (the page's NetSuite reads), tableFile, file (the list), sentFile, env() (default: this process's
+ *   deps: reads (the page's NetSuite reads), tableFile, positionsFile, file (the list), sentFile, env() (default: this process's
  *   environment with the checkout's .env over it, as the cron has), clock(), nodemailer (tests)
  */
 function createFxMailSendHandler(deps = {}) {
@@ -278,7 +339,7 @@ function createFxMailSendHandler(deps = {}) {
       // Required here: the mail script requires this module.
       const { sendNow } = require(path.join(ROOT, 'scripts', 'fx-challenge-mail.cjs'));
       const r = await sendNow({
-        env: env(), reads: deps.reads, tableFile: deps.tableFile || TABLE_FILE, mailFile: deps.file || MAIL_FILE, markerFile: deps.sentFile || MAIL_SENT_FILE,
+        env: env(), reads: deps.reads, tableFile: deps.tableFile || TABLE_FILE, positionsFile: deps.positionsFile || POSITIONS_FILE, mailFile: deps.file || MAIL_FILE, markerFile: deps.sentFile || MAIL_SENT_FILE,
         clock, nodemailer: deps.nodemailer, by: userOf(req),
       });
       if (!r.ok) {
@@ -302,8 +363,9 @@ function createFxMailSendHandler(deps = {}) {
  *               payroll(fromMonth), ilsVendors(fromMonth), salary() } (the last three optional)
  *   cached    (key, fn) → promise, the handler's memo
  *   tableDoc  the saved table document ({ value: table | null, updatedAt, updatedBy }) or null
+ *   positionsDoc  the saved deals' document (the same shape), or null
  */
-async function readFxChallenge({ reads, cached = (k, fn) => fn(), tableDoc = null, clock = Date.now }) {
+async function readFxChallenge({ reads, cached = (k, fn) => fn(), tableDoc = null, positionsDoc = null, clock = Date.now }) {
   const fx = await loadFxModule();
   const mail = reads.mail;
   const nowMs = clock();
@@ -377,6 +439,8 @@ async function readFxChallenge({ reads, cached = (k, fn) => fn(), tableDoc = nul
     today,
     table,
     tableSaved: saved ? { at: tableDoc.updatedAt || null, by: tableDoc.updatedBy || null } : null,
+    positions: positionsDoc && positionsDoc.value
+      ? { ...positionsDoc.value, savedAt: positionsDoc.updatedAt || null, savedBy: positionsDoc.updatedBy || null } : null,
     rates: { provider: 'HSBC', series, spot, sigma },
     balances,
     flows: flows || [],
@@ -431,12 +495,13 @@ function defaultNsReads(deps = {}) {
  *   getNsClient(sub), queueNsCall(fn)  the dashboard's NetSuite client and call queue; default: the cash
  *                                      projection's (finance-it's own route file passes none)
  *   reads      override every NetSuite read (tests): { rates(days), books, mail, flows(from), conversions(from) }
- *   tableFile, clock(), ttlMs (default FX_CHALLENGE_TTL_MIN, 30 minutes)
+ *   tableFile, positionsFile, clock(), ttlMs (default FX_CHALLENGE_TTL_MIN, 30 minutes)
  */
 function createFxChallengeHandler(deps = {}) {
   const clock = deps.clock || Date.now;
   const ttlMs = deps.ttlMs ?? envMinutes('FX_CHALLENGE_TTL_MIN', 30) * 60 * 1000;
   const tableFile = deps.tableFile || TABLE_FILE;
+  const positionsFile = deps.positionsFile || POSITIONS_FILE;
   const reads = deps.reads || defaultNsReads(deps);
 
   const memo = new Map();
@@ -460,7 +525,7 @@ function createFxChallengeHandler(deps = {}) {
     } catch { /* plain read */ }
     if (refresh) memo.clear();
     try {
-      send(res, 200, await readFxChallenge({ reads, cached, tableDoc: readDoc(tableFile), clock }));
+      send(res, 200, await readFxChallenge({ reads, cached, tableDoc: readDoc(tableFile), positionsDoc: readDoc(positionsFile), clock }));
     } catch (e) {
       console.error(`[fx-challenge] failed: ${e && e.stack ? e.stack : e}`);
       send(res, 200, { ok: false, status: 'error', error: 'The FX Challenge could not be read. The server log has the details.' });
@@ -474,20 +539,28 @@ function createFxTableHandler(deps = {}) {
   return createDocHandler({ file: deps.file || TABLE_FILE, label: 'fx-challenge-table', maxBytes: 64 * 1024, validate: validateTable, empty: () => null, clock: deps.clock });
 }
 
+/** GET/PUT /api/fx-challenge/positions: the bank's deals everyone's plan uses, with who saved them; each save is kept in
+ * the history. 1MB: the 190 options and 16 forwards of October 2026 are about 40KB. */
+function createFxPositionsHandler(deps = {}) {
+  return createDocHandler({ file: deps.file || POSITIONS_FILE, label: 'fx-challenge-positions', maxBytes: 1024 * 1024, validate: validatePositions, empty: () => null, clock: deps.clock });
+}
+
 /**
  * Every FX Challenge route behind one handler, by the path after /api/fx-challenge: '' the page's data, /table the
- * table, /mail the daily mail's recipients, /mail/send the page's Send now; anything else 404. finance-it mounts the
- * prefix once (app.use('/api/fx-challenge', role, …)), so a route added here needs no change there. The path is read
- * from req.originalUrl when the mount strips it from req.url.
- *   deps: as createFxChallengeHandler, plus tableFile, mail (createFxMailHandler's deps; with nodemailer for tests)
+ * table, /positions the bank's deals, /mail the daily mail's recipients, /mail/send the page's Send now; anything else
+ * 404. finance-it mounts the prefix once (app.use('/api/fx-challenge', role, …)), so a route added here needs no change
+ * there. The path is read from req.originalUrl when the mount strips it from req.url.
+ *   deps: as createFxChallengeHandler, plus tableFile, positionsFile, mail (createFxMailHandler's deps; with nodemailer
+ *   for tests)
  */
 function createFxChallengeRouter(deps = {}) {
   const reads = deps.reads || defaultNsReads(deps);
   const routes = {
     '': createFxChallengeHandler({ ...deps, reads }),
     '/table': createFxTableHandler({ file: deps.tableFile, clock: deps.clock }),
+    '/positions': createFxPositionsHandler({ file: deps.positionsFile, clock: deps.clock }),
     '/mail': createFxMailHandler({ clock: deps.clock, ...deps.mail }),
-    '/mail/send': createFxMailSendHandler({ clock: deps.clock, reads, tableFile: deps.tableFile, ...deps.mail }),
+    '/mail/send': createFxMailSendHandler({ clock: deps.clock, reads, tableFile: deps.tableFile, positionsFile: deps.positionsFile, ...deps.mail }),
   };
   return function fxChallengeRouter(req, res) {
     let p = '';
@@ -499,7 +572,8 @@ function createFxChallengeRouter(deps = {}) {
 }
 
 module.exports = {
-  createFxChallengeRouter, createFxChallengeHandler, createFxTableHandler, createFxMailHandler, createFxMailSendHandler, readMailMarker, validateTable, validateMailSettings,
+  createFxChallengeRouter, createFxChallengeHandler, createFxTableHandler, createFxPositionsHandler, createFxMailHandler, createFxMailSendHandler, readMailMarker,
+  validateTable, validatePositions, validateMailSettings,
   readFxChallenge, readSalaryProjection, nsReads, defaultNsReads, restletIds, bookRow, mailRows, israelDay, loadFxModule,
-  splitAddresses, mailHourOf, savedRecipients, checkoutEnv, LSPORTS_ADDRESS, TABLE_FILE, MAIL_FILE, MAIL_SENT_FILE,
+  splitAddresses, mailHourOf, savedRecipients, checkoutEnv, LSPORTS_ADDRESS, TABLE_FILE, POSITIONS_FILE, MAIL_FILE, MAIL_SENT_FILE,
 };

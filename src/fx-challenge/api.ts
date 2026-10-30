@@ -1,7 +1,8 @@
-// GET /api/fx-challenge, and what the page saves: the table (PUT /api/fx-challenge/table) and who gets the daily mail
-// (GET/PUT /api/fx-challenge/mail), server/fx-challenge.cjs. Relative paths: the page is served next to the dashboard API.
-import type { FxTable } from '../forecast/fx-challenge.mjs';
-import type { FxResponse, MailSettings, SavedTable } from './types.ts';
+// GET /api/fx-challenge, and what the page saves: the table (PUT /api/fx-challenge/table), the bank's deals (PUT
+// /api/fx-challenge/positions) and who gets the daily mail (GET/PUT /api/fx-challenge/mail), server/fx-challenge.cjs.
+// Relative paths: the page is served next to the dashboard API.
+import type { FxTable, Positions } from '../forecast/fx-challenge.mjs';
+import type { FxResponse, MailSettings, SavedPositions, SavedTable } from './types.ts';
 
 const SESSION = 'Your session has expired. Reload the page to sign in again.';
 const NOT_INSTALLED = 'This server does not have the FX Challenge yet: run Pull & Build and restart it.';
@@ -47,6 +48,23 @@ async function putValue<T>(url: string, value: unknown): Promise<T> {
 
 /** Saves the table for everyone; null puts the default back. */
 export const saveTable = (table: FxTable | null) => putValue<SavedTable>('/api/fx-challenge/table', table);
+
+/** Saves the bank's deals for everyone; null clears them (the euros leave the business day before the 7th again). */
+export const savePositions = (positions: Positions | null) => putValue<SavedPositions>('/api/fx-challenge/positions', positions);
+
+interface XlsxReader {
+  read(data: ArrayBuffer, opts: { type: 'array' }): { SheetNames: string[]; Sheets: Record<string, unknown> };
+  utils: { sheet_to_json(ws: unknown, opts: { header: 1; raw: true; defval: null }): unknown[][] };
+}
+/** The first sheet of an Excel file as rows of raw cells (dates as Excel serial days), with the library the Excel export
+ * already loads. */
+export async function readSheetRows(file: File): Promise<unknown[][]> {
+  const mod = (await import('xlsx-js-style')) as unknown as { default?: XlsxReader } & XlsxReader;
+  const XLSX: XlsxReader = mod.default ?? mod;
+  const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+  const first = wb.SheetNames[0];
+  return first ? XLSX.utils.sheet_to_json(wb.Sheets[first], { header: 1, raw: true, defval: null }) : [];
+}
 
 /** Who gets the daily mail; null when this server has no such route yet (finance-it's route file is older). */
 export async function fetchMail(): Promise<MailSettings | null> {

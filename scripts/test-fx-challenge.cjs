@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // ─────────────────────────────────────────────────────────────────────────────
-// Checks for the FX Challenge page: the shared logic (src/forecast/fx-challenge.mjs), the saved table's
-// validation, GET /api/fx-challenge and GET/PUT /api/fx-challenge/table (server/fx-challenge.cjs), the daily mail
+// Checks for the FX Challenge page: the shared logic (src/forecast/fx-challenge.mjs), the bank's position reports and
+// the days the euros leave, the saved table's and deals' validation, GET /api/fx-challenge and GET/PUT
+// /api/fx-challenge/table and /positions (server/fx-challenge.cjs), the daily mail
 // (scripts/fx-challenge-mail.cjs, the mail server stubbed) and the NetSuite reads' mapping (netsuite-api.cjs, fetch
 // stubbed). No network.
 //   node scripts/test-fx-challenge.cjs
@@ -318,6 +319,150 @@ async function testRateCheck(fx) {
   check(fx.rateCheck(up, TODAY).level === 'high' && fx.rateCheck(up, TODAY).share === 1 && fx.rateCheck(down, TODAY).level === 'low' && fx.rateCheck(down, TODAY).share === 0,
     'above every day → high; below every day → low');
   check(['high', 'middle', 'low'].includes(rc.level) && fx.rateCheck(series(15), TODAY) === null && fx.rateCheck([], TODAY) === null, 'too little history → no check');
+}
+
+// Hapoalim's position reports as the page reads them (a sheet's rows, dates as Excel serial days): a title, the account
+// and the report's day, the header row, the deals and a total. March 2027 is fixed in two parts, like the real one: Wed
+// 3 Mar (settled Fri 5 Mar) and Thu 4 Mar (settled Mon 8 Mar). Made-up deal numbers and account.
+const serial = (iso) => Math.round((Date.parse(`${iso}T00:00:00Z`) - Date.UTC(1899, 11, 30)) / 86400000);
+const OTC_HEAD = ['מספר עסקה', 'סוג אופציה', 'קניה/מכירה', 'למסירה', 'Put/Call', 'מטבע ראשי', 'סכום העסקה', 'מטבע נגדי', 'Strike', 'תאריך פרעון', 'שערוך במונח דולר ארהב',
+  'תאריך קשירה', 'סכום הפרמיה', 'מטבע הפרמיה', 'סכום הפרמיה בדולר ארהב', 'תאריך פקיעה', 'רווח/הפסד בדולר ארהב', 'תאריך דגימה ראשון', 'תאריך דגימה אחרון', 'תדירות דגימה',
+  'מקור שער הדגימות', 'טריגר 1', 'טריגר 2', 'מטבע Payoff'];
+const opt = (deal, kind, side, pc, ccy, amount, strike, settle, expiry, trigger = '') => [deal, kind, side, 'כן', pc, ccy, amount, 'ILS', strike, serial(settle), 120.5,
+  serial('2026-03-02'), 7000, 'EUR', 7837.39, serial(expiry), 10, null, null, null, null, trigger, '', null];
+const OTC_ROWS = [
+  [null], [null], ['פירוט עסקאות FX OPTION'], ['מספר חשבון  12-000-000000  תאריך הפקה  30.10.2026   '], OTC_HEAD,
+  opt(1001, 'VANILLA', 'מכירה', 'CALL', 'EUR', -600000, 3.49, '2027-03-05', '2027-03-03'),
+  opt(1002, 'EKO', 'קניה', 'PUT', 'EUR', 300000, 3.49, '2027-03-05', '2027-03-03', 3.3),
+  opt(1003, 'EKO', 'קניה', 'PUT', 'EUR', 300000, 3.56, '2027-03-05', '2027-03-03', 3.3),
+  opt(1004, 'VANILLA', 'קניה', 'PUT', 'EUR', -250000, 3.527, '2027-03-08', '2027-03-04'),
+  opt(1005, 'EKO', 'קניה', 'PUT', 'EUR', 200000, 3.85, '2027-03-08', '2027-03-04', 3.4),
+  opt(1006, 'VANILLA', 'מכירה', 'PUT', 'EUR', 250000, 3.3, '2027-03-08', '2027-03-04'),
+  opt(1007, 'VANILLA', 'מכירה', 'CALL', 'USD', -100000, 3.2, '2027-03-08', '2027-03-04'),
+  opt(1008, 'VANILLA', 'קניה', 'PUT', 'EUR', -100000, null, '2027-03-08', '2027-03-04'),
+  ["סה''כ", null, null, null, null, null, null, null, null, null, 4521.3],
+];
+const FWD_HEAD = ["מס' עסקה", 'תאריך קשירה', 'קניה/מכירה', 'למסירה', 'מטבע ראשי', 'סכום העסקה', 'מטבע נגדי', 'תאריך פרעון', 'שער סופי', 'שערוך במונחי דולר ארהב', 'נקודות', 'סכום נגדי'];
+const fwd = (deal, side, ccy, amount, settle, rate, counter) => [deal, serial('2025-04-03'), side, 'כן', ccy, amount, 'ILS', serial(settle), rate, 1000, 0.05, counter];
+const FWD_ROWS = [
+  [null], [null], ['פירוט עסקאות FX'], ['מספר חשבון  12-000-000000  תאריך הפקה  30.10.2026   '], FWD_HEAD,
+  fwd(2001, 'מכירה', 'EUR', -1000000, '2026-11-02', 4.2, 4200000),
+  fwd(2002, 'קניה', 'EUR', 1000000, '2026-11-02', 3.8, -3800000),
+  fwd(2003, 'מכירה', 'USD', -500000, '2026-12-31', 3.7, 1850000),
+  fwd(2004, 'קניה', 'USD', 500000, '2026-12-31', 3.24, -1620000),
+  ["סה''כ", null, null, null, null, null, null, null, null, 5021.7],
+];
+
+async function testDeals(fx) {
+  console.log('\nDEALS: the bank\'s position reports, and the days the euros leave');
+  const o = fx.parsePositionReport(OTC_ROWS);
+  check(o.kind === 'options' && o.asOf === '2026-10-30' && o.options.length === 6 && o.skipped === 1 && o.problems.length === 1 && /deal 1008/.test(o.problems[0]),
+    'the options report: its day from "תאריך הפקה", the EUR/ILS options, another pair left out, an unreadable row said; the total and the account dropped', JSON.stringify([o.kind, o.asOf, o.skipped, o.problems]));
+  check(same(o.options[1], { deal: '1002', kind: 'EKO', side: 'buy', type: 'put', eur: 300000, strike: 3.49, trigger: 3.3, expiry: '2027-03-03', settle: '2027-03-05' })
+    && o.options[3].eur === 250000 && o.options[3].trigger === null && !JSON.stringify(o).includes('12-000-000000'),
+  'each option: side, put or call, the euros (unsigned), strike, trigger, fixing and value day; no account number kept', JSON.stringify(o.options[1]));
+  const f = fx.parsePositionReport(FWD_ROWS);
+  check(f.kind === 'forwards' && f.asOf === '2026-10-30' && f.forwards.length === 4
+    && same(f.forwards[1], { deal: '2002', side: 'buy', currency: 'EUR', amount: 1000000, counter: 'ILS', rate: 3.8, settle: '2026-11-02', counterAmount: -3800000 }),
+  'the forwards report: each forward with its value day and shekels', JSON.stringify(f.forwards[1]));
+  const none = fx.parsePositionReport([['a', 'b'], [1, 2]]);
+  check(none.kind === null && none.problems.length === 1, 'another sheet: not a position report, said');
+  check(fx.reportDay(serial('2027-03-08')) === '2027-03-08' && fx.reportDay('08.03.2027') === '2027-03-08' && fx.reportDay('2027-03-08T00:00:00') === '2027-03-08' && fx.reportDay('soon') === null,
+    'days as Excel serial days, dd.mm.yyyy or ISO');
+
+  const [call349, eko349, , put3527, eko385, put33] = o.options;
+  check(fx.optionEur(call349, 3.5) === 600000 && fx.optionEur(call349, 3.45) === 0 && fx.optionEur(eko349, 3.45) === 300000 && fx.optionEur(eko349, 3.3) === 0
+    && fx.optionEur(eko349, 3.29) === 0 && fx.optionEur(put3527, 3.25) === 250000 && fx.optionEur(eko385, 3.4) === 0 && fx.optionEur(eko385, 3.41) === 200000
+    && fx.optionEur(put33, 3.25) === -250000 && fx.optionEur(put33, 3.35) === 0,
+  'a call sold sells above its strike; a put bought sells below it, an EKO not at or below its trigger; a put sold buys below its strike');
+  const legs = fx.positionLegs({ options: o.options });
+  check(same(Object.keys(legs), ['2027-03']) && same(legs['2027-03'].map((l) => [l.expiry, l.settle, l.options.length]), [['2027-03-03', '2027-03-05', 3], ['2027-03-04', '2027-03-08', 3]]),
+    'March in two parts: fixed Wed 3 Mar and settled Fri 5 Mar, fixed Thu 4 Mar and settled Mon 8 Mar');
+  const at = (rate) => fx.legsAt(legs['2027-03'], rate).map((l) => Math.round(l.eur));
+  check(same(at(3.45), [600000, 450000]) && same(at(3.35), [600000, 250000]) && same(at(3.495), [900000, 450000]) && same(at(3.25), [0, 0]),
+    'each part at a fixing rate (3.45: €600K and €450K, as the table\'s €1.05M; 3.35: €850K; 3.495: €1.35M; below 3.3 the puts sold and bought cancel)');
+  const cl = fx.conversionLegs(legs['2027-03'], 3.45, 1050000);
+  check(same(cl.map((l) => [l.settle, Math.round(l.eur), Math.round(l.ils)]), [['2027-03-05', 600000, 2115000], ['2027-03-08', 450000, 1651750]])
+    && same(fx.conversionLegs(legs['2027-03'], 3.45, 2100000).map((l) => Math.round(l.eur)), [1200000, 900000]) && fx.conversionLegs(legs['2027-03'], 3.25, 1050000) === null
+    && fx.conversionLegs(null, 3.45, 1050000) === null,
+  'a conversion\'s parts with their shekels, scaled to the amount kept; null when no part sells or without deals');
+  const marRow = fx.DEFAULT_TABLE.rows.find((r) => r.month === '2027-03');
+  check(fx.rateSelling(marRow, fx.DEFAULT_BOUNDS, 3.45, 1050000) === 3.45 && near(fx.rateSelling(marRow, fx.DEFAULT_BOUNDS, 3.45, 1350000), 3.495, 1e-9)
+    && near(fx.rateSelling(marRow, fx.DEFAULT_BOUNDS, 3.45, 2650000), 4.015, 1e-9) && fx.rateSelling(marRow, fx.DEFAULT_BOUNDS, 3.45, 123) === null,
+  'the rate whose band sells the amount kept: today\'s, else the middle of the nearest band that does');
+  const mism = fx.dealsVsTable(fx.cloneTable(fx.DEFAULT_TABLE), legs);
+  check(mism.length === 1 && mism[0].month === '2027-03' && mism[0].bands.some((b) => b.band === 0 && b.table === 300000 && b.deals === 0) && same(fx.dealsVsTable(fx.cloneTable(fx.DEFAULT_TABLE), {}), []),
+    'where the deals and the table disagree (these few options sell nothing below 3.3, the table €300K)');
+  check(same(fx.forwardFlows({ forwards: f.forwards }), [{ date: '2026-11-02', eur: 0, ils: 400000 }, { date: '2026-12-31', eur: 0, ils: 230000 }]),
+    'the forwards by value day: euros sold and bought back the same day net to nothing, the shekels don\'t');
+  check(fx.valueDayBefore('2027-03-08') === '2027-03-05' && fx.valueDayBefore('2027-03-05') === '2027-03-04' && fx.valueDayBefore('2026-12-07') === '2026-12-04',
+    'the euro value day before: Monday to Friday (a deposit for Mon 8 Mar pays out Fri 5 Mar)');
+
+  // The plan with March's parts, on the ladder of 30 Oct 2026: €810K paid out on Fri 5 Mar (two deposits).
+  const t = fx.cloneTable(fx.DEFAULT_TABLE);
+  const up = fx.fixings(t, TODAY).filter((x) => x.status !== 'past').map((x) => ({ month: x.month, date: x.date, days: x.days, conv: fx.conversionAt(x.row, t.bounds, 3.45), risk: fx.fixingRisk(x.row, t.bounds, 3.45, 0.09, x.days / 365) }));
+  const mar = up.find((u) => u.month === '2027-03');
+  mar.legs = fx.conversionLegs(legs['2027-03'], 3.45, mar.conv.eur);
+  const dep = (amount, valueDate) => ({ amount, valueDate, blocked: false, label: 'fixed-term' });
+  const LADDER = [dep(402000, '2026-11-03'), dep(202500, '2026-11-03'), dep(201500, '2026-11-03'), dep(403000, '2026-12-03'), dep(203000, '2026-12-03'),
+    dep(202000, '2026-12-03'), dep(504000, '2027-01-04'), dep(404000, '2027-01-04'), dep(505000, '2027-02-01'), dep(404000, '2027-02-01'), dep(405000, '2027-03-05'), dep(405000, '2027-03-05')];
+  const plan = fx.planReserve({ upcoming: up, policy: 'today', eur: { hapoalim: 3e6, other: 0, deposits: LADDER }, inflowPerDay: 0, today: TODAY, eurFloor: 200000 });
+  const c = plan.coverage[4];
+  check(c.deals && same(c.legs.map((l) => [l.settle, l.required, l.have, l.gap, l.until]), [['2027-03-05', 600000, 810000, 0, '2027-03-04'], ['2027-03-08', 450000, 210000, 240000, '2027-03-05']])
+    && c.gap === 240000 && c.takes === '2027-03-05' && c.late.length === 0,
+  'March part by part: the €810K of Fri 5 Mar covers the €600K leaving that day, and €210K rolls on to Mon 8 Mar, €240K short', JSON.stringify(c.legs.map((l) => [l.settle, l.required, l.have, l.gap])));
+  check(!plan.coverage[2].deals && plan.coverage[2].legs.length === 1 && plan.coverage[2].takes === '2027-01-06' && plan.next.takes === '2026-11-05',
+    'a month without deals: one part, the business day before the 7th, as before');
+  const leg = plan.ladder.find((l) => l.month === '2027-03');
+  check(leg && leg.settle === '2027-03-08' && leg.part && leg.until === '2027-03-05' && leg.eur === 240000 && leg.required === 450000 && leg.have === 210000,
+    'a new deposit for March\'s Mon 8 Mar part, paying out on Fri 5 Mar', JSON.stringify(leg));
+  const mail = require(path.join(ROOT, 'scripts', 'fx-challenge-mail.cjs'));
+  const line = mail.coverText(c, false, plan.coverage[5]);
+  check(line === 'יום א\' 7.3: €1.05M (€600K ביום ו\' 5.3, €450K ביום ב\' 8.3), הפיקדונות מכסים €810K: חסרים €240K ביום ב\' 8.3',
+    'the mail\'s line for March: its two parts, what the deposits cover, and the part that is short', line);
+  const hv = { plan: { next: {} }, rateCheck: null };
+  const said = mail.actionText({ kind: 'ladder', eur: 240000, legs: [leg] }, hv, TODAY);
+  check(said.head === 'להפקיד €240K בפיקדון עד יום ו\' 5.3' && said.body === 'לחלק של ההמרה של יום א\' 7.3 שיורד ביום ב\' 8.3: €450K, והפיקדונות שמשתחררים עד אז מכסים €210K, כלומר חסרים €240K. כל התשלומים עד אז עדיין מכוסים.',
+    'the mail\'s deposit for a part: until when, and the part it is for', JSON.stringify(said));
+  const en = fx.describeAction({ kind: 'ladder', eur: 240000, legs: [leg] }, { plan: { next: {} }, rateCheck: null }, TODAY, { eur: (n) => `€${Math.round(n / 1000)}K`, day: (d) => d });
+  check(en.body.startsWith('For the part of the 2027-03-07 conversion that leaves on 2027-03-08: €450K'), 'the page says the same', en.body);
+
+  // From the payload: the saved deals give the legs, the forwards' shekels, and what the page says about them.
+  const data = {
+    today: TODAY, table: t, rates: { series: series(400), spot: { date: TODAY, rate: 3.45 }, sigma: 0.08 },
+    balances: { rows: [{ bank: 'Bank Hapoalim', kind: 'current', currency: 'EUR', amount: 3000000 }, ...LADDER.map((d) => ({ bank: 'Hapoalim deposits', kind: 'deposit', currency: 'EUR', amount: d.amount, valueDate: d.valueDate, label: 'EUR fixed-term' }))] },
+    flows: [], inflowMonths: ['2026-07', '2026-08', '2026-09'],
+    positions: { asOf: { options: o.asOf, forwards: f.asOf }, options: o.options, forwards: f.forwards, savedAt: '2026-10-30T10:00:00Z', savedBy: 'finance' },
+  };
+  const v = fx.planFromPayload(data, 'today');
+  check(v.plan.coverage[4].deals && same(v.plan.coverage[4].legs.map((l) => Math.round(l.required)), [600000, 450000]) && !v.plan.coverage[3].deals
+    && v.deals.options === 6 && v.deals.forwards === 4 && v.deals.from === '2027-03' && same(v.deals.missing, ['2026-11', '2026-12', '2027-01', '2027-02', '2027-04'])
+    && v.deals.flows.length === 2 && v.deals.mismatches.length === 1,
+  'the saved deals give March its parts; the months without deals and where the deals and the table disagree are said', JSON.stringify(v.deals && v.deals.missing));
+  check(fx.planFromPayload({ ...data, positions: null }).deals === null && !fx.planFromPayload({ ...data, positions: null }).plan.coverage[4].deals,
+    'no deals saved: every conversion the business day before the 7th');
+
+  console.log('\nDEALS: the saved deals (PUT /api/fx-challenge/positions)');
+  const value = { asOf: { options: o.asOf, forwards: f.asOf }, options: o.options, forwards: f.forwards };
+  const ok = fxs.validatePositions({ value });
+  check(ok.ok && same(ok.value, value), 'the deals as the page reads them are accepted as they are');
+  check(fxs.validatePositions({ value: null }).ok, 'null clears them');
+  const bad = fxs.validatePositions({ value: { ...value, options: [{ ...o.options[0], side: 'long', settle: '2027-03-01', extra: 1 }] } });
+  check(!bad.ok && bad.errors.some((e) => /side/.test(e)) && bad.errors.some((e) => /settle/.test(e)) && bad.errors.some((e) => /unknown field "extra"/.test(e)),
+    'a wrong side, a value day before the fixing and an unknown field are refused', JSON.stringify(bad.errors));
+  check(!fxs.validatePositions({ value: { asOf: null, options: [], forwards: [] } }).ok, 'no deals at all is refused');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-pos-'));
+  const positionsFile = path.join(tmp, 'positions.json');
+  const nothing = async () => [];
+  const router = fxs.createFxChallengeRouter({
+    reads: { rates: async () => series(400), books: nothing, mail: null, flows: nothing, conversions: nothing },
+    tableFile: path.join(tmp, 'table.json'), positionsFile, clock: () => NOW,
+  });
+  const put = await call(router, { method: 'PUT', url: '/api/fx-challenge/positions', body: { value }, headers: { 'content-type': 'application/json', origin: 'https://finance.example' }, user: { email: 'finance@lsports.eu' } });
+  const got = (await call(router, { url: '/api/fx-challenge' })).body;
+  check(put.status === 200 && put.body.ok && got.positions && got.positions.options.length === 6 && got.positions.forwards.length === 4 && got.positions.savedAt
+    && fs.existsSync(positionsFile.replace(/\.json$/, '-history.jsonl')),
+  'saved for everyone with its history, and in the page\'s data', JSON.stringify(put.body).slice(0, 200));
 }
 
 async function testPlanFromPayload(fx) {
@@ -1131,6 +1276,7 @@ async function main() {
   await testPast(fx);
   await testRateCheck(fx);
   await testPlanFromPayload(fx);
+  await testDeals(fx);
   await testCash(fx);
   await testToday(fx);
   await testParse(fx);

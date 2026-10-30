@@ -2,7 +2,7 @@
 // The recommendation itself (planFromPayload, todayActions and their words) is shared with the daily mail.
 import {
   bandIndex, bandLabels, conversionAt, describeAction, describeDue, describeKeep, keepCover, nothingToday, pastConversions, planFromPayload, todayActions,
-  type CashPlan, type Conversion, type EurPosition, type KeepCover, type PastMonth, type PastTotals, type Policy, type RateCheck, type ReservePlan,
+  type CashPlan, type Conversion, type DealsView, type EurPosition, type KeepCover, type PastMonth, type PastTotals, type Policy, type RateCheck, type ReservePlan,
   type ScheduleItem, type ShekelDue, type TodayAction,
 } from '../forecast/fx-challenge.mjs';
 import { formatEur } from '../metrics/model.ts';
@@ -43,6 +43,8 @@ export interface FxModel {
   /** Shekels for the payroll and the vendors; null without a payroll figure. */
   cash: CashPlan | null;
   plan: ReservePlan | null;
+  /** The bank's deals behind the plan's days; null while none are saved. */
+  deals: DealsView | null;
   /** Where the amount kept for the next conversion comes from: deposits released by then, and today's cash; text says
    * it in words (empty when no deposit is released by then). */
   keep: (KeepCover & { text: string }) | null;
@@ -93,6 +95,7 @@ export function buildFxModel(data: FxPayload, simRate: number | null, policy: Po
     inflow: base.inflow,
     cash: base.cash,
     plan: base.plan,
+    deals: base.deals,
     keep: cover ? { ...cover, text: describeKeep(cover, fmt) } : null,
     todo: {
       actions: todo.actions.map((a) => ({ ...a, ...describeAction(a, base, data.today, fmt) })),
