@@ -703,7 +703,8 @@ export function eurVendorsAhead({ days, months, today, until }) {
       // The part today is in: what is left of it, today.
       const paid = start <= today ? (days || []).filter((d) => d && d.date >= start && d.date <= today).reduce((s, d) => s + (Number(d.eur) || 0), 0) : 0;
       const eur = Math.max(0, p.eur - paid);
-      if (eur >= 0.5) dues.push({ date: start <= today ? today : start, eur, part: i });
+      // rest: what is left of the part today is in (it began before today, or paid some today).
+      if (eur >= 0.5) dues.push({ date: start <= today ? today : start, eur, part: i, rest: start < today || paid >= 0.5 });
     });
   }
   return { months, parts, dues };
@@ -1291,6 +1292,36 @@ export function todayActions(view, today, { lead = 5, moveLead = 3, minEur = 500
     if (options.length) actions.push({ kind: 'deposit', key: 'deposit', urgent: false, eur: options[0].eur, options });
   }
   return { actions: [...actions.filter((a) => a.urgent), ...actions.filter((a) => !a.urgent)], ahead };
+}
+
+// On the same day, as the plan takes them: the shekels first, then the EUR vendors.
+const PAYMENT_ORDER = { shekels: 0, vendors: 1, conversion: 2, forward: 3 };
+/**
+ * The euros expected to leave from today to `days` ahead, in order (view: planFromPayload's): the EUR vendor payments
+ * on their days (eurVendorsAhead), each conversion's parts at the amount kept (the plan's coverage), the euros converted
+ * for shekels (the cash plan's needs: salaries, ILS vendors, cards) and the euros a forward sells. What the plan keeps
+ * the euros for, as the daily mail lists it. Returns { until, payments: [{ date, eur, kind: 'vendors' | 'conversion' |
+ * 'shekels' | 'forward', … }], total, byKind }.
+ *   vendors     part (0: 1st–7th, 1: 8th–20th, 2: 21st–end), rest (what is left of the part today is in)
+ *   conversion  month, part and parts (its parts, with the bank's deals)
+ *   shekels     why: what the shekels pay (net | later | cards | vendors)
+ */
+export function eurPaymentsAhead(view, today, { days = 35 } = {}) {
+  const until = isoAddDays(today, days);
+  const out = [];
+  for (const d of (view.eurVendors && view.eurVendors.dues) || []) out.push({ date: d.date, eur: d.eur, kind: 'vendors', part: d.part, rest: !!d.rest });
+  // A conversion on its day(s), as the plan takes it: with the bank's deals each part's value day, without them the 7th.
+  for (const c of (view.plan && view.plan.coverage) || []) {
+    const legs = c.legs.filter((l) => l.required >= 0.5);
+    legs.forEach((l, i) => out.push({ date: c.deals ? l.settle : c.date, eur: l.required, kind: 'conversion', month: c.month, part: i, parts: legs.length }));
+  }
+  for (const n of (view.cash && view.cash.needs) || []) if (n.eur >= 0.5) out.push({ date: n.date, eur: n.eur, kind: 'shekels', why: n.why });
+  for (const f of (view.deals && view.deals.flows) || []) if (f.eur <= -0.5) out.push({ date: f.date, eur: -f.eur, kind: 'forward' });
+  const payments = out.filter((x) => x.date >= today && x.date <= until)
+    .sort((a, b) => a.date.localeCompare(b.date) || PAYMENT_ORDER[a.kind] - PAYMENT_ORDER[b.kind]);
+  const byKind = { vendors: 0, conversion: 0, shekels: 0, forward: 0 };
+  for (const p of payments) byKind[p.kind] += p.eur;
+  return { until, payments, total: payments.reduce((s, p) => s + p.eur, 0), byKind };
 }
 
 const LEVEL_WORD = { high: 'high', middle: 'mid-range', low: 'low' };

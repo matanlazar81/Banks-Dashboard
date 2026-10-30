@@ -167,15 +167,55 @@ function keepLine(cover, on, policy) {
 
 const dayAfter = (iso) => new Date(Date.parse(`${String(iso).slice(0, 10)}T12:00:00Z`) + 86400000).toISOString().slice(0, 10);
 
-/** The EUR vendor payments the plan expects (fx.eurVendorsAhead), in one sentence: "התשלומים לספקים באירו נכללים בתכנון
- * לפי הימים שבהם יצאו ב-3 החודשים האחרונים: כ-€476K בשבוע הראשון של כל חודש, €89K מה-8 עד ה-20 ו-€119K מה-21 (הבא:
- * €476K ביום א' 1.11), ובנוסף נשמרים €683K." Empty without them. */
+/** What the recommendation expects for the EUR vendors (fx.eurVendorsAhead), in Hebrew: "ההמלצה מניחה שהתשלומים לספקים
+ * באירו יוצאים כמו ב-3 החודשים האחרונים (יולי–ספטמבר): כ-€476K בשבוע הראשון של החודש (1–7), באותם ימים שבהם הבנק לוקח את
+ * האירו להמרה, כ-€89K מה-8 עד ה-20 וכ-€119K מה-21 ועד סוף החודש. בנוסף נשמרים תמיד €683K בחשבונות האירו." Without the
+ * payments by day, says they count as spread over the month. */
 function vendorsLine(ev, floor) {
-  if (!ev || !ev.parts.some((p) => p.eur >= 500)) return '';
+  const kept = floor > 0.5 ? ` בנוסף נשמרים תמיד ${eur(floor)} בחשבונות האירו.` : '';
+  if (!ev || !ev.parts.some((p) => p.eur >= 500)) return `התשלומים לספקים באירו לא נקראו היום לפי ימים, ולכן הם בחשבון כממוצע לאורך החודש.${kept}`;
   const [first, mid, end] = ev.parts;
-  const next = ev.dues.find((d) => d.eur >= 50000) || ev.dues[0];
-  return `התשלומים לספקים באירו נכללים בתכנון לפי הימים שבהם יצאו ב-${ev.months.length} החודשים האחרונים: כ-${eur(first.eur)} בשבוע הראשון של כל חודש, `
-    + `${eur(mid.eur)} מה-8 עד ה-20 ו-${eur(end.eur)} מה-21${next ? ` (הבא: ${eur(next.eur)} ב${day(next.date)})` : ''}${floor > 0.5 ? `, ובנוסף נשמרים ${eur(floor)} בחשבונות האירו` : ''}.`;
+  const span = `${monthName(ev.months[0])}–${monthName(ev.months[ev.months.length - 1])}`;
+  return `ההמלצה מניחה שהתשלומים לספקים באירו יוצאים כמו ב-${ev.months.length} החודשים האחרונים (${span}): כ-${eur(first.eur)} בשבוע הראשון של החודש (1–7), `
+    + `באותם ימים שבהם הבנק לוקח את האירו להמרה, כ-${eur(mid.eur)} מה-8 עד ה-20 וכ-${eur(end.eur)} מה-21 ועד סוף החודש.${kept}`;
+}
+
+/** A part of the month the EUR vendor payments go out in, in a due's month: "1–7.11", "8–20.11", "21–30.11". */
+function partRange(part, iso) {
+  const [y, m] = String(iso).split('-').map(Number);
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return [`1–7.${m}`, `8–20.${m}`, `21–${last}.${m}`][part] || '';
+}
+const NEED = { net: 'שכר נטו', later: 'פנסיה, מס וביטוח לאומי', cards: 'כרטיסי אשראי', vendors: 'ספקים בשקלים' };
+
+/** A payment in euros ahead (fx.eurPaymentsAhead), in one line: "יום א' 1.11: ספקים באירו (1–7.11), כ-€476K". */
+function paymentText(p) {
+  if (p.kind === 'vendors') return `${day(p.date)}: ספקים באירו (${p.rest ? 'יתרת ' : ''}${partRange(p.part, p.date)}), כ-${eur(p.eur)}`;
+  if (p.kind === 'conversion') return `${day(p.date)}: ההמרה של ${monthName(p.month)} בבנק${p.parts > 1 ? ` (חלק ${p.part + 1} מ-${p.parts})` : ''}, ${eur(p.eur)}`;
+  if (p.kind === 'shekels') return `${day(p.date)}: המרה לשקלים (${(p.why || []).map((w) => NEED[w] || w).join(', ')}), ${eur(p.eur)}`;
+  return `${day(p.date)}: פורוורד, מכירת ${eur(p.eur)}`;
+}
+
+/** The payments ahead in total, by kind, what covers them (today's euros, the deposits paying out by then and the
+ * typical inflow) and whether it does (plan.next.short, over every due the plan sees): "סה"כ עד יום ו' 4.12: €4.63M (…).
+ * מול זה: €1.80M באירו היום, €1.61M מפיקדונות שמשתחררים עד אז ותקבולים רגילים של כ-€4.53M בחודש. לפי זה כל התשלומים
+ * מכוסים ונשארים לפחות €683K." acted: today's recommendations include the shortfall's. */
+function paymentsTotal(ahead, v, today, acted = false) {
+  const k = ahead.byKind;
+  const kinds = [['ספקים באירו', k.vendors], ['המרות בבנק', k.conversion], ['המרות לשקלים', k.shekels], ['פורוורדים', k.forward]]
+    .filter(([, x]) => x >= 0.5).map(([w, x]) => `${w} ${eur(x)}`).join(', ');
+  const deps = ((v.position && v.position.deposits) || []).filter((d) => d.amount > 0 && !d.blocked && d.valueDate && d.valueDate > today && d.valueDate <= ahead.until)
+    .reduce((s, d) => s + d.amount, 0);
+  const n = v.plan.next;
+  const has = [`${eur(n.liquid)} באירו היום`, deps >= 0.5 ? `${eur(deps)} מפיקדונות שמשתחררים עד אז` : null, v.inflow ? `תקבולים רגילים של כ-${eur(v.inflow.perMonth)} בחודש` : null].filter(Boolean);
+  const s = n.short && n.short.first;
+  const floor = n.eurFloor > 0.5 ? n.eurFloor : 0;
+  const verdict = !s
+    ? `לפי זה כל התשלומים מכוסים${floor ? ` ונשארים לפחות ${eur(floor)}` : ''}.`
+    : `לפי זה חסרים ${eur(s.eur)} ב${day(s.date)}${floor ? ` כדי שיישארו ${eur(floor)}` : ''}${acted ? ': ההמלצות למעלה אומרות איך להשלים' : ' (סכום קטן, ולכן אין עליו המלצה)'}.`;
+  const last = has[has.length - 1];
+  const and = /^[א-ת]/.test(last) ? `ו${last}` : `ו-${last}`;
+  return `סה"כ עד ${day(ahead.until)}: ${eur(ahead.total)} (${kinds}). מול זה: ${has.length > 1 ? `${has.slice(0, -1).join(', ')} ${and}` : has[0]}. ${verdict}`;
 }
 
 /** A conversion against the deposits, first in, first out (plan.coverage), by its conversion day: with the bank's deals
@@ -274,6 +314,16 @@ function renderMail(fx, data, { policy = 'today', link = null } = {}) {
       parts.push(heading(`ההמרות הבאות מול הפיקדונות (${POLICY[plan.policy]})`));
       parts.push(list(plan.coverage.map((c, i, all) => { const s = `${coverText(c, i === 0, all[i + 1])}.`; return { html: esc(s), text: s, style: c.gap >= 0.5 ? 'color:#be123c;' : 'color:#64748b;' }; })));
     }
+    // Every euro expected to leave, by day, and what the recommendation assumes for the EUR vendors.
+    const ahead = fx.eurPaymentsAhead(v, today);
+    parts.push(heading(`תשלומים צפויים באירו עד ${day(ahead.until)}`));
+    const expects = vendorsLine(v.eurVendors, n.eurFloor);
+    parts.push(para(esc(expects), expects, 'font-size:13px;'));
+    if (ahead.payments.length) {
+      parts.push(list(ahead.payments.map((p) => { const s = `${paymentText(p)}.`; return { html: esc(s), text: s, style: p.kind === 'vendors' ? 'color:#0f172a;' : 'color:#334155;' }; })));
+      const total = paymentsTotal(ahead, v, today, actions.some((a) => a.kind === 'short'));
+      parts.push(para(esc(total), total, 'font-size:13px;'));
+    }
     if (todo.ahead.dues.length) {
       parts.push(heading('תשלומים בשקלים בתקופה הקרובה'));
       parts.push(list(todo.ahead.dues.map((d) => { const s = `${dueText(d, today)}.`; return { html: esc(s), text: s, style: d.eur > 0.5 ? 'color:#0f172a;' : 'color:#64748b;' }; })));
@@ -282,7 +332,6 @@ function renderMail(fx, data, { policy = 'today', link = null } = {}) {
     const shekels = cash && cash.onHand ? `${ils(cash.onHand.total)} בשקלים (${ils(cash.onHand.current)} בעו"ש ו-${ils(cash.onHand.deposits)} בפיקדונות), ` : '';
     const status = `${shekels}${eur(n.hapoalim)} בחשבון האירו בפועלים ו-${eur(n.other)} בחשבונות אחרים. `
       + `${keepLine(fx.keepCover(plan), plan.coverage && plan.coverage[0] ? plan.coverage[0].on : [n.date], POLICY[plan.policy])}`
-      + `${v.eurVendors ? ` ${vendorsLine(v.eurVendors, n.eurFloor)}` : ''}`
       + `${cash ? '' : ` פנוי להמרה עכשיו: ${eur(n.freeNow)}.`}`
       + `${rc ? ` ${rateIs(rc)}.` : ''}`;
     parts.push(heading('המצב היום'));
@@ -541,4 +590,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { main, sendNow, renderMail, failureMail, mailDecision, parseArgs, parseRecipients, smtpFrom, mailConfig, scheduleState, israelHour, formatDay: day, actionText, coverText, vendorsLine, MARKER_FILE };
+module.exports = { main, sendNow, renderMail, failureMail, mailDecision, parseArgs, parseRecipients, smtpFrom, mailConfig, scheduleState, israelHour, formatDay: day, actionText, coverText, vendorsLine, paymentText, paymentsTotal, MARKER_FILE };

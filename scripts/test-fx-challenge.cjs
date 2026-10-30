@@ -585,11 +585,56 @@ function testEurVendors(fx) {
   check(before.eurVendors === null && near(before.inflow.perMonth, 0.8e6, 1) && near(v.inflow.perMonth, 1e6, 1) && v.eurVendors && v.plan.next.vendorsBefore === 460000,
     'from the payload: with NetSuite\'s payments by day, the inflow leaves them out and the plan takes them on their days; without, as before', JSON.stringify([before.inflow.perMonth, v.inflow.perMonth, v.plan.next.vendorsBefore]));
 
+  check(same(ev.dues.map((d) => d.rest), [true, false, false, false]) && fx.eurVendorsAhead({ days, months, today: '2026-10-23', until: '2026-10-31' }).dues[0].rest
+    && !fx.eurVendorsAhead({ days, months, today: '2026-11-01', until: '2026-11-30' }).dues[0].rest,
+  'a part already paying (it began before today, or paid some today) is its rest; one that starts today is whole');
+
   const mail = require(path.join(ROOT, 'scripts', 'fx-challenge-mail.cjs'));
   const line = mail.vendorsLine(v.eurVendors, 683000);
-  check(line === 'התשלומים לספקים באירו נכללים בתכנון לפי הימים שבהם יצאו ב-3 החודשים האחרונים: כ-€440K בשבוע הראשון של כל חודש, €70K מה-8 עד ה-20 ו-€120K מה-21 (הבא: €440K ביום א\' 1.11), ובנוסף נשמרים €683K בחשבונות האירו.'
-    && mail.vendorsLine(null, 0) === '',
-  'the mail says what it expects for the EUR vendors, and the next one', line);
+  check(line === 'ההמלצה מניחה שהתשלומים לספקים באירו יוצאים כמו ב-3 החודשים האחרונים (יולי–ספטמבר): כ-€440K בשבוע הראשון של החודש (1–7), באותם ימים שבהם הבנק לוקח את האירו להמרה, כ-€70K מה-8 עד ה-20 וכ-€120K מה-21 ועד סוף החודש. בנוסף נשמרים תמיד €683K בחשבונות האירו.'
+    && mail.vendorsLine(null, 0) === 'התשלומים לספקים באירו לא נקראו היום לפי ימים, ולכן הם בחשבון כממוצע לאורך החודש.',
+  'the mail says, in Hebrew, what the recommendation expects for the EUR vendors (or that they count as spread over the month)', line);
+
+  // Every euro expected to leave, by day: the EUR vendors, the bank's conversions (each part), the euros converted for
+  // shekels and the forwards that sell euros.
+  const view = {
+    eurVendors: { dues: [{ date: '2026-10-21', eur: 20000, part: 2, rest: true }, { date: '2026-11-01', eur: 440000, part: 0, rest: false },
+      { date: '2026-11-08', eur: 70000, part: 1, rest: false }, { date: '2026-11-21', eur: 120000, part: 2, rest: false }, { date: '2026-12-01', eur: 440000, part: 0, rest: false }] },
+    plan: { coverage: [{ month: '2026-11', date: '2026-11-07', deals: true, legs: [{ settle: '2026-11-04', required: 1.1e6 }] },
+      { month: '2026-12', date: '2026-12-07', deals: true, legs: [{ settle: '2026-12-04', required: 600000 }, { settle: '2026-12-07', required: 450000 }] }] },
+    cash: { needs: [{ date: '2026-11-04', eur: 50000, why: ['later'] }, { date: '2026-11-05', eur: 1.13e6, why: ['net', 'vendors'] }, { date: '2026-11-10', eur: 0, why: ['cards'] }] },
+    deals: { flows: [{ date: '2026-11-15', eur: -200000 }, { date: '2026-11-20', eur: 300000 }] },
+  };
+  const ahead = fx.eurPaymentsAhead(view, TODAY);
+  check(ahead.until === '2026-11-25' && same(ahead.payments.map((p) => [p.date, p.kind, p.eur]), [
+    ['2026-10-21', 'vendors', 20000], ['2026-11-01', 'vendors', 440000], ['2026-11-04', 'shekels', 50000], ['2026-11-04', 'conversion', 1.1e6],
+    ['2026-11-05', 'shekels', 1.13e6], ['2026-11-08', 'vendors', 70000], ['2026-11-15', 'forward', 200000], ['2026-11-21', 'vendors', 120000]]),
+  'every euro leaving in the next 35 days, by day (on one day as the plan takes them); none of nothing, a forward that buys or a day after', JSON.stringify(ahead.payments));
+  check(same(ahead.byKind, { vendors: 650000, conversion: 1.1e6, shekels: 1.18e6, forward: 200000 }) && ahead.total === 3.13e6
+    && same(fx.eurPaymentsAhead(view, TODAY, { days: 10 }).payments.map((p) => p.date), ['2026-10-21'])
+    && fx.eurPaymentsAhead({ plan: { coverage: [{ month: '2026-11', date: '2026-11-07', deals: false, legs: [{ settle: '2026-11-05', required: 1e6 }] }] } }, TODAY).payments[0].date === '2026-11-07'
+    && same(fx.eurPaymentsAhead({ plan: { coverage: [{ month: '2026-11', date: '2026-11-07', deals: true, legs: [{ settle: '2026-11-04', required: 0 }, { settle: '2026-11-06', required: 5e5 }] }] } }, TODAY).payments
+      .map((p) => [p.date, p.part, p.parts]), [['2026-11-06', 0, 1]])
+    && same(fx.eurPaymentsAhead({ plan: null }, TODAY), { until: '2026-11-25', payments: [], total: 0, byKind: { vendors: 0, conversion: 0, shekels: 0, forward: 0 } }),
+  'in total and by kind; a shorter window; nothing to plan → nothing', JSON.stringify(ahead.byKind));
+  const said = [
+    { date: '2026-10-21', eur: 20000, kind: 'vendors', part: 2, rest: true }, { date: '2026-11-01', eur: 440000, kind: 'vendors', part: 0, rest: false },
+    { date: '2026-11-04', eur: 1.1e6, kind: 'conversion', month: '2026-11', part: 0, parts: 1 }, { date: '2026-12-07', eur: 450000, kind: 'conversion', month: '2026-12', part: 1, parts: 2 },
+    { date: '2026-11-05', eur: 1.13e6, kind: 'shekels', why: ['net', 'vendors'] }, { date: '2026-11-15', eur: 200000, kind: 'forward' },
+  ].map((p) => mail.paymentText(p));
+  check(same(said, ['יום ד\' 21.10: ספקים באירו (יתרת 21–31.10), כ-€20K', 'יום א\' 1.11: ספקים באירו (1–7.11), כ-€440K', 'יום ד\' 4.11: ההמרה של נובמבר בבנק, €1.10M',
+    'יום ב\' 7.12: ההמרה של דצמבר בבנק (חלק 2 מ-2), €450K', 'יום ה\' 5.11: המרה לשקלים (שכר נטו, ספקים בשקלים), €1.13M', 'יום א\' 15.11: פורוורד, מכירת €200K']),
+  'each payment in the mail\'s words', JSON.stringify(said));
+  const pv = (next) => ({ plan: { next: { liquid: 1.8e6, eurFloor: 683000, short: null, ...next } }, inflow: { perMonth: 4.53e6 },
+    position: { deposits: [{ amount: 1.5e6, valueDate: '2026-11-03' }, { amount: 110000, valueDate: '2026-11-25' }, { amount: 900000, valueDate: '2026-11-26' }, { amount: 400000, valueDate: '2026-11-10', blocked: true }] } });
+  const gap = { eur: 38000, date: '2026-11-05', first: { eur: 38000, date: '2026-11-05' } };
+  const totals = [mail.paymentsTotal(ahead, pv({}), TODAY), mail.paymentsTotal(ahead, pv({ short: gap }), TODAY), mail.paymentsTotal(ahead, pv({ short: gap }), TODAY, true),
+    mail.paymentsTotal(ahead, { ...pv({ eurFloor: 0 }), inflow: null, position: { deposits: [] } }, TODAY)];
+  check(totals[0] === 'סה"כ עד יום ד\' 25.11: €3.13M (ספקים באירו €650K, המרות בבנק €1.10M, המרות לשקלים €1.18M, פורוורדים €200K). מול זה: €1.80M באירו היום, €1.61M מפיקדונות שמשתחררים עד אז ותקבולים רגילים של כ-€4.53M בחודש. לפי זה כל התשלומים מכוסים ונשארים לפחות €683K.'
+    && totals[1].endsWith('לפי זה חסרים €38K ביום ה\' 5.11 כדי שיישארו €683K (סכום קטן, ולכן אין עליו המלצה).')
+    && totals[2].endsWith('לפי זה חסרים €38K ביום ה\' 5.11 כדי שיישארו €683K: ההמלצות למעלה אומרות איך להשלים.')
+    && totals[3].endsWith('מול זה: €1.80M באירו היום. לפי זה כל התשלומים מכוסים.'),
+  'the total, by kind, against today\'s euros, the deposits paying out by then (not a blocked one) and the typical inflow; covered or how short, and whether today\'s recommendations fix it', JSON.stringify(totals));
   const hv = { plan: { next: { backup: 0, eurFloor: 0 } }, rateCheck: null };
   const short = mail.actionText({ kind: 'short', eur: 240000, date: '2026-12-01', by: '2026-12-01', shekels: false, vendors: true }, hv, TODAY);
   const leg = { month: '2026-12', date: '2026-12-07', on: '2026-12-06', until: '2026-12-03', eur: 240000, gap: 240000, required: 800000, have: 560000 };
@@ -1096,6 +1141,17 @@ async function testMail(fx) {
     && mc.text.includes('תשלומים בשקלים בתקופה הקרובה') && mc.text.includes('שכר נטו של אוקטובר ותשלומי הספקים בשקלים של נובמבר')
     && mc.text.includes('שבת 14.11 (מוכן עד יום ה\' 12.11)') && mc.text.includes('פנסיה, מס וביטוח לאומי של אוקטובר') && vc.cash && vc.cash.months.length >= 6,
   'with the payroll: today\'s recommendations lead (subject and body), each with its balances, then the payments in shekels ahead', mc.subject);
+  const section = (t) => { const ls = t.split('\n'); const at = ls.indexOf('תשלומים צפויים באירו עד יום ד\' 25.11'); return at < 0 ? [] : ls.slice(at + 1, ls.indexOf('', at + 1)); };
+  const ms = section(m.text);
+  const mcs = section(mc.text);
+  check(ms[0] === 'התשלומים לספקים באירו לא נקראו היום לפי ימים, ולכן הם בחשבון כממוצע לאורך החודש.' && /^- שבת 7\.11: ההמרה של נובמבר בבנק, €[\d.]+[KM]\.$/.test(ms[1])
+    && /^סה"כ עד יום ד' 25\.11: €[\d.]+[KM] \(המרות בבנק €[\d.]+[KM]\)\. מול זה: €1\.21M באירו היום, €1\.50M מפיקדונות שמשתחררים עד אז ותקבולים רגילים של כ-€[\d.]+[KM] בחודש\. לפי זה כל התשלומים מכוסים\.$/.test(ms[2])
+    && ms.length === 3,
+  'the mail lists every euro expected to leave in the next 35 days, by day, with what is assumed for the EUR vendors and the total against what covers it', ms.join(' | '));
+  check(/^- יום ד' 21\.10: המרה לשקלים \(ספקים בשקלים\), €[\d.]+K\.$/.test(mcs[1]) && /^- יום ה' 5\.11: המרה לשקלים \(שכר נטו, ספקים בשקלים\), €[\d.]+M\.$/.test(mcs[2])
+    && /^- שבת 7\.11: ההמרה של נובמבר בבנק/.test(mcs[3]) && mc.actions.some((a) => a.kind === 'short')
+    && /לפי זה חסרים €[\d.]+K ביום ב' 7\.12 כדי שיישארו €200K: ההמלצות למעלה אומרות איך להשלים\.$/.test(mcs[mcs.length - 1]) && !english(mcs.join(' ')),
+  'with the payroll: the euros converted for shekels on their days too, and a gap the recommendations above fix', mcs.join(' | '));
   const none = mail.renderMail(fx, { ...data, balances: null }, {});
   check(/· אין היום המלצה$/.test(none.subject) && clean(none.html) && none.text.includes('היתרות'), 'without balances: no recommendation, and why');
   const failed = mail.failureMail(TODAY, new Error('NetSuite down'));
