@@ -172,7 +172,7 @@ function Kpis({ model }: { model: FxModel }) {
         note={model.spotBand !== null ? `Band ${model.labels[model.spotBand]} · ${formatDay(model.spotDate)}` : 'No rate from NetSuite'} />
       <KpiCard label="Next conversion" value={next && next.atSpot ? next.atSpot.eur : null} ccy="eur"
         display={next && next.atSpot ? `${formatEur(next.atSpot.eur)} → ${formatIls(next.atSpot.ils)}` : undefined}
-        note={next ? `${next.fixing.fixedOn ? `Fixed ${formatDays(next.fixing.fixedOn)}` : `${formatDay(next.fixing.date)}${next.fixing.weekend ? ' (weekend)' : ''}`}${next.fixedAt ? ` at EUR/ILS ${formatRate(next.fixedAt.rate)}` : " at today's rate"}${next.atSpot ? `, ${formatTableRate(next.atSpot.rate)}` : ''}` : 'No conversion left in the table'} />
+        note={next ? `${conversionDays(next.fixing, next.fixedAt, next.parts)}${next.fixedAt ? '' : " at today's rate"}${next.atSpot ? `, ${formatTableRate(next.atSpot.rate)}` : ''}` : 'No conversion left in the table'} />
       <KpiCard label="Keep for it" value={keepEur} ccy="eur" display={keepEur !== null ? eur0(keepEur) : undefined}
         note={model.plan ? `${POLICY_LABEL[model.plan.policy]}${coverNote}` : 'Needs balances'} />
       {cash && plan ? (
@@ -200,7 +200,7 @@ const KEEP_TIP: Record<Policy, string> = {
   worst: "The largest amount in that month's row of the table, whatever the rate. It is paid from Hapoalim EUR (583400).",
 };
 const PATH_TIP = {
-  fixing: "The conversion day in the table, the 7th of each month: that day's EUR/ILS picks the band. With the bank's deals, EUR/ILS is fixed a few days before and the euros leave on their value days (the schedule below shows them).",
+  fixing: "When the conversion happens: the euros leave Hapoalim EUR (583400) and the shekels come in. With the bank's deals, its parts' value days, two business days after EUR/ILS is fixed for them; without them, the table's day (the 7th), the euros taken the business day before.",
   expected: "What the conversion sells on average: each band's euros, weighted by the chance that EUR/ILS lands in it that day, from today's rate. The bank sells one cell; this is for planning. Hover a figure for the chances.",
   released: 'EUR deposits that mature after the previous conversion (after today, for the first) and by this one, at the bank\'s value at maturity with interest. Hover a figure for each deposit and its date. They count only if the bank pays them out rather than rolling them over; a blocked deposit is left out.',
   available: "What you would hold on the day if nothing else is converted: today's liquid euros, plus the typical inflow and the deposits released by then, less what the earlier conversions take (at the amount kept) and the conversions for salaries and vendors by then.",
@@ -231,9 +231,10 @@ function Recommendation({ model, policy, onPolicy, inflowMonths }: { model: FxMo
   }
   const n = plan.next;
   const keep = model.keep;
-  // With the bank's deals, the conversion by its month and days; without, by the table's day.
+  // With the bank's deals, the conversion by the day(s) its euros leave (the plan's parts); without, by the table's day.
   const deals = !!first.fixing.fixedOn;
-  const when = deals ? `the ${monthName(first.fixing.month)} conversion (${conversionDays(first.fixing, first.fixedAt)})`
+  const c0 = plan.coverage[0];
+  const when = deals ? `the conversion of ${conversionDays(first.fixing, first.fixedAt, c0 && c0.month === first.fixing.month ? c0.legs : first.parts)}`
     : `${formatDay(n.date)}${first.fixing.weekend ? ' (a weekend: the deal sets the day)' : ''}`;
   // Deposits from NetSuite's books have no dates, so none of them shows as released on a day.
   const undated = !!model.position && model.position.deposits.length > 0 && model.position.deposits.every((d) => !d.valueDate);
@@ -321,7 +322,8 @@ function Recommendation({ model, policy, onPolicy, inflowMonths }: { model: FxMo
                     className={`cursor-pointer border-b border-slate-100 hover:bg-slate-50 ${showWorkings && p.month === chosen ? 'bg-sky-50' : ''}`}>
                     <td className="px-2 py-1.5 text-left text-slate-700">
                       <button type="button" className={HINT} title="Show how this row's figures are worked out">
-                        {formatDay(p.date)}{p.month.slice(0, 4) !== model.schedule[0].fixing.month.slice(0, 4) ? ` ${p.month.slice(0, 4)}` : ''}
+                        {(() => { const c = plan.coverage.find((x) => x.month === p.month); return c && c.deals ? formatDays(c.on) : formatDay(p.date); })()}
+                        {p.month.slice(0, 4) !== model.schedule[0].fixing.month.slice(0, 4) ? ` ${p.month.slice(0, 4)}` : ''}
                       </button>
                     </td>
                     <td className={TD}>{formatEur(p.required)}</td>
@@ -372,7 +374,7 @@ function Recommendation({ model, policy, onPolicy, inflowMonths }: { model: FxMo
 }
 
 const COVER_TIP = {
-  leaves: "When the euros leave Hapoalim EUR (583400): with the bank's deals, each part's value day, two business days after it is fixed (March 2027: €600K on Fri 5 Mar, €450K on Mon 8 Mar); without them, the business day before the 7th.",
+  day: "When the conversion happens: the euros leave Hapoalim EUR (583400) and the shekels come in. With the bank's deals, each part's value day, two business days after it is fixed (March 2027: Fri 5 and Mon 8 Mar); without them, the table's day (the 7th), the euros taken the business day before. Hover a day for its parts.",
   released: "EUR deposits paying out by the day the euros leave (each part's, with the bank's deals), and after the previous conversion's left (after today, for the first), at the bank's value then, interest included. Hover a figure for each deposit and its date. They count only if the bank pays them out rather than rolling them over.",
   carried: "What the deposits of the conversions before it left over: it rolls on to this one.",
   result: 'The deposits paid out before it, plus what is left from earlier, against what it takes, part by part. Short: the euros on hand or coming in have to fill the rest, or a new deposit timed for it.',
@@ -388,9 +390,8 @@ function CoverageCard({ model, plan }: { model: FxModel; plan: ReservePlan }) {
         <table className="min-w-full text-xs">
           <thead>
             <tr className="border-b border-slate-200">
-              <Th left tip={PATH_TIP.fixing}>Conversion day</Th>
+              <Th left tip={COVER_TIP.day}>Conversion day</Th>
               <Th tip={KEEP_TIP[plan.policy]}>It takes ({POLICY_LABEL[plan.policy].toLowerCase()})</Th>
-              <Th tip={COVER_TIP.leaves}>The euros leave</Th>
               <Th tip={COVER_TIP.released}>Deposits paid out before it</Th>
               <Th tip={COVER_TIP.carried}>Left from earlier</Th>
               <Th tip={COVER_TIP.result}>Covered?</Th>
@@ -410,14 +411,16 @@ function CoverageCard({ model, plan }: { model: FxModel; plan: ReservePlan }) {
               const shortParts = c.legs.filter((l) => l.gap >= 0.5);
               return (
                 <tr key={c.month} className="border-b border-slate-100">
-                  <td className="px-2 py-1.5 text-left text-slate-700">{formatDay(c.date)}{c.month.slice(0, 4) !== year0 ? ` ${c.month.slice(0, 4)}` : ''}</td>
-                  <td className={TD}>{formatEur(c.required)}</td>
-                  <td className={`${TD} whitespace-nowrap text-slate-700`}
+                  <td className="whitespace-nowrap px-2 py-1.5 text-left text-slate-700"
                     title={c.deals
                       ? c.legs.map((l) => `${formatEur(l.required)} leaves on ${formatDay(l.settle, true)}${l.expiry ? `, fixed on ${formatDay(l.expiry, true)}` : ''}`).join('\n')
-                      : "No deals from the bank for this month: the business day before the 7th."}>
-                    <span className={HINT}>{c.legs.length > 1 ? c.legs.map((l) => `${formatDay(l.settle)} ${formatEur(l.required)}`).join(' · ') : formatDay(c.takes)}</span>
-                    {!c.deals && <span className="text-slate-400"> (assumed)</span>}
+                      : `No deals from the bank for this month: the table's ${formatDay(c.date, true)}, its euros taken the business day before.`}>
+                    <span className={HINT}>{formatDays(c.on)}</span>{c.month.slice(0, 4) !== year0 ? ` ${c.month.slice(0, 4)}` : ''}
+                    {!c.deals && <span className="text-slate-400"> (euros leave {formatDay(c.takes)}, assumed)</span>}
+                  </td>
+                  <td className={`${TD} whitespace-nowrap`}>
+                    {formatEur(c.required)}
+                    {c.legs.length > 1 && <span className="text-slate-500"> ({c.legs.map((l) => formatEur(l.required)).join(' + ')})</span>}
                   </td>
                   <td className={`${TD} text-slate-600`} title={tip || undefined}>
                     {c.released > 0.5 ? <span className={HINT}>{formatEur(c.released)}</span> : late.length ? <span className={HINT}>– (one too late)</span> : '–'}
@@ -438,11 +441,11 @@ function CoverageCard({ model, plan }: { model: FxModel; plan: ReservePlan }) {
         </table>
       </div>
       <p className="mt-1 text-[11px] text-slate-500">
-        The euros leave on the bank&apos;s value days: with its deals (the card below), each part&apos;s own, two business days after it is
-        fixed; without them, the business day before the 7th. Each deposit counts for the first part it pays out in time for, and
-        what one doesn&apos;t take rolls on to the next. A conversion the deposits don&apos;t cover is short: the euros on hand or coming in
-        fill the rest, or a new deposit that pays out the value day before (the last column, also under what to do today). Hover
-        a header for what it means.
+        A conversion happens when its euros leave (and the shekels come in): with the bank&apos;s deals (the card below), on each
+        part&apos;s value day, two business days after it is fixed; without them, the euros are taken the business day before the
+        table&apos;s 7th. Each deposit counts for the first part it pays out in time for, and what one doesn&apos;t take rolls on to the
+        next. A conversion the deposits don&apos;t cover is short: the euros on hand or coming in fill the rest, or a new deposit that
+        pays out the value day before (the last column, also under what to do today). Hover a header for what it means.
       </p>
     </Card>
   );
@@ -785,7 +788,8 @@ function Workings({ model, plan, month, inflowMonths, onClose }: { model: FxMode
   const p = plan.path[i];
   const limit = plan.path.find((x) => x.month === p.limitedBy) || p;
   const day = formatDay(p.date, true);
-  const nextDay = formatDay(n.date, true);
+  const c0 = plan.coverage[0];
+  const nextDay = c0 && c0.deals ? formatDays(c0.on) : formatDay(n.date, true);
   const setting = POLICY_LABEL[plan.policy].toLowerCase();
   const months = inflowMonths.map((m) => monthName(m).slice(0, 3)).join('–');
   const deposits = plan.path.slice(0, i + 1).reduce((s, x) => s + x.releasedDeposits.length, 0);
@@ -929,7 +933,7 @@ function Simulation({ model, rateText, onRate }: { model: FxModel; rateText: str
             {model.schedule.map((s) => (
               <tr key={s.fixing.month} className="border-b border-slate-100">
                 <td className="px-2 py-1.5 text-left text-slate-700">
-                  {monthName(s.fixing.month)} <span className="text-slate-400">· {conversionDays(s.fixing, s.fixedAt)}</span>
+                  {monthName(s.fixing.month)} <span className="text-slate-400">· {conversionDays(s.fixing, s.fixedAt, s.simParts)}</span>
                 </td>
                 <td className={`${TD} font-medium text-slate-900`}>{s.atSim ? formatEur(s.atSim.eur) : '–'}</td>
                 <td className={TD}>{s.atSim ? formatTableRate(s.atSim.rate) : '–'}</td>

@@ -1,8 +1,9 @@
 // Pure: what the FX Challenge page shows, from GET /api/fx-challenge and the rate being simulated. No React.
 // The recommendation itself (planFromPayload, todayActions and their words) is shared with the daily mail.
 import {
-  bandIndex, bandLabels, conversionAt, describeAction, describeDue, describeKeep, keepCover, nothingToday, pastConversions, planFromPayload, todayActions,
-  type CashPlan, type Conversion, type DealsView, type EurPosition, type Fixing, type FxTable, type KeepCover, type PastMonth, type PastTotals, type Policy, type RateCheck, type ReservePlan,
+  bandIndex, bandLabels, conversionAt, describeAction, describeDue, describeKeep, keepCover, legsAt, nothingToday, pastConversions, planFromPayload, todayActions,
+  type CashPlan, type Conversion, type ConversionLeg, type DealsView, type EurPosition, type Fixing, type FxTable, type KeepCover, type PastMonth, type PastTotals, type Policy,
+  type RateCheck, type ReservePlan,
   type ScheduleItem, type ShekelDue, type TodayAction,
 } from '../forecast/fx-challenge.mjs';
 import { formatEur } from '../metrics/model.ts';
@@ -10,6 +11,8 @@ import type { FxPayload } from './types.ts';
 
 export interface ScheduleRow extends ScheduleItem {
   atSim: Conversion | null;
+  /** With the bank's deals, the parts selling at the simulated rate (once fixed, at the fixed one). */
+  simParts: ConversionLeg[] | null;
 }
 export interface YearTotal { year: string; eur: number; ils: number; vsSpotIls: number; expectedEur: number; count: number }
 /** What to do today, as the daily mail says it: each action in words, the payments in shekels ahead, and what comes next
@@ -64,7 +67,15 @@ export function buildFxModel(data: FxPayload, simRate: number | null, policy: Po
   const bounds = table.bounds;
   const sim = simRate && simRate > 0 ? simRate : base.spot;
   // A conversion already fixed sells what it was fixed at, whatever rate is simulated.
-  const schedule: ScheduleRow[] = base.schedule.map((s) => ({ ...s, atSim: s.fixedAt ? s.atSpot : sim ? conversionAt(s.fixing.row, bounds, sim) : null }));
+  const legsOf = (month: string) => (base.dealLegs && base.dealLegs[month]) || null;
+  const schedule: ScheduleRow[] = base.schedule.map((s) => {
+    const legs = legsOf(s.fixing.month);
+    return {
+      ...s,
+      atSim: s.fixedAt ? s.atSpot : sim ? conversionAt(s.fixing.row, bounds, sim) : null,
+      simParts: s.fixedAt ? s.parts : legs && sim ? legsAt(legs, sim).filter((l) => l.eur > 0.5) : null,
+    };
+  });
 
   const byYear = new Map<string, YearTotal>();
   for (const s of schedule) {
@@ -148,11 +159,15 @@ export function formatDays(days: string[]): string {
   return shown.length > 1 ? `${shown.slice(0, -1).join(', ')} & ${shown[shown.length - 1]}` : shown[0] || '–';
 }
 
-/** When a conversion happens: with the bank's deals "fixed Mon 2 & Tue 3 Nov, paid Wed 4 & Thu 5 Nov" (and the rate it
- * was fixed at, once fixed); without, the table's day, "Sat 7 Nov (weekend)". */
-export function conversionDays(f: Fixing, fixedAt: { rate: number } | null = null): string {
+/** A conversion's day, when it happens: with the bank's deals, the day(s) its euros leave (and the shekels come in) and
+ * when EUR/ILS is fixed for them, "Wed 4 Nov (fixed Mon 2 Nov)": the parts selling at the rate shown, else all of its
+ * parts, and once fixed the rate it was fixed at. Without, the table's day, "Sat 7 Nov (weekend)". */
+export function conversionDays(f: Fixing, fixedAt: { rate: number } | null = null, parts: { expiry: string | null; settle: string }[] | null = null): string {
   if (!f.fixedOn || !f.paidOn) return `${formatDay(f.date)}${f.weekend ? ' (weekend)' : ''}`;
-  return `fixed ${formatDays(f.fixedOn)}${fixedAt ? ` at ${formatRate(fixedAt.rate)}` : ''}, paid ${formatDays(f.paidOn)}`;
+  const some = parts && parts.length ? parts : null;
+  const on = some ? [...new Set(some.map((p) => p.settle))].sort() : f.paidOn;
+  const fixed = some ? [...new Set(some.map((p) => p.expiry).filter((d): d is string => !!d))].sort() : f.fixedOn;
+  return `${formatDays(on)} (fixed ${formatDays(fixed.length ? fixed : f.fixedOn)}${fixedAt ? ` at ${formatRate(fixedAt.rate)}` : ''})`;
 }
 
 export const formatPct0 = (p: number) => `${Math.round(p * 100)}%`;

@@ -333,7 +333,11 @@ export interface CoverageLeg {
  * conversion doesn't take rolls on to the next. */
 export interface CoverageRow {
   month: string;
+  /** The table's day (the 7th). */
   date: string;
+  /** Its conversion day(s), when its euros leave: with the deals, its parts' value days (Wed 4 Nov; Fri 4 & Mon 7 Dec);
+   * without, the 7th. */
+  on: string[];
   /** Deposits count for it when they pay out after this day: the day the bank took the previous conversion's euros
    * (today, for the first). */
   from: string;
@@ -364,7 +368,8 @@ export interface CoverageRow {
 }
 /** A new deposit for a conversion's gap: eur until `until`, for the conversion on `date`; with the deals, for its part
  * leaving on `settle` (part: the conversion leaves in more than one part), whose amount is `required`. */
-export interface LadderLeg { month: string; date: string; settle?: string; part?: boolean; until: string; eur: number; gap: number; required: number; have: number }
+/** on: the conversion day the deposit is for (with the deals, its part's value day; without, the 7th). */
+export interface LadderLeg { month: string; date: string; on?: string; settle?: string; part?: boolean; until: string; eur: number; gap: number; required: number; have: number }
 export declare function planReserve(input: {
   upcoming: Upcoming[];
   policy?: Policy;
@@ -414,6 +419,8 @@ export interface ScheduleItem {
   /** Every part fixed: NetSuite's rate on its last fixing day, which atSpot and risk then use (no risk left). */
   fixedAt: RatePoint | null;
   atSpot: Conversion | null;
+  /** With the bank's deals, the parts selling at atSpot's rate: their value days are the conversion's days. */
+  parts: ConversionLeg[] | null;
   risk: FixingRisk | null;
   /** What it can sell, by EUR/ILS range, with each range's chance (from today's rate). */
   outcomes: OutcomeRange[] | null;
@@ -436,6 +443,8 @@ export interface PlanView {
   plan: ReservePlan | null;
   /** The bank's deals; null while none are saved. */
   deals: DealsView | null;
+  /** The deals' options by month and part (positionLegs), for the parts selling at another rate; null without deals. */
+  dealLegs: Record<string, PositionLeg[]> | null;
 }
 export declare function planFromPayload(data: PlanInput, policy?: Policy): PlanView;
 
@@ -443,7 +452,7 @@ export declare function planFromPayload(data: PlanInput, policy?: Policy): PlanV
 export type TodayAction =
   | { kind: 'convert'; key: string; urgent: boolean; eur: number; by: string; left: number; due: ShekelDue }
   | { kind: 'short'; key: string; urgent: boolean; eur: number; date: string; by: string; left: number; shekels: boolean }
-  | { kind: 'move'; key: string; urgent: boolean; eur: number; date: string; by: string; left: number }
+  | { kind: 'move'; key: string; urgent: boolean; eur: number; date: string; on?: string[]; by: string; left: number }
   | { kind: 'ladder'; key: string; urgent: boolean; eur: number; legs: LadderLeg[] }
   | { kind: 'deposit'; key: string; urgent: boolean; eur: number; options: { months: number; until: string; eur: number }[] };
 export declare function todayActions(view: PlanView, today: string, opts?: { lead?: number; moveLead?: number; minEur?: number; notice?: number }): { actions: TodayAction[]; ahead: { dues: ShekelDue[]; eur: number } };

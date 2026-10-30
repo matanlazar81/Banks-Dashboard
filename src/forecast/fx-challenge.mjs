@@ -1015,7 +1015,9 @@ export function planReserve({ upcoming, policy = 'p95', eur, inflowPerDay = null
     const short = legs.find((l) => l.gap >= 0.5);
     const until = (short || legs[0]).until;
     return {
-      month: f.month, date: f.date, from, takes: legs[0].settle, deals: parts[0].deals, legs, required: req, released,
+      // on: its conversion day(s), when its euros leave (with the deals, its parts' value days; without, the 7th).
+      month: f.month, date: f.date, on: parts[0].deals ? [...new Set(legs.map((l) => l.settle))] : [f.date],
+      from, takes: legs[0].settle, deals: parts[0].deals, legs, required: req, released,
       releasedDeposits: legs.flatMap((l) => l.releasedDeposits), late: last.settle < f.date ? releasedBetween(last.settle, f.date) : [],
       carried: carriedIn, have: carriedIn + released, gap: legs.reduce((s, l) => s + l.gap, 0), until, timed: i > 0 && daysTo(until) >= LADDER_MIN_DAYS,
     };
@@ -1034,8 +1036,9 @@ export function planReserve({ upcoming, policy = 'p95', eur, inflowPerDay = null
       const space = Math.min(cap - laddered, ...checkpoints.filter((x) => x.date < l.until).map((x) => x.spare - lockedAt(x.date)));
       const eur = Math.min(Math.ceil(l.gap / 10000) * 10000, Math.floor(Math.max(0, space) / 10000) * 10000);
       if (eur < 10000) { room = false; continue; }
-      // part: the conversion leaves in more than one part, and this deposit is for the one on `settle`.
-      ladder.push({ month: c.month, date: c.date, settle: l.settle, part: c.legs.length > 1, until: l.until, eur, gap: l.gap, required: l.required, have: l.have });
+      // part: the conversion leaves in more than one part, and this deposit is for the one on `settle`; on: that part's
+      // conversion day (the 7th without the deals).
+      ladder.push({ month: c.month, date: c.date, on: c.deals ? l.settle : c.date, settle: l.settle, part: c.legs.length > 1, until: l.until, eur, gap: l.gap, required: l.required, have: l.have });
       laddered += eur;
     }
   }
@@ -1066,11 +1069,13 @@ export function planFromPayload(data, policy = 'p95') {
     const was = f.fixed ? rateOn(data.rates.series, f.fixedOn[f.fixedOn.length - 1]) : null;
     const fixedAt = was && was.date >= f.fixedOn[0] ? was : null;
     const rate = fixedAt ? fixedAt.rate : spot;
-    if (!rate) return { fixing: f, fixedAt: null, atSpot: null, risk: null, outcomes: null };
+    if (!rate) return { fixing: f, fixedAt: null, atSpot: null, risk: null, outcomes: null, parts: null };
     const atSpot = conversionAt(f.row, bounds, rate);
     const r = fixingRisk(f.row, bounds, rate, sigma, fixedAt ? 0 : f.riskDays / 365);
     const risk = fixedAt ? { ...r, worstEur: Math.max(0, atSpot.eur) } : r;
-    return { fixing: f, fixedAt, atSpot, risk, outcomes: outcomeRanges(f.row, bounds, risk.probs) };
+    // parts: with the deals, the parts that sell at that rate (their days are the conversion's).
+    const parts = deals && deals[f.month] ? legsAt(deals[f.month], rate).filter((l) => l.eur > 0.5) : null;
+    return { fixing: f, fixedAt, atSpot, risk, outcomes: outcomeRanges(f.row, bounds, risk.probs), parts };
   });
   const position = data.balances ? eurPosition(data.balances.rows) : null;
   const inflow = typicalInflow(data.flows, data.inflowMonths);
@@ -1099,7 +1104,7 @@ export function planFromPayload(data, policy = 'p95') {
   return {
     table, all, spot, spotDate: data.rates.spot ? data.rates.spot.date : null, spotBand: spot ? bandIndex(bounds, spot) : null,
     sigma, sigmaFromHistory, rateCheck: rateCheck(data.rates.series, today), schedule, position, inflow, cash, plan,
-    deals: dealsView(data, deals, upcoming, flows),
+    deals: dealsView(data, deals, upcoming, flows), dealLegs: deals,
   };
 }
 
@@ -1219,7 +1224,9 @@ export function todayActions(view, today, { lead = 5, moveLead = 3, minEur = 500
   const fixingBy = n.takes || conversionTakes(n.date);
   const fixLeft = businessDaysBetween(today, fixingBy);
   if (fixLeft < moveLead && n.moveToHapoalim >= 10000) {
-    actions.push({ kind: 'move', key: `move:${n.date}`, urgent: true, eur: n.moveToHapoalim, date: n.date, by: fixingBy, left: fixLeft });
+    // on: the conversion's day(s), when its euros leave.
+    const on = plan.coverage && plan.coverage[0] ? plan.coverage[0].on : [n.date];
+    actions.push({ kind: 'move', key: `move:${n.date}`, urgent: true, eur: n.moveToHapoalim, date: n.date, on, by: fixingBy, left: fixLeft });
   }
   const spare = view.cash ? n.spare : n.freeNow;
   const shortNow = view.cash ? !!n.short : n.shortfall > 0;
@@ -1270,21 +1277,26 @@ export function describeAction(a, view, today, fmt) {
   if (a.kind === 'move') {
     const fromDeposits = Math.min(n.required, n.maturing || 0);
     const dep = fromDeposits > 0.5 ? `, ${eur(fromDeposits)} of it from deposits released by then` : '';
-    return { head: `Move ${eur(a.eur)} to Hapoalim EUR by ${day(a.by)}`, body: `The ${day(a.date)} conversion takes its euros from Hapoalim EUR (583400), which holds ${eur(n.hapoalim)}; keep ${eur(n.required)} there${dep}.` };
+    const on = (a.on || [a.date]).map(day).join(' & ');
+    return { head: `Move ${eur(a.eur)} to Hapoalim EUR by ${day(a.by)}`, body: `The ${on} conversion takes its euros from Hapoalim EUR (583400), which holds ${eur(n.hapoalim)}; keep ${eur(n.required)} there${dep}.` };
   }
   if (a.kind === 'ladder') {
+    // Each deposit is for one conversion day: with the deals, one part's (a part is a conversion on its own day).
     const legs = a.legs;
+    const partOf = (l) => (l.part ? `part of ${monthNameOf(l.month)}'s` : '');
     if (legs.length === 1) {
       const l = legs[0];
-      const what = l.part ? `For the part of the ${day(l.date)} conversion that leaves on ${day(l.settle)}: ${eur(l.required)}` : `For the ${day(l.date)} conversion: it takes ${eur(l.required)}`;
-      return { head: `Put ${eur(l.eur)} in a deposit until ${day(l.until)}`, body: `${what}, and the deposits paid out by then hold ${eur(l.have)}, ${eur(l.gap)} short. Every payment before then stays covered.` };
+      return {
+        head: `Put ${eur(l.eur)} in a deposit until ${day(l.until)}`,
+        body: `For the ${day(l.on || l.date)} conversion${l.part ? ` (${partOf(l)})` : ''}: it takes ${eur(l.required)}, and the deposits paid out by then hold ${eur(l.have)}, ${eur(l.gap)} short. Every payment before then stays covered.`,
+      };
     }
     const first = monthNameOf(legs[0].month);
     const last = monthNameOf(legs[legs.length - 1].month);
     const months = new Set(legs.map((l) => l.month)).size;
     return {
       head: `Put ${eur(a.eur)} in deposits for the ${first}${months === 1 ? '' : ` ${months === 2 ? 'and' : 'to'} ${last}`} conversion${months === 1 ? '' : 's'}`,
-      body: `${legs.map((l) => `${eur(l.eur)} until ${day(l.until)} for ${day(l.date)} (${l.part ? `the part leaving ${day(l.settle)}, ` : ''}${eur(l.gap)} short)`).join(', ')}. Every payment before then stays covered.`,
+      body: `${legs.map((l) => `${eur(l.eur)} until ${day(l.until)} for the ${day(l.on || l.date)} conversion (${l.part ? `${partOf(l)}, ` : ''}${eur(l.gap)} short)`).join(', ')}. Every payment before then stays covered.`,
     };
   }
   // The same amount for every term: one line ("€430K for 1, 3 or 6 months").

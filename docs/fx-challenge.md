@@ -73,10 +73,14 @@ briefly a tab of the Metrics page before it got its own sidebar item.
     each deposit's date and value. Deposits maturing after the last fixing shown are listed under the table.
     They count only if the bank pays them out rather than rolling them over.
 - **The conversions against your deposits (first in, first out)** (`planReserve`'s `coverage` and `ladder`): the next
-  6 conversions at the setting, each against the EUR deposits paying out before its euros leave. **The euros leave**
-  on the bank's value days: with its deals (below), each part's own (March 2027: €600K on Fri 5 Mar, €450K on Mon 8
-  Mar); without them, the business day before the 7th (`conversionTakes`, from NetSuite's "Conversion" journals:
-  October 2026's, for Wed 7 Oct, on Tue 6 Oct). A conversion is covered part by part: each deposit counts for the
+  6 conversions at the setting, each against the EUR deposits paying out before its euros leave. **Conversion day** is
+  when the conversion happens: its euros leave Hapoalim EUR and the shekels come in (`coverage[].on`). With the bank's
+  deals (below), each part's value day, two business days after it is fixed ("Fri 5 & Mon 8 Mar", **It takes** "€2.05M
+  (€1.40M + €650K)"; hover the day for each part's amount and fixing day); without them, the table's 7th, the euros
+  taken the business day before (`conversionTakes`, from NetSuite's "Conversion" journals: October 2026's, for Wed 7
+  Oct, on Tue 6 Oct). The same day names the conversion everywhere: the next-conversion KPI ("Wed 4 Nov (fixed Mon 2
+  Nov) at today's rate"), the keep line ("for the conversion of Wed 4 Nov (fixed Mon 2 Nov)"), the path, the schedule
+  (the parts selling at the simulated rate) and the mail. A conversion is covered part by part: each deposit counts for the
   first part whose euros leave after it pays out (on its value day or before), and what a part doesn't take rolls on
   to the next ("Left from earlier"). A deposit paying out after a conversion's last euros left but by the 7th counts
   for the next conversion: it is that conversion's `late` deposit, and the page (hover "Deposits paid out before it")
@@ -260,15 +264,16 @@ by range, how "free to convert" adds up, the next six conversions) stay on the p
 - the subject: the day and the first two recommendations (`FX יום א' 25.10 · להמיר €1.16M עד יום ה' 5.11 · …`);
 - the recommendations, each with the balances behind it ("להמיר €1.16M עד יום ה' 5.11. שכר נטו של אוקטובר ותשלומי
   הספקים בשקלים של נובמבר: ₪4.91M יוצאים ביום ה' 5.11, ועד אז יהיו ביתרה ₪873K."); urgent ones in red;
-- the next 6 conversions against the deposits, first in, first out, at the mail's setting: covered ("שבת 7.11:
-  €800K, מכוסה מהפיקדונות (€806K)") or short, in red ("יום ה' 7.1: €1.05M, הפיקדונות מכסים €922K: חסרים €128K"). With
-  the bank's deals a conversion in parts says them ("יום א' 7.3: €1.05M (€600K ביום ו' 5.3, €450K ביום ב' 8.3), הפיקדונות
-  מכסים €810K: חסרים €240K ביום ב' 8.3"), and in one part its day ("שבת 7.11: €1.10M (ביום ד' 4.11), …").
+- the next 6 conversions against the deposits, first in, first out, at the mail's setting, each by its conversion
+  day (with the bank's deals, when its euros leave; without, the 7th): covered ("שבת 7.11: €800K, מכוסה מהפיקדונות
+  (€806K)") or short, in red ("יום ד' 4.11: €1.10M, הפיקדונות מכסים €806K: חסרים €294K"). In parts, each part's day and
+  amount in order ("יום ו' 5.3 ויום ב' 8.3: €1.05M (€600K ו-€450K), הפיקדונות מכסים €810K: חסרים €240K ביום ב' 8.3").
   A short one says why: a deposit that pays out after its last euros leave but by the 7th (without the deals, where
   they leave the business day before: "יום א' 7.3: €1.05M, הפיקדון שמשתחרר ביום ו' 5.3 (€405K) מגיע אחרי שהבנק לוקח את
   האירו ביום ה' 4.3, ולכן נספר להמרה של יום ד' 7.4: חסרים €1.05M"), or the days in which none pays out ("אין פיקדון
-  שמשתחרר בין יום ו' 5.2 ליום ה' 4.3"), the earlier ones going to the earlier conversions. A new deposit for one part
-  says so ("€240K עד יום ו' 5.3 להמרה של יום א' 7.3 (לחלק שיורד ביום ב' 8.3, חסרים €240K)");
+  שמשתחרר בין יום ו' 5.2 ליום ה' 4.3"), the earlier ones going to the earlier conversions. A new deposit names the
+  conversion day it is for, and the month when it is one of its parts ("€240K עד יום ו' 5.3 להמרה של יום ב' 8.3 (חלק
+  מההמרה של מרץ)"); the keep line too ("להשאיר … להמרה של יום ד' 4.11");
 - the payments in shekels ahead: the day, how many days to it, what it pays, and what covers it (a conversion, or
   the shekels on hand);
 - today's position in one paragraph: the shekels on hand (current and deposits), the euros at Hapoalim and elsewhere,
