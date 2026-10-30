@@ -131,9 +131,10 @@ const reportNumber = (v) => {
 /**
  * One of the bank's position reports, as the rows of its sheet (arrays of cells, dates as Excel serial days): the options
  * report (it has Strike and תאריך פקיעה) or the forwards report (שער סופי). The header row is found by its titles, the
- * report's day from "תאריך הפקה dd.mm.yyyy" above it; the account number is not kept. Options other than EUR/ILS and
- * forwards against a currency other than ILS are left out (skipped).
- * Returns { kind: 'options' | 'forwards' | null, asOf, options | forwards, skipped, problems }.
+ * report's day from "תאריך הפקה dd.mm.yyyy" above it, and the account from "מספר חשבון": its own number only (583400, as
+ * NetSuite names the account; not the bank or branch), to tell several accounts' reports apart. Options other than
+ * EUR/ILS and forwards against a currency other than ILS are left out (skipped).
+ * Returns { kind: 'options' | 'forwards' | null, asOf, account, options | forwards, skipped, problems }.
  *   option   { deal, kind, side: 'buy' | 'sell', type: 'put' | 'call', eur, strike, trigger (null), expiry, settle }
  *   forward  { deal, side, currency, amount, counter, rate, settle, counterAmount (+ received, − paid) }
  */
@@ -145,12 +146,16 @@ export function parsePositionReport(rows) {
   list[at].forEach((c, i) => { const k = HEADER_OF.get(headerKey(c)); if (k && col[k] === undefined) col[k] = i; });
   const kind = col.strike !== undefined && col.expiry !== undefined ? 'options' : col.rate !== undefined ? 'forwards' : null;
   let asOf = null;
+  let account = null;
   for (const r of list.slice(0, at)) {
-    const m = /תאריך הפקה\s*(\d{1,2}\.\d{1,2}\.\d{4})/.exec((r || []).join(' '));
-    if (m) { asOf = reportDay(m[1]); break; }
+    const text = (r || []).join(' ');
+    const m = /תאריך הפקה\s*(\d{1,2}\.\d{1,2}\.\d{4})/.exec(text);
+    if (m && !asOf) asOf = reportDay(m[1]);
+    const a = /מספר חשבון\s*(?:\d+-)*(\d+)/.exec(text);
+    if (a && !account) account = a[1];
   }
   const problems = [];
-  if (!kind) return { kind: null, asOf, skipped: 0, problems: ['The header row has neither Strike and תאריך פקיעה (options) nor שער סופי (forwards).'] };
+  if (!kind) return { kind: null, asOf, account, skipped: 0, problems: ['The header row has neither Strike and תאריך פקיעה (options) nor שער סופי (forwards).'] };
   const cell = (r, k) => (col[k] === undefined ? null : r[col[k]]);
   const SIDES = { 'קניה': 'buy', 'מכירה': 'sell' };
   const out = [];
@@ -183,7 +188,82 @@ export function parsePositionReport(rows) {
     }
   });
   if (!out.length && !problems.length) problems.push(`No ${kind === 'options' ? 'EUR/ILS options' : 'forwards against shekels'} in the report.`);
-  return { kind, asOf, [kind]: out, skipped, problems };
+  return { kind, asOf, account, [kind]: out, skipped, problems };
+}
+
+const POSITION_KINDS = ['options', 'forwards'];
+
+/** The reports the saved deals came from: as saved, or one per kind for deals saved before the reports were kept (no
+ * name, no account). */
+function savedReportsOf(saved) {
+  if (!saved) return [];
+  if (Array.isArray(saved.reports)) return saved.reports;
+  return POSITION_KINDS.filter((k) => (saved[k] || []).length)
+    .map((k) => ({ name: null, kind: k, account: null, asOf: (saved.asOf && saved.asOf[k]) || null, deals: saved[k].map((d) => d.deal) }));
+}
+
+/**
+ * The deals after an upload of the bank's reports, any number of files (each { name, report: parsePositionReport's }),
+ * merged into the saved deals. Reports of one kind and one account (without an account, sharing a deal) are one book:
+ * of a book, the newest report in the upload is used and an older one is left out; it replaces the book's saved report
+ * (deals saved before the reports were kept, any report of their kind), and the other books' saved reports stay. Each
+ * deal once, by its number. A file without deals (another sheet, or none readable) is left out.
+ * Returns { value (null when no deal is left), files (what became of each file: used, or why not; `older` when the
+ * saved report it replaces is newer), kept (the saved reports staying as they were) }.
+ */
+export function mergePositionReports(saved, reads) {
+  const old = savedReportsOf(saved).map((r) => ({ ...r, ids: new Set(r.deals) }));
+  const files = (reads || []).map(({ name, report: r }) => {
+    const list = r && r.kind ? r[r.kind] || [] : [];
+    return {
+      name, kind: (r && r.kind) || null, account: (r && r.account) || null, asOf: (r && r.asOf) || null, count: list.length,
+      skipped: (r && r.skipped) || 0, problems: (r && r.problems) || [], used: false, why: null, older: null, replaces: [],
+      list, ids: new Set(list.map((d) => d.deal)),
+    };
+  });
+  const sameBook = (a, b) => a.kind === b.kind && (a.account && b.account ? a.account === b.account : [...a.ids].some((d) => b.ids.has(d)));
+  // Newest first, so a book's newest report is the one used.
+  const order = files.filter((f) => {
+    if (!f.kind) { f.why = "not one of the bank's position reports"; return false; }
+    if (!f.count) { f.why = 'no deal could be read from it'; return false; }
+    return true;
+  }).sort((a, b) => (b.asOf || '').localeCompare(a.asOf || ''));
+  const used = [];
+  for (const f of order) {
+    const newer = used.find((u) => sameBook(u, f));
+    if (newer) {
+      f.why = newer.asOf && f.asOf && newer.asOf > f.asOf ? `${newer.name} is a newer report of ${newer.account ? `account ${newer.account}` : 'the same deals'}` : `the same report as ${newer.name}`;
+      continue;
+    }
+    f.used = true;
+    used.push(f);
+  }
+  const replaced = new Set();
+  for (const f of used) {
+    const mine = old.filter((o) => o.kind === f.kind && ((!o.name && !o.account) || sameBook(o, f)));
+    mine.forEach((o) => replaced.add(o));
+    f.replaces = mine.map((o) => ({ name: o.name, asOf: o.asOf }));
+    const newest = mine.map((o) => o.asOf).filter(Boolean).sort().pop() || null;
+    if (newest && f.asOf && f.asOf < newest) f.older = newest;
+  }
+  const kept = old.filter((o) => !replaced.has(o));
+  const value = { asOf: { options: null, forwards: null }, options: [], forwards: [], reports: [] };
+  for (const kind of POSITION_KINDS) {
+    const seen = new Set();
+    const add = (d) => { if (d && !seen.has(d.deal)) { seen.add(d.deal); value[kind].push(d); } };
+    const byId = new Map(((saved && saved[kind]) || []).map((d) => [d.deal, d]));
+    for (const f of used.filter((x) => x.kind === kind)) f.list.forEach(add);
+    for (const o of kept.filter((x) => x.kind === kind)) o.deals.forEach((id) => add(byId.get(id)));
+  }
+  for (const r of [...kept, ...used]) {
+    value.reports.push({ name: r.name, kind: r.kind, account: r.account, asOf: r.asOf, deals: [...r.ids] });
+    if (r.asOf && (!value.asOf[r.kind] || r.asOf > value.asOf[r.kind])) value.asOf[r.kind] = r.asOf;
+  }
+  return {
+    value: value.options.length || value.forwards.length ? value : null,
+    files: files.map(({ list, ids, ...f }) => f),
+    kept: kept.map(({ ids, ...o }) => o),
+  };
 }
 
 /** The options by conversion month (the fixing's) and by the day each part's euros leave: { 'YYYY-MM': [{ expiry,
@@ -345,19 +425,32 @@ export function valueDayBefore(iso) {
   return new Date(t).toISOString().slice(0, 10);
 }
 
-/** Every row's fixing: date, weekday (a weekend fixing may move to a business day), days from today, and
- * whether it is past, the next one, or later. */
-export function fixings(table, today) {
+/**
+ * Every row's fixing: date (the table's day, the 7th), weekday (a weekend fixing may move to a business day), days from
+ * today, and whether it is past, the next one, or later. With the bank's deals for its month (positionLegs), the days
+ * they give: fixedOn (the parts' fixing days, the options' expiry), paidOn (their value days), riskDays (to the last
+ * fixing day: what EUR/ILS can still move by) and fixed (every part fixed before today); the month is past once its
+ * last part is paid, whether before or after the 7th. Without, riskDays is the days to the 7th.
+ */
+export function fixings(table, today, legsByMonth = null) {
   const t = utc(today);
   let nextSeen = false;
   return [...table.rows].sort((a, b) => a.month.localeCompare(b.month)).map((row) => {
     const date = fixingDate(row.month, table.fixingDay);
     const d = utc(date);
     const dow = new Date(d).getUTCDay();
+    const legs = legsByMonth && legsByMonth[row.month] && legsByMonth[row.month].length ? legsByMonth[row.month] : null;
+    const fixedOn = legs ? [...new Set(legs.flatMap((l) => l.options.map((o) => o.expiry)))].sort() : null;
+    const paidOn = legs ? [...new Set(legs.map((l) => l.settle))].sort() : null;
+    const days = Math.max(0, Math.round((d - t) / DAY_MS));
     let status = 'future';
-    if (d < t) status = 'past';
+    if (paidOn ? utc(paidOn[paidOn.length - 1]) < t : d < t) status = 'past';
     else if (!nextSeen) { status = 'next'; nextSeen = true; }
-    return { month: row.month, date, weekday: WEEKDAY[dow], weekend: dow === 0 || dow === 6, status, days: Math.max(0, Math.round((d - t) / DAY_MS)), row };
+    return {
+      month: row.month, date, weekday: WEEKDAY[dow], weekend: dow === 0 || dow === 6, status, days, row,
+      fixedOn, paidOn, riskDays: fixedOn ? Math.max(0, daysUntil(today, fixedOn[fixedOn.length - 1])) : days,
+      fixed: !!fixedOn && fixedOn[fixedOn.length - 1] < today,
+    };
   });
 }
 
@@ -750,16 +843,20 @@ const addMonthsIso = (iso, n) => {
  *   forwards   the forward deals' euros by value day, [{ date, eur (+ bought, − sold) }] (forwardFlows)
  * Deposits maturing before a fixing count for it; later ones are the backup (broken early only if needed).
  * A fixing with `legs` (conversionLegs: the bank's deals, at the amount kept) takes its euros on each part's value day;
- * without, all of them the business day before the 7th.
+ * without, all of them the business day before the 7th. `paid`: the euros of its parts already paid (their value day
+ * before today, so gone from the balances), left out of what it still takes.
  */
 export function planReserve({ upcoming, policy = 'p95', eur, inflowPerDay = null, today, horizon = 6, shekels = [], eurFloor = 0, forwards = [] }) {
   const fx = (upcoming || []).slice(0, horizon);
   if (!fx.length || !eur) return null;
+  const reqOf = (f) => Math.max(0, requirementOf(policy, f.conv, f.risk) - (f.paid || 0));
   // A conversion's parts, by the day each part's euros leave: the deals' (legs, scaled to the amount kept `req`), each
   // with the day a deposit for it has to pay out (the value day before); else one part, the business day before the 7th.
   const partsOf = (f, req) => {
     const legs = (f.legs || []).filter((l) => l.eur > 0.5);
     const sum = legs.reduce((s, l) => s + l.eur, 0);
+    // Every part that sells already paid: nothing more leaves, on its last value day.
+    if (f.lastPaid && f.legs && !legs.length) return [{ settle: f.lastPaid, expiry: null, required: req, until: valueDayBefore(f.lastPaid), deals: true }];
     if (!legs.length || !(sum > 0.5)) {
       const settle = conversionTakes(f.date);
       return [{ settle, expiry: null, required: req, until: businessDayOnOrBefore(isoAddDays(settle, -1)), deals: false }];
@@ -778,8 +875,8 @@ export function planReserve({ upcoming, policy = 'p95', eur, inflowPerDay = null
   const inflowTo = (f) => (inflowPerDay == null ? 0 : inflowPerDay * Math.max(0, f.days - 1));
 
   const f0 = fx[0];
-  const required = requirementOf(policy, f0.conv, f0.risk);
-  const todayAmount = Math.max(0, f0.conv.eur);
+  const required = reqOf(f0);
+  const todayAmount = Math.max(0, f0.conv.eur - (f0.paid || 0));
   // With the deals, the deposits that pay out by the first part's value day; else by the fixing.
   const first = partsOf(f0, required)[0];
   const f0By = first.deals ? first.settle : f0.date;
@@ -806,7 +903,7 @@ export function planReserve({ upcoming, policy = 'p95', eur, inflowPerDay = null
   let before = 0;
   let from = today;
   const path = fx.map((f) => {
-    const req = requirementOf(policy, f.conv, f.risk);
+    const req = reqOf(f);
     // Its parts, kept so the page can show the sum: inflow up to the day before, deposits matured by the day,
     // what the earlier conversions take, and the conversions for shekels by the day (this row's since the last).
     const inflow = inflowTo(f);
@@ -857,7 +954,7 @@ export function planReserve({ upcoming, policy = 'p95', eur, inflowPerDay = null
   const dues = [
     ...forIls.map((x) => ({ date: x.date, eur: x.eur, shekels: true })),
     ...fx.flatMap((f) => {
-      const req = requirementOf(policy, f.conv, f.risk);
+      const req = reqOf(f);
       const parts = partsOf(f, req);
       return parts[0].deals ? parts.map((p) => ({ date: p.settle, eur: p.required, shekels: false })) : [{ date: f.date, eur: req, shekels: false }];
     }),
@@ -897,7 +994,7 @@ export function planReserve({ upcoming, policy = 'p95', eur, inflowPerDay = null
   let carried = 0;
   let prior = today;
   const coverage = fx.map((f, i) => {
-    const req = requirementOf(policy, f.conv, f.risk);
+    const req = reqOf(f);
     const from = prior;
     const carriedIn = carried;
     const parts = partsOf(f, req);
@@ -962,20 +1059,32 @@ export function planFromPayload(data, policy = 'p95') {
   const spot = data.rates.spot ? data.rates.spot.rate : null;
   const sigmaFromHistory = !!(data.rates.sigma && data.rates.sigma > 0);
   const sigma = sigmaFromHistory ? data.rates.sigma : FALLBACK_SIGMA;
-  const all = fixings(table, today);
+  const all = fixings(table, today, deals);
+  // The risk runs to the day EUR/ILS is fixed: with the deals, their last fixing day (Tue 3 Nov 2026 for 7 Nov), not the
+  // 7th. Once every part is fixed, the conversion is at that day's rate (NetSuite's), with no risk left.
   const schedule = all.filter((f) => f.status !== 'past').map((f) => {
-    const risk = spot ? fixingRisk(f.row, bounds, spot, sigma, f.days / 365) : null;
-    return { fixing: f, atSpot: spot ? conversionAt(f.row, bounds, spot) : null, risk, outcomes: risk ? outcomeRanges(f.row, bounds, risk.probs) : null };
+    const was = f.fixed ? rateOn(data.rates.series, f.fixedOn[f.fixedOn.length - 1]) : null;
+    const fixedAt = was && was.date >= f.fixedOn[0] ? was : null;
+    const rate = fixedAt ? fixedAt.rate : spot;
+    if (!rate) return { fixing: f, fixedAt: null, atSpot: null, risk: null, outcomes: null };
+    const atSpot = conversionAt(f.row, bounds, rate);
+    const r = fixingRisk(f.row, bounds, rate, sigma, fixedAt ? 0 : f.riskDays / 365);
+    const risk = fixedAt ? { ...r, worstEur: Math.max(0, atSpot.eur) } : r;
+    return { fixing: f, fixedAt, atSpot, risk, outcomes: outcomeRanges(f.row, bounds, risk.probs) };
   });
   const position = data.balances ? eurPosition(data.balances.rows) : null;
   const inflow = typicalInflow(data.flows, data.inflowMonths);
-  // The bank's deals: when each conversion's parts leave, at the amount kept (the rate whose band sells it).
+  // The bank's deals: when each conversion's parts leave, at the amount kept (the rate whose band sells it). Parts paid
+  // before today are gone from the balances: the plan keeps for the others only.
   const upcoming = schedule.flatMap((s) => {
     if (!(s.atSpot && s.risk)) return [];
     const item = { month: s.fixing.month, date: s.fixing.date, days: s.fixing.days, conv: s.atSpot, risk: s.risk };
     if (deals && deals[item.month]) {
       const kept = requirementOf(policy, s.atSpot, s.risk);
-      item.legs = conversionLegs(deals[item.month], rateSelling(s.fixing.row, bounds, spot, kept), kept);
+      const legs = conversionLegs(deals[item.month], rateSelling(s.fixing.row, bounds, s.fixedAt ? s.fixedAt.rate : spot, kept), kept);
+      item.legs = legs ? legs.filter((l) => l.settle >= today) : null;
+      const paid = legs ? legs.filter((l) => l.settle < today).reduce((sum, l) => sum + l.eur, 0) : 0;
+      if (paid > 0.5) { item.paid = paid; item.lastPaid = s.fixing.paidOn[s.fixing.paidOn.length - 1]; }
     }
     return [item];
   });
@@ -1006,6 +1115,7 @@ function dealsView(data, deals, upcoming, flows) {
     options: (p.options || []).length, forwards: (p.forwards || []).length, months, from: months[0] || null, to: months[months.length - 1] || null,
     missing: upcoming.slice(0, 6).filter((u) => !(deals && deals[u.month])).map((u) => u.month),
     flows, mismatches: deals ? dealsVsTable(data.table, deals) : [],
+    reports: savedReportsOf(p).map((r) => ({ name: r.name, kind: r.kind, account: r.account, asOf: r.asOf, count: r.deals.length })),
   };
 }
 
@@ -1047,10 +1157,11 @@ function cashPlanOf(data, today, spot, upcoming, schedule, policy, forwards = []
   // If a fixing sells the amount kept, it also brings that amount's shekels: with the bank's deals, each part's on its
   // value day (Wed 4 Nov for 7 Nov 2026, before the net salaries of the 5th). A forward's shekels come in on its value
   // day too (on 2 Nov 2026, ₪670,750 from the euros sold and bought back).
+  // Parts already paid brought their shekels already (legs leaves them out).
   const legsOf = new Map(upcoming.map((u) => [u.month, u.legs]));
   const conversions = schedule.filter((s) => s.atSpot && s.risk).slice(0, 6).flatMap((s) => {
     const legs = legsOf.get(s.fixing.month);
-    return legs && legs.length ? legs.map((l) => ({ date: l.settle, ils: l.ils })) : [{ date: s.fixing.date, ils: ilsKept(policy, s) }];
+    return legs ? legs.map((l) => ({ date: l.settle, ils: l.ils })) : [{ date: s.fixing.date, ils: ilsKept(policy, s) }];
   });
   for (const f of forwards || []) if (f.ils > 0.5) conversions.push({ date: f.date, ils: f.ils });
   const needs = shekelNeeds({ today, ilsNow, payroll: pay.rows, conversions, vendorsIls: vendors.other ?? 0, cardBills: bills, spot, until });

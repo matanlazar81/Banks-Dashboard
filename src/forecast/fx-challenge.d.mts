@@ -48,18 +48,39 @@ export interface PositionForward {
   counterAmount: number;
 }
 /** The bank's deals as saved on the page (GET/PUT /api/fx-challenge/positions): each report's day, and its deals. */
+/** A report the saved deals came from: its file, kind, account (its own number, as NetSuite names it: 583400), day and
+ * deal numbers. name and account null: deals saved before the reports were kept. */
+export interface SavedReport { name: string | null; kind: 'options' | 'forwards'; account: string | null; asOf: string | null; deals: string[] }
 export interface Positions {
+  /** The newest report's day of each kind. */
   asOf: { options: string | null; forwards: string | null };
   options: PositionOption[];
   forwards: PositionForward[];
+  reports?: SavedReport[];
 }
 export declare function optionEur(o: PositionOption, rate: number): number;
 export declare function reportDay(v: unknown): string | null;
 export type PositionReport =
-  | { kind: 'options'; asOf: string | null; options: PositionOption[]; skipped: number; problems: string[] }
-  | { kind: 'forwards'; asOf: string | null; forwards: PositionForward[]; skipped: number; problems: string[] }
-  | { kind: null; asOf: string | null; skipped: number; problems: string[] };
+  | { kind: 'options'; asOf: string | null; account: string | null; options: PositionOption[]; skipped: number; problems: string[] }
+  | { kind: 'forwards'; asOf: string | null; account: string | null; forwards: PositionForward[]; skipped: number; problems: string[] }
+  | { kind: null; asOf: string | null; account?: string | null; skipped: number; problems: string[] };
 export declare function parsePositionReport(rows: unknown[][]): PositionReport;
+/** What became of a file uploaded: used, or why not; older: the day of the saved report it replaces when that one is
+ * newer; replaces: the saved reports it replaces. */
+export interface ReportFile {
+  name: string;
+  kind: 'options' | 'forwards' | null;
+  account: string | null;
+  asOf: string | null;
+  count: number;
+  skipped: number;
+  problems: string[];
+  used: boolean;
+  why: string | null;
+  older: string | null;
+  replaces: { name: string | null; asOf: string | null }[];
+}
+export declare function mergePositionReports(saved: Positions | null, reads: { name: string; report: PositionReport }[]): { value: Positions | null; files: ReportFile[]; kept: SavedReport[] };
 /** The options of one month that settle on one day. */
 export interface PositionLeg { expiry: string; settle: string; options: PositionOption[] }
 export declare function positionLegs(positions: Pick<Positions, 'options'> | null): Record<string, PositionLeg[]>;
@@ -79,15 +100,25 @@ export declare function valueDayBefore(iso: string): string;
 
 export interface Fixing {
   month: string;
+  /** The table's day (the 7th). */
   date: string;
   weekday: string;
   weekend: boolean;
+  /** With the deals, past once its last part is paid; else once the 7th has passed. */
   status: 'past' | 'next' | 'future';
+  /** Days to the 7th. */
   days: number;
   row: FxRow;
+  /** The bank's deals' days for its month: the parts' fixing days and value days; null without deals. */
+  fixedOn: string[] | null;
+  paidOn: string[] | null;
+  /** Days EUR/ILS can still move by: to the last fixing day with the deals, else to the 7th. */
+  riskDays: number;
+  /** Every part fixed before today. */
+  fixed: boolean;
 }
 export declare function fixingDate(month: string, day: number): string;
-export declare function fixings(table: FxTable, today: string): Fixing[];
+export declare function fixings(table: FxTable, today: string, legsByMonth?: Record<string, PositionLeg[]> | null): Fixing[];
 
 export declare function annualVol(series: RatePoint[], opts?: { minReturns?: number }): number | null;
 export declare function rateOn(series: RatePoint[], date: string): RatePoint | null;
@@ -207,7 +238,9 @@ export declare function duesAhead(cash: CashPlan | null): { dues: ShekelDue[]; e
 export declare function dueWhat(due: Pick<ShekelDue, 'items'>): string;
 
 /** A fixing ahead; legs: its parts from the bank's deals at the amount kept (null or absent without deals). */
-export interface Upcoming { month: string; date: string; days: number; conv: Conversion; risk: FixingRisk; legs?: ConversionLeg[] | null }
+/** paid: the euros of its parts already paid (value day before today), left out of what it still takes; lastPaid: then,
+ * its last value day. */
+export interface Upcoming { month: string; date: string; days: number; conv: Conversion; risk: FixingRisk; legs?: ConversionLeg[] | null; paid?: number; lastPaid?: string }
 export interface NextFixingPlan {
   month: string;
   date: string;
@@ -373,9 +406,13 @@ export interface DealsView {
   missing: string[];
   flows: ForwardFlow[];
   mismatches: { month: string; bands: { band: number; table: number; deals: number }[] }[];
+  /** The reports saved: file, kind, account, day and how many deals. */
+  reports: { name: string | null; kind: 'options' | 'forwards'; account: string | null; asOf: string | null; count: number }[];
 }
 export interface ScheduleItem {
   fixing: Fixing;
+  /** Every part fixed: NetSuite's rate on its last fixing day, which atSpot and risk then use (no risk left). */
+  fixedAt: RatePoint | null;
   atSpot: Conversion | null;
   risk: FixingRisk | null;
   /** What it can sell, by EUR/ILS range, with each range's chance (from today's rate). */

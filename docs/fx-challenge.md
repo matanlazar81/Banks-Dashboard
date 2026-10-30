@@ -20,7 +20,7 @@ briefly a tab of the Metrics page before it got its own sidebar item.
 | `fx-challenge.html` | the page (a small bundle, never loads the old dashboard) |
 | `GET /api/fx-challenge` | what the page shows (`server/fx-challenge.cjs`); `?refresh=true` reads NetSuite again |
 | `GET/PUT /api/fx-challenge/table` | the conversion table, saved for everyone (`null` = the default) |
-| `GET/PUT /api/fx-challenge/positions` | the bank's deals, read on the page from its two position reports, saved for everyone; they give the amounts and days of the months they cover (`null` = none: the table's amounts, the euros leaving the business day before the 7th) |
+| `GET/PUT /api/fx-challenge/positions` | the bank's deals, read on the page from its position reports (any number), saved for everyone with the reports behind them; they give the amounts and days of the months they cover (`null` = none: the table's amounts, the euros leaving the business day before the 7th) |
 | `GET/PUT /api/fx-challenge/mail` | who gets the daily mail, saved for everyone (`null` = the server's `FX_MAIL_TO`) |
 | `POST /api/fx-challenge/mail/send` | the page's **Send now**: the daily mail at once, to the saved list |
 | finance-it | sidebar item → iframe of `<bank-dashboard static base>/fx-challenge.html`; every `/api/fx-challenge` route is mounted once, by prefix (`createFxChallengeRouter`), so new ones need no finance-it change (see Deploying) |
@@ -38,11 +38,20 @@ briefly a tab of the Metrics page before it got its own sidebar item.
   - The card shows the table the plan uses: the deals' months underlined (hover one for how), their rates to three
     decimals (3.669 for the 3.67 of the table received).
 - **Simulate**: type a rate or use the slider or presets. The schedule shows each remaining fixing at that
-  rate (euros, rate, shekels, shekels against that rate) beside its risk from today's rate.
-- **Risk of a fixing**: EUR/ILS on the day is lognormal around today's rate (no drift), with the annual
+  rate (euros, rate, shekels, shekels against that rate) beside its risk from today's rate. With the bank's deals,
+  each month shows their days: "fixed Mon 2 & Tue 3 Nov, paid Wed 4 & Thu 5 Nov" (the options' expiry and value
+  days); without, the table's day ("Sat 7 Nov (weekend)").
+- **Risk of a fixing**: EUR/ILS on the day it is fixed is lognormal around today's rate (no drift), with the annual
   volatility of NetSuite's daily HSBC rate over 400 days (7.5% assumed when there is too little history).
   That gives each band's chance, the expected euros, the 95% amount (enough for 19 fixings in 20) and the
-  table's worst case.
+  table's worst case. The day it is fixed (`fixings`' `riskDays`): with the deals, their last fixing day of the
+  month (November 2026: Tue 3 Nov, 4 days from 30 Oct rather than 8 to the 7th, so 95% is €1.10M, not €1.40M, at
+  today's 3.491 and 9% volatility); without, the 7th.
+  - Once every part of a month is fixed, it sells what NetSuite's rate on its last fixing day gives, with no risk
+    left (the 95% and the worst case are that amount; the simulated rate doesn't change it).
+  - A month stays in the plan until its last part is paid, before or after the 7th (February 2027's €450K leaves on
+    Mon 8 Feb). A part already paid (its value day before today) is gone from the balances, so the plan keeps for the
+    other parts only (`paid`).
 - **What the next conversion can sell** (`outcomeRanges`): a table of the EUR/ILS ranges on its day (neighbouring
   bands that sell the same amount, or nothing, merged), each with its chance, the euros sold, the rate and the shekels; today's
   range is highlighted. Hovering an expected figure anywhere on the page shows the same chances for that month.
@@ -78,8 +87,8 @@ briefly a tab of the Metrics page before it got its own sidebar item.
   the dues before it pays out leave room for (each new deposit locks its euros away from them), earliest gap first,
   from today's euros above the floor. The next conversion's gap is the cash to keep (the keep line, which counts the
   same deposits), and a deposit is only timed when it pays out 14 days or more from today.
-- **The bank's deals (how many euros, and when they leave)**: Hapoalim's two position reports for 583400, uploaded here
-  (**Upload the bank's reports**, one or both) and saved for everyone:
+- **The bank's deals (how many euros, and when they leave)**: Hapoalim's position reports (today two, for 583400: the
+  options and the forwards), uploaded here (**Upload the bank's reports**, any number) and saved for everyone:
   - `OTCPositionDetails.xlsx` ("פירוט עסקאות FX OPTION"): the options behind the table. Each is fixed on its expiry day
     (תאריך פקיעה) and settled on its value day (תאריך פרעון), two business days later, Fridays included: the euros
     leave and the shekels come in then. A call LSports sold is exercised above its strike, a put it bought below it
@@ -99,13 +108,20 @@ briefly a tab of the Metrics page before it got its own sidebar item.
     USD pair brings ₪241,450 on 31 Dec. Their shekels count on the shekels side; euros a forward sells or buys count
     among the dues.
   - The page reads the files itself (`parsePositionReport`, with the Excel library the exports use): the header row by
-    its titles, the report's day from "תאריך הפקה". Only the deals are kept: no account number, no valuation. Each
-    report replaces its own deals; months without deals keep the saved table's amounts and the business day before
-    the 7th, and the card says which.
-  - Before saving, the card shows what each file is. A report older than the one saved is flagged ("Older than the one
-    saved, of …: saving it puts back the deals as they were on …") and the button reads **Save anyway**; one whose
-    day isn't found is flagged too. With two reports of a kind in one upload, the newer is used and the other is
-    said to be left out. Reports with no deal left (all fixed and paid) clear the saved deals.
+    its titles, the report's day from "תאריך הפקה" and the account from "מספר חשבון", its own number only (583400, as
+    NetSuite names the account; not the bank or branch). Only the deals, the account's number and each file's name
+    are kept: no valuation. Months without deals keep the saved table's amounts and the business day before the 7th,
+    and the card says which.
+  - **Any number of files** (`mergePositionReports`): pick several at once, or add them one by one (**Add more
+    files**) before saving. The options and the forwards of each account are a report each: of one account and kind,
+    the newest file is used (an older one in the same upload is said to be left out); it replaces that account's
+    saved report of its kind, and the other accounts' saved reports stay ("Kept as saved"). Deals saved before the
+    reports were kept (#268) count as one report per kind, replaced by any new report of that kind. Each deal counts
+    once, by its number. A file without deals (another sheet, or none readable) is left out and changes nothing.
+  - Before saving, the card shows what becomes of each file. A report older than its account's saved one is flagged
+    ("Older than the one saved, of …: saving it puts back the deals as they were on …") and the button reads **Save
+    anyway**; one whose day isn't found is flagged too. Once saved, the card lists the reports behind the deals
+    (kind, account, day, how many deals, file).
 - **What to do today** (`todayActions`, the first lines of the recommendation and of the daily mail): from today's
   balances and rate, urgent ones first (in red):
   - **Convert** for a payment in shekels that the shekels on hand (and the conversions before it) don't cover, by the
@@ -247,7 +263,7 @@ by range, how "free to convert" adds up, the next six conversions) stay on the p
 - the next 6 conversions against the deposits, first in, first out, at the mail's setting: covered ("שבת 7.11:
   €800K, מכוסה מהפיקדונות (€806K)") or short, in red ("יום ה' 7.1: €1.05M, הפיקדונות מכסים €922K: חסרים €128K"). With
   the bank's deals a conversion in parts says them ("יום א' 7.3: €1.05M (€600K ביום ו' 5.3, €450K ביום ב' 8.3), הפיקדונות
-  מכסים €810K: חסרים €240K ביום ב' 8.3").
+  מכסים €810K: חסרים €240K ביום ב' 8.3"), and in one part its day ("שבת 7.11: €1.10M (ביום ד' 4.11), …").
   A short one says why: a deposit that pays out after its last euros leave but by the 7th (without the deals, where
   they leave the business day before: "יום א' 7.3: €1.05M, הפיקדון שמשתחרר ביום ו' 5.3 (€405K) מגיע אחרי שהבנק לוקח את
   האירו ביום ה' 4.3, ולכן נספר להמרה של יום ד' 7.4: חסרים €1.05M"), or the days in which none pays out ("אין פיקדון
@@ -306,7 +322,8 @@ The scheduled run behaves like this:
 - Every save is appended to `data/fx-challenge-table-history.jsonl`, with who and when.
 - The bank's deals likewise: `data/fx-challenge-positions.json` (git-ignored), with `-history.jsonl` next to it, and
   validated on the server (`validatePositions`: known fields only, sides, put or call, amounts, rates and days, a
-  value day on or after the fixing, up to 3,000 deals each).
+  value day on or after the fixing, up to 3,000 deals each; the reports behind them, up to 50, each with its file
+  name, kind, the account's own number (digits only), day and deal numbers).
 - Saves are validated (the same rules as the page), JSON only, same-origin, and carry finance-it's CSRF
   token (`server/json-store.cjs`).
 - While the page was a Metrics tab, the table was saved in the Metrics settings. That copy is not read: paste

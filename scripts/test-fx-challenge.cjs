@@ -360,7 +360,7 @@ async function testDeals(fx) {
     'the options report: its day from "תאריך הפקה", the EUR/ILS options, another pair left out, an unreadable row said; the total and the account dropped', JSON.stringify([o.kind, o.asOf, o.skipped, o.problems]));
   check(same(o.options[1], { deal: '1002', kind: 'EKO', side: 'buy', type: 'put', eur: 300000, strike: 3.49, trigger: 3.3, expiry: '2027-03-03', settle: '2027-03-05' })
     && o.options[3].eur === 250000 && o.options[3].trigger === null && !JSON.stringify(o).includes('12-000-000000'),
-  'each option: side, put or call, the euros (unsigned), strike, trigger, fixing and value day; no account number kept', JSON.stringify(o.options[1]));
+  'each option: side, put or call, the euros (unsigned), strike, trigger, fixing and value day; not the whole account number', JSON.stringify(o.options[1]));
   const f = fx.parsePositionReport(FWD_ROWS);
   check(f.kind === 'forwards' && f.asOf === '2026-10-30' && f.forwards.length === 4
     && same(f.forwards[1], { deal: '2002', side: 'buy', currency: 'EUR', amount: 1000000, counter: 'ILS', rate: 3.8, settle: '2026-11-02', counterAmount: -3800000 }),
@@ -462,6 +462,63 @@ async function testDeals(fx) {
     && v.schedule.find((s) => s.fixing.month === '2027-03').outcomes[0].eur === 0,
   'the plan uses it: March\'s outcomes from its deals (nothing below 3.3); without deals the saved table');
 
+  console.log('\nDEALS: the days each conversion is fixed and paid');
+  const fixMar = (today) => fx.fixings(t, today, legs).find((x) => x.month === '2027-03');
+  const m1 = fixMar('2027-03-01');
+  check(same(m1.fixedOn, ['2027-03-03', '2027-03-04']) && same(m1.paidOn, ['2027-03-05', '2027-03-08']) && m1.riskDays === 3 && m1.days === 6 && !m1.fixed && m1.status === 'next',
+    'March with its deals: fixed Wed 3 and Thu 4 Mar, paid Fri 5 and Mon 8 Mar; EUR/ILS can move 3 days (to the last fixing), not the 6 to the 7th', JSON.stringify(m1));
+  check(fixMar('2027-03-08').status === 'next' && fixMar('2027-03-08').fixed && fixMar('2027-03-09').status === 'past'
+    && fx.fixings(t, '2027-03-08').find((x) => x.month === '2027-03').status === 'past' && fx.fixings(t, '2027-03-01').find((x) => x.month === '2027-03').fixedOn === null,
+  'a month stays until its last part is paid (Mon 8 Mar, after the 7th); without deals, until the 7th');
+  const early = fx.positionLegs({ options: o.options.map((x) => ({ ...x, expiry: '2027-04-01', settle: '2027-04-05' })) });
+  check(fx.fixings(t, '2027-04-06', early).find((x) => x.month === '2027-04').status === 'past' && fx.fixings(t, '2027-04-06').find((x) => x.month === '2027-04').status === 'next',
+    'paid on Mon 5 Apr: done from the 6th, before the 7th, so the plan no longer keeps for it');
+  const onDay = (today, extra = []) => ({
+    ...data, today, rates: { series: [{ date: '2027-02-26', rate: 3.45 }, ...extra.map(([date, rate]) => ({ date, rate }))], spot: { date: today, rate: 3.45 }, sigma: 0.08 },
+  });
+  const before = fx.planFromPayload(onDay('2027-03-01'), 'p95');
+  const s1 = before.schedule[0];
+  check(s1.fixing.month === '2027-03' && s1.fixedAt === null && same(s1.risk, fx.fixingRisk(s1.fixing.row, before.table.bounds, 3.45, 0.08, 3 / 365)),
+    'the risk runs to Thu 4 Mar, the last fixing day (3 days)');
+  const fixedDays = [['2027-03-03', 3.47], ['2027-03-04', 3.495]];
+  const after = fx.planFromPayload(onDay('2027-03-05', fixedDays), 'worst');
+  const s2 = after.schedule[0];
+  check(s2.fixedAt && s2.fixedAt.date === '2027-03-04' && s2.fixedAt.rate === 3.495 && s2.atSpot.eur === 1350000 && s2.risk.p95Eur === 1350000 && s2.risk.worstEur === 1350000
+    && after.plan.next.required === 1350000,
+  'both parts fixed: at Thu 4 Mar\'s rate (3.495, €1.35M) with no risk left, whatever the setting (the worst case too)', JSON.stringify([s2.fixedAt, s2.atSpot && s2.atSpot.eur]));
+  const paidOne = fx.planFromPayload(onDay('2027-03-08', fixedDays), 'p95');
+  const c8 = paidOne.plan.coverage[0];
+  check(paidOne.schedule[0].fixing.month === '2027-03' && paidOne.plan.next.required === 450000 && same(c8.legs.map((l) => [l.settle, Math.round(l.required)]), [['2027-03-08', 450000]]),
+    'Mon 8 Mar: the €900K paid on Fri 5 Mar is gone from the balances, so only the €450K part is kept for', JSON.stringify(c8.legs.map((l) => [l.settle, l.required])));
+  check(fx.planFromPayload(onDay('2027-03-09', fixedDays), 'p95').schedule[0].fixing.month === '2027-04', 'Tue 9 Mar: March is done, April is next');
+  check(mail.coverText(c8, true, null).startsWith('יום א\' 7.3: €450K (ביום ב\' 8.3), '), 'the mail says the day even for one part', mail.coverText(c8, true, null));
+
+  console.log('\nDEALS: any number of report files');
+  check(o.account === '000000' && f.account === '000000' && !JSON.stringify(o).includes('12-000'), 'each report\'s account by its own number (as NetSuite names it), not the bank or branch', o.account);
+  const reportOf = (rows, day, account) => rows.map((r, i) => (i === 3 ? [`מספר חשבון  12-000-${account}  תאריך הפקה  ${day}   `] : r));
+  const later = fx.parsePositionReport(reportOf(OTC_ROWS.filter((r) => r[0] !== 1001), '06.11.2026', '000000'));
+  const other = fx.parsePositionReport(reportOf([...OTC_ROWS.slice(0, 5), opt(3001, 'VANILLA', 'קניה', 'PUT', 'EUR', 100000, 3.65, '2027-04-07', '2027-04-05')], '30.10.2026', '111111'));
+  const before268 = { asOf: { options: o.asOf, forwards: f.asOf }, options: o.options, forwards: f.forwards };
+  const r1 = fx.mergePositionReports(before268, [{ name: 'OTC 6 Nov.xlsx', report: later }]);
+  check(r1.files[0].used && same(r1.files[0].replaces, [{ name: null, asOf: '2026-10-30' }]) && r1.value.options.length === 5 && !r1.value.options.some((x) => x.deal === '1001')
+    && r1.value.forwards.length === 4 && r1.value.asOf.options === '2026-11-06' && r1.kept.length === 1 && r1.kept[0].kind === 'forwards',
+  'the deals saved before: a newer options report replaces their options (deal 1001 fixed and gone), the forwards stay as saved', JSON.stringify(r1.files[0]));
+  const r2 = fx.mergePositionReports(null, [
+    { name: 'OTC.xlsx', report: o }, { name: 'OTC 6 Nov.xlsx', report: later }, { name: 'OTC other.xlsx', report: other }, { name: 'FX.xlsx', report: f }, { name: 'notes.xlsx', report: none },
+  ]);
+  const byName = Object.fromEntries(r2.files.map((x) => [x.name, x]));
+  check(!byName['OTC.xlsx'].used && byName['OTC.xlsx'].why === 'OTC 6 Nov.xlsx is a newer report of account 000000' && byName['OTC 6 Nov.xlsx'].used && byName['OTC other.xlsx'].used
+    && byName['FX.xlsx'].used && !byName['notes.xlsx'].used && byName['notes.xlsx'].why === "not one of the bank's position reports"
+    && r2.value.options.length === 6 && r2.value.options.some((x) => x.deal === '3001') && r2.value.reports.length === 3,
+  'five files at once: two accounts\' options combined, the same account\'s older report left out, another sheet said', JSON.stringify(r2.files.map((x) => [x.name, x.used, x.why])));
+  const r3 = fx.mergePositionReports(r2.value, [{ name: 'OTC.xlsx', report: o }]);
+  check(r3.files[0].used && r3.files[0].older === '2026-11-06' && r3.kept.some((k) => k.account === '111111') && r3.value.options.some((x) => x.deal === '1001')
+    && r3.value.options.some((x) => x.deal === '3001') && r3.value.forwards.length === 4,
+  'a report older than its account\'s saved one is flagged; the other account\'s report and the forwards stay as saved');
+  const r4 = fx.mergePositionReports(r2.value, [{ name: 'empty.xlsx', report: fx.parsePositionReport(reportOf(OTC_ROWS.slice(0, 5), '04.12.2026', '111111')) }]);
+  check(!r4.files[0].used && r4.files[0].why === 'no deal could be read from it' && r4.kept.length === 3, 'a report without deals changes nothing');
+  check(same(v.deals.reports.map((r) => [r.kind, r.account, r.count]), [['options', null, 6], ['forwards', null, 4]]), 'deals saved before the reports were kept: one report per kind on the page');
+
   console.log('\nDEALS: the saved deals (PUT /api/fx-challenge/positions)');
   const value = { asOf: { options: o.asOf, forwards: f.asOf }, options: o.options, forwards: f.forwards };
   const ok = fxs.validatePositions({ value });
@@ -471,6 +528,11 @@ async function testDeals(fx) {
   check(!bad.ok && bad.errors.some((e) => /side/.test(e)) && bad.errors.some((e) => /settle/.test(e)) && bad.errors.some((e) => /unknown field "extra"/.test(e)),
     'a wrong side, a value day before the fixing and an unknown field are refused', JSON.stringify(bad.errors));
   check(!fxs.validatePositions({ value: { asOf: null, options: [], forwards: [] } }).ok, 'no deals at all is refused');
+  const withReports = fxs.validatePositions({ value: r2.value });
+  check(withReports.ok && same(withReports.value.reports, r2.value.reports), 'the deals of several reports, with the reports, are accepted as they are', JSON.stringify(withReports.errors));
+  const badReport = fxs.validatePositions({ value: { ...r2.value, reports: [{ ...r2.value.reports[0], account: '12-000-000000', extra: 1 }] } });
+  check(!badReport.ok && badReport.errors.some((e) => /account/.test(e)) && badReport.errors.some((e) => /unknown field "extra"/.test(e)),
+    'a report with a whole account number or an unknown field is refused', JSON.stringify(badReport.errors));
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fx-pos-'));
   const positionsFile = path.join(tmp, 'positions.json');
   const nothing = async () => [];

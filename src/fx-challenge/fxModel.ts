@@ -2,7 +2,7 @@
 // The recommendation itself (planFromPayload, todayActions and their words) is shared with the daily mail.
 import {
   bandIndex, bandLabels, conversionAt, describeAction, describeDue, describeKeep, keepCover, nothingToday, pastConversions, planFromPayload, todayActions,
-  type CashPlan, type Conversion, type DealsView, type EurPosition, type FxTable, type KeepCover, type PastMonth, type PastTotals, type Policy, type RateCheck, type ReservePlan,
+  type CashPlan, type Conversion, type DealsView, type EurPosition, type Fixing, type FxTable, type KeepCover, type PastMonth, type PastTotals, type Policy, type RateCheck, type ReservePlan,
   type ScheduleItem, type ShekelDue, type TodayAction,
 } from '../forecast/fx-challenge.mjs';
 import { formatEur } from '../metrics/model.ts';
@@ -63,7 +63,8 @@ export function buildFxModel(data: FxPayload, simRate: number | null, policy: Po
   const table = base.table;
   const bounds = table.bounds;
   const sim = simRate && simRate > 0 ? simRate : base.spot;
-  const schedule: ScheduleRow[] = base.schedule.map((s) => ({ ...s, atSim: sim ? conversionAt(s.fixing.row, bounds, sim) : null }));
+  // A conversion already fixed sells what it was fixed at, whatever rate is simulated.
+  const schedule: ScheduleRow[] = base.schedule.map((s) => ({ ...s, atSim: s.fixedAt ? s.atSpot : sim ? conversionAt(s.fixing.row, bounds, sim) : null }));
 
   const byYear = new Map<string, YearTotal>();
   for (const s of schedule) {
@@ -137,6 +138,21 @@ export function formatDay(iso: string | null | undefined, withYear = false): str
   return new Date(`${iso.slice(0, 10)}T12:00:00Z`).toLocaleDateString('en-GB', {
     weekday: 'short', day: 'numeric', month: 'short', ...(withYear ? { year: 'numeric' } : {}), timeZone: 'UTC',
   });
+}
+
+/** "Mon 2 & Tue 3 Nov": days, the month once when they share it. */
+export function formatDays(days: string[]): string {
+  const parts = days.map((d) => formatDay(d));
+  const month = (p: string) => p.slice(p.lastIndexOf(' ') + 1);
+  const shown = parts.every((p) => month(p) === month(parts[0])) ? parts.map((p, i) => (i < parts.length - 1 ? p.slice(0, p.lastIndexOf(' ')) : p)) : parts;
+  return shown.length > 1 ? `${shown.slice(0, -1).join(', ')} & ${shown[shown.length - 1]}` : shown[0] || '–';
+}
+
+/** When a conversion happens: with the bank's deals "fixed Mon 2 & Tue 3 Nov, paid Wed 4 & Thu 5 Nov" (and the rate it
+ * was fixed at, once fixed); without, the table's day, "Sat 7 Nov (weekend)". */
+export function conversionDays(f: Fixing, fixedAt: { rate: number } | null = null): string {
+  if (!f.fixedOn || !f.paidOn) return `${formatDay(f.date)}${f.weekend ? ' (weekend)' : ''}`;
+  return `fixed ${formatDays(f.fixedOn)}${fixedAt ? ` at ${formatRate(fixedAt.rate)}` : ''}, paid ${formatDays(f.paidOn)}`;
 }
 
 export const formatPct0 = (p: number) => `${Math.round(p * 100)}%`;
