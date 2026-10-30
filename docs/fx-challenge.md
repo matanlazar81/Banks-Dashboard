@@ -173,7 +173,7 @@ briefly a tab of the Metrics page before it got its own sidebar item.
     out). Most go out in the first week of the month, the days the conversions take their euros (July to September
     2026: €476K of €683K a month by the 7th, €89K from the 8th to the 20th, €119K from the 21st). Each part of the
     month (1st–7th, 8th–20th, 21st–end, `VENDOR_PARTS`) is expected at its average of the 3 closed months, due on its
-    first day; the part today is in, less what it has paid this month so far, today. The typical inflow then leaves
+    first day; the part today is in, less what it has paid since it began, today. The typical inflow then leaves
     them out (`typicalInflow(…, { vendors: false })`). Without NetSuite's payments by day, they stay in the typical
     inflow, spread evenly over the month, and the page says so. NetSuite's open EUR vendor bills are not used: few
     are entered ahead of payment (on 30 Oct 2026, 7 open, none due from November).
@@ -289,13 +289,25 @@ by range, how "free to convert" adds up, the next six conversions) stay on the p
   שמשתחרר בין יום ו' 5.2 ליום ה' 4.3"), the earlier ones going to the earlier conversions. A new deposit names the
   conversion day it is for, and the month when it is one of its parts ("€240K עד יום ו' 5.3 להמרה של יום ב' 8.3 (חלק
   מההמרה של מרץ)"); the keep line too ("להשאיר … להמרה של יום ד' 4.11");
+- **the payments in euros expected in the next 35 days** ("תשלומים צפויים באירו עד יום ו' 4.12", `eurPaymentsAhead`):
+  - first, what the recommendation assumes for the EUR vendors (`vendorsLine`): "ההמלצה מניחה שהתשלומים לספקים באירו
+    יוצאים כמו ב-3 החודשים האחרונים (יולי–ספטמבר): כ-€476K בשבוע הראשון של החודש (1–7), באותם ימים שבהם הבנק לוקח את
+    האירו להמרה, כ-€89K מה-8 עד ה-20 וכ-€119K מה-21 ועד סוף החודש. בנוסף נשמרים תמיד €683K בחשבונות האירו." When
+    NetSuite's payments by day could not be read, it says they count as spread over the month;
+  - then every euro expected to leave, by day (`paymentText`; on one day in the plan's order, the shekels first, then
+    the EUR vendors, then the conversion): the EUR vendors, each
+    part of the month on its first day ("יום א' 1.11: ספקים באירו (1–7.11), כ-€476K"; the part today is in, what is
+    left of it: "יתרת 21–31.10"); the bank's conversions, each part on the day its euros leave (without the deals, the
+    7th: "יום ד' 4.11: ההמרה של נובמבר בבנק, €1.10M", "(חלק 2 מ-2)"); the euros converted for shekels ("יום ה' 5.11:
+    המרה לשקלים (שכר נטו, ספקים בשקלים), €1.13M"); and a forward that sells euros;
+  - last, the total by kind against what covers it, and whether it does (`paymentsTotal`, the plan's shortfall over
+    every due it sees): "סה"כ עד יום ו' 4.12: €4.63M (…). מול זה: €1.80M באירו היום, €1.61M מפיקדונות שמשתחררים עד אז
+    ותקבולים רגילים של כ-€4.53M בחודש. לפי זה כל התשלומים מכוסים ונשארים לפחות €683K." Short, it says by how much and
+    on which day, and whether today's recommendations fix it (one under €50K has none);
 - the payments in shekels ahead: the day, how many days to it, what it pays, and what covers it (a conversion, or
   the shekels on hand);
 - today's position in one paragraph: the shekels on hand (current and deposits), the euros at Hapoalim and elsewhere,
-  what to keep at Hapoalim for the next conversion (with the setting), the EUR vendor payments the plan expects
-  (`vendorsLine`: "התשלומים לספקים באירו נכללים בתכנון לפי הימים שבהם יצאו ב-3 החודשים האחרונים: כ-€476K בשבוע הראשון של
-  כל חודש, €89K מה-8 עד ה-20 ו-€119K מה-21 (הבא: €476K ביום א' 1.11), ובנוסף נשמרים €683K בחשבונות האירו."), and the
-  rate check;
+  what to keep at Hapoalim for the next conversion (with the setting), and the rate check;
 - a note when part of the data could not be read, then a link to the page and the sources.
 
 When NetSuite can't be read at all, a short mail says so (`failureMail`).

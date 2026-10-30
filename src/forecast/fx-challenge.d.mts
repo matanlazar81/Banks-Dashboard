@@ -166,8 +166,21 @@ export interface EurVendorsAhead {
   months: string[];
   /** 1st–7th, 8th–20th, 21st–end: the average a month. */
   parts: { from: number; to: number; eur: number }[];
-  /** Each part's payments, on its first day (the part today is in: what is left of it, today). */
-  dues: { date: string; eur: number; part: number }[];
+  /** Each part's payments, on its first day (the part today is in: what is left of it, today; rest when it began
+   * before today or paid some today). */
+  dues: { date: string; eur: number; part: number; rest: boolean }[];
+}
+/** A payment in euros ahead (eurPaymentsAhead). */
+export type EurPayment =
+  | { date: string; eur: number; kind: 'vendors'; part: number; rest: boolean }
+  | { date: string; eur: number; kind: 'conversion'; month: string; part: number; parts: number }
+  | { date: string; eur: number; kind: 'shekels'; why: ShekelNeedWhy[] }
+  | { date: string; eur: number; kind: 'forward' };
+export interface EurPaymentsAhead {
+  until: string;
+  payments: EurPayment[];
+  total: number;
+  byKind: { vendors: number; conversion: number; shekels: number; forward: number };
 }
 export declare function eurVendorsAhead(input: { days: VendorDay[]; months: string[]; today: string; until: string }): EurVendorsAhead | null;
 
@@ -481,6 +494,8 @@ export type TodayAction =
   | { kind: 'ladder'; key: string; urgent: boolean; eur: number; legs: LadderLeg[] }
   | { kind: 'deposit'; key: string; urgent: boolean; eur: number; options: { months: number; until: string; eur: number }[] };
 export declare function todayActions(view: PlanView, today: string, opts?: { lead?: number; moveLead?: number; minEur?: number; notice?: number }): { actions: TodayAction[]; ahead: { dues: ShekelDue[]; eur: number } };
+/** The euros expected to leave from today to `days` (35) ahead: what the plan keeps the euros for. */
+export declare function eurPaymentsAhead(view: PlanView, today: string, opts?: { days?: number }): EurPaymentsAhead;
 /** Number and date formats for the texts: the page's or the mail's. */
 export interface TextFormats { eur: (n: number) => string; ils: (n: number) => string; day: (iso: string) => string; rate: (r: number) => string }
 export declare function describeAction(a: TodayAction, view: PlanView, today: string, fmt: TextFormats): { head: string; body: string };
