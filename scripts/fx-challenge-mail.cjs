@@ -114,7 +114,7 @@ function actionText(a, v, today) {
     return { head: `להמיר ${eur(a.eur)} ${now ? 'היום' : `עד ${day(a.by)}`}`, body };
   }
   if (a.kind === 'short') {
-    const what = a.shekels ? 'ההמרה לשקלים הנדרשת אז' : `ההמרה של ${day(a.date)}`;
+    const what = a.shekels ? 'ההמרה לשקלים הנדרשת אז' : a.vendors ? 'התשלומים לספקים באירו הצפויים אז' : `ההמרה של ${day(a.date)}`;
     const fix = n.backup > 0 ? ` כדאי להיערך לשבירה של עד ${eur(Math.min(a.eur, n.backup))} מהפיקדונות שנפתחים מאוחר יותר.` : ' כדאי לשמור כל אירו פנוי עד אז.';
     return { head: `חוסר של ${eur(a.eur)} עד ${day(a.date)}`, body: `האירו שיש ושצפוי להיכנס עד אז לא מכסים את ${what} ואת ${eur(n.eurFloor)} השמורים לספקים באירו.${fix}` };
   }
@@ -126,7 +126,7 @@ function actionText(a, v, today) {
   if (a.kind === 'ladder') {
     // Each deposit is for one conversion day: with the bank's deals, one part's (a part is a conversion on its own day).
     const legs = a.legs;
-    const tail = 'כל התשלומים עד אז עדיין מכוסים.';
+    const tail = v.eurVendors ? 'כל התשלומים עד אז, כולל הספקים באירו, עדיין מכוסים.' : 'כל התשלומים עד אז עדיין מכוסים.';
     const of = (l) => `${day(l.on || l.date)}${l.part ? ` (חלק מההמרה של ${monthName(l.month)})` : ''}`;
     if (legs.length === 1) {
       const l = legs[0];
@@ -137,7 +137,7 @@ function actionText(a, v, today) {
     const months = new Set(legs.map((l) => l.month)).size;
     return {
       head: `להפקיד ${eur(a.eur)} בפיקדונות ${months === 1 ? `להמרה של ${first}` : `להמרות של ${months === 2 ? `${first} ו${last}` : `${first} עד ${last}`}`}`,
-      body: `${legs.map((l) => `${eur(l.eur)} עד ${day(l.until)} להמרה של ${of(l)} (חסרים ${eur(l.gap)})`).join(', ')}. ${tail}`,
+      body: `${legs.map((l) => `${eur(l.eur)} עד ${day(l.until)} להמרה של ${day(l.on || l.date)} (${l.part ? `חלק מההמרה של ${monthName(l.month)}, ` : ''}חסרים ${eur(l.gap)})`).join(', ')}. ${tail}`,
     };
   }
   // A new deposit: one line when every term holds the same.
@@ -166,6 +166,17 @@ function keepLine(cover, on, policy) {
 }
 
 const dayAfter = (iso) => new Date(Date.parse(`${String(iso).slice(0, 10)}T12:00:00Z`) + 86400000).toISOString().slice(0, 10);
+
+/** The EUR vendor payments the plan expects (fx.eurVendorsAhead), in one sentence: "התשלומים לספקים באירו נכללים בתכנון
+ * לפי הימים שבהם יצאו ב-3 החודשים האחרונים: כ-€476K בשבוע הראשון של כל חודש, €89K מה-8 עד ה-20 ו-€119K מה-21 (הבא:
+ * €476K ביום א' 1.11), ובנוסף נשמרים €683K." Empty without them. */
+function vendorsLine(ev, floor) {
+  if (!ev || !ev.parts.some((p) => p.eur >= 500)) return '';
+  const [first, mid, end] = ev.parts;
+  const next = ev.dues.find((d) => d.eur >= 50000) || ev.dues[0];
+  return `התשלומים לספקים באירו נכללים בתכנון לפי הימים שבהם יצאו ב-${ev.months.length} החודשים האחרונים: כ-${eur(first.eur)} בשבוע הראשון של כל חודש, `
+    + `${eur(mid.eur)} מה-8 עד ה-20 ו-${eur(end.eur)} מה-21${next ? ` (הבא: ${eur(next.eur)} ב${day(next.date)})` : ''}${floor > 0.5 ? `, ובנוסף נשמרים ${eur(floor)} בחשבונות האירו` : ''}.`;
+}
 
 /** A conversion against the deposits, first in, first out (plan.coverage), by its conversion day: with the bank's deals
  * the day its euros leave ("יום ד' 6.1: €1.05M, הפיקדונות מכסים €922K: חסרים €128K"), in parts each part's ("יום ו' 5.3
@@ -271,6 +282,7 @@ function renderMail(fx, data, { policy = 'today', link = null } = {}) {
     const shekels = cash && cash.onHand ? `${ils(cash.onHand.total)} בשקלים (${ils(cash.onHand.current)} בעו"ש ו-${ils(cash.onHand.deposits)} בפיקדונות), ` : '';
     const status = `${shekels}${eur(n.hapoalim)} בחשבון האירו בפועלים ו-${eur(n.other)} בחשבונות אחרים. `
       + `${keepLine(fx.keepCover(plan), plan.coverage && plan.coverage[0] ? plan.coverage[0].on : [n.date], POLICY[plan.policy])}`
+      + `${v.eurVendors ? ` ${vendorsLine(v.eurVendors, n.eurFloor)}` : ''}`
       + `${cash ? '' : ` פנוי להמרה עכשיו: ${eur(n.freeNow)}.`}`
       + `${rc ? ` ${rateIs(rc)}.` : ''}`;
     parts.push(heading('המצב היום'));
@@ -529,4 +541,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { main, sendNow, renderMail, failureMail, mailDecision, parseArgs, parseRecipients, smtpFrom, mailConfig, scheduleState, israelHour, formatDay: day, actionText, coverText, MARKER_FILE };
+module.exports = { main, sendNow, renderMail, failureMail, mailDecision, parseArgs, parseRecipients, smtpFrom, mailConfig, scheduleState, israelHour, formatDay: day, actionText, coverText, vendorsLine, MARKER_FILE };

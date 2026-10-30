@@ -65,7 +65,8 @@ briefly a tab of the Metrics page before it got its own sidebar item.
     (€1.00M) covers the €800K it takes from Hapoalim EUR (583400)", or "Keep €300K in Hapoalim EUR (583400) for Sat 7
     Nov: it takes €800K, and the deposit released on Thu 5 Nov brings €500K of it". The **Keep for it** card shows
     the same amount (€0 when covered), with what the conversion takes and what covers it under it.
-  - Free to convert now = liquid euros less what the reserve still needs. It is also shown with the backup
+  - Free to convert now = liquid euros less what the reserve still needs (and the EUR vendor payments expected
+    before it, when they are planned on their days). It is also shown with the backup
     covering a jump above today's band, and by the fixing with the typical inflow (customers less EUR
     payments, before conversions, deposits and transfers, last 3 closed months).
   - The path shows the next 6 fixings if nothing else is converted. Its **Deposits released** column is the EUR
@@ -166,8 +167,16 @@ briefly a tab of the Metrics page before it got its own sidebar item.
     - **bank transfers and Masav batches** (the batches clear through the credit card type account 17036 MASAV IL): a
       monthly need in shekels from the 5th.
 
-    EUR vendor payments (the flows' vendor kind) are **kept in the euro accounts at all times** (the EUR floor); the
-    typical inflow already nets them.
+    EUR vendor payments (the flows' vendor kind) are **kept in the euro accounts at all times** (the EUR floor: a
+    month of them, the average of the 3 closed months), and **planned on the days they go out** (`eurVendorsAhead`,
+    from `fetchEurVendorDays`: NetSuite's EUR vendor payments and checks by day, deposit accounts and dividends left
+    out). Most go out in the first week of the month, the days the conversions take their euros (July to September
+    2026: €476K of €683K a month by the 7th, €89K from the 8th to the 20th, €119K from the 21st). Each part of the
+    month (1st–7th, 8th–20th, 21st–end, `VENDOR_PARTS`) is expected at its average of the 3 closed months, due on its
+    first day; the part today is in, less what it has paid this month so far, today. The typical inflow then leaves
+    them out (`typicalInflow(…, { vendors: false })`). Without NetSuite's payments by day, they stay in the typical
+    inflow, spread evenly over the month, and the page says so. NetSuite's open EUR vendor bills are not used: few
+    are entered ahead of payment (on 30 Oct 2026, 7 open, none due from November).
   - **The shekels on hand** (`ilsOnHand`): LSports' ILS current accounts (an overdraft counts against them) and its
     **ILS deposits**, which finance releases the day a payment goes out (a blocked deposit is left out); 0 when not
     known (NetSuite's books).
@@ -182,14 +191,19 @@ briefly a tab of the Metrics page before it got its own sidebar item.
     Each gap is converted by its day at today's rate. The card **Salaries and vendors: the shekels each month
     needs** shows it month by month.
   - **The euros** (`planReserve`): the conversions for shekels come out of the euros by each conversion (the
-    plan's **Salaries & vendors** column), and the EUR floor is kept. At every due (each conversion at the amount
-    kept, each conversion for shekels) the spare is the euros held then (today's, the typical inflow and the
-    deposits maturing by then, less what fell due before), less what is due and the floor.
+    plan's **Salaries & vendors** column), the EUR vendor payments on their days (`eurOut`, the **EUR vendors**
+    column), and the EUR floor is kept. At every due (each conversion at the amount kept, each conversion for
+    shekels, each part of the month's EUR vendor payments) the spare is the euros held then (today's, the typical
+    inflow and the deposits maturing by then, less what fell due before), less what is due and the floor. **Free to
+    convert now** also leaves the EUR vendor payments before the next conversion (`vendorsBefore`).
     - **Spare now** (converted for good) is the smallest spare of all dues to the end of the 6th conversion's
       month, never more than today's euros above the floor.
     - **A new deposit maturing on a day** can hold the smallest spare of the dues before that day (euros in a
       deposit come back), never more than today's euros above the floor. It is rounded down to €10K.
-    - **Short**: the first day a gap opens, and the largest gap.
+    - **Short**: the first day a gap opens, and the largest gap; on a vendor day, it says it is for the EUR
+      vendor payments ("the EUR vendor payments expected then").
+    - A new deposit's advice says the EUR vendors stay covered ("Every payment before then, the EUR vendors'
+      included, stays covered"; "כל התשלומים עד אז, כולל הספקים באירו, עדיין מכוסים").
   - The rate check then speaks of the spare instead of the free euros.
 - **Rate check** (under "Keep … Free to convert now"): today's EUR/ILS against the 90 days before it (`rateCheck`,
   NetSuite's HSBC rate, business days): the share of those days it beats, their average and range, and a verdict:
@@ -228,6 +242,7 @@ a warning, and the rest still shows.
 | Conversions | the Hapoalim "Conversion" / המרה journals (EUR 11001 ↔ ILS 10002, euros bought back included), from 20 December 2025, or before the table's first month if it is earlier |
 | Payroll | NetSuite's payroll journals (what each owes: net salaries, tax, pension, social security), four months back; the Salary Projection's Total payroll by month, from the figures its page saved (`data/salary-projection-cache.json`) |
 | ILS vendor payments | NetSuite's books: vendor payments and checks out of the ILS accounts (book 2; bank and credit card type, so the Masav batches count), four months back, the credit cards' apart |
+| EUR vendor payments by day | NetSuite's books: vendor payments and checks out of the EUR bank accounts (primary book, deposit accounts and dividends left out), four months back, by day (`fetchEurVendorDays`) |
 | The bank's deals | Hapoalim's position reports (options and forwards), uploaded on the page and saved in `data/fx-challenge-positions.json`; not read from NetSuite |
 
 The RESTlet gives what the bank imports last fetched: Bank Hapoalim and its deposits (several times a day),
@@ -277,7 +292,10 @@ by range, how "free to convert" adds up, the next six conversions) stay on the p
 - the payments in shekels ahead: the day, how many days to it, what it pays, and what covers it (a conversion, or
   the shekels on hand);
 - today's position in one paragraph: the shekels on hand (current and deposits), the euros at Hapoalim and elsewhere,
-  what to keep at Hapoalim for the next conversion (with the setting), and the rate check;
+  what to keep at Hapoalim for the next conversion (with the setting), the EUR vendor payments the plan expects
+  (`vendorsLine`: "התשלומים לספקים באירו נכללים בתכנון לפי הימים שבהם יצאו ב-3 החודשים האחרונים: כ-€476K בשבוע הראשון של
+  כל חודש, €89K מה-8 עד ה-20 ו-€119K מה-21 (הבא: €476K ביום א' 1.11), ובנוסף נשמרים €683K בחשבונות האירו."), and the
+  rate check;
 - a note when part of the data could not be read, then a link to the page and the sources.
 
 When NetSuite can't be read at all, a short mail says so (`failureMail`).

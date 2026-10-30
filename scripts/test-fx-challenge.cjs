@@ -547,6 +547,60 @@ async function testDeals(fx) {
   'saved for everyone with its history, and in the page\'s data', JSON.stringify(put.body).slice(0, 200));
 }
 
+// The EUR vendor payments on their days: made-up days, with the real shape (most in the first week).
+function testEurVendors(fx) {
+  console.log('\nEUR VENDORS: the payments on the days they go out');
+  const days = [['07-02', 200000], ['07-10', 60000], ['07-25', 90000], ['08-04', 500000], ['08-18', 90000], ['08-31', 120000],
+    ['09-03', 620000], ['09-08', 60000], ['09-28', 150000], ['10-04', 550000], ['10-20', 85000], ['10-21', 100000]].map(([d, eur]) => ({ date: `2026-${d}`, eur }));
+  const months = ['2026-07', '2026-08', '2026-09'];
+  const ev = fx.eurVendorsAhead({ days, months, today: TODAY, until: '2026-11-30' });
+  check(same(ev.parts.map((p) => [p.from, p.to, Math.round(p.eur)]), [[1, 7, 440000], [8, 20, 70000], [21, 31, 120000]]),
+    'each part of the month (1st–7th, 8th–20th, 21st–end) at its average of the three months', JSON.stringify(ev.parts));
+  check(same(ev.dues.map((d) => [d.date, Math.round(d.eur), d.part]), [['2026-10-21', 20000, 2], ['2026-11-01', 440000, 0], ['2026-11-08', 70000, 1], ['2026-11-21', 120000, 2]])
+    && fx.eurVendorsAhead({ days, months: [], today: TODAY, until: '2026-11-30' }) === null,
+  'each on its first day; the part today is in, less what it has paid so far (€100K of €120K), today', JSON.stringify(ev.dues));
+  const flows = [{ month: '2026-09', kind: 'customer', eur: 3e6 }, { month: '2026-09', kind: 'vendor', eur: -6e5 }, { month: '2026-09', kind: 'conversion', eur: -2e6 }];
+  check(fx.typicalInflow(flows, ['2026-09']).perMonth === 2.4e6 && fx.typicalInflow(flows, ['2026-09'], { vendors: false }).perMonth === 3e6,
+    'the typical inflow leaves the vendor payments out when they are planned on their days');
+
+  const t = fx.cloneTable(fx.DEFAULT_TABLE);
+  const up = fx.fixings(t, TODAY).filter((x) => x.status !== 'past').slice(0, 2)
+    .map((x) => ({ month: x.month, date: x.date, days: x.days, conv: fx.conversionAt(x.row, t.bounds, 3.45), risk: fx.fixingRisk(x.row, t.bounds, 3.45, 0.08, x.days / 365) }));
+  const input = { upcoming: up, policy: 'today', eur: { hapoalim: 2.5e6, other: 0, deposits: [] }, inflowPerDay: 0, today: TODAY };
+  const without = fx.planReserve(input);
+  const withV = fx.planReserve({ ...input, eurOut: [{ date: '2026-11-01', eur: 440000 }, { date: '2026-12-01', eur: 1.5e6 }] });
+  check(without.next.freeNow === 1.7e6 && without.next.vendorsBefore === 0 && withV.next.vendorsBefore === 440000 && withV.next.freeNow === 1.26e6,
+    'free now: today\'s euros less what the conversion needs and the EUR vendor payments before it (€440K on 1 Nov)', JSON.stringify([without.next.freeNow, withV.next.freeNow]));
+  check(withV.path[0].forVendors === 440000 && withV.path[1].vendors === 1.5e6 && withV.path[1].available === 2.5e6 - 800000 - 1.94e6,
+    'the path takes them by each conversion day', JSON.stringify(withV.path.map((p) => [p.forVendors, p.vendors, p.available])));
+  check(withV.next.short && withV.next.short.first.vendors && withV.next.short.first.date === '2026-12-01' && withV.next.short.first.eur === 240000 && !withV.next.short.vendors,
+    'a gap that opens on a vendor day says so (€240K short on 1 Dec, for the EUR vendors)', JSON.stringify(withV.next.short));
+
+  const data = {
+    today: TODAY, table: t, rates: { series: series(400), spot: { date: TODAY, rate: 3.45 }, sigma: 0.08 },
+    balances: { rows: [{ bank: 'Bank Hapoalim', kind: 'current', currency: 'EUR', amount: 2.5e6 }] }, flows, inflowMonths: months,
+  };
+  const before = fx.planFromPayload(data, 'today');
+  const v = fx.planFromPayload({ ...data, eurVendors: days }, 'today');
+  check(before.eurVendors === null && near(before.inflow.perMonth, 0.8e6, 1) && near(v.inflow.perMonth, 1e6, 1) && v.eurVendors && v.plan.next.vendorsBefore === 460000,
+    'from the payload: with NetSuite\'s payments by day, the inflow leaves them out and the plan takes them on their days; without, as before', JSON.stringify([before.inflow.perMonth, v.inflow.perMonth, v.plan.next.vendorsBefore]));
+
+  const mail = require(path.join(ROOT, 'scripts', 'fx-challenge-mail.cjs'));
+  const line = mail.vendorsLine(v.eurVendors, 683000);
+  check(line === 'התשלומים לספקים באירו נכללים בתכנון לפי הימים שבהם יצאו ב-3 החודשים האחרונים: כ-€440K בשבוע הראשון של כל חודש, €70K מה-8 עד ה-20 ו-€120K מה-21 (הבא: €440K ביום א\' 1.11), ובנוסף נשמרים €683K בחשבונות האירו.'
+    && mail.vendorsLine(null, 0) === '',
+  'the mail says what it expects for the EUR vendors, and the next one', line);
+  const hv = { plan: { next: { backup: 0, eurFloor: 0 } }, rateCheck: null };
+  const short = mail.actionText({ kind: 'short', eur: 240000, date: '2026-12-01', by: '2026-12-01', shekels: false, vendors: true }, hv, TODAY);
+  const leg = { month: '2026-12', date: '2026-12-07', on: '2026-12-06', until: '2026-12-03', eur: 240000, gap: 240000, required: 800000, have: 560000 };
+  const ladder = mail.actionText({ kind: 'ladder', eur: 240000, legs: [leg] }, { ...hv, eurVendors: v.eurVendors }, TODAY);
+  const fmt = { eur: (n) => `€${Math.round(n / 1000)}K`, ils: (n) => `₪${Math.round(n / 1000)}K`, day: (d) => d, rate: (r) => r.toFixed(3) };
+  check(short.body.includes('את התשלומים לספקים באירו הצפויים אז') && ladder.body.endsWith('כל התשלומים עד אז, כולל הספקים באירו, עדיין מכוסים.')
+    && fx.describeAction({ kind: 'short', eur: 240000, date: '2026-12-01', by: '2026-12-01', shekels: false, vendors: true }, hv, TODAY, fmt).body.includes('the EUR vendor payments expected then')
+    && fx.describeAction({ kind: 'ladder', eur: 240000, legs: [leg] }, { ...hv, eurVendors: v.eurVendors }, TODAY, fmt).body.endsWith("Every payment before then, the EUR vendors' included, stays covered."),
+  'a shortfall on a vendor day, and a deposit that leaves the EUR vendors covered, say so (mail and page)', JSON.stringify([short.body, ladder.body]));
+}
+
 async function testPlanFromPayload(fx) {
   console.log('\nSHARED: the recommendation the page and the mail both use');
   const t = fx.cloneTable(fx.DEFAULT_TABLE);
@@ -1260,6 +1314,11 @@ async function testServerCash(fx) {
   const none = await quietly(() => fxs.readFxChallenge({ reads: { ...reads, payroll: async () => { throw new Error('NetSuite down'); }, salary: async () => null, ilsVendors: async () => { throw new Error('down'); } }, clock: () => NOW }));
   check(none[0].payroll === null && none[0].ilsVendors === null && none[0].warnings.some((w) => /Neither the Salary Projection/.test(w)),
     'neither the payroll nor the Salary Projection → no payroll, said once');
+  const vd = await fxs.readFxChallenge({ reads: { ...reads, eurVendors: async (from) => { asked.eurVendors = from; return [{ date: '2026-09-03', eur: 440954.95 }]; } }, clock: () => NOW });
+  const vdDown = await quietly(() => fxs.readFxChallenge({ reads: { ...reads, eurVendors: async () => { throw new Error('down'); } }, clock: () => NOW }));
+  check(same(vd.eurVendors, [{ date: '2026-09-03', eur: 440954.95 }]) && asked.eurVendors === '2026-06' && d.eurVendors === null && vdDown[0].eurVendors === null
+    && vdDown[0].warnings.some((w) => /EUR vendor payments by day/.test(w)) && !d.warnings.some((w) => /EUR vendor payments by day/.test(w)),
+  'the payload carries the EUR vendor payments by day (four months back); a failed read is said, and they are then spread over the month');
   fs.rmSync(tmp, { recursive: true, force: true });
 }
 
@@ -1359,6 +1418,7 @@ async function main() {
   await testRateCheck(fx);
   await testPlanFromPayload(fx);
   await testDeals(fx);
+  testEurVendors(fx);
   await testCash(fx);
   await testToday(fx);
   await testParse(fx);

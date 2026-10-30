@@ -206,6 +206,7 @@ const PATH_TIP = {
   available: "What you would hold on the day if nothing else is converted: today's liquid euros, plus the typical inflow and the deposits released by then, less what the earlier conversions take (at the amount kept) and the conversions for salaries and vendors by then.",
   convertible: 'How much you can convert yourself before this conversion, in total, as the euros come in, with this conversion, every later one, the salaries and vendors still covered, and the euros for EUR vendors kept: the smallest spare from this row on. Euros converted now are gone at every later conversion too.',
   shekels: "Euros converted for salaries and ILS vendors after the previous conversion (after today, for the first) and by this one, at today's rate: what the shekels on hand and the table's conversions don't cover. Hover a figure for the days.",
+  eurVendors: "EUR vendor payments expected after the previous conversion (after today, for the first) and by this one, on the days they usually go out: each part of the month (1st–7th, 8th–20th, 21st–end) at its average of the last three months, on its first day. Hover a figure for the days.",
 };
 
 const WHY: Record<string, string> = { net: 'net salaries', later: 'pension, tax and social security', cards: 'credit card bills', vendors: 'ILS vendors' };
@@ -287,14 +288,26 @@ function Recommendation({ model, policy, onPolicy, inflowMonths }: { model: FxMo
             {n.maturing > 0 ? `, deposits maturing by then ${formatEur(n.maturing)}` : ''}
             {n.backup > 0 ? `, backup deposits after it ${formatEur(n.backup)}` : ''}.
           </li>
+          {model.eurVendors && (() => {
+            const ev = model.eurVendors;
+            const next = ev.dues.find((d) => d.eur >= 50000) || ev.dues[0];
+            return (
+              <li>
+                <span className={HINT} title={['EUR vendor payments the plan expects:', ...ev.dues.map((d) => `${formatDay(d.date, true)}: ${formatEur(d.eur)}`)].join('\n')}>EUR vendor payments</span>
+                {' '}are planned on the days they usually go out ({ev.months.map((m) => monthName(m).slice(0, 3)).join('–')}): about {formatEur(ev.parts[0].eur)} by the 7th,
+                {' '}{formatEur(ev.parts[1].eur)} from the 8th and {formatEur(ev.parts[2].eur)} from the 21st, each month{next ? `; next ${formatEur(next.eur)} on ${formatDay(next.date)}` : ''}
+                {n.eurFloor > 0.5 ? `, and ${formatEur(n.eurFloor)} is kept besides` : ''}.
+              </li>
+            );
+          })()}
           {n.shortfall > 0 && (
             <li className="text-rose-700">
-              Today&apos;s euros are {formatEur(n.shortfall)} short of the reserve: it needs inflows before the conversion{n.backup > 0 ? ', or a backup deposit' : ''}.
+              Today&apos;s euros are {formatEur(n.shortfall)} short of the reserve{n.vendorsBefore > 0.5 ? ' and the EUR vendor payments before it' : ''}: it needs inflows before the conversion{n.backup > 0 ? ', or a backup deposit' : ''}.
             </li>
           )}
           {n.freeByFixing !== null && model.inflow && (
             <li>
-              With the typical inflow ({formatEur(model.inflow.perMonth)} a month, {inflowMonths.map((m) => monthName(m).slice(0, 3)).join('–')}), about{' '}
+              With the typical inflow ({formatEur(model.inflow.perMonth)} a month{model.eurVendors ? ' before EUR vendor payments' : ''}, {inflowMonths.map((m) => monthName(m).slice(0, 3)).join('–')}), about{' '}
               {formatEur(n.inflowUntil)} comes in before the conversion
               {n.freeByFixing > 0.5
                 ? <>, so <strong>{formatEur(n.freeByFixing)}</strong> can be converted before it, in total, as the euros come in, with the next {plan.path.length} conversions{model.cash ? ', the salaries and vendors' : ''} still covered.</>
@@ -312,6 +325,7 @@ function Recommendation({ model, policy, onPolicy, inflowMonths }: { model: FxMo
                   <Th tip={PATH_TIP.expected}>Expected</Th>
                   <Th tip={undated ? `${PATH_TIP.released} NetSuite's books give no maturity dates, so this stays empty until the balances RESTlet is set up.` : PATH_TIP.released}>Deposits released</Th>
                   {model.cash && <Th tip={PATH_TIP.shekels}>Salaries &amp; vendors</Th>}
+                  {model.eurVendors && <Th tip={PATH_TIP.eurVendors}>EUR vendors</Th>}
                   <Th tip={PATH_TIP.available}>Euros by then</Th>
                   <Th tip={PATH_TIP.convertible}>Can be converted before it</Th>
                 </tr>
@@ -342,7 +356,16 @@ function Recommendation({ model, policy, onPolicy, inflowMonths }: { model: FxMo
                         </td>
                       );
                     })()}
-                    <td className={TD} title={`${eur0(n.liquid)} cash today + ${eur0(p.inflow)} inflow + ${eur0(p.depositsBy)} deposits − ${eur0(p.earlier)} earlier conversions${model.cash ? ` − ${eur0(p.forShekels)} for salaries and vendors` : ''} = ${eur0(p.available)}. Click the row for the workings.`}>
+                    {model.eurVendors && (() => {
+                      const prev = plan.path[plan.path.indexOf(p) - 1];
+                      const here = model.eurVendors.dues.filter((x) => x.date <= p.date && (prev ? x.date > prev.date : true));
+                      return (
+                        <td className={`${TD} text-slate-600`} title={here.length ? here.map((x) => `${formatDay(x.date, true)}: ${formatEur(x.eur)}`).join('\n') : undefined}>
+                          {p.vendors > 0.5 ? <span className={HINT}>{formatEur(p.vendors)}</span> : '–'}
+                        </td>
+                      );
+                    })()}
+                    <td className={TD} title={`${eur0(n.liquid)} cash today + ${eur0(p.inflow)} inflow + ${eur0(p.depositsBy)} deposits − ${eur0(p.earlier)} earlier conversions${model.cash ? ` − ${eur0(p.forShekels)} for salaries and vendors` : ''}${model.eurVendors ? ` − ${eur0(p.forVendors)} EUR vendors` : ''} = ${eur0(p.available)}. Click the row for the workings.`}>
                       <span className={HINT}>{formatEur(p.available)}</span>
                     </td>
                     <td className={`${TD} font-medium ${p.surplus < 0 ? 'text-rose-700' : 'text-emerald-700'}`}
@@ -810,12 +833,12 @@ function Workings({ model, plan, month, inflowMonths, onClose }: { model: FxMode
       </div>
       {model.cash ? (
         <Steps title="Spare now (for a new deposit, or to convert on a good day)"
-          note={`At every due from today to ${formatDay(model.cash.until, true)} (each conversion at the amount kept, each conversion for salaries and vendors), the spare is the euros held then (today's, the typical inflow and the deposits maturing by then, less what fell due before) less what is due and the euros kept for EUR vendors.${moveNote}`}
+          note={`At every due from today to ${formatDay(model.cash.until, true)} (each conversion at the amount kept, each conversion for salaries and vendors${model.eurVendors ? ', the EUR vendor payments on their days' : ''}), the spare is the euros held then (today's, the typical inflow and the deposits maturing by then, less what fell due before) less what is due and the euros kept for EUR vendors.${moveNote}`}
           rows={[
             ['Euro cash today', `The bank's balances: Hapoalim EUR cash ${eur0(n.hapoalim)} + other EUR accounts ${eur0(n.other)}`, eur0(n.liquid)],
-            ['− Kept for EUR vendors', `A month of EUR vendor payments: the average of ${months}`, eur0(n.eurFloor)],
+            ['− Kept for EUR vendors', `A month of EUR vendor payments: the average of ${months}${model.eurVendors ? ', on top of the payments planned on their days' : ''}`, eur0(n.eurFloor)],
             ['= The most that can leave today', '', eur0(n.liquid - n.eurFloor)],
-            ['The tightest due', n.tightest ? `${formatDay(n.tightest.date, true)} (${n.tightest.shekels ? 'salaries and vendors' : 'the conversion'}): its spare` : 'No due in the plan', n.tightest ? eur0(n.tightest.spare) : '–'],
+            ['The tightest due', n.tightest ? `${formatDay(n.tightest.date, true)} (${n.tightest.shekels ? 'salaries and vendors' : n.tightest.vendors ? 'EUR vendor payments' : 'the conversion'}): its spare` : 'No due in the plan', n.tightest ? eur0(n.tightest.spare) : '–'],
             ['Spare now', 'The smaller of the two, never below zero', eur0(n.spare)],
           ]} />
       ) : (
@@ -824,17 +847,19 @@ function Workings({ model, plan, month, inflowMonths, onClose }: { model: FxMode
           [`Keep for ${nextDay}`, `Your setting: ${setting}`, eur0(n.required)],
           ['− Deposits maturing before it', "The bank's deposit dates: paid out by then", eur0(n.maturing)],
           ["= Needed from today's cash", 'What is kept, less those deposits (never below zero)', eur0(n.needLiquid)],
-          ['Free to convert now', 'Cash today, less what is needed from it', eur0(n.freeNow)],
+          ...(n.vendorsBefore > 0.5 ? [['− EUR vendor payments before it', 'Expected on the days they usually go out (the last three months)', `−${eur0(n.vendorsBefore)}`] as [string, string, string]] : []),
+          ['Free to convert now', `Cash today, less what is needed from it${n.vendorsBefore > 0.5 ? ' and the EUR vendor payments before it' : ''}`, eur0(n.freeNow)],
         ]} />
       )}
       <Steps title={`Euros by then (${day})`} rows={[
         ['Euro cash today', 'As above', eur0(n.liquid)],
         ['+ Typical inflow', model.inflow
-          ? `NetSuite's books: ${formatEur(model.inflow.perMonth)} a month net (${months}), about ${formatEur(model.inflow.perDay)} a day × ${p.inflowDays} days, up to the day before`
+          ? `NetSuite's books: ${formatEur(model.inflow.perMonth)} a month net (${months})${model.eurVendors ? ', EUR vendor payments apart (below)' : ''}, about ${formatEur(model.inflow.perDay)} a day × ${p.inflowDays} days, up to the day before`
           : 'Not known: the monthly EUR flows could not be read', eur0(p.inflow)],
         ['+ Deposits maturing by then', `The bank's deposit dates: ${deposits} deposit${deposits === 1 ? '' : 's'} from today to ${day}`, eur0(p.depositsBy)],
         ['− Earlier conversions', earlier.length ? `${earlier.map((x) => `${formatDay(x.date)} ${formatEur(x.required)}`).join(' + ')} (kept at your setting)` : 'None: this is the next conversion', earlier.length ? `−${eur0(p.earlier)}` : '€0'],
         ...(model.cash ? [['− For salaries and vendors', "Converted for net salaries, pension, tax, social security and ILS vendors by then, at today's rate (the table under this card)", p.forShekels > 0.5 ? `−${eur0(p.forShekels)}` : '€0'] as [string, string, string]] : []),
+        ...(model.eurVendors ? [['− EUR vendor payments', 'Expected by then on the days they usually go out: each part of the month at its average of the last three months', p.forVendors > 0.5 ? `−${eur0(p.forVendors)}` : '€0'] as [string, string, string]] : []),
         ['= Euros by then', '', eur0(p.available)],
       ]} />
       <Steps title={`Can be converted before it (${day})`}
@@ -852,6 +877,7 @@ function Workings({ model, plan, month, inflowMonths, onClose }: { model: FxMode
         <li>Money comes in at the average pace; real months are lumpier, so convert as it arrives.</li>
         <li>Each deposit is paid out on its date, not rolled over.</li>
         <li>{model.cash ? "The salaries follow the Salary Projection, and the vendors the last three months' average." : 'These figures say what you can convert, not whether you need the shekels.'}</li>
+        {model.eurVendors && <li>The EUR vendor payments go out as in the last three months: most in the first week, when the conversions take their euros.</li>}
       </ul>
     </div>
   );

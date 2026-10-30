@@ -2,7 +2,7 @@
 // The recommendation itself (planFromPayload, todayActions and their words) is shared with the daily mail.
 import {
   bandIndex, bandLabels, conversionAt, describeAction, describeDue, describeKeep, keepCover, legsAt, nothingToday, pastConversions, planFromPayload, todayActions,
-  type CashPlan, type Conversion, type ConversionLeg, type DealsView, type EurPosition, type Fixing, type FxTable, type KeepCover, type PastMonth, type PastTotals, type Policy,
+  type CashPlan, type Conversion, type ConversionLeg, type DealsView, type EurPosition, type EurVendorsAhead, type Fixing, type FxTable, type KeepCover, type PastMonth, type PastTotals, type Policy,
   type RateCheck, type ReservePlan,
   type ScheduleItem, type ShekelDue, type TodayAction,
 } from '../forecast/fx-challenge.mjs';
@@ -50,6 +50,8 @@ export interface FxModel {
   plan: ReservePlan | null;
   /** The bank's deals behind the plan's days; null while none are saved. */
   deals: DealsView | null;
+  /** The EUR vendor payments the plan expects on their days; null without NetSuite's payments by day. */
+  eurVendors: EurVendorsAhead | null;
   /** Where the amount kept for the next conversion comes from: deposits released by then, and today's cash; text says
    * it in words (empty when no deposit is released by then). */
   keep: (KeepCover & { text: string }) | null;
@@ -111,6 +113,7 @@ export function buildFxModel(data: FxPayload, simRate: number | null, policy: Po
     cash: base.cash,
     plan: base.plan,
     deals: base.deals,
+    eurVendors: base.eurVendors,
     keep: cover ? { ...cover, text: describeKeep(cover, fmt) } : null,
     todo: {
       actions: todo.actions.map((a) => ({ ...a, ...describeAction(a, base, data.today, fmt) })),
