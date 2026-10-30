@@ -2885,11 +2885,15 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
   // EUR vendor payments (vendor payments and checks) out of the EUR bank accounts by day, deposit accounts left out,
   // from `from` (YYYY-MM): when they go out, for the FX Challenge's EUR payments ahead (most in the first week of the
   // month: in September 2026 €624K of €846K by the 7th). A dividend is left out, as in fetchIlsVendorPayments.
-  // Returns [{ date, eur }] (paid, positive).
-  async function fetchEurVendorDays({ from } = {}) {
+  // hapoalim: the part paid from Hapoalim EUR (by default 11001, 583400: the conversions' account, which pays its run on
+  // the month's first Tuesday; PKO EUR pays the larger one around the 3rd).
+  // Returns [{ date, eur, hapoalim }] (paid, positive).
+  async function fetchEurVendorDays({ from, hapoalimAccount = '11001' } = {}) {
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(String(from || ''))) throw new Error(`fetchEurVendorDays: bad month ${from}`);
+    if (!/^\d{3,10}$/.test(String(hapoalimAccount))) throw new Error('fetchEurVendorDays: bad account number');
     const rows = await suiteqlAll(`
-      SELECT TO_CHAR(t.trandate, 'YYYY-MM-DD') AS d, SUM(tal.amount) AS eur
+      SELECT TO_CHAR(t.trandate, 'YYYY-MM-DD') AS d, SUM(tal.amount) AS eur,
+             SUM(CASE WHEN a.acctnumber = '${hapoalimAccount}' THEN tal.amount ELSE 0 END) AS hap
       FROM transactionaccountingline tal
       JOIN transaction t ON t.id = tal.transaction
       JOIN account a ON a.id = tal.account
@@ -2909,8 +2913,9 @@ function createNetSuiteClient(env, subsidiaryId = 3) {
           WHERE e2.transaction = t.id AND e2.posting = 'T' AND ea2.accttype = 'Equity')
       GROUP BY TO_CHAR(t.trandate, 'YYYY-MM-DD')
     `);
-    return rows.map((r) => ({ date: String(r.d || ''), eur: Math.round(-(parseFloat(r.eur) || 0) * 100) / 100 }))
-      .filter((r) => r.eur > 0).sort((a, b) => a.date.localeCompare(b.date));
+    const paid = (x) => Math.round(-(parseFloat(x) || 0) * 100) / 100;
+    return rows.map((r) => ({ date: String(r.d || ''), eur: paid(r.eur), hapoalim: Math.max(0, paid(r.hap)) }))
+      .filter((r) => r.eur > 0).map((r) => ({ ...r, hapoalim: Math.min(r.eur, r.hapoalim) })).sort((a, b) => a.date.localeCompare(b.date));
   }
 
   // GET a RESTlet with the same token (TBA). `script` / `deploy`: the script and deployment ids (numbers, or
