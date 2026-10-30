@@ -630,7 +630,8 @@ export function planReserve({ upcoming, policy = 'p95', eur, inflowPerDay = null
   // (conversionTakes: the business day before the 7th), and what a conversion doesn't take rolls on to the next. What
   // the deposits don't cover is the conversion's gap: euros on hand or coming in fill it, or a new deposit timed for
   // it, paying out the business day before the bank takes the euros (until). The next conversion's gap is the cash to
-  // keep (the keep line), so a deposit is timed for the later ones only.
+  // keep (the keep line), so a deposit is timed for the later ones only. A deposit paying out after the bank takes the
+  // euros but by the 7th (Fri 5 Mar for Sun 7 Mar, taken Thu 4 Mar) is the conversion's `late`: it counts for the next.
   let carried = 0;
   let prior = today;
   const coverage = fx.map((f, i) => {
@@ -640,7 +641,10 @@ export function planReserve({ upcoming, policy = 'p95', eur, inflowPerDay = null
     const released = releasedDeposits.reduce((s, d) => s + d.amount, 0);
     const have = carried + released;
     const until = businessDayOnOrBefore(isoAddDays(takes, -1));
-    const row = { month: f.month, date: f.date, takes, required: req, released, releasedDeposits, carried, have, gap: Math.max(0, req - have), until, timed: i > 0 && daysTo(until) >= LADDER_MIN_DAYS };
+    const row = {
+      month: f.month, date: f.date, from: prior, takes, required: req, released, releasedDeposits, late: releasedBetween(takes, f.date),
+      carried, have, gap: Math.max(0, req - have), until, timed: i > 0 && daysTo(until) >= LADDER_MIN_DAYS,
+    };
     carried = Math.max(0, have - req);
     prior = takes;
     return row;

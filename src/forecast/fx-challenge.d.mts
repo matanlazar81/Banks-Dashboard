@@ -224,6 +224,9 @@ export interface ReservePlan {
 export interface CoverageRow {
   month: string;
   date: string;
+  /** Deposits count for it when they pay out after this day: the day the bank took the previous conversion's euros
+   * (today, for the first). */
+  from: string;
   /** The day the bank takes the euros: the business day before the 7th. */
   takes: string;
   /** What it takes, at the setting (today's band, 95% or the worst case). */
@@ -232,6 +235,9 @@ export interface CoverageRow {
    * first) and by the day it takes this one's. */
   released: number;
   releasedDeposits: DepositRelease[];
+  /** Deposits paying out after the bank takes this conversion's euros but by its 7th: they count for the next one
+   * (Fri 5 Mar for Sun 7 Mar, whose euros go on Thu 4 Mar). */
+  late: DepositRelease[];
   /** Left over from the deposits of the conversions before it. */
   carried: number;
   have: number;
