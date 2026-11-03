@@ -962,12 +962,13 @@ async function testToday(fx) {
   check(fx.nothingToday(fx.duesAhead(cashOn(TODAY)), TODAY, fmt) === `Nothing to do today. Next: convert €${Math.round(7.1e6 / 3.5)} by 2026-11-05 (in 15 days) for October's net salaries and November's ILS vendor payments.`,
     'nothing to do: what comes next, and when');
 
-  // When the mail goes: any day but Saturday, whenever there is a recommendation.
+  // When the mail goes: any day but Saturday, with or without a recommendation.
   const u = [{ kind: 'convert', key: 'convert:2026-11-05', urgent: true, eur: 1e6 }];
   const n1 = [{ kind: 'deposit', key: 'deposit', urgent: false, eur: 500000 }];
   check(mailDecision(u, { today: '2026-10-23' }).send && mailDecision(n1, { today: '2026-10-22' }).send && mailDecision(n1, { today: '2026-10-23' }).send
-    && mailDecision(n1, { today: '2026-10-25' }).send && mailDecision(u, { today: '2026-10-24' }).why === 'Saturday' && mailDecision([], { today: TODAY }).why === 'no recommendations',
-  'a mail every day but Saturday (Friday included) when there is a recommendation, urgent or not, the same as the day before or not; none without one');
+    && mailDecision(n1, { today: '2026-10-25' }).send && mailDecision(u, { today: '2026-10-24' }).why === 'Saturday' && mailDecision([], { today: TODAY }).send
+    && mailDecision([], { today: '2026-10-24' }).why === 'Saturday',
+  'a mail every day but Saturday (Friday included), with or without a recommendation, so a weekday without it means the check did not run');
   check(mailDecision([], { today: '2026-10-24', always: true }).send, 'FX_MAIL_ALWAYS=1: every day, Saturday included');
 }
 
@@ -1174,6 +1175,14 @@ async function testMail(fx) {
   check(!m.html.includes('<b>markup') && !m.text.includes('markup') && m.text.includes('חלק מהנתונים לא נקראו היום'), 'a read that failed is said in Hebrew; nothing from the data reaches the mail unescaped');
   check((m.html.match(/<table/g) || []).length === 2 && m.text.length < 2500 && !/If EUR\/ILS|Can be converted/.test(m.text), 'focused: no tables and no workings (they stay on the page)', String(m.text.length));
   check(m.html.includes('href="https://finance.example/business-tools/fx-challenge"') && m.text.includes('95% מתנודות השער'), 'the page\'s link and the setting used');
+  // A day without a recommendation: the mail goes all the same, and says so.
+  const fxQuiet = { ...fx, todayActions: (v, t) => ({ ...fx.todayActions(v, t), actions: [] }) };
+  const calm = mail.renderMail(fxQuiet, { ...data, warnings: [] }, { policy: 'p95' });
+  const calmPartial = mail.renderMail(fxQuiet, data, { policy: 'p95' });
+  check(/· אין היום המלצות$/.test(calm.subject) && calm.text.includes('אין היום המלצות: כל הנתונים נקראו היום, ואין צורך להמיר, להעביר בין חשבונות או להפקיד.')
+    && calm.text.includes('תשלומים צפויים באירו') && calm.text.includes('המצב היום') && calm.text.includes("נשלח בימים א'–ו', גם כשאין המלצה")
+    && calmPartial.text.includes('אין היום המלצות: לפי מה שנקרא היום אין צורך') && calmPartial.text.includes('חלק מהנתונים לא נקראו היום') && !english(calm.text),
+  'a day without a recommendation: the mail says so, and that every figure was read (or that some were not), with the usual sections', calm.subject);
   const cover = fx.keepCover(fx.planFromPayload(data, 'p95').plan);
   check(cover.covered && /אין צורך לשמור כסף להמרה של שבת 7\.11: הפיקדון שמשתחרר ביום ג' 3\.11 \(€1\.50M\) מכסה את ה-€[\d.]+[KM] שהיא מוכרת מחשבון האירו בפועלים \(95% מתנודות השער\)\./.test(m.text)
     && !m.text.includes('להשאיר €'),

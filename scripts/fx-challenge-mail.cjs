@@ -10,7 +10,8 @@
 //                                                   nothing (--html=<file> also writes the HTML)
 //   node scripts/fx-challenge-mail.cjs --scheduled  the cron, every hour: checks once a day from FX_MAIL_HOUR, Israel
 //                                                   time, so daylight saving needs no change, and sends every day but
-//                                                   Saturday when there is a recommendation (mailDecision). An
+//                                                   Saturday, with or without a recommendation (mailDecision): a
+//                                                   weekday without the mail means the check did not run. An
 //                                                   incomplete read (no balances, no rate) is tried again the next two
 //                                                   hours.
 //
@@ -28,7 +29,7 @@
 //   The mail server: FX_MAIL_SMTP_URL, else NET_CASH_SMTP_URL, else SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS
 //   (the backend's mailer); FX_MAIL_SMTP_HELO, else NET_CASH_SMTP_HELO, else the sender's domain, for Google's relay.
 //
-// Exit codes: 0 sent, skipped (not the hour, checked already, no recommendations) or printed; 1 not sent (the log says why).
+// Exit codes: 0 sent, skipped (not the hour, checked already, Saturday) or printed; 1 not sent (the log says why).
 // ─────────────────────────────────────────────────────────────────────────────
 const fs = require('fs');
 const path = require('path');
@@ -322,8 +323,10 @@ function renderMail(fx, data, { policy = 'today', link = null } = {}) {
     if (said.length) {
       parts.push(list(said.map((s, i) => ({ html: `${strong(s.head, actions[i].urgent ? '#be123c' : '#0f172a')}. ${esc(s.body)}`, text: `${s.head}. ${s.body}` }))));
     } else {
+      // A day without a recommendation says so, and that the figures were read (else the note below says what was not).
       const last = todo.ahead.dues[todo.ahead.dues.length - 1];
-      const s = last ? `אין היום המלצות: היתרה בשקלים וההמרות מכסות את התשלומים עד ${day(last.date)}.` : 'אין היום המלצות.';
+      const read = data.warnings && data.warnings.length ? 'לפי מה שנקרא היום אין' : 'כל הנתונים נקראו היום, ואין';
+      const s = `אין היום המלצות: ${read} צורך להמיר, להעביר בין חשבונות או להפקיד.${last ? ` היתרה בשקלים וההמרות מכסות את התשלומים בשקלים עד ${day(last.date)}.` : ''}`;
       parts.push(para(esc(s), s, 'font-size:15px;'));
     }
     title = said.length ? said[0].head : 'אין היום המלצות';
@@ -369,7 +372,7 @@ function renderMail(fx, data, { policy = 'today', link = null } = {}) {
   const asOf = b && b.asOf ? `, ${new Date(b.asOf).toLocaleString('en-GB', { timeZone: 'Asia/Jerusalem', day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' })}` : '';
   const footer = [];
   if (link) footer.push({ html: `הפירוט המלא בדף: <a href="${esc(link)}" style="color:#0369a1;">FX Challenge</a>`, text: `הפירוט המלא בדף: ${link}` });
-  const about = `יתרות: ${b ? `${SOURCE[b.source]}${asOf}` : 'לא נקראו'}. שער: HSBC ב-NetSuite. נשלח בימים א'–ו' כשיש המלצה (scripts/fx-challenge-mail.cjs).`;
+  const about = `יתרות: ${b ? `${SOURCE[b.source]}${asOf}` : 'לא נקראו'}. שער: HSBC ב-NetSuite. נשלח בימים א'–ו', גם כשאין המלצה (scripts/fx-challenge-mail.cjs).`;
   footer.push({ html: esc(about), text: about });
 
   const subject = `FX ${day(today)} · ${heads.length ? heads.slice(0, 2).join(' · ') : title}`;
@@ -378,14 +381,14 @@ function renderMail(fx, data, { policy = 'today', link = null } = {}) {
 }
 
 /**
- * Whether the daily mail goes today: on any day but Saturday (the bank works Sunday to Friday), when there is at least
- * one recommendation (todayActions); never without one. always (FX_MAIL_ALWAYS=1): every day, Saturday included, with
- * or without. Returns { send, why } (why: when it doesn't).
+ * Whether the daily mail goes today: on any day but Saturday (the bank works Sunday to Friday), with or without a
+ * recommendation, so a quiet day says so ("אין היום המלצות") and a weekday without the mail means the check did not
+ * run (finance's ask, 3 Nov 2026). always (FX_MAIL_ALWAYS=1): Saturday too. Returns { send, why } (why: when it doesn't).
  */
 function mailDecision(actions, { today, always = false }) {
   if (always) return { send: true, why: null };
   if (offDay(today)) return { send: false, why: 'Saturday' };
-  return actions.length ? { send: true, why: null } : { send: false, why: 'no recommendations' };
+  return { send: true, why: null };
 }
 
 /** When nothing could be read: a short mail saying so. */
@@ -575,7 +578,7 @@ async function main(argv = process.argv.slice(2), deps = {}) {
     return 0;
   }
   const mail = data ? renderMail(fx, data, { policy: cfg.policy, link: cfg.link }) : failureMail(today, failure);
-  // A mail only with a recommendation; a read that failed is always said.
+  // A mail every day but Saturday; a read that failed is always said.
   const decision = complete ? mailDecision(mail.actions, { today, always }) : { send: true, why: null };
 
   if (args.dryRun) {
