@@ -515,7 +515,10 @@ async function sendNow(deps = {}) {
   const fx = await fxs.loadFxModule();
   let data;
   try {
-    data = await fxs.readFxChallenge({ reads: deps.reads || fxs.defaultNsReads(), tableDoc: readDoc(deps.tableFile || fxs.TABLE_FILE), positionsDoc: readDoc(deps.positionsFile || fxs.POSITIONS_FILE), clock: () => now });
+    data = await fxs.readFxChallenge({
+      reads: deps.reads || fxs.defaultNsReads(), tableDoc: readDoc(deps.tableFile || fxs.TABLE_FILE), positionsDoc: readDoc(deps.positionsFile || fxs.POSITIONS_FILE),
+      clock: () => now, depositsFile: path.join(path.dirname(deps.markerFile || MARKER_FILE), fxs.DEPOSITS_SEEN),
+    });
   } catch (e) {
     return { ok: false, status: 502, error: `NetSuite could not be read (${String((e && e.message) || e).slice(0, 200)}).` };
   }
@@ -568,7 +571,10 @@ async function main(argv = process.argv.slice(2), deps = {}) {
   let data = null;
   let failure = null;
   try {
-    data = await fxs.readFxChallenge({ reads: deps.reads || fxs.defaultNsReads(), tableDoc: readDoc(deps.tableFile || fxs.TABLE_FILE), positionsDoc: readDoc(deps.positionsFile || fxs.POSITIONS_FILE), clock: () => now });
+    data = await fxs.readFxChallenge({
+      reads: deps.reads || fxs.defaultNsReads(), tableDoc: readDoc(deps.tableFile || fxs.TABLE_FILE), positionsDoc: readDoc(deps.positionsFile || fxs.POSITIONS_FILE),
+      clock: () => now, depositsFile: path.join(path.dirname(markerFile), fxs.DEPOSITS_SEEN),
+    });
   } catch (e) {
     failure = e;
   }

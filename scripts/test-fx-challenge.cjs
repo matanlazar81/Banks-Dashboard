@@ -645,6 +645,21 @@ function testEurVendors(fx) {
   const nov3total = mail.paymentsTotal({ until: '2026-12-08', payments: [], total: 1.67e6, byKind: { vendors: 572000, conversion: 1.1e6, shekels: 0, forward: 0 } },
     { plan: counted, position: fx.eurPosition(nov3rows), inflow: null }, '2026-11-03');
   check(nov3total.includes('€806K מפיקדונות שמשתחררים עד אז'), 'the mail counts them among the deposits paying out by then', nov3total);
+  // On their payout day the bank shows the deposits at 0 (3 Nov 2026, as it was): their last value stands in until
+  // Hapoalim's balance has them.
+  const cur = (asOf) => ({ company: 'LSports', bank: 'Bank Hapoalim', kind: 'current', currency: 'EUR', amount: 648000, asOf });
+  const dep = (amount, valueDate) => ({ company: 'LSports', bank: 'Bank Hapoalim', kind: 'deposit', currency: 'EUR', amount, valueDate, label: 'fixed-term' });
+  const mon = fxs.payingDeposits([cur('2026-11-01'), dep(300000, '2026-11-03'), dep(300000, '2026-11-03'), dep(206000, '2026-11-03'), dep(203122, '2026-12-03')], '2026-11-02', {});
+  const tue = fxs.payingDeposits([cur('2026-11-02'), dep(0, '2026-11-03'), dep(0, '2026-11-03'), dep(0, '2026-11-03'), dep(203122, '2026-12-03')], '2026-11-03', mon.store);
+  const wed = fxs.payingDeposits([cur('2026-11-03'), dep(0, '2026-11-03'), dep(203122, '2026-12-03')], '2026-11-04', tue.store);
+  const blind = fxs.payingDeposits([cur('2026-11-02'), dep(0, '2026-11-03')], '2026-11-03', {});
+  const paying = tue.rows.filter((r) => r.kind === 'deposit' && r.valueDate === '2026-11-03');
+  check(same(mon.store['LSports|EUR|2026-11-03'], { amount: 806000, count: 3, seen: '2026-11-02' }) && paying.length === 3 && near(paying.reduce((x, r) => x + r.amount, 0), 806000)
+    && /3 EUR deposit\(s\) paying out on 2026-11-03 show 0 at the bank/.test(tue.notes[0]) && same(tue.store['LSports|EUR|2026-11-03'], mon.store['LSports|EUR|2026-11-03'])
+    && !wed.rows.some((r) => r.valueDate === '2026-11-03') && !blind.rows.some((r) => r.kind === 'deposit') && !blind.notes.length
+    && fx.planReserve({ ...nov3, eur: fx.eurPosition(tue.rows) }).next.runsOut.date === '2026-12-07',
+  'a deposit the bank shows at 0 on its payout day counts at its last value until Hapoalim\'s balance has it (3 Nov: €806K, the 4 Nov conversion met); not the day after, nor without a value seen',
+  JSON.stringify(tue.notes));
   const thin = fx.planReserve({ ...oct30, eur: { ...oct30.eur, hapoalim: 100000, deposits: [{ amount: 500000, valueDate: '2026-11-03', label: 'EUR fixed-term' }] } });
   const part = fx.keepCover(thin);
   check(thin.next.moveToHapoalim === 361000 && part.fromCash === 461000
@@ -1066,7 +1081,7 @@ async function testHandler(fx) {
   const rateDays = [];
   const rates = fxReads.rates;
   fxReads.rates = async (days) => { rateDays.push(days); return rates(); };
-  const h = fxs.createFxChallengeHandler({ reads: fxReads, tableFile, clock: () => NOW });
+  const h = fxs.createFxChallengeHandler({ reads: fxReads, tableFile, positionsFile: path.join(path.dirname(tableFile), 'positions.json'), clock: () => NOW });
 
   const a = (await call(h)).body;
   check(a.ok && a.status === 'ready' && a.today === TODAY, 'answers on its own route');
@@ -1100,7 +1115,7 @@ async function testHandler(fx) {
   const wrong = await call(h, { method: 'PUT', body: {} });
   check(wrong.status === 405, 'the page\'s data is read-only (PUT → 405)');
   const down = async () => { throw new Error('NetSuite down'); };
-  const broken = fxs.createFxChallengeHandler({ reads: { rates: down, books: down, mail: null, flows: down, conversions: down }, tableFile, clock: () => NOW });
+  const broken = fxs.createFxChallengeHandler({ reads: { rates: down, books: down, mail: null, flows: down, conversions: down }, tableFile, positionsFile: path.join(path.dirname(tableFile), 'positions.json'), clock: () => NOW });
   const e = (await call(broken)).body;
   check(e.ok && e.rates.spot === null && e.balances === null && e.warnings.length === 4, 'every read failing → still an answer, with four warnings');
 

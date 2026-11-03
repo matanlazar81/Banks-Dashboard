@@ -41,6 +41,8 @@ const POSITIONS_FILE = path.join(ROOT, 'data', 'fx-challenge-positions.json');
 /** The daily mail's recipients as saved on the page, and when it last went (scripts/fx-challenge-mail.cjs). */
 const MAIL_FILE = path.join(ROOT, 'data', 'fx-challenge-mail.json');
 const MAIL_SENT_FILE = path.join(ROOT, 'data', 'fx-challenge-mail-last.json');
+// The deposits' last values, for their payout day (payingDeposits): next to the saved deals.
+const DEPOSITS_SEEN = 'fx-challenge-deposits-seen.json';
 let moduleP = null;
 function loadFxModule() {
   if (!moduleP) {
@@ -116,6 +118,53 @@ function mailRows(body) {
     });
   }
   return { rows, dropped, builtAt: typeof body.builtAt === 'string' ? body.builtAt : null, notes: Array.isArray(body.notes) ? body.notes.filter((n) => typeof n === 'string').slice(0, 10) : [] };
+}
+
+/**
+ * Deposits on their payout day. Hapoalim shows a deposit at 0 once it pays out, before the payment is in the account's
+ * balance (the closing balance of the day before): on 3 Nov 2026 three EUR deposits (€806K) read 0 the day they paid
+ * out, the day before the conversion, and the plan read €451K short. Until the balance has them (their day after the
+ * Hapoalim balance's of that company and currency), the last value seen for that company's deposits of that currency
+ * and day stands in for them, split evenly. store: { 'company|currency|day': { amount, count, seen } } from earlier
+ * reads; a day whose deposits all show a value is kept, back to a week ago. Returns { rows, store, notes }.
+ */
+function payingDeposits(rows, today, store = {}) {
+  const companyOf = (r) => r.company || 'LSports';
+  const keyOf = (r) => `${companyOf(r)}|${r.currency}|${r.valueDate}`;
+  const balanceDay = (company, currency) => rows
+    .filter((r) => r.kind === 'current' && companyOf(r) === company && r.currency === currency && /hapoalim|poalim/i.test(String(r.bank || '')))
+    .map((r) => String(r.asOf || '').slice(0, 10)).filter(isIso).sort()[0] || isoDaysBefore(today, 1);
+  const groups = new Map();
+  for (const r of rows) if (r.kind === 'deposit' && isIso(r.valueDate)) groups.set(keyOf(r), [...(groups.get(keyOf(r)) || []), r]);
+  const next = {};
+  for (const [k, v] of Object.entries(store || {})) if (v && Number(v.amount) > 0 && k.slice(-10) >= isoDaysBefore(today, 7)) next[k] = v;
+  const out = rows.filter((r) => !(r.kind === 'deposit' && !(Number(r.amount) > 0)));
+  const notes = [];
+  for (const [k, g] of groups) {
+    const zero = g.filter((r) => !(Number(r.amount) > 0));
+    const shown = g.reduce((s, r) => s + Math.max(0, Number(r.amount) || 0), 0);
+    if (!zero.length) {
+      next[k] = { amount: shown, count: g.length, seen: today };
+      continue;
+    }
+    const r0 = zero[0];
+    const seen = next[k];
+    if (!(r0.valueDate > balanceDay(companyOf(r0), r0.currency)) || !seen || !(seen.amount > shown + 0.5)) continue;
+    const each = (seen.amount - shown) / zero.length;
+    for (const r of zero) out.push({ ...r, amount: each, label: r.label || 'paying out' });
+    notes.push(`${zero.length} ${r0.currency} deposit(s) paying out on ${r0.valueDate} show 0 at the bank until the payment is in the account: counted at ${Math.round(seen.amount - shown)}, their value on ${seen.seen}.`);
+  }
+  return { rows: out, store: next, notes };
+}
+
+const readJson = (file) => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } };
+function writeJson(file, value) {
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(value));
+  } catch (e) {
+    console.warn(`[fx-challenge] ${path.basename(file)} not written: ${e && e.message}`);
+  }
 }
 
 // ── the saved table ─────────────────────────────────────────────────────────
@@ -384,7 +433,7 @@ function createFxMailSendHandler(deps = {}) {
  *   tableDoc  the saved table document ({ value: table | null, updatedAt, updatedBy }) or null
  *   positionsDoc  the saved deals' document (the same shape), or null
  */
-async function readFxChallenge({ reads, cached = (k, fn) => fn(), tableDoc = null, positionsDoc = null, clock = Date.now }) {
+async function readFxChallenge({ reads, cached = (k, fn) => fn(), tableDoc = null, positionsDoc = null, clock = Date.now, depositsFile = null }) {
   const fx = await loadFxModule();
   const mail = reads.mail;
   const nowMs = clock();
@@ -425,7 +474,11 @@ async function readFxChallenge({ reads, cached = (k, fn) => fn(), tableDoc = nul
   if (mail && mailBody !== undefined) {
     try {
       const m = mailRows(mailBody);
-      balances = { source: 'mail', asOf: m.builtAt, rows: m.rows, notes: m.notes };
+      // Deposits on their payout day show 0 at the bank: their last value stands in (payingDeposits), remembered in
+      // depositsFile from read to read.
+      const paid = depositsFile ? payingDeposits(m.rows, today, readJson(depositsFile) || {}) : { rows: m.rows, notes: [] };
+      if (depositsFile) writeJson(depositsFile, paid.store);
+      balances = { source: 'mail', asOf: m.builtAt, rows: paid.rows, notes: [...m.notes, ...paid.notes] };
       if (m.dropped) warnings.push(`${m.dropped} balance row(s) from the mail's sources did not fit and were left out.`);
     } catch (e) {
       console.warn(`[fx-challenge] mail balances unusable: ${e && e.message}`);
@@ -549,7 +602,9 @@ function createFxChallengeHandler(deps = {}) {
     } catch { /* plain read */ }
     if (refresh) memo.clear();
     try {
-      send(res, 200, await readFxChallenge({ reads, cached, tableDoc: readDoc(tableFile), positionsDoc: readDoc(positionsFile), clock }));
+      send(res, 200, await readFxChallenge({
+        reads, cached, tableDoc: readDoc(tableFile), positionsDoc: readDoc(positionsFile), clock, depositsFile: path.join(path.dirname(positionsFile), DEPOSITS_SEEN),
+      }));
     } catch (e) {
       console.error(`[fx-challenge] failed: ${e && e.stack ? e.stack : e}`);
       send(res, 200, { ok: false, status: 'error', error: 'The FX Challenge could not be read. The server log has the details.' });
@@ -598,6 +653,6 @@ function createFxChallengeRouter(deps = {}) {
 module.exports = {
   createFxChallengeRouter, createFxChallengeHandler, createFxTableHandler, createFxPositionsHandler, createFxMailHandler, createFxMailSendHandler, readMailMarker,
   validateTable, validatePositions, validateMailSettings,
-  readFxChallenge, readSalaryProjection, nsReads, defaultNsReads, restletIds, bookRow, mailRows, israelDay, loadFxModule,
+  readFxChallenge, readSalaryProjection, nsReads, defaultNsReads, restletIds, bookRow, mailRows, payingDeposits, israelDay, loadFxModule, DEPOSITS_SEEN,
   splitAddresses, mailHourOf, savedRecipients, checkoutEnv, LSPORTS_ADDRESS, TABLE_FILE, POSITIONS_FILE, MAIL_FILE, MAIL_SENT_FILE,
 };
