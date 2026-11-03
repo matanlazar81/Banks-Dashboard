@@ -64,6 +64,11 @@ briefly a tab of the Metrics page before it got its own sidebar item.
     `balanceDay`, `plan.next.depositsAfter`): that balance is the bank's closing balance of the day before the read,
     so a deposit paying out today is not in it yet. On 3 Nov 2026 three deposits (€806K) paid out the day before the
     conversion; counted only after today, they were in neither, and the mail read €451K short and €572K to move.
+  - On its payout day the bank already shows the deposit at 0. The server keeps each deposit day's last value
+    (`payingDeposits`, `data/fx-challenge-deposits-seen.json`, by company, currency and day, written at every read of
+    the balances, a week back), and until the Hapoalim balance has the payment, that value stands in for the deposits
+    showing 0, with a note ("3 EUR deposit(s) paying out on 2026-11-03 show 0 at the bank …: counted at 806000, their
+    value on …"). With no value seen before (the first read after a deploy), they count for nothing.
   - The keep line (and the mail's) is what today's cash has to keep: what the conversion takes, less the deposits
     released by then (`keepCover`, `describeKeep`), and the EUR vendor payments Hapoalim EUR makes itself in the
     conversion's month before its euros leave (`hapoalimVendors`: the same account pays them; its first-week run goes
