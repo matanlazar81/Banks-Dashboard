@@ -615,9 +615,18 @@ function testEurVendors(fx) {
   const quiet = fx.todayActions({ plan: dipped, cash: null, rateCheck: null }, '2026-10-30');
   const dry = fx.planReserve({ ...oct30, eur: { ...oct30.eur, hapoalim: 100000, other: 0 } });
   const urgent = fx.todayActions({ plan: dry, cash: null, rateCheck: null }, '2026-10-30');
-  check(quiet.actions.length === 0 && dry.next.runsOut && dry.next.runsOut.eur === 495000 && dry.next.runsOut.date === '2026-11-01' && dry.next.runsOut.vendors
+  const dipSaid = quiet.actions[0] ? [mail.actionText(quiet.actions[0], { plan: dipped, rateCheck: null }, '2026-10-30'),
+    fx.describeAction(quiet.actions[0], { plan: dipped, rateCheck: null }, '2026-10-30', { eur: (x) => `€${Math.round(x / 1000)}K`, ils: (x) => `₪${Math.round(x / 1000)}K`, day: (d) => d, rate: (r) => r.toFixed(3) })] : [];
+  check(same(quiet.actions.map((a) => [a.kind, a.urgent, a.eur, a.date, a.left, a.back]), [['dip', false, 152000, '2026-11-01', 531000, '2026-11-02']])
+    && dry.next.runsOut && dry.next.runsOut.eur === 495000 && dry.next.runsOut.date === '2026-11-01' && dry.next.runsOut.vendors
     && same(urgent.actions.map((a) => [a.kind, a.urgent, a.eur, a.date]), [['short', true, 495000, '2026-11-01']]),
-  'the dip alone is no recommendation; euros that run out (€100K held: €495K short on Sun 1 Nov, the floor spent too) are, urgent', JSON.stringify(urgent.actions));
+  'the dip is a top-line line of its own (€152K below the €683K on Sun 1 Nov, €531K held, back by Mon 2 Nov), not urgent; euros that run out are a shortfall instead, urgent (€100K held: €495K short)',
+  JSON.stringify([quiet.actions, urgent.actions]));
+  check(dipSaid.length === 2 && dipSaid[0].head === 'היתרה באירו יורדת €152K מתחת ל-€683K ביום א\' 1.11'
+    && dipSaid[0].body === 'כל התשלומים מכוסים (נשארים €531K), אבל זה מתחת לסכום שנשמר תמיד לספקים באירו, והיתרה חוזרת מעליו עד יום ב\' 2.11. עד אז לא להפקיד ולא להמיר מעבר למתוכנן.'
+    && dipSaid[1].head === 'Euros €152K below the €683K kept on 2026-11-01'
+    && dipSaid[1].body === 'Every payment is met (€531K held then), but below what is kept for EUR vendors; back above it by 2026-11-02. Until then, no new deposit and no extra conversion.',
+  'the dip in words: the mail\'s and the page\'s', JSON.stringify(dipSaid));
   // Hapoalim EUR pays €161K of the first week itself, before the euros leave for the conversion: it keeps them too.
   const kept = fx.keepCover(dipped);
   const words = { eur: (x) => `€${Math.round(x / 1000)}K`, day: (iso) => iso };
@@ -921,8 +930,11 @@ async function testToday(fx) {
     && kinds(fx.todayActions(view('2026-11-01', { next: { short: dip, runsOut } }), '2026-11-01')).includes('short!:2026-11-07')
     && !kinds(fx.todayActions(view(TODAY, { next: { short: dip, runsOut: { ...runsOut, eur: 13000 } } }), TODAY)).some((k) => k.startsWith('short')),
   'a shortfall (the euros run out): said when it opens, urgent in its last week; under €50K not at all');
-  check(!kinds(fx.todayActions(view('2026-11-01', { next: { short: dip, runsOut: null } }), '2026-11-01')).some((k) => k.startsWith('short') || k.startsWith('deposit')),
-    'a dip into the floor kept for EUR vendors alone is no shortfall (and no new deposit either)');
+  const dipOnly = kinds(fx.todayActions(view('2026-11-01', { next: { short: dip, runsOut: null } }), '2026-11-01'));
+  check(dipOnly.includes('dip:2026-11-07') && !dipOnly.some((k) => k.startsWith('short') || k.startsWith('deposit'))
+    && !kinds(fx.todayActions(view('2026-11-01', { next: { short: dip, runsOut } }), '2026-11-01')).some((k) => k.startsWith('dip'))
+    && !kinds(fx.todayActions(view('2026-11-01', { next: { short: { ...dip, eur: 30000 }, runsOut: null } }), '2026-11-01')).some((k) => k.startsWith('dip')),
+  'a dip into the floor kept for EUR vendors alone is a dip, not a shortfall (and no new deposit); with a shortfall, only the shortfall; under €50K, nothing', JSON.stringify(dipOnly));
   check(same(kinds(fx.todayActions(view('2026-11-04', { next: { moveToHapoalim: 300000 } }), '2026-11-04')).filter((k) => k.startsWith('move')), ['move!:2026-11-07'])
     && !kinds(fx.todayActions(view(TODAY, { next: { moveToHapoalim: 300000 } }), TODAY)).some((k) => k.startsWith('move')),
   'euros to move to Hapoalim EUR: urgent in the last business days before the conversion (a Saturday one counts from the Thursday), not before');

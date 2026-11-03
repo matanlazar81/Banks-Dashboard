@@ -1309,8 +1309,10 @@ function cashPlanOf(data, today, spot, upcoming, schedule, policy, forwards = []
  *                  `notice` business days before it has to be ready (finance converts at once; asked on 27 Oct 2026,
  *                  as the figure moves until then), urgent. Never earlier, whatever the rate (finance asked the same
  *                  day for no early conversion on a high EUR/ILS)
- *   short          the euros held and expected don't meet a due, the floor kept for EUR vendors spent too (a dip into the
- *                  floor alone is none): urgent within `lead` business days
+ *   short          the euros held and expected don't meet a due, the floor kept for EUR vendors spent too: urgent within
+ *                  `lead` business days
+ *   dip            the euros fall below that floor, every payment still met: how deep, what is held then and when they
+ *                  are back above it (no new deposit or extra conversion until then)
  *   move           the conversion day is within `moveLead` business days and Hapoalim EUR holds less than to keep there
  *   ladder         a conversion the deposits don't cover (first in, first out): spare euros into deposits that pay out
  *                  just before it, earliest first
@@ -1332,13 +1334,18 @@ export function todayActions(view, today, { lead = 5, moveLead = 3, minEur = 500
     // Earlier it is only among the payments ahead.
     if (left <= notice) actions.push({ kind: 'convert', key: `convert:${d.date}`, urgent: left < lead, eur: d.eur, by: d.by, left, due: d });
   }
-  // Short only when the euros run out: a dip into the floor kept for EUR vendors leaves the payments met (the mail and
-  // the page say how deep, and when it is back).
+  // Short only when the euros run out: a dip into the floor kept for EUR vendors leaves the payments met.
   const out = n.runsOut;
   if (out && out.eur >= minEur) {
     const by = businessDayOnOrBefore(out.date);
     const left = businessDaysBetween(today, by);
     actions.push({ kind: 'short', key: `short:${out.date}`, urgent: left < lead, eur: out.eur, date: out.date, by, left, shekels: out.shekels, vendors: !!out.vendors });
+  }
+  // The dip itself, said at the top too (finance's ask, 3 Nov 2026): how deep, what is held then and when the euros are
+  // back above the floor, so nothing is deposited or converted on top until then. Not when they run out at all.
+  const dip = !out && n.short;
+  if (dip && dip.eur >= minEur) {
+    actions.push({ kind: 'dip', key: `dip:${dip.date}`, urgent: false, eur: dip.eur, date: dip.date, left: dip.left, back: dip.back, floor: n.eurFloor });
   }
   // The euros have to be in Hapoalim EUR by the day the first of them leave (the deals' value day, else the day before).
   const fixingBy = n.takes || conversionTakes(n.date);
@@ -1419,8 +1426,15 @@ export function describeAction(a, view, today, fmt) {
     }
     return { head: `Convert ${eur(a.eur)} ${now ? 'today' : `by ${day(a.by)}`}`, body };
   }
+  if (a.kind === 'dip') {
+    const back = a.back ? `; back above it by ${day(a.back)}` : '';
+    return {
+      head: `Euros ${eur(a.eur)} below the ${eur(a.floor)} kept on ${day(a.date)}`,
+      body: `Every payment is met (${eur(a.left)} held then), but below what is kept for EUR vendors${back}. ${a.back ? 'Until then' : 'For now'}, no new deposit and no extra conversion.`,
+    };
+  }
   if (a.kind === 'short') {
-    // The euros run out (the floor kept for EUR vendors spent too): a dip into the floor alone is no action.
+    // The euros run out, the floor kept for EUR vendors spent too (a dip into the floor alone is the dip above).
     const what = a.shekels ? 'the conversion for shekels due then' : a.vendors ? 'the EUR vendor payments expected then' : `the ${day(a.date)} conversion`;
     const fix = n.backup > 0 ? ` Be ready to break up to ${eur(Math.min(a.eur, n.backup))} of the deposits maturing later.` : ' Keep every spare euro until then.';
     const floor = n.eurFloor > 0.5 ? `, even with the ${eur(n.eurFloor)} kept for EUR vendors spent` : '';

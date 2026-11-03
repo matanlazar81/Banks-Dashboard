@@ -151,9 +151,12 @@ briefly a tab of the Metrics page before it got its own sidebar item.
     earlier (`notice`), whatever the rate. Finance converts at once, and the figure moves until then; before that,
     the payment is only in the payments ahead. (An early conversion on a high EUR/ILS was dropped on 27 Oct 2026.)
   - **Short**: the euros held and expected don't meet a due even with the EUR floor spent (`runsOut`: they run out;
-    urgent in its last 5 business days). A dip into the floor alone is no recommendation (the euros kept for EUR vendors
-    are a buffer: the payments are met); the mail's payments section and the page say how deep it goes, what is still
-    held and when the euros are back above it.
+    urgent in its last 5 business days).
+  - **Dip**: the euros fall below the floor kept for EUR vendors, every payment still met (the floor is a buffer):
+    a top line of its own, not in red (finance's ask, 3 Nov 2026): how deep, what is still held and when the euros are
+    back above it, and no new deposit or extra conversion until then ("היתרה באירו יורדת €152K מתחת ל-€683K ביום א'
+    1.11. כל התשלומים מכוסים (נשארים €531K), אבל זה מתחת לסכום שנשמר תמיד לספקים באירו, והיתרה חוזרת מעליו עד יום ב'
+    2.11. עד אז לא להפקיד ולא להמיר מעבר למתוכנן."). Not when the euros run out (that is the shortfall), nor under €50K.
   - **Move** euros to Hapoalim EUR in the last 3 business days before the bank takes the euros (the business day
     before the 7th), when it holds less than to keep there, its own EUR vendor payments before then included.
   - **Deposits for the conversions the deposits leave short** (`ladder`): "Put €440K in deposits for the January to
