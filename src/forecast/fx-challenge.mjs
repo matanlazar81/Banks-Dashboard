@@ -597,12 +597,16 @@ export function eurPosition(rows) {
   const eur = (rows || []).filter((r) => r && r.currency === 'EUR' && (!r.company || /lsports/i.test(r.company)));
   const isHapoalim = (r) => /hapoalim|poalim/i.test(String(r.bank || ''));
   const sum = (xs) => xs.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+  // The day Hapoalim's EUR balance is for: the bank's closing balance, the day before the morning's read (the earliest,
+  // if there are several). A deposit paying out after it is not in it yet.
+  const days = eur.filter((r) => r.kind === 'current' && isHapoalim(r)).map((r) => String(r.asOf || '').slice(0, 10)).filter(isIso).sort();
   return {
     hapoalim: Math.max(0, sum(eur.filter((r) => r.kind === 'current' && isHapoalim(r)))),
     other: Math.max(0, sum(eur.filter((r) => r.kind === 'current' && !isHapoalim(r)))),
     deposits: eur.filter((r) => r.kind === 'deposit' && Number(r.amount) > 0).map((r) => ({
       amount: Number(r.amount), valueDate: isIso(r.valueDate) ? r.valueDate : null, blocked: r.blocked === true, label: r.label || r.bank || 'Deposit',
     })),
+    balanceDay: days.length ? days[0] : null,
   };
 }
 
@@ -938,7 +942,11 @@ export function planReserve({ upcoming, policy = 'p95', eur, inflowPerBusinessDa
   const forIls = (shekels || []).filter((s) => s && s.eur > 0 && s.date >= today);
   const shekelsBy = (date) => forIls.filter((s) => s.date <= date).reduce((s, x) => s + x.eur, 0);
   const usable = (eur.deposits || []).filter((d) => d.amount > 0 && !d.blocked);
-  const maturingBy = (date) => usable.filter((d) => d.valueDate && d.valueDate > today && d.valueDate <= date).reduce((s, d) => s + d.amount, 0);
+  // A deposit counts from the day after Hapoalim's balance is for (eur.balanceDay: the closing balance before today's):
+  // one paying out today is not in it yet, so it still comes in (3 Nov 2026: €806K paying out the day before the
+  // conversion). Without that day, from tomorrow.
+  const counted = isIso(eur.balanceDay) && eur.balanceDay < today ? eur.balanceDay : today;
+  const maturingBy = (date) => usable.filter((d) => d.valueDate && d.valueDate > counted && d.valueDate <= date).reduce((s, d) => s + d.amount, 0);
   const daysTo = (date) => Math.round((utc(date) - utc(today)) / DAY_MS);
   // The typical inflow up to the day before `date`, on business days only (Sunday to Friday).
   const inflowBy = (date) => (inflowPerBusinessDay == null ? 0 : inflowPerBusinessDay * receiptDaysBetween(today, date));
@@ -976,7 +984,7 @@ export function planReserve({ upcoming, policy = 'p95', eur, inflowPerBusinessDa
   // and at every later one, so what can be converted (or deposited) before a fixing, in total, is the smallest spare
   // from that fixing on.
   let before = 0;
-  let from = today;
+  let from = counted;
   const path = fx.map((f) => {
     const req = reqOf(f);
     // Its parts, kept so the page can show the sum: inflow up to the day before, deposits matured by the day,
@@ -1013,6 +1021,8 @@ export function planReserve({ upcoming, policy = 'p95', eur, inflowPerBusinessDa
   const next = {
     month: f0.month, date: f0.date, required, todayAmount, hapoalim, other, liquid, maturing, backup,
     needLiquid, needLiquidWithBackup, shekelsBefore, vendorsBefore, hapoalimVendors, eurFloor: keep,
+    // Deposits paying out after this day count as coming in (today, or the day Hapoalim's balance is for, if earlier).
+    depositsAfter: counted,
     // On today's balances only: what is held now, less what the reserve still needs from it and the EUR vendor payments
     // before it.
     freeNow: Math.max(0, liquid - needLiquid - vendorsBefore),
@@ -1092,7 +1102,7 @@ export function planReserve({ upcoming, policy = 'p95', eur, inflowPerBusinessDa
   // ones only. A deposit paying out after a conversion's euros have all left but by the 7th is its `late`: it counts for
   // the next one.
   let carried = 0;
-  let prior = today;
+  let prior = counted;
   const coverage = fx.map((f, i) => {
     const req = reqOf(f);
     const from = prior;

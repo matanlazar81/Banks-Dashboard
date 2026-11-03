@@ -60,6 +60,10 @@ briefly a tab of the Metrics page before it got its own sidebar item.
   - It is paid from Hapoalim EUR (583400); the other EUR accounts can be moved there before the day.
   - EUR deposits that mature before the fixing count for it; later ones are the backup (broken early only
     if needed). Without the mail's balances there are no dates, so every deposit is backup.
+  - A deposit counts as coming in from the day after the day Hapoalim's EUR balance is for (`eurPosition`'s
+    `balanceDay`, `plan.next.depositsAfter`): that balance is the bank's closing balance of the day before the read,
+    so a deposit paying out today is not in it yet. On 3 Nov 2026 three deposits (€806K) paid out the day before the
+    conversion; counted only after today, they were in neither, and the mail read €451K short and €572K to move.
   - The keep line (and the mail's) is what today's cash has to keep: what the conversion takes, less the deposits
     released by then (`keepCover`, `describeKeep`), and the EUR vendor payments Hapoalim EUR makes itself in the
     conversion's month before its euros leave (`hapoalimVendors`: the same account pays them; its first-week run goes
@@ -143,8 +147,8 @@ briefly a tab of the Metrics page before it got its own sidebar item.
     the payment is only in the payments ahead. (An early conversion on a high EUR/ILS was dropped on 27 Oct 2026.)
   - **Short**: the euros held and expected don't meet a due even with the EUR floor spent (`runsOut`: they run out;
     urgent in its last 5 business days). A dip into the floor alone is no recommendation (the euros kept for EUR vendors
-    are a buffer: the payments are met), so it sends no mail; the mail's payments section and the page say how deep
-    it goes, what is still held and when the euros are back above it.
+    are a buffer: the payments are met); the mail's payments section and the page say how deep it goes, what is still
+    held and when the euros are back above it.
   - **Move** euros to Hapoalim EUR in the last 3 business days before the bank takes the euros (the business day
     before the 7th), when it holds less than to keep there, its own EUR vendor payments before then included.
   - **Deposits for the conversions the deposits leave short** (`ladder`): "Put €440K in deposits for the January to
@@ -154,7 +158,7 @@ briefly a tab of the Metrics page before it got its own sidebar item.
     line when every term holds the same), but only when no conversion ahead is left short by €50K or more. Nothing is
     converted for the rate alone, however high EUR/ILS is (converting the spare on a high rate was dropped on 27 Oct
     2026); the rate check stays on the page as information.
-  - Amounts under €50K are left out. With no recommendation, the page says so and no mail goes.
+  - Amounts under €50K are left out. With no recommendation, the page and the mail say so.
 - **Payments in shekels ahead** (`duesAhead`, `describeDue`): each payment day up to the first month with salaries
   (its 5th, 10th and 14th, and any before): when (a Friday or Saturday one is ready by the Thursday) and in how many
   days, what it pays, how much, and what to convert for it, or what covers it (the shekels on hand, or a conversion).
@@ -272,16 +276,18 @@ MoneyNet carry no balance in their files, so they are not in it. Only LSports' e
 
 ## The daily mail
 
-`scripts/fx-challenge-mail.cjs` checks every day at 10:00 Israel time and mails **only when there is a
-recommendation**. It reads NetSuite and the bank balances fresh (no cache) and computes the same figures as the page
-(`planFromPayload`, `todayActions`).
+`scripts/fx-challenge-mail.cjs` checks every day at 10:00 Israel time and mails **every day but Saturday**, with
+today's recommendations or saying there is none. It reads NetSuite and the bank balances fresh (no cache) and computes
+the same figures as the page (`planFromPayload`, `todayActions`).
 
 **When it goes** (`mailDecision`): every day but Saturday (the bank works Sunday to Friday; finance writes to it on
-Fridays too), when there is at least one recommendation (a conversion for a payment the balances don't cover, a
-shortfall, euros to move to Hapoalim before a conversion, deposits for the conversions the deposits leave short, or
-spare euros for a new deposit), and never without one. So a conversion for the salaries is in the mail, in red, from
-2 business days before it has to be ready until the balances show it converted. A Saturday, or a day with no recommendation, sends nothing. `FX_MAIL_ALWAYS=1` sends
-every day, Saturday included.
+Fridays too), with or without a recommendation (finance's ask on 3 Nov 2026, so that a weekday without the mail means
+the check did not run). Its recommendations are a conversion for a payment the balances don't cover, a shortfall,
+euros to move to Hapoalim before a conversion, deposits for the conversions the deposits leave short, or spare euros
+for a new deposit. A conversion for the salaries is in the mail, in red, from 2 business days before it has to be ready
+until the balances show it converted. A day without one says so: "אין היום המלצות: כל הנתונים נקראו היום, ואין צורך
+להמיר, להעביר בין חשבונות או להפקיד. …" ("לפי מה שנקרא היום …" with the note when part of the data was not read), with
+the usual sections. A Saturday sends nothing; `FX_MAIL_ALWAYS=1` sends then too.
 
 **Who gets it** is kept on the page, in the **Daily mail** card at the bottom:
 - Add or remove lsports.eu addresses, then **Save for everyone**.
@@ -297,7 +303,8 @@ every day, Saturday included.
 The mail is in Hebrew, right to left, and short: what to act on, and why. Amounts stay as on the page (€1.16M,
 ₪4.91M), days read "יום ה' 5.11". The tables and the workings (the shekels by month, what the conversion sells range
 by range, how "free to convert" adds up, the next six conversions) stay on the page. HTML with a plain-text part:
-- the subject: the day and the first two recommendations (`FX יום א' 25.10 · להמיר €1.16M עד יום ה' 5.11 · …`);
+- the subject: the day and the first two recommendations (`FX יום א' 25.10 · להמיר €1.16M עד יום ה' 5.11 · …`), or
+  `FX יום ב' 2.11 · אין היום המלצות`;
 - the recommendations, each with the balances behind it ("להמיר €1.16M עד יום ה' 5.11. שכר נטו של אוקטובר ותשלומי
   הספקים בשקלים של נובמבר: ₪4.91M יוצאים ביום ה' 5.11, ועד אז יהיו ביתרה ₪873K."); urgent ones in red;
 - the next 6 conversions against the deposits, first in, first out, at the mail's setting, each by its conversion
@@ -375,7 +382,8 @@ The scheduled run behaves like this:
   the reason.
 - If the mail server refuses, it tries again every hour that day.
 - The log has one line per check: `[fx-mail] 2026-10-22: sent to 2 recipient(s) from … via …: <subject>`,
-  `[fx-mail] 2026-10-22: no mail (no recommendations)`, or `[fx-mail] 2026-10-24: no mail on Saturdays`.
+  or `[fx-mail] 2026-10-24: no mail on Saturdays`. A weekday has a "sent" line (the subject says when there is no
+  recommendation); one without any line means the cron did not run the script.
 
 ## Saving
 

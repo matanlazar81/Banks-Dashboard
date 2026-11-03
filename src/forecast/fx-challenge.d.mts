@@ -155,7 +155,9 @@ export interface BalanceRow {
   account?: string;
 }
 export interface EurDeposit { amount: number; valueDate: string | null; blocked: boolean; label: string }
-export interface EurPosition { hapoalim: number; other: number; deposits: EurDeposit[] }
+/** balanceDay: the day Hapoalim's EUR balance is for (its closing balance, before today's read); a deposit paying out
+ * after it is not in it yet. */
+export interface EurPosition { hapoalim: number; other: number; deposits: EurDeposit[]; balanceDay?: string | null }
 export declare function eurPosition(rows: BalanceRow[]): EurPosition;
 
 export interface FlowRow { month: string; kind: 'customer' | 'vendor' | 'conversion' | 'deposit' | 'transfer' | 'refund' | 'other'; eur: number }
@@ -289,6 +291,8 @@ export interface NextFixingPlan {
   vendorsBefore: number;
   /** Of them, those paid from Hapoalim EUR: they have to stay there too until the conversion's euros leave. */
   hapoalimVendors: number;
+  /** Deposits paying out after this day count as coming in: today, or the day Hapoalim's balance is for, if earlier. */
+  depositsAfter: string;
   /** The euros kept for the EUR vendors at all times. */
   eurFloor: number;
   /** What can leave the euro accounts for good today (converted, say) with every due met as the typical inflow comes

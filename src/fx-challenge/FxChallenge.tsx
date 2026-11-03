@@ -668,7 +668,7 @@ function TodayLines({ model }: { model: FxModel }) {
   const { todo } = model;
   if (!todo.actions.length) return model.cash ? <p className="text-[15px] text-slate-900">{todo.nothing}</p> : null;
   return (
-    <ul className="space-y-1 text-[15px] text-slate-900" title="What to do today, from today's balances and EUR/ILS: the same lines as the daily mail, which goes out every day but Saturday when there is a recommendation.">
+    <ul className="space-y-1 text-[15px] text-slate-900" title="What to do today, from today's balances and EUR/ILS: the same lines as the daily mail, which goes out every day but Saturday, saying so when there is nothing to do.">
       {todo.actions.map((a) => (
         <li key={a.key}><strong className={a.urgent ? 'text-rose-700' : 'text-slate-900'}>{a.head}</strong>. {a.body}</li>
       ))}
@@ -1384,7 +1384,7 @@ function DailyMail() {
       <div className="space-y-2.5 text-xs text-slate-700">
         <p>
           Checked every day but Saturday at {String(data.hour).padStart(2, '0')}:00 Israel time, and sent{data.from ? ` from ${data.from}` : ''} to the addresses below
-          {' '}when there is a recommendation: a conversion for a payment the balances don&apos;t cover, a shortfall, euros to move to Hapoalim, a high rate to convert on, or spare euros for a deposit.
+          {' '}with today&apos;s recommendations (a conversion for a payment the balances don&apos;t cover, a shortfall, euros to move to Hapoalim, spare euros for a deposit), or saying there is none, so a weekday without it means the check did not run.
           {' '}{sent ? `Last sent ${atIsrael(sent.at)}${sent.manual ? ' (Send now)' : ''}${sent.recipients ? `, to ${sent.recipients} address${sent.recipients === 1 ? '' : 'es'}` : ''}.` : 'Not sent by the daily job yet.'}
           {check ? ` Last check ${atIsrael(check.at)}: no mail (${check.why}).` : ''}
         </p>
