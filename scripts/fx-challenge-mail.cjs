@@ -114,6 +114,13 @@ function actionText(a, v, today) {
     if (rc && !now && rc.level === 'low') body += ` ${rateIs(rc)}: אם אפשר, כדאי לחכות, אבל לא יאוחר מ${day(a.by)}.`;
     return { head: `להמיר ${eur(a.eur)} ${now ? 'היום' : `עד ${day(a.by)}`}`, body };
   }
+  if (a.kind === 'dip') {
+    const back = a.back ? `, והיתרה חוזרת מעליו עד ${day(a.back)}` : '';
+    return {
+      head: `היתרה באירו יורדת ${eur(a.eur)} מתחת ל-${eur(a.floor)} ב${day(a.date)}`,
+      body: `כל התשלומים מכוסים (נשארים ${eur(a.left)}), אבל זה מתחת לסכום שנשמר תמיד לספקים באירו${back}. ${a.back ? 'עד אז' : 'בינתיים'} לא להפקיד ולא להמיר מעבר למתוכנן.`,
+    };
+  }
   if (a.kind === 'short') {
     const what = a.shekels ? 'ההמרה לשקלים הנדרשת אז' : a.vendors ? 'התשלומים לספקים באירו הצפויים אז' : `ההמרה של ${day(a.date)}`;
     const fix = n.backup > 0 ? ` כדאי להיערך לשבירה של עד ${eur(Math.min(a.eur, n.backup))} מהפיקדונות שנפתחים מאוחר יותר.` : ' כדאי לשמור כל אירו פנוי עד אז.';
