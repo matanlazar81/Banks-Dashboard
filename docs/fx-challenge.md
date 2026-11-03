@@ -60,6 +60,10 @@ briefly a tab of the Metrics page before it got its own sidebar item.
   - It is paid from Hapoalim EUR (583400); the other EUR accounts can be moved there before the day.
   - EUR deposits that mature before the fixing count for it; later ones are the backup (broken early only
     if needed). Without the mail's balances there are no dates, so every deposit is backup.
+  - A deposit counts as coming in from the day after the day Hapoalim's EUR balance is for (`eurPosition`'s
+    `balanceDay`, `plan.next.depositsAfter`): that balance is the bank's closing balance of the day before the read,
+    so a deposit paying out today is not in it yet. On 3 Nov 2026 three deposits (€806K) paid out the day before the
+    conversion; counted only after today, they were in neither, and the mail read €451K short and €572K to move.
   - The keep line (and the mail's) is what today's cash has to keep: what the conversion takes, less the deposits
     released by then (`keepCover`, `describeKeep`), and the EUR vendor payments Hapoalim EUR makes itself in the
     conversion's month before its euros leave (`hapoalimVendors`: the same account pays them; its first-week run goes

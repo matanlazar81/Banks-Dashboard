@@ -625,6 +625,26 @@ function testEurVendors(fx) {
     && fx.describeKeep(kept, words) === 'the deposit released on 2026-11-03 (€806K) covers the €800K it takes from Hapoalim EUR (583400), but about €161K of EUR vendor payments leave Hapoalim EUR before it'
     && mail.keepLine(kept, ['2026-11-07'], 'לפי השער היום') === 'להשאיר €161K בפועלים להמרה של שבת 7.11 (לפי השער היום): הפיקדון שמשתחרר ביום ג\' 3.11 (€806K) מכסה את ה-€800K שהיא מוכרת, אבל כ-€161K יוצאים מפועלים לספקים באירו לפני כן.',
   'the deposit covers the conversion, but Hapoalim EUR\'s own EUR vendor payments in its month, before its euros leave, stay there: keep €161K (October\'s last €5K is met by the inflow before then; page and mail)', JSON.stringify(kept));
+  // 3 Nov 2026: three deposits (€806K) pay out that day, the day before the conversion, and Hapoalim's balance is 2 Nov's
+  // closing: in neither, they read as €451K short and €572K to move. They count from the day after the balance's.
+  const nov3rows = [
+    { company: 'LSports', bank: 'Bank Hapoalim', kind: 'current', currency: 'EUR', amount: 648000, asOf: '2026-11-02' },
+    { company: 'LSports', bank: 'PKO', kind: 'current', currency: 'EUR', amount: 572000, asOf: '2026-11-03' },
+    ...[300000, 300000, 206000].map((amount) => ({ company: 'LSports', bank: 'Hapoalim deposits', kind: 'deposit', currency: 'EUR', amount, valueDate: '2026-11-03', label: 'EUR fixed-term' })),
+  ];
+  const nov3 = { upcoming: up, policy: 'today', today: '2026-11-03', inflowPerBusinessDay: 0, eurFloor: 808000, eurOut: [{ date: '2026-11-03', eur: 572000, hapoalim: 145000 }] };
+  const counted = fx.planReserve({ ...nov3, eur: fx.eurPosition(nov3rows) });
+  const inBalance = fx.planReserve({ ...nov3, eur: fx.eurPosition(nov3rows.map((r) => (r.kind === 'current' ? { ...r, asOf: '2026-11-03' } : r))) });
+  const undated = fx.planReserve({ ...nov3, eur: fx.eurPosition(nov3rows.map((r) => ({ ...r, asOf: null }))) });
+  check(fx.eurPosition(nov3rows).balanceDay === '2026-11-02' && counted.next.depositsAfter === '2026-11-02' && counted.next.maturing === 806000 && counted.coverage[0].released === 806000
+    && counted.next.runsOut.date === '2026-12-07' && counted.next.moveToHapoalim === 0 && counted.next.short.first.date === '2026-11-07'
+    && inBalance.next.maturing === 0 && inBalance.next.runsOut.date === '2026-11-07' && undated.next.maturing === 0 && undated.next.depositsAfter === '2026-11-03',
+  'deposits paying out today count while Hapoalim\'s balance is yesterday\'s closing (the 7 Nov conversion is met, nothing to move, the floor dips; '
+    + 'with no inflow here December runs short), not once the balance is today\'s, nor without its day',
+  JSON.stringify([counted.next.maturing, counted.next.runsOut, inBalance.next.runsOut]));
+  const nov3total = mail.paymentsTotal({ until: '2026-12-08', payments: [], total: 1.67e6, byKind: { vendors: 572000, conversion: 1.1e6, shekels: 0, forward: 0 } },
+    { plan: counted, position: fx.eurPosition(nov3rows), inflow: null }, '2026-11-03');
+  check(nov3total.includes('€806K מפיקדונות שמשתחררים עד אז'), 'the mail counts them among the deposits paying out by then', nov3total);
   const thin = fx.planReserve({ ...oct30, eur: { ...oct30.eur, hapoalim: 100000, deposits: [{ amount: 500000, valueDate: '2026-11-03', label: 'EUR fixed-term' }] } });
   const part = fx.keepCover(thin);
   check(thin.next.moveToHapoalim === 361000 && part.fromCash === 461000

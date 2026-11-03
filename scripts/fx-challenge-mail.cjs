@@ -217,9 +217,10 @@ function paymentsTotal(ahead, v, today, acted = false) {
   const k = ahead.byKind;
   const kinds = [['ספקים באירו', k.vendors], ['המרות בבנק', k.conversion], ['המרות לשקלים', k.shekels], ['פורוורדים', k.forward]]
     .filter(([, x]) => x >= 0.5).map(([w, x]) => `${w} ${eur(x)}`).join(', ');
-  const deps = ((v.position && v.position.deposits) || []).filter((d) => d.amount > 0 && !d.blocked && d.valueDate && d.valueDate > today && d.valueDate <= ahead.until)
-    .reduce((s, d) => s + d.amount, 0);
   const n = v.plan.next;
+  const after = n.depositsAfter || today;
+  const deps = ((v.position && v.position.deposits) || []).filter((d) => d.amount > 0 && !d.blocked && d.valueDate && d.valueDate > after && d.valueDate <= ahead.until)
+    .reduce((s, d) => s + d.amount, 0);
   const has = [`${eur(n.liquid)} באירו היום`, deps >= 0.5 ? `${eur(deps)} מפיקדונות שמשתחררים עד אז` : null, v.inflow ? `תקבולים רגילים של כ-${eur(v.inflow.perMonth)} בחודש` : null].filter(Boolean);
   const out = n.runsOut;
   const s = n.short;
