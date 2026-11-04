@@ -507,7 +507,7 @@ export declare function planFromPayload(data: PlanInput, policy?: Policy): PlanV
 export type TodayAction =
   | { kind: 'convert'; key: string; urgent: boolean; eur: number; by: string; left: number; due: ShekelDue }
   | { kind: 'short'; key: string; urgent: boolean; eur: number; date: string; by: string; left: number; shekels: boolean; vendors?: boolean }
-  | { kind: 'dip'; key: string; urgent: boolean; eur: number; date: string; left: number; back: string | null; floor: number }
+  | { kind: 'dip'; key: string; urgent: boolean; eur: number; date: string; left: number; back: string | null; floor: number; after?: 'conversion' | 'vendors' | 'shekels' }
   | { kind: 'move'; key: string; urgent: boolean; eur: number; date: string; on?: string[]; by: string; left: number }
   | { kind: 'ladder'; key: string; urgent: boolean; eur: number; legs: LadderLeg[] }
   | { kind: 'deposit'; key: string; urgent: boolean; eur: number; options: { months: number; until: string; eur: number }[] };

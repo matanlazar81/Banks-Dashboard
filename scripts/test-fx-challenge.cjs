@@ -622,11 +622,13 @@ function testEurVendors(fx) {
     && same(urgent.actions.map((a) => [a.kind, a.urgent, a.eur, a.date]), [['short', true, 495000, '2026-11-01']]),
   'the dip is a top-line line of its own (€152K below the €683K on Sun 1 Nov, €531K held, back by Mon 2 Nov), not urgent; euros that run out are a shortfall instead, urgent (€100K held: €495K short)',
   JSON.stringify([quiet.actions, urgent.actions]));
-  check(dipSaid.length === 2 && dipSaid[0].head === 'היתרה באירו יורדת €152K מתחת ל-€683K ביום א\' 1.11'
-    && dipSaid[0].body === 'כל התשלומים מכוסים (נשארים €531K), אבל זה מתחת לסכום שנשמר תמיד לספקים באירו, והיתרה חוזרת מעליו עד יום ב\' 2.11. עד אז לא להפקיד ולא להמיר מעבר למתוכנן.'
-    && dipSaid[1].head === 'Euros €152K below the €683K kept on 2026-11-01'
-    && dipSaid[1].body === 'Every payment is met (€531K held then), but below what is kept for EUR vendors; back above it by 2026-11-02. Until then, no new deposit and no extra conversion.',
-  'the dip in words: the mail\'s and the page\'s', JSON.stringify(dipSaid));
+  check(dipSaid.length === 2 && dipSaid[0].head === 'אחרי התשלומים לספקים באירו ביום א\' 1.11 יישארו באירו €531K, פחות מ-€683K שנשמרים תמיד'
+    && dipSaid[0].body === 'כל התשלומים מכוסים, רק הרזרבה קטנה: €683K הם כחודש של תשלומים לספקים באירו, שנשמר תמיד בחשבונות האירו. עם התקבולים הרגילים היתרה חוזרת ל-€683K עד יום ב\' 2.11. עד אז לא לפתוח פיקדונות חדשים ולא להמיר אירו מעבר להמרות המתוכננות.'
+    && dipSaid[1].head === '€531K left in euros after the EUR vendor payments on 2026-11-01, under the €683K kept'
+    && dipSaid[1].body === 'Every payment is met; only the reserve is thinner. The €683K is about a month of EUR vendor payments, kept in the euro accounts at all times. With the usual receipts the euros are back to it by 2026-11-02. Until then, no new deposit and no extra conversion.'
+    && mail.actionText({ ...quiet.actions[0], after: 'conversion', date: '2026-11-04', left: 408000, floor: 808000, back: '2026-11-09' }, { plan: dipped, rateCheck: null }, '2026-11-04').head
+      === 'אחרי ההמרה של יום ד\' 4.11 יישארו באירו €408K, פחות מ-€808K שנשמרים תמיד',
+  'the dip in words, the mail\'s and the page\'s: how much is left, after what, and what the reserve is', JSON.stringify(dipSaid));
   // Hapoalim EUR pays €161K of the first week itself, before the euros leave for the conversion: it keeps them too.
   const kept = fx.keepCover(dipped);
   const words = { eur: (x) => `€${Math.round(x / 1000)}K`, day: (iso) => iso };
@@ -726,8 +728,8 @@ function testEurVendors(fx) {
     mail.paymentsTotal(ahead, pv({ short: dip, runsOut: gone }), TODAY, true), mail.paymentsTotal(ahead, pv({ short: dip, runsOut: { ...gone, eur: 30000 } }), TODAY),
     mail.paymentsTotal(ahead, { ...pv({ eurFloor: 0 }), inflow: null, position: { deposits: [] } }, TODAY)];
   check(totals[0] === 'סה"כ עד יום ד\' 25.11: €3.13M (ספקים באירו €650K, המרות בבנק €1.10M, המרות לשקלים €1.18M, פורוורדים €200K). מול זה: €1.80M באירו היום, €1.61M מפיקדונות שמשתחררים עד אז ותקבולים רגילים של כ-€4.53M בחודש. לפי זה כל התשלומים מכוסים ונשארים לפחות €683K.'
-    && totals[1].endsWith('לפי זה התשלומים מכוסים, אבל ביום א\' 1.11 היתרה באירו יורדת €146K מתחת ל-€683K שנשמרים תמיד (נשארים €537K) וחוזרת מעליהם עד יום ב\' 2.11: עד אז לא להפקיד ולא להמיר מעבר למתוכנן.')
-    && totals[2].endsWith('(נשארים €537K): בינתיים לא להפקיד ולא להמיר מעבר למתוכנן.')
+    && totals[1].endsWith('לפי זה כל התשלומים מכוסים, אבל ביום א\' 1.11 יישארו באירו €537K, פחות מ-€683K שנשמרים תמיד, והיתרה חוזרת אליהם עד יום ב\' 2.11: עד אז לא לפתוח פיקדונות חדשים ולא להמיר אירו מעבר למתוכנן.')
+    && totals[2].endsWith('יישארו באירו €537K, פחות מ-€683K שנשמרים תמיד: בינתיים לא לפתוח פיקדונות חדשים ולא להמיר אירו מעבר למתוכנן.')
     && totals[3].endsWith('לפי זה חסרים €120K ביום ג\' 1.12, גם אחרי ה-€683K השמורים: ההמלצות למעלה אומרות איך להשלים.')
     && totals[4].endsWith('לפי זה חסרים €30K ביום ג\' 1.12, גם אחרי ה-€683K השמורים (סכום קטן, ולכן אין עליו המלצה).')
     && totals[5].endsWith('מול זה: €1.80M באירו היום. לפי זה כל התשלומים מכוסים.'),

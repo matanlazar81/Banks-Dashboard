@@ -1345,7 +1345,9 @@ export function todayActions(view, today, { lead = 5, moveLead = 3, minEur = 500
   // back above the floor, so nothing is deposited or converted on top until then. Not when they run out at all.
   const dip = !out && n.short;
   if (dip && dip.eur >= minEur) {
-    actions.push({ kind: 'dip', key: `dip:${dip.date}`, urgent: false, eur: dip.eur, date: dip.date, left: dip.left, back: dip.back, floor: n.eurFloor });
+    // after: what takes the euros down that day (a conversion's part, the EUR vendor payments or a conversion for shekels).
+    const after = dip.shekels ? 'shekels' : dip.vendors ? 'vendors' : 'conversion';
+    actions.push({ kind: 'dip', key: `dip:${dip.date}`, urgent: false, eur: dip.eur, date: dip.date, left: dip.left, back: dip.back, floor: n.eurFloor, after });
   }
   // The euros have to be in Hapoalim EUR by the day the first of them leave (the deals' value day, else the day before).
   const fixingBy = n.takes || conversionTakes(n.date);
@@ -1427,10 +1429,13 @@ export function describeAction(a, view, today, fmt) {
     return { head: `Convert ${eur(a.eur)} ${now ? 'today' : `by ${day(a.by)}`}`, body };
   }
   if (a.kind === 'dip') {
-    const back = a.back ? `; back above it by ${day(a.back)}` : '';
+    // How much is left, after what, and what the floor is: "€408K left in euros after the Wed 4 Nov conversion, under the
+    // €808K kept".
+    const after = a.after === 'vendors' ? `the EUR vendor payments on ${day(a.date)}` : a.after === 'shekels' ? `the conversion for shekels on ${day(a.date)}` : `the ${day(a.date)} conversion`;
+    const back = a.back ? ` With the usual receipts the euros are back to it by ${day(a.back)}.` : '';
     return {
-      head: `Euros ${eur(a.eur)} below the ${eur(a.floor)} kept on ${day(a.date)}`,
-      body: `Every payment is met (${eur(a.left)} held then), but below what is kept for EUR vendors${back}. ${a.back ? 'Until then' : 'For now'}, no new deposit and no extra conversion.`,
+      head: `${eur(a.left)} left in euros after ${after}, under the ${eur(a.floor)} kept`,
+      body: `Every payment is met; only the reserve is thinner. The ${eur(a.floor)} is about a month of EUR vendor payments, kept in the euro accounts at all times.${back} ${a.back ? 'Until then' : 'For now'}, no new deposit and no extra conversion.`,
     };
   }
   if (a.kind === 'short') {

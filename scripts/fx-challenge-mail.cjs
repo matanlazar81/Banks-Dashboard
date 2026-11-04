@@ -115,10 +115,14 @@ function actionText(a, v, today) {
     return { head: `להמיר ${eur(a.eur)} ${now ? 'היום' : `עד ${day(a.by)}`}`, body };
   }
   if (a.kind === 'dip') {
-    const back = a.back ? `, והיתרה חוזרת מעליו עד ${day(a.back)}` : '';
+    // How much is left, after what, and what the floor is: "אחרי ההמרה של יום ד' 4.11 יישארו באירו €408K, פחות מ-€808K
+    // שנשמרים תמיד".
+    const after = a.after === 'vendors' ? `התשלומים לספקים באירו ב${day(a.date)}` : a.after === 'shekels' ? `ההמרה לשקלים ב${day(a.date)}` : `ההמרה של ${day(a.date)}`;
+    const back = a.back ? ` עם התקבולים הרגילים היתרה חוזרת ל-${eur(a.floor)} עד ${day(a.back)}.` : '';
     return {
-      head: `היתרה באירו יורדת ${eur(a.eur)} מתחת ל-${eur(a.floor)} ב${day(a.date)}`,
-      body: `כל התשלומים מכוסים (נשארים ${eur(a.left)}), אבל זה מתחת לסכום שנשמר תמיד לספקים באירו${back}. ${a.back ? 'עד אז' : 'בינתיים'} לא להפקיד ולא להמיר מעבר למתוכנן.`,
+      head: `אחרי ${after} יישארו באירו ${eur(a.left)}, פחות מ-${eur(a.floor)} שנשמרים תמיד`,
+      body: `כל התשלומים מכוסים, רק הרזרבה קטנה: ${eur(a.floor)} הם כחודש של תשלומים לספקים באירו, שנשמר תמיד בחשבונות האירו.${back} `
+        + `${a.back ? 'עד אז' : 'בינתיים'} לא לפתוח פיקדונות חדשים ולא להמיר אירו מעבר להמרות המתוכננות.`,
     };
   }
   if (a.kind === 'short') {
@@ -236,8 +240,8 @@ function paymentsTotal(ahead, v, today, acted = false) {
   let verdict = `לפי זה כל התשלומים מכוסים${floor ? ` ונשארים לפחות ${eur(floor)}` : ''}.`;
   if (out) verdict = `לפי זה חסרים ${eur(out.eur)} ב${day(out.date)}${floor ? `, גם אחרי ה-${eur(floor)} השמורים` : ''}${acted ? ': ההמלצות למעלה אומרות איך להשלים' : ' (סכום קטן, ולכן אין עליו המלצה)'}.`;
   else if (s) {
-    verdict = `לפי זה התשלומים מכוסים, אבל ב${day(s.date)} היתרה באירו יורדת ${eur(s.eur)} מתחת ל-${eur(floor)} שנשמרים תמיד (נשארים ${eur(s.left)})`
-      + `${s.back ? ` וחוזרת מעליהם עד ${day(s.back)}` : ''}: ${s.back ? 'עד אז' : 'בינתיים'} לא להפקיד ולא להמיר מעבר למתוכנן.`;
+    verdict = `לפי זה כל התשלומים מכוסים, אבל ב${day(s.date)} יישארו באירו ${eur(s.left)}, פחות מ-${eur(floor)} שנשמרים תמיד`
+      + `${s.back ? `, והיתרה חוזרת אליהם עד ${day(s.back)}` : ''}: ${s.back ? 'עד אז' : 'בינתיים'} לא לפתוח פיקדונות חדשים ולא להמיר אירו מעבר למתוכנן.`;
   }
   const last = has[has.length - 1];
   const and = /^[א-ת]/.test(last) ? `ו${last}` : `ו-${last}`;
