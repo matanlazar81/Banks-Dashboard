@@ -153,10 +153,13 @@ briefly a tab of the Metrics page before it got its own sidebar item.
   - **Short**: the euros held and expected don't meet a due even with the EUR floor spent (`runsOut`: they run out;
     urgent in its last 5 business days).
   - **Dip**: the euros fall below the floor kept for EUR vendors, every payment still met (the floor is a buffer):
-    a top line of its own, not in red (finance's ask, 3 Nov 2026): how deep, what is still held and when the euros are
-    back above it, and no new deposit or extra conversion until then ("היתרה באירו יורדת €152K מתחת ל-€683K ביום א'
-    1.11. כל התשלומים מכוסים (נשארים €531K), אבל זה מתחת לסכום שנשמר תמיד לספקים באירו, והיתרה חוזרת מעליו עד יום ב'
-    2.11. עד אז לא להפקיד ולא להמיר מעבר למתוכנן."). Not when the euros run out (that is the shortfall), nor under €50K.
+    a top line of its own, not in red (finance's ask, 3 Nov 2026): what is left, after what (the conversion, the EUR
+    vendor payments or a conversion for shekels), what the floor is and when the euros are back to it, and no new deposit
+    or extra conversion until then ("אחרי ההמרה של יום ד' 4.11 יישארו באירו €408K, פחות מ-€808K שנשמרים תמיד. כל התשלומים
+    מכוסים, רק הרזרבה קטנה: €808K הם כחודש של תשלומים לספקים באירו, שנשמר תמיד בחשבונות האירו. עם התקבולים הרגילים
+    היתרה חוזרת ל-€808K עד יום ב' 9.11. עד אז לא לפתוח פיקדונות חדשים ולא להמיר אירו מעבר להמרות המתוכננות."; reworded
+    on 4 Nov 2026, as "יורדת €400K מתחת ל-€808K" was not clear). Not when the euros run out (that is the shortfall), nor
+    under €50K.
   - **Move** euros to Hapoalim EUR in the last 3 business days before the bank takes the euros (the business day
     before the 7th), when it holds less than to keep there, its own EUR vendor payments before then included.
   - **Deposits for the conversions the deposits leave short** (`ladder`): "Put €440K in deposits for the January to
@@ -342,8 +345,8 @@ by range, how "free to convert" adds up, the next six conversions) stay on the p
     sees): "סה"כ עד יום ו' 4.12: €3.60M (…). מול זה: €1.13M באירו היום, €1.61M מפיקדונות שמשתחררים עד אז ותקבולים רגילים
     של כ-€4.53M בחודש." and then one of:
     - covered: "לפי זה כל התשלומים מכוסים ונשארים לפחות €683K.";
-    - a dip into the floor: "לפי זה התשלומים מכוסים, אבל ביום א' 1.11 היתרה באירו יורדת €152K מתחת ל-€683K שנשמרים
-      תמיד (נשארים €532K) וחוזרת מעליהם עד יום ב' 2.11: עד אז לא להפקיד ולא להמיר מעבר למתוכנן.";
+    - a dip into the floor: "לפי זה כל התשלומים מכוסים, אבל ביום א' 1.11 יישארו באירו €532K, פחות מ-€683K שנשמרים תמיד,
+      והיתרה חוזרת אליהם עד יום ב' 2.11: עד אז לא לפתוח פיקדונות חדשים ולא להמיר אירו מעבר למתוכנן.";
     - euros that run out: by how much and on which day, and whether today's recommendations fix it (one under €50K
       has none);
 - the payments in shekels ahead: the day, how many days to it, what it pays, and what covers it (a conversion, or
