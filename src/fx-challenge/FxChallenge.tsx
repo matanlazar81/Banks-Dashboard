@@ -442,14 +442,14 @@ function CoverageCard({ model, plan }: { model: FxModel; plan: ReservePlan }) {
                 <tr key={c.month} className="border-b border-slate-100">
                   <td className="whitespace-nowrap px-2 py-1.5 text-left text-slate-700"
                     title={c.deals
-                      ? c.legs.map((l) => `${formatEur(l.required)} leaves on ${formatDay(l.settle, true)}${l.expiry ? `, fixed on ${formatDay(l.expiry, true)}` : ''}`).join('\n')
+                      ? c.legs.map((l) => `${formatEur(l.required)} leaves on ${formatDay(l.settle, true)}${l.forward ? ', a forward at its own rate' : l.expiry ? `, fixed on ${formatDay(l.expiry, true)}` : ''}`).join('\n')
                       : `No deals from the bank for this month: the table's ${formatDay(c.date, true)}, its euros taken the business day before.`}>
                     <span className={HINT}>{formatDays(c.on)}</span>{c.month.slice(0, 4) !== year0 ? ` ${c.month.slice(0, 4)}` : ''}
                     {!c.deals && <span className="text-slate-400"> (euros leave {formatDay(c.takes)}, assumed)</span>}
                   </td>
                   <td className={`${TD} whitespace-nowrap`}>
                     {formatEur(c.required)}
-                    {c.legs.length > 1 && <span className="text-slate-500"> ({c.legs.map((l) => formatEur(l.required)).join(' + ')})</span>}
+                    {c.legs.length > 1 && <span className="text-slate-500"> ({c.legs.map((l) => `${formatEur(l.required)}${l.forward ? ' forward' : ''}`).join(' + ')})</span>}
                   </td>
                   <td className={`${TD} text-slate-600`} title={tip || undefined}>
                     {c.released > 0.5 ? <span className={HINT}>{formatEur(c.released)}</span> : late.length ? <span className={HINT}>– (one too late)</span> : '–'}
@@ -498,8 +498,9 @@ const reportLabel = (r: { kind: 'options' | 'forwards'; account: string | null; 
 
 /** The bank's deals: Hapoalim's position reports (any number: the options and the forwards, of one account or more),
  * read here and saved for everyone. The months their options cover take their amounts from them (the conversion table
- * shows it), each conversion's euros leave on its parts' value days, and the forwards' shekels count when they come in;
- * the saved table fills the other months. */
+ * shows it), each conversion's euros leave on its parts' value days, a forward selling euros in such a month is one of
+ * its parts (at its own rate), and the other forwards' shekels count when they come in; the saved table fills the other
+ * months. */
 function DealsCard({ data, model, onSaved }: { data: FxPayload; model: FxModel; onSaved: () => Promise<void> }) {
   const saved = data.positions || null;
   const d = model.deals;
@@ -614,9 +615,18 @@ function DealsCard({ data, model, onSaved }: { data: FxPayload; model: FxModel; 
               {d.reports.map((r) => `${reportLabel(r)} (${r.count} deal${r.count === 1 ? '' : 's'}${r.name ? `, ${r.name}` : ''})`).join('; ')}.
             </p>
           )}
+          {d.inConversions.length > 0 && (
+            <p title={`A forward selling euros in a month with options is a part of that month's conversion: its euros leave on its value day at its own rate, whatever EUR/ILS is, as the bank's table counts it in every band.\n${d.inConversions.map((f) => `${formatEur(f.eur)} on ${formatDay(f.date, true)}`).join('\n')}`}>
+              <span className={HINT}>Forwards in the conversions</span>:{' '}
+              {d.inConversions.length > 1 && d.inConversions.every((f) => Math.abs(f.eur - d.inConversions[0].eur) < 0.5)
+                ? `${d.inConversions.length} of ${formatEur(d.inConversions[0].eur)}, ${monthName(d.inConversions[0].month)} – ${monthName(d.inConversions[d.inConversions.length - 1].month)}`
+                : d.inConversions.map((f) => `${formatEur(f.eur)} on ${formatDay(f.date)}`).join(' · ')}
+              : each a part of its month&apos;s conversion, at its own rate, from {formatDay(d.inConversions[0].date)}.
+            </p>
+          )}
           {d.flows.length > 0 && (
             <p title="The forwards netted by value day. A sale bought back the same day moves only shekels.">
-              <span className={HINT}>Forwards ahead</span>:{' '}
+              <span className={HINT}>{d.inConversions.length > 0 ? 'Other forwards ahead' : 'Forwards ahead'}</span>:{' '}
               {d.flows.map((f) => `${formatIls(Math.abs(f.ils))} ${f.ils >= 0 ? 'in' : 'out'}${Math.abs(f.eur) >= 0.5 ? `, ${formatEur(Math.abs(f.eur))} ${f.eur > 0 ? 'in' : 'out'}` : ''} on ${formatDay(f.date)}`).join(' · ')}
               {d.flows.every((f) => Math.abs(f.eur) < 0.5) ? ' (no euros move)' : ''}
             </p>

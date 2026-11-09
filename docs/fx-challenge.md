@@ -127,8 +127,20 @@ briefly a tab of the Metrics page before it got its own sidebar item.
     (Wed 4 Nov 2026 for Sat 7 Nov, before the net salaries of the 5th).
   - `FXPositionDetails.xlsx` ("פירוט עסקאות FX"): the forwards. Netted by value day (`forwardFlows`): on 2 Nov and 2
     Dec 2026 the €1.75M sold was bought back the same day, so only shekels come in (₪670,750 and ₪672,450), and the
-    USD pair brings ₪241,450 on 31 Dec. Their shekels count on the shekels side; euros a forward sells or buys count
-    among the dues.
+    USD pair brings ₪241,450 on 31 Dec.
+  - **A forward selling euros in a month with options is a part of that month's conversion** (`positionLegs`, asked
+    on 9 Nov 2026): from January to December 2027 the bank sells €200K a month on a forward (deals of 6 Nov 2026, at
+    about 3.58), settled on the month's first business day (Mon 4 Jan, Mon 1 Feb, …), and its table counts them in
+    every band, whatever EUR/ILS is fixed at. Each is a part of its own, before the options' (January at today's
+    band: €200K on Mon 4 Jan and €1.35M on Wed 6 Jan), selling its euros at its own rate (`legsAt`), with no fixing
+    day (no EUR/ILS risk). So the amounts, the days, the deposits (first in, first out: January's €988K deposit of
+    Mon 4 Jan covers the forward first), the shekels (counted once, with the conversion's) and the mail all take it as
+    one of the conversion's parts. The options of 30 Oct 2026 with these forwards give the bank's table of 9 Nov 2026
+    exactly, December 2026 to December 2027 (the same euros, the rates to its two decimals). A part already paid
+    (the forward's €200K on the 1st) is gone from the balances, so the plan then keeps for the options' parts only.
+  - The other forwards stay flows of their own (`forwardsApart`): a swap that moves only shekels, one buying euros,
+    one selling them in a month without options. Their shekels count on the shekels side; their euros among the dues.
+    The card lists both: "Forwards in the conversions" and "Other forwards ahead".
   - The page reads the files itself (`parsePositionReport`, with the Excel library the exports use): the header row by
     its titles, the report's day from "תאריך הפקה" and the account from "מספר חשבון", its own number only (583400, as
     NetSuite names the account; not the bank or branch). Only the deals, the account's number and each file's name
@@ -321,7 +333,9 @@ by range, how "free to convert" adds up, the next six conversions) stay on the p
 - the next 6 conversions against the deposits, first in, first out, at the mail's setting, each by its conversion
   day (with the bank's deals, when its euros leave; without, the 7th): covered ("שבת 7.11: €800K, מכוסה מהפיקדונות
   (€806K)") or short, in red ("יום ד' 4.11: €1.10M, הפיקדונות מכסים €806K: חסרים €294K"). In parts, each part's day and
-  amount in order ("יום ו' 5.3 ויום ב' 8.3: €1.05M (€600K ו-€450K), הפיקדונות מכסים €810K: חסרים €240K ביום ב' 8.3").
+  amount in order ("יום ו' 5.3 ויום ב' 8.3: €1.05M (€600K ו-€450K), הפיקדונות מכסים €810K: חסרים €240K ביום ב' 8.3"),
+  a forward's part named ("יום ב' 1.3 ויום ו' 5.3 ויום ב' 8.3: €1.25M (€200K בפורוורד ו-€600K ו-€450K), …"; a deposit
+  for it: "להמרה של יום ב' 1.3 (הפורוורד, חלק מההמרה של מרץ)").
   A short one says why: a deposit that pays out after its last euros leave but by the 7th (without the deals, where
   they leave the business day before: "יום א' 7.3: €1.05M, הפיקדון שמשתחרר ביום ו' 5.3 (€405K) מגיע אחרי שהבנק לוקח את
   האירו ביום ה' 4.3, ולכן נספר להמרה של יום ד' 7.4: חסרים €1.05M"), or the days in which none pays out ("אין פיקדון
@@ -339,8 +353,9 @@ by range, how "free to convert" adds up, the next six conversions) stay on the p
     the EUR vendors, then the conversion): the EUR vendors, each
     part of the month on its first day ("יום א' 1.11: ספקים באירו (1–7.11), כ-€589K"; the part today is in, what is
     left of it: "יתרת 21–31.10"); the bank's conversions, each part on the day its euros leave (without the deals, the
-    7th: "יום ד' 4.11: ההמרה של נובמבר בבנק, €1.10M", "(חלק 2 מ-2)"); the euros converted for shekels ("יום ה' 5.11:
-    המרה לשקלים (שכר נטו, ספקים בשקלים), €1.13M"); and a forward that sells euros;
+    7th: "יום ד' 4.11: ההמרה של נובמבר בבנק, €1.10M", "(חלק 2 מ-2)"; a forward's part named: "יום ב' 4.1: ההמרה של
+    ינואר בבנק (חלק 1 מ-2, פורוורד), €200K"); the euros converted for shekels ("יום ה' 5.11: המרה לשקלים (שכר נטו,
+    ספקים בשקלים), €1.13M"); and a forward apart from the conversions that sells euros;
   - last, the total by kind against what covers it, and whether it does (`paymentsTotal`, over every due the plan
     sees): "סה"כ עד יום ו' 4.12: €3.60M (…). מול זה: €1.13M באירו היום, €1.61M מפיקדונות שמשתחררים עד אז ותקבולים רגילים
     של כ-€4.53M בחודש." and then one of:

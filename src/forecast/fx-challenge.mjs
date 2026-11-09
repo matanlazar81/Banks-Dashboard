@@ -267,7 +267,11 @@ export function mergePositionReports(saved, reads) {
 }
 
 /** The options by conversion month (the fixing's) and by the day each part's euros leave: { 'YYYY-MM': [{ expiry,
- * settle, options }] }, earliest first. Options fixed on different days that settle the same day make one part. */
+ * settle, options, forward }] }, earliest first. Options fixed on different days that settle the same day make one part.
+ * A forward selling euros (netted by day, forwardFlows) in a month with options is a part of that month's conversion of
+ * its own, fixed whatever the rate, as the bank's table counts it in every band (from January 2027 €200K a month at about
+ * 3.58, settled on the month's first business day, before the options): { expiry: null, settle, options: [], forward:
+ * { eur (sold), ils (received) } }. */
 export function positionLegs(positions) {
   const out = {};
   for (const o of (positions && positions.options) || []) {
@@ -277,17 +281,29 @@ export function positionLegs(positions) {
     if (o.expiry < leg.expiry) leg.expiry = o.expiry;
     leg.options.push(o);
   }
+  for (const f of forwardFlows(positions)) {
+    const legs = out[f.date.slice(0, 7)];
+    if (legs && f.eur <= -0.5) legs.push({ expiry: null, settle: f.date, options: [], forward: { eur: -f.eur, ils: f.ils } });
+  }
   for (const legs of Object.values(out)) legs.sort((a, b) => a.settle.localeCompare(b.settle));
   return out;
 }
 
-/** A month's parts fixed at `rate`: [{ expiry, settle, eur (sold, net), ils (received, net, at the strikes) }]. */
+/** The forwards left as flows of their own (forwardFlows), not part of a conversion (positionLegs): a swap that moves
+ * only shekels, one buying euros, one selling them in a month without options. */
+export function forwardsApart(positions, legsByMonth) {
+  return forwardFlows(positions).filter((f) => !(f.eur <= -0.5 && legsByMonth && legsByMonth[f.date.slice(0, 7)]));
+}
+
+/** A month's parts fixed at `rate`: [{ expiry, settle, eur (sold, net), ils (received, net, at the strikes), forward }];
+ * a forward's part sells its euros at its own rate, whatever `rate` is. */
 export function legsAt(legs, rate) {
   return (legs || []).map((l) => {
     let eur = 0;
     let ils = 0;
     for (const o of l.options) { const e = optionEur(o, rate); eur += e; ils += e * o.strike; }
-    return { expiry: l.expiry, settle: l.settle, eur, ils };
+    if (l.forward) { eur += l.forward.eur; ils += l.forward.ils; }
+    return { expiry: l.expiry, settle: l.settle, eur, ils, forward: !!l.forward };
   });
 }
 
@@ -326,7 +342,8 @@ export function rateSelling(row, bounds, spot, eur) {
  * euros the deals sell at the middle of the band, at their blended rate), the other months from the saved table. The
  * bands are the saved table's plus every strike and trigger of the deals, so a new deal's level gets a band of its own
  * (the saved months keep their cells across it). On 30 Oct 2026 this is the table finance received, its rates to four
- * decimals (€800K at 3.6688 rather than 3.67). Without deals, the saved table as it is.
+ * decimals (€800K at 3.6688 rather than 3.67); with the forwards of 6 Nov (a fixed part in every band), the bank's table
+ * of 9 Nov. Without deals, the saved table as it is.
  */
 export function tableWithDeals(table, legsByMonth) {
   const months = Object.keys(legsByMonth || {}).filter((m) => legsByMonth[m] && legsByMonth[m].length);
@@ -933,7 +950,7 @@ export function planReserve({ upcoming, policy = 'p95', eur, inflowPerBusinessDa
       const settle = conversionTakes(f.date);
       return [{ settle, expiry: null, required: req, until: businessDayOnOrBefore(isoAddDays(settle, -1)), deals: false }];
     }
-    return legs.map((l) => ({ settle: l.settle, expiry: l.expiry, required: (req * l.eur) / sum, until: valueDayBefore(l.settle), deals: true }));
+    return legs.map((l) => ({ settle: l.settle, expiry: l.expiry, required: (req * l.eur) / sum, until: valueDayBefore(l.settle), deals: true, forward: !!l.forward }));
   };
   const hapoalim = Math.max(0, eur.hapoalim || 0);
   const other = Math.max(0, eur.other || 0);
@@ -1113,7 +1130,7 @@ export function planReserve({ upcoming, policy = 'p95', eur, inflowPerBusinessDa
       const released = releasedDeposits.reduce((s, d) => s + d.amount, 0);
       const have = carried + released;
       const leg = {
-        settle: p.settle, expiry: p.expiry, required: p.required, released, releasedDeposits, carried, have, gap: Math.max(0, p.required - have),
+        settle: p.settle, expiry: p.expiry, forward: !!p.forward, required: p.required, released, releasedDeposits, carried, have, gap: Math.max(0, p.required - have),
         until: p.until, timed: i > 0 && daysTo(p.until) >= LADDER_MIN_DAYS,
       };
       carried = Math.max(0, have - p.required);
@@ -1146,9 +1163,11 @@ export function planReserve({ upcoming, policy = 'p95', eur, inflowPerBusinessDa
       const space = Math.min(cap - laddered, ...checkpoints.filter((x) => x.date < l.until).map((x) => x.spare - lockedAt(x.date)));
       const eur = Math.min(Math.ceil(l.gap / 10000) * 10000, Math.floor(Math.max(0, space) / 10000) * 10000);
       if (eur < 10000) { room = false; continue; }
-      // part: the conversion leaves in more than one part, and this deposit is for the one on `settle`; on: that part's
-      // conversion day (the 7th without the deals).
-      ladder.push({ month: c.month, date: c.date, on: c.deals ? l.settle : c.date, settle: l.settle, part: c.legs.length > 1, until: l.until, eur, gap: l.gap, required: l.required, have: l.have });
+      // part: the conversion leaves in more than one part, and this deposit is for the one on `settle` (forward: that part
+      // is a forward); on: that part's conversion day (the 7th without the deals).
+      ladder.push({
+        month: c.month, date: c.date, on: c.deals ? l.settle : c.date, settle: l.settle, part: c.legs.length > 1, forward: l.forward, until: l.until, eur, gap: l.gap, required: l.required, have: l.have,
+      });
       laddered += eur;
     }
   }
@@ -1206,7 +1225,8 @@ export function planFromPayload(data, policy = 'p95') {
     }
     return [item];
   });
-  const flows = data.positions ? forwardFlows(data.positions).filter((f) => f.date >= today) : [];
+  // The forwards apart from the conversions (a forward selling euros in a conversion month is one of its parts).
+  const flows = data.positions ? forwardsApart(data.positions, deals).filter((f) => f.date >= today) : [];
   const cash = cashPlanOf(data, today, spot, upcoming, schedule, policy, flows);
   const eurVendors = vendorDays && upcoming.length
     ? eurVendorsAhead({ days: vendorDays, months: data.inflowMonths, today, until: monthEnd(upcoming[Math.min(upcoming.length, 6) - 1].month) })
@@ -1236,6 +1256,9 @@ function dealsView(data, deals, upcoming, flows) {
     options: (p.options || []).length, forwards: (p.forwards || []).length, months, from: months[0] || null, to: months[months.length - 1] || null,
     missing: upcoming.slice(0, 6).filter((u) => !(deals && deals[u.month])).map((u) => u.month),
     flows, mismatches: deals ? dealsVsTable(data.table, deals) : [],
+    // The forwards that are parts of the conversions (positionLegs), from today: [{ month, date, eur }].
+    inConversions: deals ? Object.entries(deals).flatMap(([month, legs]) => legs.filter((l) => l.forward && l.settle >= data.today).map((l) => ({ month, date: l.settle, eur: l.forward.eur })))
+      .sort((a, b) => a.date.localeCompare(b.date)) : [],
     reports: savedReportsOf(p).map((r) => ({ name: r.name, kind: r.kind, account: r.account, asOf: r.asOf, count: r.deals.length })),
   };
 }
@@ -1378,11 +1401,11 @@ const PAYMENT_ORDER = { shekels: 0, vendors: 1, conversion: 2, forward: 3 };
 /**
  * The euros expected to leave from today to `days` ahead, in order (view: planFromPayload's): the EUR vendor payments
  * on their days (eurVendorsAhead), each conversion's parts at the amount kept (the plan's coverage), the euros converted
- * for shekels (the cash plan's needs: salaries, ILS vendors, cards) and the euros a forward sells. What the plan keeps
- * the euros for, as the daily mail lists it. Returns { until, payments: [{ date, eur, kind: 'vendors' | 'conversion' |
- * 'shekels' | 'forward', … }], total, byKind }.
+ * for shekels (the cash plan's needs: salaries, ILS vendors, cards) and the euros a forward apart from the conversions
+ * sells. What the plan keeps the euros for, as the daily mail lists it. Returns { until, payments: [{ date, eur, kind:
+ * 'vendors' | 'conversion' | 'shekels' | 'forward', … }], total, byKind }.
  *   vendors     part (0: 1st–7th, 1: 8th–20th, 2: 21st–end), rest (what is left of the part today is in)
- *   conversion  month, part and parts (its parts, with the bank's deals)
+ *   conversion  month, part and parts (its parts, with the bank's deals), forward (the part is a forward)
  *   shekels     why: what the shekels pay (net | later | cards | vendors)
  */
 export function eurPaymentsAhead(view, today, { days = 35 } = {}) {
@@ -1392,7 +1415,7 @@ export function eurPaymentsAhead(view, today, { days = 35 } = {}) {
   // A conversion on its day(s), as the plan takes it: with the bank's deals each part's value day, without them the 7th.
   for (const c of (view.plan && view.plan.coverage) || []) {
     const legs = c.legs.filter((l) => l.required >= 0.5);
-    legs.forEach((l, i) => out.push({ date: c.deals ? l.settle : c.date, eur: l.required, kind: 'conversion', month: c.month, part: i, parts: legs.length }));
+    legs.forEach((l, i) => out.push({ date: c.deals ? l.settle : c.date, eur: l.required, kind: 'conversion', month: c.month, part: i, parts: legs.length, forward: !!l.forward }));
   }
   for (const n of (view.cash && view.cash.needs) || []) if (n.eur >= 0.5) out.push({ date: n.date, eur: n.eur, kind: 'shekels', why: n.why });
   for (const f of (view.deals && view.deals.flows) || []) if (f.eur <= -0.5) out.push({ date: f.date, eur: -f.eur, kind: 'forward' });
@@ -1455,7 +1478,7 @@ export function describeAction(a, view, today, fmt) {
   if (a.kind === 'ladder') {
     // Each deposit is for one conversion day: with the deals, one part's (a part is a conversion on its own day).
     const legs = a.legs;
-    const partOf = (l) => (l.part ? `part of ${monthNameOf(l.month)}'s` : '');
+    const partOf = (l) => (l.part ? `${l.forward ? 'the forward, ' : ''}part of ${monthNameOf(l.month)}'s` : '');
     const covered = view.eurVendors ? 'Every payment before then, the EUR vendors\' included, stays covered.' : 'Every payment before then stays covered.';
     if (legs.length === 1) {
       const l = legs[0];

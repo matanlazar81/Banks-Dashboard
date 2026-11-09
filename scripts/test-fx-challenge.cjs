@@ -493,6 +493,68 @@ async function testDeals(fx) {
   check(fx.planFromPayload(onDay('2027-03-09', fixedDays), 'p95').schedule[0].fixing.month === '2027-04', 'Tue 9 Mar: March is done, April is next');
   check(mail.coverText(c8, true, null).startsWith('יום ב\' 8.3: €450K, '), 'the mail\'s line by the day the euros leave, in one part too', mail.coverText(c8, true, null));
 
+  console.log('\nDEALS: a forward selling euros in a month with options is a part of its conversion');
+  // From January 2027 the bank sells €200K a month on a forward (at about 3.58), settled on the month's first business
+  // day, and its table counts it in every band (9 Nov 2026). Here one on Mon 1 Mar 2027, in March with its options, and
+  // one on Mon 3 May, a month without options.
+  const f2 = fx.parsePositionReport([...FWD_ROWS.slice(0, -1), fwd(2005, 'מכירה', 'EUR', -200000, '2027-03-01', 3.58, 716000),
+    fwd(2006, 'מכירה', 'EUR', -150000, '2027-05-03', 3.6, 540000), FWD_ROWS[FWD_ROWS.length - 1]]);
+  const pos2 = { options: o.options, forwards: f2.forwards };
+  const legsF = fx.positionLegs(pos2);
+  check(same(Object.keys(legsF), ['2027-03']) && same(legsF['2027-03'].map((l) => [l.expiry, l.settle, l.options.length, l.forward || null]),
+    [[null, '2027-03-01', 0, { eur: 200000, ils: 716000 }], ['2027-03-03', '2027-03-05', 3, null], ['2027-03-04', '2027-03-08', 3, null]]),
+  'March in three parts: the forward of Mon 1 Mar (€200K for ₪716,000), then the options\' two; May, without options, gets none', JSON.stringify(legsF['2027-03'].map((l) => [l.settle, l.forward])));
+  const atF = (rate) => fx.legsAt(legsF['2027-03'], rate).map((l) => [Math.round(l.eur), Math.round(l.ils), l.forward]);
+  check(same(atF(3.45).map((x) => x[0]), [200000, 600000, 450000]) && same(atF(3.25).map((x) => x[0]), [200000, 0, 0]) && same(atF(3.25)[0], [200000, 716000, true])
+    && same(atF(4.2)[0], [200000, 716000, true]) && atF(3.45)[1][2] === false,
+  'the forward sells its €200K at its own rate whatever EUR/ILS is fixed at; the options as before', JSON.stringify(atF(3.25)));
+  check(same(fx.forwardsApart(pos2, legsF), [{ date: '2026-11-02', eur: 0, ils: 400000 }, { date: '2026-12-31', eur: 0, ils: 230000 }, { date: '2027-05-03', eur: -150000, ils: 540000 }])
+    && fx.forwardsApart(pos2, null).length === 4 && same(fx.positionLegs({ options: o.options }), legs),
+  'the other forwards stay flows of their own: the swaps (only shekels move) and May\'s sale; without options, all of them');
+  const effF = fx.tableWithDeals(t, legsF);
+  const marF = effF.rows.find((r) => r.month === '2027-03').cells;
+  const offBy = fx.dealsVsTable(eff, legsF);
+  check(same(marF[2], { eurK: -1250, rate: 3.5862 }) && marF[0].eurK === -200 && same(effF.bounds, t.bounds) && same(fx.dealsVsTable(effF, legsF), [])
+    && offBy.length === 1 && offBy[0].bands.length === marF.length && offBy[0].bands.every((b) => b.deals - b.table === 200000),
+  'the table from the deals counts the forward in every band (3.4–3.49: €1.25M at 3.5862; below 3.3 the forward\'s €200K), as the bank\'s does; one without it is €200K off in each', JSON.stringify(marF.slice(0, 3)));
+  const fixF = fx.fixings(t, '2027-02-26', legsF).find((x) => x.month === '2027-03');
+  check(same(fixF.fixedOn, ['2027-03-03', '2027-03-04']) && same(fixF.paidOn, ['2027-03-01', '2027-03-05', '2027-03-08']) && fixF.riskDays === 6,
+    'the forward has no fixing: EUR/ILS can still move to Thu 4 Mar; its day is one of the days the euros leave');
+
+  const dataF = {
+    ...data, positions: { ...data.positions, forwards: f2.forwards }, ilsVendors: [{ month: '2026-07', ils: 3e6 }, { month: '2026-08', ils: 3e6 }, { month: '2026-09', ils: 3e6 }],
+    payroll: { journals: [], projection: { asOf: null, months: ['2026-09', '2026-10', '2026-11', '2026-12', '2027-01', '2027-02', '2027-03', '2027-04'].map((m) => ({ month: m, ils: 8e6 })) } },
+  };
+  const vF = fx.planFromPayload(dataF, 'today');
+  const covF = vF.plan.coverage[4];
+  check(covF.month === '2027-03' && same(covF.legs.map((l) => [l.settle, Math.round(l.required), l.forward]), [['2027-03-01', 200000, true], ['2027-03-05', 600000, false], ['2027-03-08', 450000, false]])
+    && same(covF.on, ['2027-03-01', '2027-03-05', '2027-03-08']) && same(vF.table.rows.find((r) => r.month === '2027-03'), effF.rows.find((r) => r.month === '2027-03')),
+  'the plan: March takes €1.25M in three parts, the forward\'s €200K on Mon 1 Mar first', JSON.stringify(covF.legs.map((l) => [l.settle, l.required, l.forward])));
+  check(same(vF.deals.inConversions, [{ month: '2027-03', date: '2027-03-01', eur: 200000 }]) && same(vF.deals.flows.map((x) => [x.date, x.eur]), [['2026-11-02', 0], ['2026-12-31', 0], ['2027-05-03', -150000]])
+    && vF.deals.forwards === 6 && same(v.deals.inConversions, []),
+  'the page: the forward in March\'s conversion, the other forwards ahead apart', JSON.stringify(vF.deals.inConversions));
+  const marIls = vF.schedule.find((s) => s.fixing.month === '2027-03').parts.reduce((s, l) => s + l.ils, 0);
+  check(near(marIls, 3766750 + 716000) && near(vF.cash.months.find((m) => m.month === '2027-03').tableIls, marIls),
+    'the forward\'s shekels come in once, with March\'s other parts (₪4,482,750 in March, not ₪716,000 more)', String(vF.cash.months.find((m) => m.month === '2027-03').tableIls));
+  const marPays = fx.eurPaymentsAhead(vF, '2027-02-20').payments.filter((p) => p.kind === 'conversion' && p.month === '2027-03');
+  check(same(marPays.map((p) => [p.date, Math.round(p.eur), p.part, p.parts, p.forward]), [['2027-03-01', 200000, 0, 3, true], ['2027-03-05', 600000, 1, 3, false], ['2027-03-08', 450000, 2, 3, false]])
+    && mail.paymentText(marPays[0]) === 'יום ב\' 1.3: ההמרה של מרץ בבנק (חלק 1 מ-3, פורוורד), €200K' && mail.paymentText(marPays[1]) === 'יום ו\' 5.3: ההמרה של מרץ בבנק (חלק 2 מ-3), €600K'
+    && mail.paymentText({ ...marPays[0], parts: 1 }) === 'יום ב\' 1.3: ההמרה של מרץ בבנק (פורוורד), €200K',
+  'the mail lists March\'s parts by day, the forward\'s named', mail.paymentText(marPays[0]));
+  const lineF = mail.coverText(covF, false, vF.plan.coverage[5]);
+  check(lineF === 'יום ב\' 1.3 ויום ו\' 5.3 ויום ב\' 8.3: €1.25M (€200K בפורוורד ו-€600K ו-€450K), הפיקדונות מכסים €810K: חסרים €200K ביום ב\' 1.3 ו-€240K ביום ב\' 8.3',
+    'the mail\'s line for March: the forward\'s part named, short on Mon 1 Mar as the deposits pay out on Fri 5 Mar', lineF);
+  const fwdLeg = { month: '2027-03', date: '2027-03-07', on: '2027-03-01', settle: '2027-03-01', part: true, forward: true, until: '2027-02-26', eur: 200000, gap: 200000, required: 200000, have: 0 };
+  const saidF = mail.actionText({ kind: 'ladder', eur: 200000, legs: [fwdLeg] }, hv, TODAY);
+  const enF = fx.describeAction({ kind: 'ladder', eur: 200000, legs: [fwdLeg] }, { plan: { next: {} }, rateCheck: null }, TODAY, { eur: (n) => `€${Math.round(n / 1000)}K`, day: (d) => d });
+  check(saidF.body.startsWith('להמרה של יום ב\' 1.3 (הפורוורד, חלק מההמרה של מרץ): היא מוכרת €200K') && enF.body.startsWith('For the 2027-03-01 conversion (the forward, part of March\'s)'),
+    'a deposit for the forward\'s part says it is for the forward', saidF.body);
+  const onDayF = (today) => ({ ...dataF, today, rates: { series: [{ date: '2027-02-26', rate: 3.45 }], spot: { date: today, rate: 3.45 }, sigma: 0.08 } });
+  const fwdPaid = fx.planFromPayload(onDayF('2027-03-02'), 'today');
+  check(fwdPaid.schedule[0].fixing.month === '2027-03' && fwdPaid.plan.next.required === 1050000
+    && same(fwdPaid.plan.coverage[0].legs.map((l) => [l.settle, Math.round(l.required), l.forward]), [['2027-03-05', 600000, false], ['2027-03-08', 450000, false]]),
+  'Tue 2 Mar: the forward\'s €200K left on Mon 1 Mar, so only the options\' €1.05M is kept for', JSON.stringify(fwdPaid.plan.coverage[0].legs.map((l) => [l.settle, l.required])));
+
   console.log('\nDEALS: any number of report files');
   check(o.account === '000000' && f.account === '000000' && !JSON.stringify(o).includes('12-000'), 'each report\'s account by its own number (as NetSuite names it), not the bank or branch', o.account);
   const reportOf = (rows, day, account) => rows.map((r, i) => (i === 3 ? [`מספר חשבון  12-000-${account}  תאריך הפקה  ${day}   `] : r));
