@@ -142,7 +142,8 @@ function actionText(a, v, today) {
     // Each deposit is for one conversion day: with the bank's deals, one part's (a part is a conversion on its own day).
     const legs = a.legs;
     const tail = v.eurVendors ? 'כל התשלומים עד אז, כולל הספקים באירו, עדיין מכוסים.' : 'כל התשלומים עד אז עדיין מכוסים.';
-    const of = (l) => `${day(l.on || l.date)}${l.part ? ` (חלק מההמרה של ${monthName(l.month)})` : ''}`;
+    const partOf = (l) => `${l.forward ? 'הפורוורד, ' : ''}חלק מההמרה של ${monthName(l.month)}`;
+    const of = (l) => `${day(l.on || l.date)}${l.part ? ` (${partOf(l)})` : ''}`;
     if (legs.length === 1) {
       const l = legs[0];
       return { head: `להפקיד ${eur(l.eur)} בפיקדון עד ${day(l.until)}`, body: `להמרה של ${of(l)}: היא מוכרת ${eur(l.required)}, והפיקדונות שמשתחררים עד אז מכסים ${eur(l.have)}, כלומר חסרים ${eur(l.gap)}. ${tail}` };
@@ -152,7 +153,7 @@ function actionText(a, v, today) {
     const months = new Set(legs.map((l) => l.month)).size;
     return {
       head: `להפקיד ${eur(a.eur)} בפיקדונות ${months === 1 ? `להמרה של ${first}` : `להמרות של ${months === 2 ? `${first} ו${last}` : `${first} עד ${last}`}`}`,
-      body: `${legs.map((l) => `${eur(l.eur)} עד ${day(l.until)} להמרה של ${day(l.on || l.date)} (${l.part ? `חלק מההמרה של ${monthName(l.month)}, ` : ''}חסרים ${eur(l.gap)})`).join(', ')}. ${tail}`,
+      body: `${legs.map((l) => `${eur(l.eur)} עד ${day(l.until)} להמרה של ${day(l.on || l.date)} (${l.part ? `${partOf(l)}, ` : ''}חסרים ${eur(l.gap)})`).join(', ')}. ${tail}`,
     };
   }
   // A new deposit: one line when every term holds the same.
@@ -212,10 +213,14 @@ function partRange(part, iso) {
 }
 const NEED = { net: 'שכר נטו', later: 'פנסיה, מס וביטוח לאומי', cards: 'כרטיסי אשראי', vendors: 'ספקים בשקלים' };
 
-/** A payment in euros ahead (fx.eurPaymentsAhead), in one line: "יום א' 1.11: ספקים באירו (1–7.11), כ-€476K". */
+/** A payment in euros ahead (fx.eurPaymentsAhead), in one line: "יום א' 1.11: ספקים באירו (1–7.11), כ-€476K"; a
+ * conversion's part that is a forward says so: "יום ב' 4.1: ההמרה של ינואר בבנק (חלק 1 מ-2, פורוורד), €200K". */
 function paymentText(p) {
   if (p.kind === 'vendors') return `${day(p.date)}: ספקים באירו (${p.rest ? 'יתרת ' : ''}${partRange(p.part, p.date)}), כ-${eur(p.eur)}`;
-  if (p.kind === 'conversion') return `${day(p.date)}: ההמרה של ${monthName(p.month)} בבנק${p.parts > 1 ? ` (חלק ${p.part + 1} מ-${p.parts})` : ''}, ${eur(p.eur)}`;
+  if (p.kind === 'conversion') {
+    const what = [p.parts > 1 ? `חלק ${p.part + 1} מ-${p.parts}` : null, p.forward ? 'פורוורד' : null].filter(Boolean).join(', ');
+    return `${day(p.date)}: ההמרה של ${monthName(p.month)} בבנק${what ? ` (${what})` : ''}, ${eur(p.eur)}`;
+  }
   if (p.kind === 'shekels') return `${day(p.date)}: המרה לשקלים (${(p.why || []).map((w) => NEED[w] || w).join(', ')}), ${eur(p.eur)}`;
   return `${day(p.date)}: פורוורד, מכירת ${eur(p.eur)}`;
 }
@@ -256,7 +261,7 @@ function paymentsTotal(ahead, v, today, acted = false) {
  * at all, the days one would have to pay out in: the earlier ones went to the earlier conversions. */
 function coverText(c, first, next) {
   const legs = c.legs && c.legs.length ? c.legs : [{ settle: c.takes, required: c.required, gap: c.gap }];
-  const parts = legs.length > 1 ? ` (${legs.map((l) => eur(l.required)).join(' ו-')})` : '';
+  const parts = legs.length > 1 ? ` (${legs.map((l) => `${eur(l.required)}${l.forward ? ' בפורוורד' : ''}`).join(' ו-')})` : '';
   const head = `${days(c.on || [c.date])}: ${eur(c.required)}${parts}`;
   if (!(c.gap >= 0.5)) return `${head}, מכוסה מהפיקדונות (${eur(c.have)})`;
   const lastOut = legs[legs.length - 1].settle;

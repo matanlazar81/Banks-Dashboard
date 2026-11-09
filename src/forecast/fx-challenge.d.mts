@@ -81,11 +81,17 @@ export interface ReportFile {
   replaces: { name: string | null; asOf: string | null }[];
 }
 export declare function mergePositionReports(saved: Positions | null, reads: { name: string; report: PositionReport }[]): { value: Positions | null; files: ReportFile[]; kept: SavedReport[] };
-/** The options of one month that settle on one day. */
-export interface PositionLeg { expiry: string; settle: string; options: PositionOption[] }
-export declare function positionLegs(positions: Pick<Positions, 'options'> | null): Record<string, PositionLeg[]>;
-/** A part of a conversion: the euros it sells (net) and the shekels it brings, settled on `settle`. */
-export interface ConversionLeg { expiry: string; settle: string; eur: number; ils: number }
+/** The options of one month that settle on one day (expiry: their first fixing day), or a forward selling euros in a
+ * month with options, a part of its own: its euros sold and shekels received, at its own rate whatever EUR/ILS is (no
+ * options, expiry null). */
+export interface PositionLeg { expiry: string | null; settle: string; options: PositionOption[]; forward?: { eur: number; ils: number } }
+export declare function positionLegs(positions: Pick<Positions, 'options'> & Partial<Pick<Positions, 'forwards'>> | null): Record<string, PositionLeg[]>;
+/** The forwards that are flows of their own: not selling euros in a month with options (a swap, a purchase, a month
+ * without options). */
+export declare function forwardsApart(positions: Pick<Positions, 'forwards'> | null, legsByMonth: Record<string, PositionLeg[]> | null): ForwardFlow[];
+/** A part of a conversion: the euros it sells (net) and the shekels it brings, settled on `settle`; forward: the part is a
+ * forward. */
+export interface ConversionLeg { expiry: string | null; settle: string; eur: number; ils: number; forward: boolean }
 export declare function legsAt(legs: PositionLeg[], rate: number): ConversionLeg[];
 export declare function conversionLegs(legs: PositionLeg[] | null | undefined, rate: number | null, eur: number): ConversionLeg[] | null;
 export declare function rateSelling(row: FxRow, bounds: number[], spot: number | null, eur: number): number | null;
@@ -178,7 +184,7 @@ export interface EurVendorsAhead {
 /** A payment in euros ahead (eurPaymentsAhead). */
 export type EurPayment =
   | { date: string; eur: number; kind: 'vendors'; part: number; rest: boolean }
-  | { date: string; eur: number; kind: 'conversion'; month: string; part: number; parts: number }
+  | { date: string; eur: number; kind: 'conversion'; month: string; part: number; parts: number; forward: boolean }
   | { date: string; eur: number; kind: 'shekels'; why: ShekelNeedWhy[] }
   | { date: string; eur: number; kind: 'forward' };
 export interface EurPaymentsAhead {
@@ -365,8 +371,10 @@ export interface ReservePlan {
  * before (after today, for the first), what is left from earlier, and its gap. */
 export interface CoverageLeg {
   settle: string;
-  /** Its fixing day (the deals'); null without deals. */
+  /** Its fixing day (the deals'); null without deals, or for a forward. */
   expiry: string | null;
+  /** The part is a forward: its euros go at the forward's rate. */
+  forward: boolean;
   required: number;
   released: number;
   releasedDeposits: DepositRelease[];
@@ -417,7 +425,8 @@ export interface CoverageRow {
 /** A new deposit for a conversion's gap: eur until `until`, for the conversion on `date`; with the deals, for its part
  * leaving on `settle` (part: the conversion leaves in more than one part), whose amount is `required`. */
 /** on: the conversion day the deposit is for (with the deals, its part's value day; without, the 7th). */
-export interface LadderLeg { month: string; date: string; on?: string; settle?: string; part?: boolean; until: string; eur: number; gap: number; required: number; have: number }
+/** A new deposit for a conversion part's gap; forward: the part is a forward. */
+export interface LadderLeg { month: string; date: string; on?: string; settle?: string; part?: boolean; forward?: boolean; until: string; eur: number; gap: number; required: number; have: number }
 export declare function planReserve(input: {
   upcoming: Upcoming[];
   policy?: Policy;
@@ -462,7 +471,10 @@ export interface DealsView {
   from: string | null;
   to: string | null;
   missing: string[];
+  /** The forwards ahead that are flows of their own (forwardsApart). */
   flows: ForwardFlow[];
+  /** The forwards ahead that are parts of the conversions (positionLegs): the month, the value day, the euros sold. */
+  inConversions: { month: string; date: string; eur: number }[];
   mismatches: { month: string; bands: { band: number; table: number; deals: number }[] }[];
   /** The reports saved: file, kind, account, day and how many deals. */
   reports: { name: string | null; kind: 'options' | 'forwards'; account: string | null; asOf: string | null; count: number }[];
