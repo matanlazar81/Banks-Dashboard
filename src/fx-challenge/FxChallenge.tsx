@@ -543,7 +543,7 @@ function DealsCard({ data, model, onSaved }: { data: FxPayload; model: FxModel; 
   const usable = !!merged && merged.files.some((f) => f.used);
   const older = !!merged && merged.files.some((f) => f.used && f.older);
   const savedLabels = bandLabels(data.table.bounds);
-  const pickTitle = "Hapoalim's position reports: OTCPositionDetails.xlsx (the options) and FXPositionDetails.xlsx (the forwards), of one account or more. Pick several at once, or add them one by one before saving.";
+  const pickTitle = "Hapoalim's position reports, the deal details (\"פירוט עסקאות\"): OTCPositionDetails.xlsx (the options) and FXPositionDetails.xlsx (the forwards), of one account or more; not the summaries OTCPosition.xlsx and FXPosition.xlsx. Pick several at once, or add them one by one before saving.";
   return (
     <Card title="The bank's deals (how many euros, and when they leave)"
       aside={(
@@ -560,7 +560,8 @@ function DealsCard({ data, model, onSaved }: { data: FxPayload; model: FxModel; 
                 <span className="font-medium">{f.name}</span>:{' '}
                 {f.kind
                   ? `${reportLabel({ kind: f.kind, account: f.account, asOf: f.asOf })}: ${f.count} ${f.kind === 'options' ? 'EUR/ILS options' : 'forwards'}${f.skipped ? ` (${f.skipped} in other currencies left out)` : ''}`
-                  : "not one of the bank's position reports"}
+                  : f.summary ? 'a summary of positions, not the deal details, so it is left out' : "not one of the bank's position reports"}
+                {!f.kind && f.summary && f.problems.length > 0 && <p className="text-amber-700">{f.problems[0]}</p>}
                 {f.kind && !f.used && f.why && <span className="text-slate-500"> (left out: {f.why})</span>}
                 {f.used && (
                   <span className="text-slate-500">

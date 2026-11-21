@@ -366,7 +366,22 @@ async function testDeals(fx) {
     && same(f.forwards[1], { deal: '2002', side: 'buy', currency: 'EUR', amount: 1000000, counter: 'ILS', rate: 3.8, settle: '2026-11-02', counterAmount: -3800000 }),
   'the forwards report: each forward with its value day and shekels', JSON.stringify(f.forwards[1]));
   const none = fx.parsePositionReport([['a', 'b'], [1, 2]]);
-  check(none.kind === null && none.problems.length === 1, 'another sheet: not a position report, said');
+  check(none.kind === null && none.summary === null && none.problems.length === 1, 'another sheet: not a position report, said');
+  // The bank's other export, its summary of positions (OTCPosition.xlsx and FXPosition.xlsx, 21 Nov 2026): the same
+  // columns without the deal numbers (and the options' fixing day), the trigger under טריגר 2. Made-up account.
+  const OTC_SUM_HEAD = ['סוג אופציה', 'למסירה', 'קניה/מכירה', 'Put/Call', 'מטבע ראשי', 'סכום העסקה', 'מטבע נגדי', 'תאריך פרעון', 'שערוך במונח דולר ארהב', 'Strike',
+    'תאריך דגימה ראשון', 'תאריך דגימה אחרון', 'תדירות דגימה', 'מקור שער הדגימות', 'טריגר 1', 'טריגר 2', 'מטבע Payoff'];
+  const FWD_SUM_HEAD = ['תאריך פרעון', 'קניה/מכירה', 'למסירה', 'מטבע ראשי', 'סכום העסקה', 'מטבע נגדי', 'סכום נגדי', 'שער פוזיציה ממוצע', 'שערוך במונחי דולר ארהב'];
+  const summaryOf = (title, head, row) => [[null], [null], [title], ['מספר חשבון  12-000-000000  תאריך הפקה  21.11.2026  '], head, row];
+  const sumO = fx.parsePositionReport(summaryOf('עסקאות FX OPTION', OTC_SUM_HEAD, ['EKO', 'כן', 'קניה', 'PUT', 'EUR', -300000, 'ILS', serial('2027-01-06'), 17.04, 3.49, null, null, null, null, '', 3.3, '']));
+  const sumF = fx.parsePositionReport(summaryOf('עסקאות FX', FWD_SUM_HEAD, [serial('2027-01-04'), 'מכירה', 'כן', 'EUR', -200000, 'ILS', 717900, '', -3253.16]));
+  check(sumO.kind === null && sumO.summary === 'options' && sumO.asOf === '2026-11-21' && sumO.account === '000000' && /"פירוט עסקאות FX OPTION" \(OTCPositionDetails\.xlsx\)/.test(sumO.problems[0])
+    && sumF.kind === null && sumF.summary === 'forwards' && /"פירוט עסקאות FX" \(FXPositionDetails\.xlsx\)/.test(sumF.problems[0]) && /locked profit/.test(sumF.problems[0]),
+  'the bank\'s summary of positions is not read: its kind, day and account, and the detail report to download instead', JSON.stringify([sumO.summary, sumF.summary, sumO.problems[0]]));
+  const sumMerge = fx.mergePositionReports(null, [{ name: 'OTCPosition.xlsx', report: sumO }, { name: 'FXPosition.xlsx', report: sumF }]);
+  check(sumMerge.value === null && sumMerge.files.every((x) => !x.used && x.why === 'a summary of positions, not the deal details') && same(sumMerge.files.map((x) => x.summary), ['options', 'forwards'])
+    && fx.mergePositionReports(null, [{ name: 'x.xlsx', report: none }]).files[0].why === "not one of the bank's position reports",
+  'an upload of the summaries saves nothing and says why, file by file');
   check(fx.reportDay(serial('2027-03-08')) === '2027-03-08' && fx.reportDay('08.03.2027') === '2027-03-08' && fx.reportDay('2027-03-08T00:00:00') === '2027-03-08' && fx.reportDay('soon') === null,
     'days as Excel serial days, dd.mm.yyyy or ISO');
 
