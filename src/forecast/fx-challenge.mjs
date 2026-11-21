@@ -388,6 +388,48 @@ export function tableWithDeals(table, legsByMonth) {
   return { pair: table.pair, fixingDay: table.fixingDay, bounds, rows: [...rows.values()].sort((a, b) => a.month.localeCompare(b.month)) };
 }
 
+/**
+ * What a cell of the table worked out from the deals (tableWithDeals) is made of: the month's parts (positionLegs) with
+ * EUR/ILS in the middle of band `band` of `bounds`, as the cell has them. A forward sells at its own rate; the options
+ * at their strikes, the deals at one strike, type, side and trigger together (a layer), each selling (+) or buying (−)
+ * euros. Parts and layers that move no euros there are left out. The bands are cut at every strike and trigger, so the
+ * same layers go through anywhere in the band. Returns { rate (the band's middle), eur, ils, parts: [{ settle, fixed (the
+ * options' first fixing day; null for a forward), forward ({ eur, ils } or null), layers: [{ type, side, strike, trigger,
+ * eur, ils }] }] }, eur and ils adding up to the cell's (its rate is ils / eur); null without legs. January 2027 at
+ * 3.62–3.70 on 21 Nov 2026: €200K on the forward of 4 Jan at 3.5895, €2.05M of options settled on 6 Jan and €250K of
+ * the new deal on 22 Jan at 3.62, €2.50M for ₪9,073,650 (3.6295).
+ */
+export function cellLayers(legs, bounds, band) {
+  if (!legs || !legs.length) return null;
+  const rate = bandMiddle(bounds, band);
+  let eur = 0;
+  let ils = 0;
+  const parts = [];
+  for (const l of legs) {
+    if (l.forward) {
+      parts.push({ settle: l.settle, fixed: null, forward: { eur: l.forward.eur, ils: l.forward.ils }, layers: [] });
+      eur += l.forward.eur;
+      ils += l.forward.ils;
+      continue;
+    }
+    const by = new Map();
+    for (const o of l.options) {
+      const e = optionEur(o, rate);
+      if (Math.abs(e) < 0.5) continue;
+      const key = `${o.type}|${o.side}|${o.strike}|${o.trigger || ''}`;
+      const x = by.get(key) || { type: o.type, side: o.side, strike: o.strike, trigger: o.trigger || null, eur: 0, ils: 0 };
+      x.eur += e;
+      x.ils += e * o.strike;
+      by.set(key, x);
+    }
+    const layers = [...by.values()].sort((a, b) => a.strike - b.strike || a.type.localeCompare(b.type) || a.side.localeCompare(b.side));
+    if (!layers.length) continue;
+    parts.push({ settle: l.settle, fixed: l.expiry, forward: null, layers });
+    for (const x of layers) { eur += x.eur; ils += x.ils; }
+  }
+  return { rate, eur, ils, parts };
+}
+
 /** The forwards netted by value day: [{ date, eur (+ bought, − sold), ils (+ received, − paid) }], earliest first. On 2 Nov
  * 2026 the €1.75M sold was bought back the same day, so only shekels move. */
 export function forwardFlows(positions) {

@@ -122,6 +122,14 @@ briefly a tab of the Metrics page before it got its own sidebar item.
     options of 30 Oct 2026 give the table received exactly, band by band, from November 2026 to December 2027 (the
     same euros; the rates within 0.005 of its two decimals), and the card says where the saved table differs from the
     deals (`dealsVsTable`): for information, since the deals are used.
+  - **A cell's layers** (`cellLayers`, asked on 21 Nov 2026): hovering (or tapping) a cell of a month from the deals
+    opens what it is made of, part by part on its day: the forward at its own rate, then the options by layer (the
+    deals at one strike, type, side and trigger together: "Call sold", "Put bought, out ≤ 3.4"), each with its euros
+    (− for euros bought), its rate and its shekels, and the total, the cell: its rate is their average, shekels ÷
+    euros, and the same anywhere in the band, which is cut at every strike and trigger. January 2027 at 3.62–3.70 on
+    21 Nov 2026: €200K on the forward of Mon 4 Jan at 3.5895, €2.05M of options settled Wed 6 Jan at 3.49 to 3.93 and
+    €250K of the new deal on Fri 22 Jan at 3.62, €2.50M for ₪9,073,650, 3.6295 (the cell shows 3.63). The other
+    months (the saved table's) keep their one-line tip.
   - **The days**: each conversion's amount kept is split between its parts as the deals split it at the rate whose
     band sells that amount (`rateSelling`, `conversionLegs`). The shekels side counts each part's shekels on its day
     (Wed 4 Nov 2026 for Sat 7 Nov, before the net salaries of the 5th).

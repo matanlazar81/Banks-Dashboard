@@ -1,14 +1,14 @@
 // Business Tools → FX Challenge: finance's monthly EUR→ILS conversions at Bank Hapoalim (fixed on the 7th by the
 // conversion table), simulated at any rate, and how much EUR to keep for them (GET /api/fx-challenge; the logic is
 // src/forecast/fx-challenge.mjs, the same as the server's tests).
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Loader2, RefreshCw, Upload } from 'lucide-react';
 import { ErrorCard, Segmented, Skeleton, Warnings } from '../new-dashboard/PageParts.tsx';
 import { KpiCard } from '../new-dashboard/KpiStrip.tsx';
 import { readParam, writeParam } from '../new-dashboard/urlParams.ts';
 import {
-  bandLabels, mergePositionReports, parsePositionReport, parseTable, POLICIES, POLICY_LABEL, tableToText,
-  type CashPlan, type DepositRelease, type Fixing, type FxTable, type OtherConversion, type OutcomeRange, type PathPoint, type Policy, type PositionReport, type Positions,
+  bandLabels, cellLayers, mergePositionReports, parsePositionReport, parseTable, POLICIES, POLICY_LABEL, tableToText,
+  type CashPlan, type CellLayer, type CellLayers, type DepositRelease, type Fixing, type FxTable, type OtherConversion, type OutcomeRange, type PathPoint, type Policy, type PositionReport, type Positions,
   type RateCheck, type ReservePlan,
 } from '../forecast/fx-challenge.mjs';
 import { formatEur, monthName } from '../metrics/model.ts';
@@ -1018,7 +1018,21 @@ function Simulation({ model, rateText, onRate }: { model: FxModel; rateText: str
  * the saved table. */
 function TableCard({ data, model, onSaved }: { data: FxPayload; model: FxModel; onSaved: () => Promise<void> }) {
   const [editing, setEditing] = useState(false);
+  // The cell under the pointer (or tapped) of a month from the deals, for what it is made of: its month, band and place.
+  const [tip, setTip] = useState<{ month: string; band: number; x: number; top: number; bottom: number } | null>(null);
+  useEffect(() => {
+    if (!tip) return undefined;
+    const close = () => setTip(null);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => { window.removeEventListener('scroll', close, true); window.removeEventListener('resize', close); };
+  }, [tip]);
+  const showTip = (month: string, band: number, el: HTMLElement) => {
+    const r = el.getBoundingClientRect();
+    setTip({ month, band, x: r.left + r.width / 2, top: r.top, bottom: r.bottom });
+  };
   const { table } = model;
+  const tipLayers = tip && model.dealLegs ? cellLayers(model.dealLegs[tip.month], table.bounds, tip.band) : null;
   const max = Math.max(1, ...table.rows.flatMap((r) => r.cells.map((c) => Math.abs(c.eurK))));
   const saved = data.tableSaved;
   const d = model.deals;
@@ -1059,9 +1073,12 @@ function TableCard({ data, model, onSaved }: { data: FxPayload; model: FxModel; 
                     {deal ? <span className={HINT}>{monthName(r.month)}</span> : monthName(r.month)}
                   </td>
                   {r.cells.map((c, i) => (
-                    <td key={i} className={`whitespace-nowrap rounded px-1.5 py-1 text-center tabular-nums text-slate-800 ${i === model.simBand ? 'ring-2 ring-sky-700' : ''}`}
+                    <td key={i} className={`whitespace-nowrap rounded px-1.5 py-1 text-center tabular-nums text-slate-800 ${i === model.simBand ? 'ring-2 ring-sky-700' : ''} ${deal ? 'cursor-help' : ''}`}
                       style={{ backgroundColor: `rgba(14, 116, 144, ${(0.06 + 0.42 * Math.abs(c.eurK) / max).toFixed(3)})` }}
-                      title={`${monthName(r.month)}, ${model.labels[i]}: ${c.eurK ? `sell ${formatEur(-c.eurK * 1000)} at ${c.rate} = ${formatIls(-c.eurK * 1000 * c.rate)}` : 'nothing sold'}${deal ? " (the bank's deals)" : ''}`}>
+                      title={deal ? undefined : `${monthName(r.month)}, ${model.labels[i]}: ${c.eurK ? `sell ${formatEur(-c.eurK * 1000)} at ${c.rate} = ${formatIls(-c.eurK * 1000 * c.rate)}` : 'nothing sold'}`}
+                      onMouseEnter={deal ? (e) => showTip(r.month, i, e.currentTarget) : undefined}
+                      onMouseLeave={deal ? () => setTip(null) : undefined}
+                      onClick={deal ? (e) => showTip(r.month, i, e.currentTarget) : undefined}>
                       {c.eurK ? `${-c.eurK} · ${formatTableRate(c.rate)}` : '0'}
                     </td>
                   ))}
@@ -1076,12 +1093,73 @@ function TableCard({ data, model, onSaved }: { data: FxPayload; model: FxModel; 
         {d && d.from && d.to && (
           <>
             {' '}{d.from === d.to ? monthName(d.from) : `${monthName(d.from)} – ${monthName(d.to)}`} come{d.from === d.to ? 's' : ''} from the bank&apos;s deals
-            (underlined; hover a month for how), the other months from the saved table
+            (underlined; hover a month for how, and one of its cells for the layers it is made of), the other months from the saved table
             {newEdges.length ? `, and the deals add ${newEdges.join(', ')} to the bands` : ''}.
           </>
         )}
       </p>
+      {tip && tipLayers && <LayersTip month={tip.month} label={model.labels[tip.band]} layers={tipLayers} at={tip} />}
     </Card>
+  );
+}
+
+const TIP_WIDTH = 400;
+const tipIls = (n: number) => `${n < -0.5 ? '−' : ''}₪${Math.round(Math.abs(n)).toLocaleString('en-US')}`;
+const tipEur = (n: number) => (n < -0.5 ? `−${formatEur(-n)}` : formatEur(n));
+/** "Call sold", "Put bought, out ≤ 3.4": a layer's options, and the trigger that knocks them out (optionEur). */
+const layerName = (x: CellLayer) => `${x.type === 'call' ? 'Call' : 'Put'} ${x.side === 'sell' ? 'sold' : 'bought'}${x.trigger ? `, out ${x.type === 'call' ? '≥' : '≤'} ${x.trigger}` : ''}`;
+
+/** What a cell of the conversion table is made of (cellLayers), next to it: each part on its day with its layers at
+ * their own rates (the forward at its own, the options at their strikes), and their total, the cell: its rate is their
+ * average. */
+function LayersTip({ month, label, layers, at }: { month: string; label: string; layers: CellLayers; at: { x: number; top: number; bottom: number } }) {
+  const below = window.innerHeight - at.bottom > 320 || at.top < 320;
+  const left = Math.min(Math.max(8, at.x - TIP_WIDTH / 2), window.innerWidth - TIP_WIDTH - 8);
+  const cell = 'py-px text-right';
+  return (
+    <div role="tooltip" className="pointer-events-none fixed z-50 rounded-md border border-slate-200 bg-white p-2.5 text-[11px] text-slate-700 shadow-lg"
+      style={{ width: TIP_WIDTH, left, ...(below ? { top: at.bottom + 6 } : { bottom: window.innerHeight - at.top + 6 }) }}>
+      <p className="mb-1 font-medium text-slate-900">{monthName(month)} · EUR/ILS {label}</p>
+      <table className="w-full tabular-nums">
+        <thead>
+          <tr className="text-slate-500">
+            <th className="text-left font-normal">Layer</th><th className="text-right font-normal">€</th><th className="text-right font-normal">at</th><th className="text-right font-normal">₪</th>
+          </tr>
+        </thead>
+        <tbody>
+          {layers.parts.map((p) => (
+            <Fragment key={`${p.settle}-${p.forward ? 'forward' : 'options'}`}>
+              <tr>
+                <td colSpan={4} className="pt-1.5 text-slate-500">
+                  {formatDay(p.settle)}{p.forward ? ': the forward' : `: options${p.fixed ? ` fixed ${formatDay(p.fixed)}` : ''}`}
+                </td>
+              </tr>
+              {p.forward && (
+                <tr>
+                  <td className="py-px pl-2">Forward</td><td className={cell}>{tipEur(p.forward.eur)}</td>
+                  <td className={cell}>{(p.forward.ils / p.forward.eur).toFixed(4)}</td><td className={cell}>{tipIls(p.forward.ils)}</td>
+                </tr>
+              )}
+              {p.layers.map((x) => (
+                <tr key={`${x.type}-${x.side}-${x.strike}-${x.trigger ?? ''}`}>
+                  <td className="py-px pl-2">{layerName(x)}</td><td className={cell}>{tipEur(x.eur)}</td><td className={cell}>{x.strike}</td><td className={cell}>{tipIls(x.ils)}</td>
+                </tr>
+              ))}
+            </Fragment>
+          ))}
+          <tr className="font-medium text-slate-900">
+            <td className="border-t border-slate-200 pt-1">Total</td>
+            <td className="border-t border-slate-200 pt-1 text-right">{tipEur(layers.eur)}</td>
+            <td className="border-t border-slate-200 pt-1 text-right">{Math.abs(layers.eur) >= 0.5 ? (layers.ils / layers.eur).toFixed(4) : '–'}</td>
+            <td className="border-t border-slate-200 pt-1 text-right">{tipIls(layers.ils)}</td>
+          </tr>
+        </tbody>
+      </table>
+      <p className="mt-1.5 text-slate-500">
+        Each layer at its own rate: the forward at its own, the options at their strikes (− is euros you buy). The cell&apos;s
+        rate is their average, ₪ ÷ €, the same anywhere in the band (worked out at {layers.rate.toFixed(4)}).
+      </p>
+    </div>
   );
 }
 

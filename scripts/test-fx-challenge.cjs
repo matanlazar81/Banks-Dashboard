@@ -532,6 +532,22 @@ async function testDeals(fx) {
   check(same(marF[2], { eurK: -1250, rate: 3.5862 }) && marF[0].eurK === -200 && same(effF.bounds, t.bounds) && same(fx.dealsVsTable(effF, legsF), [])
     && offBy.length === 1 && offBy[0].bands.length === marF.length && offBy[0].bands.every((b) => b.deals - b.table === 200000),
   'the table from the deals counts the forward in every band (3.4–3.49: €1.25M at 3.5862; below 3.3 the forward\'s €200K), as the bank\'s does; one without it is €200K off in each', JSON.stringify(marF.slice(0, 3)));
+  // What a cell is made of, as the page shows it on hover.
+  const layersOf = (c) => c.parts.map((p) => [p.settle, p.fixed, p.forward, p.layers.map((x) => [x.side, x.type, x.strike, x.trigger, Math.round(x.eur), Math.round(x.ils)])]);
+  const cellMar = fx.cellLayers(legs['2027-03'], t.bounds, 2);
+  check(near(cellMar.rate, 3.445, 1e-9) && same(layersOf(cellMar), [
+    ['2027-03-05', '2027-03-03', null, [['buy', 'put', 3.49, 3.3, 300000, 1047000], ['buy', 'put', 3.56, 3.3, 300000, 1068000]]],
+    ['2027-03-08', '2027-03-04', null, [['buy', 'put', 3.527, null, 250000, 881750], ['buy', 'put', 3.85, 3.4, 200000, 770000]]],
+  ]) && Math.round(cellMar.eur) === 1050000 && Math.round(cellMar.ils) === 3766750 && same(eff.rows.find((r) => r.month === '2027-03').cells[2], { eurK: -1050, rate: Math.round((cellMar.ils / cellMar.eur) * 10000) / 10000 }),
+  'a cell\'s layers: March at 3.4–3.49, the puts bought settled each day, €1.05M for ₪3,766,750, the cell\'s 3.5874', JSON.stringify(layersOf(cellMar)));
+  const clLow = fx.cellLayers(legs['2027-03'], t.bounds, 0);
+  check(same(layersOf(clLow), [['2027-03-08', '2027-03-04', null, [['sell', 'put', 3.3, null, -250000, -825000], ['buy', 'put', 3.527, null, 250000, 881750]]]])
+    && Math.abs(clLow.eur) < 0.5 && Math.round(clLow.ils) === 56750,
+  'below 3.3 the EKO puts are out, and the put sold and the put bought cancel in euros but not in shekels: both shown, the part that moves nothing left out');
+  const clF = fx.cellLayers(legsF['2027-03'], t.bounds, 2);
+  check(same(clF.parts[0], { settle: '2027-03-01', fixed: null, forward: { eur: 200000, ils: 716000 }, layers: [] }) && clF.parts.length === 3
+    && same(marF[2], { eurK: -Math.round(clF.eur) / 1000, rate: Math.round((clF.ils / clF.eur) * 10000) / 10000 }) && fx.cellLayers(null, t.bounds, 2) === null,
+  'with the forward: its part first, at its own rate, and the layers still add up to the cell (€1.25M at 3.5862)');
   const fixF = fx.fixings(t, '2027-02-26', legsF).find((x) => x.month === '2027-03');
   check(same(fixF.fixedOn, ['2027-03-03', '2027-03-04']) && same(fixF.paidOn, ['2027-03-01', '2027-03-05', '2027-03-08']) && fixF.riskDays === 6,
     'the forward has no fixing: EUR/ILS can still move to Thu 4 Mar; its day is one of the days the euros leave');
