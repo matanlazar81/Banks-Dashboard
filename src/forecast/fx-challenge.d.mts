@@ -102,6 +102,14 @@ export declare function rateSelling(row: FxRow, bounds: number[], spot: number |
 /** The table with the months the deals cover worked out from them (bands: the saved table's plus every strike and
  * trigger); the saved table's months otherwise. The saved table itself without deals. */
 export declare function tableWithDeals(table: FxTable, legsByMonth: Record<string, PositionLeg[]> | null): FxTable;
+/** A layer of a table cell: the options at one strike, type, side and trigger, selling (+) or buying (−) euros. */
+export interface CellLayer { type: 'put' | 'call'; side: 'buy' | 'sell'; strike: number; trigger: number | null; eur: number; ils: number }
+/** A part of a cell: a forward (at its own rate), or the options settled that day (fixed: their first fixing day). */
+export interface CellPart { settle: string; fixed: string | null; forward: { eur: number; ils: number } | null; layers: CellLayer[] }
+/** What a cell worked out from the deals is made of, with EUR/ILS at `rate` (the band's middle); eur and ils add up
+ * to the cell's. */
+export interface CellLayers { rate: number; eur: number; ils: number; parts: CellPart[] }
+export declare function cellLayers(legs: PositionLeg[] | null | undefined, bounds: number[], band: number): CellLayers | null;
 /** The forwards netted by value day: euros (+ bought, − sold) and shekels (+ received, − paid). */
 export interface ForwardFlow { date: string; eur: number; ils: number }
 export declare function forwardFlows(positions: Pick<Positions, 'forwards'> | null): ForwardFlow[];

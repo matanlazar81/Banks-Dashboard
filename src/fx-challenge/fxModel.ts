@@ -3,7 +3,7 @@
 import {
   bandIndex, bandLabels, conversionAt, describeAction, describeDue, describeKeep, keepCover, legsAt, nothingToday, pastConversions, planFromPayload, todayActions,
   type CashPlan, type Conversion, type ConversionLeg, type DealsView, type EurPosition, type EurVendorsAhead, type Fixing, type FxTable, type KeepCover, type PastMonth, type PastTotals, type Policy,
-  type RateCheck, type ReservePlan,
+  type PositionLeg, type RateCheck, type ReservePlan,
   type ScheduleItem, type ShekelDue, type TodayAction,
 } from '../forecast/fx-challenge.mjs';
 import { formatEur } from '../metrics/model.ts';
@@ -50,6 +50,8 @@ export interface FxModel {
   plan: ReservePlan | null;
   /** The bank's deals behind the plan's days; null while none are saved. */
   deals: DealsView | null;
+  /** The deals' parts by month (positionLegs), for what each cell of the table is made of; null without deals. */
+  dealLegs: Record<string, PositionLeg[]> | null;
   /** The EUR vendor payments the plan expects on their days; null without NetSuite's payments by day. */
   eurVendors: EurVendorsAhead | null;
   /** Where the amount kept for the next conversion comes from: deposits released by then, and today's cash; text says
@@ -113,6 +115,7 @@ export function buildFxModel(data: FxPayload, simRate: number | null, policy: Po
     cash: base.cash,
     plan: base.plan,
     deals: base.deals,
+    dealLegs: base.dealLegs,
     eurVendors: base.eurVendors,
     keep: cover ? { ...cover, text: describeKeep(cover, fmt) } : null,
     todo: {
