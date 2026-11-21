@@ -133,29 +133,30 @@ const reportNumber = (v) => {
  * report (it has Strike and תאריך פקיעה) or the forwards report (שער סופי). The header row is found by its titles, the
  * report's day from "תאריך הפקה dd.mm.yyyy" above it, and the account from "מספר חשבון": its own number only (583400, as
  * NetSuite names the account; not the bank or branch), to tell several accounts' reports apart. Options other than
- * EUR/ILS and forwards against a currency other than ILS are left out (skipped).
- * Returns { kind: 'options' | 'forwards' | null, asOf, account, options | forwards, skipped, problems }.
+ * EUR/ILS and forwards against a currency other than ILS are left out (skipped). The bank's summary of positions (its
+ * other export: OTCPosition.xlsx, "עסקאות FX OPTION", and FXPosition.xlsx, "עסקאות FX") has the same columns without the
+ * deal numbers, nets the deals, and gives neither the options' fixing days nor the shekels of a sale bought back: it is
+ * not read, and `summary` (its kind) says so, with the detail report to download in `problems` (21 Nov 2026).
+ * Returns { kind: 'options' | 'forwards' | null, summary (null), asOf, account, options | forwards, skipped, problems }.
  *   option   { deal, kind, side: 'buy' | 'sell', type: 'put' | 'call', eur, strike, trigger (null), expiry, settle }
  *   forward  { deal, side, currency, amount, counter, rate, settle, counterAmount (+ received, − paid) }
  */
 export function parsePositionReport(rows) {
   const list = Array.isArray(rows) ? rows : [];
-  const at = list.findIndex((r) => Array.isArray(r) && r.some((c) => HEADER_OF.get(headerKey(c)) === 'deal') && r.some((c) => HEADER_OF.get(headerKey(c)) === 'settle'));
-  if (at < 0) return { kind: null, asOf: null, skipped: 0, problems: ["No header row with the deal number and תאריך פרעון: this is not one of Hapoalim's position reports."] };
+  const keysOf = (r) => new Set((Array.isArray(r) ? r : []).map((c) => HEADER_OF.get(headerKey(c))).filter(Boolean));
+  const at = list.findIndex((r) => { const k = keysOf(r); return k.has('deal') && k.has('settle'); });
+  if (at < 0) {
+    const s = list.findIndex((r) => { const k = keysOf(r); return ['settle', 'side', 'currency', 'amount', 'counter'].every((x) => k.has(x)); });
+    if (s < 0) return { kind: null, summary: null, asOf: null, skipped: 0, problems: ["No header row with the deal number and תאריך פרעון: this is not one of Hapoalim's position reports."] };
+    const summary = keysOf(list[s]).has('strike') ? 'options' : 'forwards';
+    return { kind: null, summary, ...reportHead(list, s), skipped: 0, problems: [SUMMARY_TEXT[summary]] };
+  }
   const col = {};
   list[at].forEach((c, i) => { const k = HEADER_OF.get(headerKey(c)); if (k && col[k] === undefined) col[k] = i; });
   const kind = col.strike !== undefined && col.expiry !== undefined ? 'options' : col.rate !== undefined ? 'forwards' : null;
-  let asOf = null;
-  let account = null;
-  for (const r of list.slice(0, at)) {
-    const text = (r || []).join(' ');
-    const m = /תאריך הפקה\s*(\d{1,2}\.\d{1,2}\.\d{4})/.exec(text);
-    if (m && !asOf) asOf = reportDay(m[1]);
-    const a = /מספר חשבון\s*(?:\d+-)*(\d+)/.exec(text);
-    if (a && !account) account = a[1];
-  }
+  const { asOf, account } = reportHead(list, at);
   const problems = [];
-  if (!kind) return { kind: null, asOf, account, skipped: 0, problems: ['The header row has neither Strike and תאריך פקיעה (options) nor שער סופי (forwards).'] };
+  if (!kind) return { kind: null, summary: null, asOf, account, skipped: 0, problems: ['The header row has neither Strike and תאריך פקיעה (options) nor שער סופי (forwards).'] };
   const cell = (r, k) => (col[k] === undefined ? null : r[col[k]]);
   const SIDES = { 'קניה': 'buy', 'מכירה': 'sell' };
   const out = [];
@@ -188,8 +189,28 @@ export function parsePositionReport(rows) {
     }
   });
   if (!out.length && !problems.length) problems.push(`No ${kind === 'options' ? 'EUR/ILS options' : 'forwards against shekels'} in the report.`);
-  return { kind, asOf, account, [kind]: out, skipped, problems };
+  return { kind, summary: null, asOf, account, [kind]: out, skipped, problems };
 }
+
+/** A report's day ("תאריך הפקה dd.mm.yyyy") and account ("מספר חשבון", its own number) from the rows above its header. */
+function reportHead(list, at) {
+  let asOf = null;
+  let account = null;
+  for (const r of list.slice(0, at)) {
+    const text = (r || []).join(' ');
+    const m = /תאריך הפקה\s*(\d{1,2}\.\d{1,2}\.\d{4})/.exec(text);
+    if (m && !asOf) asOf = reportDay(m[1]);
+    const a = /מספר חשבון\s*(?:\d+-)*(\d+)/.exec(text);
+    if (a && !account) account = a[1];
+  }
+  return { asOf, account };
+}
+
+/** What to download instead of the bank's summary of positions, by its kind. */
+const SUMMARY_TEXT = {
+  options: 'The bank\'s summary of positions ("עסקאות FX OPTION") nets the deals, without their numbers or fixing days: download the deal details instead, "פירוט עסקאות FX OPTION" (OTCPositionDetails.xlsx).',
+  forwards: 'The bank\'s summary of positions ("עסקאות FX") has no deal numbers, and a sale bought back shows only its locked profit, not its shekels: download the deal details instead, "פירוט עסקאות FX" (FXPositionDetails.xlsx).',
+};
 
 const POSITION_KINDS = ['options', 'forwards'];
 
@@ -216,15 +237,15 @@ export function mergePositionReports(saved, reads) {
   const files = (reads || []).map(({ name, report: r }) => {
     const list = r && r.kind ? r[r.kind] || [] : [];
     return {
-      name, kind: (r && r.kind) || null, account: (r && r.account) || null, asOf: (r && r.asOf) || null, count: list.length,
-      skipped: (r && r.skipped) || 0, problems: (r && r.problems) || [], used: false, why: null, older: null, replaces: [],
+      name, kind: (r && r.kind) || null, summary: (r && r.summary) || null, account: (r && r.account) || null, asOf: (r && r.asOf) || null,
+      count: list.length, skipped: (r && r.skipped) || 0, problems: (r && r.problems) || [], used: false, why: null, older: null, replaces: [],
       list, ids: new Set(list.map((d) => d.deal)),
     };
   });
   const sameBook = (a, b) => a.kind === b.kind && (a.account && b.account ? a.account === b.account : [...a.ids].some((d) => b.ids.has(d)));
   // Newest first, so a book's newest report is the one used.
   const order = files.filter((f) => {
-    if (!f.kind) { f.why = "not one of the bank's position reports"; return false; }
+    if (!f.kind) { f.why = f.summary ? 'a summary of positions, not the deal details' : "not one of the bank's position reports"; return false; }
     if (!f.count) { f.why = 'no deal could be read from it'; return false; }
     return true;
   }).sort((a, b) => (b.asOf || '').localeCompare(a.asOf || ''));

@@ -146,6 +146,12 @@ briefly a tab of the Metrics page before it got its own sidebar item.
     NetSuite names the account; not the bank or branch). Only the deals, the account's number and each file's name
     are kept: no valuation. Months without deals keep the saved table's amounts and the business day before the 7th,
     and the card says which.
+  - **The deal details, not the summary.** The bank also exports a summary of positions (`OTCPosition.xlsx`, "עסקאות FX
+    OPTION", and `FXPosition.xlsx`, "עסקאות FX"): the same columns without the deal numbers, the deals netted, and
+    neither the options' fixing days nor the shekels of a sale bought back (it shows only its locked profit). It is not
+    read: the card says "a summary of positions, not the deal details, so it is left out" and which detail report to
+    download instead, "פירוט עסקאות FX OPTION" (`OTCPositionDetails.xlsx`) or "פירוט עסקאות FX" (`FXPositionDetails.xlsx`),
+    and nothing is saved from it (21 Nov 2026). The upload button's tip says the same.
   - **Any number of files** (`mergePositionReports`): pick several at once, or add them one by one (**Add more
     files**) before saving. The options and the forwards of each account are a report each: of one account and kind,
     the newest file is used (an older one in the same upload is said to be left out); it replaces that account's

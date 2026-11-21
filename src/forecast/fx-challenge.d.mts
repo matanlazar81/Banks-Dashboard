@@ -60,16 +60,20 @@ export interface Positions {
 }
 export declare function optionEur(o: PositionOption, rate: number): number;
 export declare function reportDay(v: unknown): string | null;
+/** summary: the bank's summary of positions of that kind (OTCPosition.xlsx, FXPosition.xlsx), not read (no deal numbers
+ * or fixing days); its problem says which detail report to download instead. null for anything else. */
 export type PositionReport =
-  | { kind: 'options'; asOf: string | null; account: string | null; options: PositionOption[]; skipped: number; problems: string[] }
-  | { kind: 'forwards'; asOf: string | null; account: string | null; forwards: PositionForward[]; skipped: number; problems: string[] }
-  | { kind: null; asOf: string | null; account?: string | null; skipped: number; problems: string[] };
+  | { kind: 'options'; summary?: null; asOf: string | null; account: string | null; options: PositionOption[]; skipped: number; problems: string[] }
+  | { kind: 'forwards'; summary?: null; asOf: string | null; account: string | null; forwards: PositionForward[]; skipped: number; problems: string[] }
+  | { kind: null; summary?: 'options' | 'forwards' | null; asOf: string | null; account?: string | null; skipped: number; problems: string[] };
 export declare function parsePositionReport(rows: unknown[][]): PositionReport;
 /** What became of a file uploaded: used, or why not; older: the day of the saved report it replaces when that one is
  * newer; replaces: the saved reports it replaces. */
 export interface ReportFile {
   name: string;
   kind: 'options' | 'forwards' | null;
+  /** The bank's summary of positions of that kind, left out (see PositionReport). */
+  summary: 'options' | 'forwards' | null;
   account: string | null;
   asOf: string | null;
   count: number;
